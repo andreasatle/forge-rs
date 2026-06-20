@@ -31,8 +31,8 @@ use super::effect::SchedulerEffect;
 /// will not create a replacement — the scheduler transitions to `Failed`.
 const MAX_ATTEMPTS: u32 = 3;
 use super::event::{
-    IntegrationOutcome, IntegrationOutput, NodeFailure, NodeOutcome, NodeOutcome::*, NodeRequest,
-    RecoveryAction, SchedulerEvent, WorkOutput,
+    IntegrationFailure, IntegrationOutcome, IntegrationOutput, NodeFailure, NodeOutcome,
+    NodeOutcome::*, NodeRequest, RecoveryAction, SchedulerEvent, WorkOutput,
 };
 use super::state::{
     ModelTier, Node, NodeId, NodeKind, NodeStatus, RunGraph, RunRequest, SchedulerState,
@@ -396,6 +396,108 @@ impl SchedulerMachine {
         Self::remap_pending_dependencies(graph, node_id, &split_id)
     }
 
+    /// Route a `RecoveryAction` for a failed or failed-integration node.
+    ///
+    /// Both `NodeOutcome::Failed` and `IntegrationOutcome::Failed` share the
+    /// same four recovery branches. This helper centralises the routing so
+    /// neither caller duplicates the exhaustion checks or graph mutations.
+    ///
+    /// The caller is responsible for ensuring `node_id` is present in `graph`.
+    fn route_recovery(
+        graph: RunGraph,
+        node_id: &NodeId,
+        recovery: RecoveryAction,
+    ) -> Transition<SchedulerState, SchedulerEffect> {
+        match recovery {
+            RecoveryAction::Retry { .. } => {
+                let exhausted = Self::attempts_exhausted(Self::get_node(&graph, node_id));
+                if exhausted {
+                    let reason = format!(
+                        "node {} exhausted all {} attempts (Retry)",
+                        node_id.0, MAX_ATTEMPTS
+                    );
+                    let graph = Self::mark_node(graph, node_id, NodeStatus::Failed);
+                    Transition {
+                        state: SchedulerState::Failed {
+                            graph: graph.clone(),
+                            reason: reason.clone(),
+                        },
+                        effects: vec![SchedulerEffect::ReturnFailed { graph, reason }],
+                    }
+                } else {
+                    let graph = Self::apply_retry(graph, node_id);
+                    Transition {
+                        state: SchedulerState::Running { graph },
+                        effects: vec![],
+                    }
+                }
+            }
+
+            RecoveryAction::Split { message } => {
+                let exhausted = Self::attempts_exhausted(Self::get_node(&graph, node_id));
+                if exhausted {
+                    let reason = format!(
+                        "node {} exhausted all {} attempts (Split)",
+                        node_id.0, MAX_ATTEMPTS
+                    );
+                    let graph = Self::mark_node(graph, node_id, NodeStatus::Failed);
+                    Transition {
+                        state: SchedulerState::Failed {
+                            graph: graph.clone(),
+                            reason: reason.clone(),
+                        },
+                        effects: vec![SchedulerEffect::ReturnFailed { graph, reason }],
+                    }
+                } else {
+                    let graph = Self::apply_split(graph, node_id, message);
+                    Transition {
+                        state: SchedulerState::Running { graph },
+                        effects: vec![],
+                    }
+                }
+            }
+
+            RecoveryAction::ElevateModel { .. } => {
+                let exhausted = Self::attempts_exhausted(Self::get_node(&graph, node_id));
+                if exhausted {
+                    let reason = format!(
+                        "node {} exhausted all {} attempts (ElevateModel)",
+                        node_id.0, MAX_ATTEMPTS
+                    );
+                    let graph = Self::mark_node(graph, node_id, NodeStatus::Failed);
+                    Transition {
+                        state: SchedulerState::Failed {
+                            graph: graph.clone(),
+                            reason: reason.clone(),
+                        },
+                        effects: vec![SchedulerEffect::ReturnFailed { graph, reason }],
+                    }
+                } else {
+                    let graph = Self::apply_elevate(graph, node_id);
+                    Transition {
+                        state: SchedulerState::Running { graph },
+                        effects: vec![],
+                    }
+                }
+            }
+
+            RecoveryAction::Terminal { message } => {
+                let graph = Self::mark_node(graph, node_id, NodeStatus::Failed);
+                let graph = Self::cancel_pending_dependents(graph, node_id);
+                Transition {
+                    state: SchedulerState::Failed {
+                        graph: graph.clone(),
+                        reason: message.clone(),
+                    },
+                    effects: vec![SchedulerEffect::ReturnFailed {
+                        graph,
+                        reason: message,
+                    }],
+                }
+            }
+        }
+    }
+
     /// Handle an `ElevateModel` recovery: create a replacement at `Strong` tier.
     ///
     /// Preserves the exact same objective so the stronger model retries the same
@@ -565,116 +667,7 @@ impl Machine for SchedulerMachine {
                     Failed(NodeFailure {
                         reason: _,
                         recovery,
-                    }) => match recovery {
-                        // Retry: the same objective is worth attempting again as-is.
-                        // A replacement node with the same tier is inserted;
-                        // the original node remains in the graph as Failed.
-                        // When attempts are exhausted, no replacement is created
-                        // and the scheduler transitions directly to Failed.
-                        RecoveryAction::Retry { .. } => {
-                            let exhausted =
-                                Self::attempts_exhausted(Self::get_node(&graph, &node_id));
-                            if exhausted {
-                                let reason = format!(
-                                    "node {} exhausted all {} attempts (Retry)",
-                                    node_id.0, MAX_ATTEMPTS
-                                );
-                                let graph = Self::mark_node(graph, &node_id, NodeStatus::Failed);
-                                Transition {
-                                    state: SchedulerState::Failed {
-                                        graph: graph.clone(),
-                                        reason: reason.clone(),
-                                    },
-                                    effects: vec![SchedulerEffect::ReturnFailed { graph, reason }],
-                                }
-                            } else {
-                                let graph = Self::apply_retry(graph, &node_id);
-                                Transition {
-                                    state: SchedulerState::Running { graph },
-                                    effects: vec![],
-                                }
-                            }
-                        }
-
-                        // Split: the task was too large or ambiguous to execute directly.
-                        // A new Plan node at Strong tier is inserted to decompose it.
-                        // The original node is marked Failed; the plan result will create
-                        // the actual replacement work.
-                        // When attempts are exhausted, no replacement is created and the
-                        // scheduler transitions directly to Failed, matching Retry/ElevateModel.
-                        RecoveryAction::Split { message } => {
-                            let exhausted =
-                                Self::attempts_exhausted(Self::get_node(&graph, &node_id));
-                            if exhausted {
-                                let reason = format!(
-                                    "node {} exhausted all {} attempts (Split)",
-                                    node_id.0, MAX_ATTEMPTS
-                                );
-                                let graph = Self::mark_node(graph, &node_id, NodeStatus::Failed);
-                                Transition {
-                                    state: SchedulerState::Failed {
-                                        graph: graph.clone(),
-                                        reason: reason.clone(),
-                                    },
-                                    effects: vec![SchedulerEffect::ReturnFailed { graph, reason }],
-                                }
-                            } else {
-                                let graph = Self::apply_split(graph, &node_id, message);
-                                Transition {
-                                    state: SchedulerState::Running { graph },
-                                    effects: vec![],
-                                }
-                            }
-                        }
-
-                        // Model escalation: the same objective is retried at Strong tier.
-                        // The original node is marked Failed; model escalation preserves
-                        // the objective exactly — only the capability level changes.
-                        // When attempts are exhausted, no replacement is created
-                        // and the scheduler transitions directly to Failed.
-                        RecoveryAction::ElevateModel { .. } => {
-                            let exhausted =
-                                Self::attempts_exhausted(Self::get_node(&graph, &node_id));
-                            if exhausted {
-                                let reason = format!(
-                                    "node {} exhausted all {} attempts (ElevateModel)",
-                                    node_id.0, MAX_ATTEMPTS
-                                );
-                                let graph = Self::mark_node(graph, &node_id, NodeStatus::Failed);
-                                Transition {
-                                    state: SchedulerState::Failed {
-                                        graph: graph.clone(),
-                                        reason: reason.clone(),
-                                    },
-                                    effects: vec![SchedulerEffect::ReturnFailed { graph, reason }],
-                                }
-                            } else {
-                                let graph = Self::apply_elevate(graph, &node_id);
-                                Transition {
-                                    state: SchedulerState::Running { graph },
-                                    effects: vec![],
-                                }
-                            }
-                        }
-
-                        // Terminal failure: no recovery is possible. The run stops
-                        // immediately. Downstream Pending dependents are cancelled
-                        // transitively so the final graph has no misleading Pending nodes.
-                        RecoveryAction::Terminal { message } => {
-                            let graph = Self::mark_node(graph, &node_id, NodeStatus::Failed);
-                            let graph = Self::cancel_pending_dependents(graph, &node_id);
-                            Transition {
-                                state: SchedulerState::Failed {
-                                    graph: graph.clone(),
-                                    reason: message.clone(),
-                                },
-                                effects: vec![SchedulerEffect::ReturnFailed {
-                                    graph,
-                                    reason: message,
-                                }],
-                            }
-                        }
-                    },
+                    }) => Self::route_recovery(graph, &node_id, recovery),
                 }
             }
 
@@ -700,9 +693,10 @@ impl Machine for SchedulerMachine {
                             effects: vec![],
                         }
                     }
-                    IntegrationOutcome::Failed(_) => {
-                        panic!("IntegrationReturned::Failed is not yet implemented")
-                    }
+                    IntegrationOutcome::Failed(IntegrationFailure {
+                        reason: _,
+                        recovery,
+                    }) => Self::route_recovery(graph, &node_id, recovery),
                 }
             }
 
@@ -835,8 +829,8 @@ impl Machine for SchedulerMachine {
 mod tests {
     use super::*;
     use crate::machines::scheduler::event::{
-        IntegrationOutcome, IntegrationOutput, NodeFailure, NodeOutcome, NodeRequest, PlanOutput,
-        RecoveryAction, WorkOutput,
+        IntegrationFailure, IntegrationOutcome, IntegrationOutput, NodeFailure, NodeOutcome,
+        NodeRequest, PlanOutput, RecoveryAction, WorkOutput,
     };
     use crate::machines::scheduler::state::{Node, RunGraph, RunRequest};
 
@@ -1827,6 +1821,74 @@ mod tests {
             c.dependencies.contains(&split.id),
             "C must depend on the split Plan node"
         );
+    }
+
+    #[test]
+    fn integration_failure_retry_routes_to_replacement() {
+        // Graph: A -> B -> C; B is Integrating (work accepted, integration pending).
+        // Integration fails with Retry.
+        // Expected:
+        //   - original B becomes Failed
+        //   - replacement B' is created with the same kind/objective
+        //   - B'.attempt == 1, B'.dependencies == B.dependencies
+        //   - C's dependency is remapped from B to B'
+        //   - scheduler returns to Running (no panic)
+        let mut graph = RunGraph {
+            nodes: vec![
+                work_node("A", "step A", &[]),
+                work_node("B", "step B", &["A"]),
+                work_node("C", "step C", &["B"]),
+            ],
+            next_id: 0,
+        };
+        graph.nodes[0].status = NodeStatus::Completed;
+        graph.nodes[1].status = NodeStatus::Integrating;
+
+        let t = do_transition(
+            SchedulerState::Waiting {
+                graph,
+                running: NodeId("B".to_string()),
+            },
+            SchedulerEvent::IntegrationReturned {
+                node_id: NodeId("B".to_string()),
+                outcome: IntegrationOutcome::Failed(IntegrationFailure {
+                    reason: "integration error".to_string(),
+                    recovery: RecoveryAction::Retry {
+                        message: "retry after integration failure".to_string(),
+                    },
+                }),
+            },
+        );
+
+        let SchedulerState::Running { graph } = t.state else {
+            panic!("expected Running, got {:#?}", t.state);
+        };
+
+        let b = graph.nodes.iter().find(|n| n.id.0 == "B").expect("B");
+        assert_eq!(b.status, NodeStatus::Failed);
+
+        let b_prime = graph
+            .nodes
+            .iter()
+            .find(|n| n.id.0.starts_with("B-retry-"))
+            .expect("B' replacement");
+        assert_eq!(b_prime.kind, NodeKind::Work);
+        assert_eq!(b_prime.objective, "step B");
+        assert_eq!(b_prime.attempt, 1);
+        assert_eq!(b_prime.status, NodeStatus::Pending);
+        assert_eq!(b_prime.dependencies, vec![NodeId("A".to_string())]);
+
+        let c = graph.nodes.iter().find(|n| n.id.0 == "C").expect("C");
+        assert!(
+            !c.dependencies.contains(&NodeId("B".to_string())),
+            "C still depends on failed B"
+        );
+        assert!(
+            c.dependencies.contains(&b_prime.id),
+            "C does not depend on B'"
+        );
+
+        assert!(t.effects.is_empty());
     }
 
     #[test]
