@@ -31,6 +31,12 @@ use super::effect::SchedulerEffect;
 /// recovery will not create a replacement — the scheduler transitions to
 /// `Failed`.
 const MAX_ATTEMPTS: u32 = 3;
+
+/// Scheduler circuit breaker for graph growth.
+///
+/// This is not a business limit. It exists only to bound recursive planning and
+/// recovery expansion so a run cannot append nodes forever.
+const MAX_GRAPH_NODES: usize = 100;
 use super::event::{
     IntegrationFailure, IntegrationOutcome, IntegrationOutput, NodeFailure, NodeOutcome,
     NodeOutcome::*, NodeRequest, RecoveryAction, SchedulerEvent, WorkOutput,
@@ -393,6 +399,34 @@ impl SchedulerMachine {
         node.attempt >= MAX_ATTEMPTS
     }
 
+    /// Return whether the graph can accept `additional_nodes` more appended nodes.
+    fn graph_has_capacity(graph: &RunGraph, additional_nodes: usize) -> bool {
+        graph
+            .nodes
+            .len()
+            .checked_add(additional_nodes)
+            .is_some_and(|total| total <= MAX_GRAPH_NODES)
+    }
+
+    fn graph_size_limit_reason(additional_nodes: usize) -> String {
+        format!(
+            "graph size limit exceeded: cannot add {additional_nodes} node(s); limit is {MAX_GRAPH_NODES}"
+        )
+    }
+
+    fn failed_transition(
+        graph: RunGraph,
+        reason: String,
+    ) -> Transition<SchedulerState, SchedulerEffect> {
+        Transition {
+            state: SchedulerState::Failed {
+                graph: graph.clone(),
+                reason: reason.clone(),
+            },
+            effects: vec![SchedulerEffect::ReturnFailed { graph, reason }],
+        }
+    }
+
     /// Mark every `Pending` node that depends (directly or indirectly) on
     /// `failed_id` as `Cancelled`.
     ///
@@ -537,6 +571,9 @@ impl SchedulerMachine {
                         },
                         effects: vec![SchedulerEffect::ReturnFailed { graph, reason }],
                     }
+                } else if !Self::graph_has_capacity(&graph, 1) {
+                    let graph = Self::mark_node(graph, node_id, NodeStatus::Failed);
+                    Self::failed_transition(graph, Self::graph_size_limit_reason(1))
                 } else {
                     let graph = Self::apply_retry(graph, node_id);
                     Transition {
@@ -561,6 +598,9 @@ impl SchedulerMachine {
                         },
                         effects: vec![SchedulerEffect::ReturnFailed { graph, reason }],
                     }
+                } else if !Self::graph_has_capacity(&graph, 1) {
+                    let graph = Self::mark_node(graph, node_id, NodeStatus::Failed);
+                    Self::failed_transition(graph, Self::graph_size_limit_reason(1))
                 } else {
                     let graph = Self::apply_split(graph, node_id, message);
                     Transition {
@@ -585,6 +625,9 @@ impl SchedulerMachine {
                         },
                         effects: vec![SchedulerEffect::ReturnFailed { graph, reason }],
                     }
+                } else if !Self::graph_has_capacity(&graph, 1) {
+                    let graph = Self::mark_node(graph, node_id, NodeStatus::Failed);
+                    Self::failed_transition(graph, Self::graph_size_limit_reason(1))
                 } else {
                     let graph = Self::apply_elevate(graph, node_id);
                     Transition {
@@ -827,6 +870,16 @@ impl Machine for SchedulerMachine {
                                 },
                                 effects: vec![SchedulerEffect::ReturnFailed { graph, reason }],
                             },
+                            Ok(()) if !Self::graph_has_capacity(&graph, plan.children.len()) => {
+                                let reason = Self::graph_size_limit_reason(plan.children.len());
+                                Transition {
+                                    state: SchedulerState::Failed {
+                                        graph: graph.clone(),
+                                        reason: reason.clone(),
+                                    },
+                                    effects: vec![SchedulerEffect::ReturnFailed { graph, reason }],
+                                }
+                            }
                             Ok(()) => {
                                 let graph = Self::mark_node(graph, &node_id, NodeStatus::Completed);
                                 let graph = Self::insert_children(graph, &node_id, plan.children);
@@ -1091,6 +1144,16 @@ mod tests {
             }
         }
         graph
+    }
+
+    fn graph_with_filler_nodes(first: Node, total_nodes: usize) -> RunGraph {
+        let mut nodes = vec![first];
+        for i in 1..total_nodes {
+            let mut node = work_node(&format!("filler-{i}"), "already done", &[]);
+            node.status = NodeStatus::Completed;
+            nodes.push(node);
+        }
+        RunGraph { nodes, next_id: 0 }
     }
 
     fn do_transition(
@@ -1818,6 +1881,57 @@ mod tests {
     }
 
     #[test]
+    fn plan_expansion_respects_graph_size_limit() {
+        let graph =
+            graph_with_filler_nodes(plan_node("P", "plan something", &[]), MAX_GRAPH_NODES - 1);
+        let graph = running(graph, "P");
+
+        let t = do_transition(
+            SchedulerState::Waiting {
+                graph,
+                running: NodeId("P".to_string()),
+            },
+            SchedulerEvent::NodeReturned {
+                node_id: NodeId("P".to_string()),
+                outcome: NodeOutcome::PlanAccepted(PlanOutput {
+                    children: vec![
+                        NodeRequest {
+                            kind: NodeKind::Work,
+                            objective: "child one".to_string(),
+                            dependencies: vec![NodeId("P".to_string())],
+                        },
+                        NodeRequest {
+                            kind: NodeKind::Work,
+                            objective: "child two".to_string(),
+                            dependencies: vec![NodeId("P".to_string())],
+                        },
+                    ],
+                }),
+            },
+        );
+
+        let SchedulerState::Failed { graph, reason } = t.state else {
+            panic!("expected Failed, got {:#?}", t.state);
+        };
+        assert_eq!(graph.nodes.len(), MAX_GRAPH_NODES - 1);
+        assert!(
+            graph
+                .nodes
+                .iter()
+                .all(|node| !matches!(node.origin, NodeOrigin::PlanExpansion)),
+            "no children should be inserted"
+        );
+        assert!(reason.contains("graph size limit"));
+        assert!(reason.contains(&MAX_GRAPH_NODES.to_string()));
+        assert!(matches!(
+            t.effects.as_slice(),
+            [SchedulerEffect::ReturnFailed { reason, .. }]
+                if reason.contains("graph size limit")
+                    && reason.contains(&MAX_GRAPH_NODES.to_string())
+        ));
+    }
+
+    #[test]
     fn elevate_exhaustion_fails_scheduler() {
         // Verify that an ElevateModel recovery on a node already at MAX_ATTEMPTS:
         //   1. does not insert a replacement node,
@@ -1963,6 +2077,126 @@ mod tests {
             reason.contains("exhausted"),
             "reason should mention exhaustion, got: {reason:?}"
         );
+        assert!(matches!(
+            t.effects.as_slice(),
+            [SchedulerEffect::ReturnFailed { .. }]
+        ));
+    }
+
+    #[test]
+    fn retry_respects_graph_size_limit() {
+        let graph = graph_with_filler_nodes(work_node("W", "failing task", &[]), MAX_GRAPH_NODES);
+
+        let t = do_transition(
+            SchedulerState::Waiting {
+                graph: running(graph, "W"),
+                running: NodeId("W".to_string()),
+            },
+            SchedulerEvent::NodeReturned {
+                node_id: NodeId("W".to_string()),
+                outcome: NodeOutcome::Failed(NodeFailure {
+                    reason: "transient error".to_string(),
+                    recovery: RecoveryAction::Retry {
+                        message: "try again".to_string(),
+                    },
+                }),
+            },
+        );
+
+        let SchedulerState::Failed { graph, reason } = t.state else {
+            panic!("expected Failed, got {:#?}", t.state);
+        };
+        assert_eq!(graph.nodes.len(), MAX_GRAPH_NODES);
+        assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
+        assert!(
+            graph
+                .nodes
+                .iter()
+                .all(|node| !matches!(node.origin, NodeOrigin::Retry { .. })),
+            "no retry replacement should be created"
+        );
+        assert!(reason.contains("graph size limit"));
+        assert!(reason.contains(&MAX_GRAPH_NODES.to_string()));
+        assert!(matches!(
+            t.effects.as_slice(),
+            [SchedulerEffect::ReturnFailed { .. }]
+        ));
+    }
+
+    #[test]
+    fn split_respects_graph_size_limit() {
+        let graph = graph_with_filler_nodes(work_node("W", "complex task", &[]), MAX_GRAPH_NODES);
+
+        let t = do_transition(
+            SchedulerState::Waiting {
+                graph: running(graph, "W"),
+                running: NodeId("W".to_string()),
+            },
+            SchedulerEvent::NodeReturned {
+                node_id: NodeId("W".to_string()),
+                outcome: NodeOutcome::Failed(NodeFailure {
+                    reason: "task too complex".to_string(),
+                    recovery: RecoveryAction::Split {
+                        message: "decompose the work".to_string(),
+                    },
+                }),
+            },
+        );
+
+        let SchedulerState::Failed { graph, reason } = t.state else {
+            panic!("expected Failed, got {:#?}", t.state);
+        };
+        assert_eq!(graph.nodes.len(), MAX_GRAPH_NODES);
+        assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
+        assert!(
+            graph
+                .nodes
+                .iter()
+                .all(|node| !matches!(node.origin, NodeOrigin::Split { .. })),
+            "no split replacement should be created"
+        );
+        assert!(reason.contains("graph size limit"));
+        assert!(reason.contains(&MAX_GRAPH_NODES.to_string()));
+        assert!(matches!(
+            t.effects.as_slice(),
+            [SchedulerEffect::ReturnFailed { .. }]
+        ));
+    }
+
+    #[test]
+    fn elevate_respects_graph_size_limit() {
+        let graph = graph_with_filler_nodes(work_node("W", "hard task", &[]), MAX_GRAPH_NODES);
+
+        let t = do_transition(
+            SchedulerState::Waiting {
+                graph: running(graph, "W"),
+                running: NodeId("W".to_string()),
+            },
+            SchedulerEvent::NodeReturned {
+                node_id: NodeId("W".to_string()),
+                outcome: NodeOutcome::Failed(NodeFailure {
+                    reason: "capability ceiling".to_string(),
+                    recovery: RecoveryAction::ElevateModel {
+                        message: "use stronger model".to_string(),
+                    },
+                }),
+            },
+        );
+
+        let SchedulerState::Failed { graph, reason } = t.state else {
+            panic!("expected Failed, got {:#?}", t.state);
+        };
+        assert_eq!(graph.nodes.len(), MAX_GRAPH_NODES);
+        assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
+        assert!(
+            graph
+                .nodes
+                .iter()
+                .all(|node| !matches!(node.origin, NodeOrigin::ElevateModel { .. })),
+            "no elevate replacement should be created"
+        );
+        assert!(reason.contains("graph size limit"));
+        assert!(reason.contains(&MAX_GRAPH_NODES.to_string()));
         assert!(matches!(
             t.effects.as_slice(),
             [SchedulerEffect::ReturnFailed { .. }]
