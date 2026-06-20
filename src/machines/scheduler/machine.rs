@@ -194,16 +194,40 @@ impl SchedulerMachine {
         graph
     }
 
+    /// Rewrite `old_id` → `new_id` in the `dependencies` of every `Pending` node.
+    ///
+    /// Only `Pending` nodes are mutable; `Running`, `Completed`, `Failed`, and
+    /// `Cancelled` nodes are historical records and must not be touched.
+    fn remap_pending_dependencies(graph: RunGraph, old_id: &NodeId, new_id: &NodeId) -> RunGraph {
+        let next_id = graph.next_id;
+        RunGraph {
+            nodes: graph
+                .nodes
+                .into_iter()
+                .map(|mut n| {
+                    if n.status == NodeStatus::Pending {
+                        n.dependencies = n
+                            .dependencies
+                            .into_iter()
+                            .map(|dep| if &dep == old_id { new_id.clone() } else { dep })
+                            .collect();
+                    }
+                    n
+                })
+                .collect(),
+            next_id,
+        }
+    }
+
     /// Handle a `Retry` recovery: mark the failed node and create a replacement.
     ///
     /// The replacement carries the same objective, kind, model tier, and
     /// dependencies as the original, with `attempt` incremented. The original
     /// node is marked `Failed` — it is never removed or mutated further.
     ///
-    /// TODO: downstream nodes that depend on `node_id` will stall because
-    /// `node_id` is now `Failed`, not `Completed`. Fixing this requires either
-    /// remapping dependencies to point at the replacement, or making
-    /// `find_ready` aware of retry chains.
+    /// After inserting the replacement, all `Pending` downstream nodes that
+    /// referenced `node_id` are remapped to reference `replacement_id` so that
+    /// the graph does not deadlock waiting for a `Failed` node to complete.
     fn apply_retry(graph: RunGraph, node_id: &NodeId) -> RunGraph {
         let (kind, objective, deps, attempt, model_tier) = {
             let n = Self::get_node(&graph, node_id);
@@ -217,7 +241,7 @@ impl SchedulerMachine {
         };
         let replacement_id = NodeId(format!("{}-retry-{}", node_id.0, graph.next_id));
         let replacement = Node {
-            id: replacement_id,
+            id: replacement_id.clone(),
             kind,
             objective,
             dependencies: deps,
@@ -227,7 +251,8 @@ impl SchedulerMachine {
             summary: None,
         };
         let graph = Self::mark_node(graph, node_id, NodeStatus::Failed);
-        Self::push_node(graph, replacement)
+        let graph = Self::push_node(graph, replacement);
+        Self::remap_pending_dependencies(graph, node_id, &replacement_id)
     }
 
     /// Handle a `Split` recovery: mark the failed node and insert a plan node.
@@ -854,6 +879,55 @@ mod tests {
         graph2.nodes[0].status = NodeStatus::Completed;
         let ready2 = SchedulerMachine::find_ready(&graph2);
         assert_eq!(ready2, vec![NodeId("B".to_string())]);
+    }
+
+    #[test]
+    fn retry_remaps_downstream_dependencies_and_chain_completes() {
+        // A -> B -> C; B fails with Retry on attempt 0, succeeds on attempt 1.
+        // After Retry the stub handler returns WorkAccepted because "do retry"
+        // contains "retry" and attempt > 0.
+        let graph = RunGraph {
+            nodes: vec![
+                work_node("A", "step A", &[]),
+                work_node("B", "do retry", &["A"]),
+                work_node("C", "step C", &["B"]),
+            ],
+            next_id: 0,
+        };
+
+        let output =
+            crate::engine::run_machine(SchedulerMachine, SchedulerState::Running { graph });
+
+        let SchedulerOutput::Complete(graph) = output else {
+            panic!("expected Complete")
+        };
+
+        // Original B is Failed (historical record).
+        let b = graph.nodes.iter().find(|n| n.id.0 == "B").expect("B");
+        assert_eq!(b.status, NodeStatus::Failed);
+
+        // Replacement B' exists and completed.
+        let b_prime = graph
+            .nodes
+            .iter()
+            .find(|n| n.id.0.starts_with("B-retry-"))
+            .expect("B'");
+        assert_eq!(b_prime.status, NodeStatus::Completed);
+        assert_eq!(b_prime.attempt, 1);
+
+        // C's dependency was rewritten from B to B'.
+        let c = graph.nodes.iter().find(|n| n.id.0 == "C").expect("C");
+        assert!(
+            !c.dependencies.contains(&NodeId("B".to_string())),
+            "C still depends on failed B"
+        );
+        assert!(
+            c.dependencies.contains(&b_prime.id),
+            "C does not depend on B'"
+        );
+
+        // C ran and completed.
+        assert_eq!(c.status, NodeStatus::Completed);
     }
 
     #[test]
