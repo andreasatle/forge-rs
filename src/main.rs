@@ -26,6 +26,7 @@ fn work(id: &str, objective: &str, deps: &[&str]) -> Node {
         dependencies: deps.iter().map(|d| NodeId(d.to_string())).collect(),
         status: NodeStatus::Pending,
         attempt: 0,
+        plan_depth: 0,
         model_tier: ModelTier::Cheap,
         summary: None,
         origin: NodeOrigin::Root,

@@ -37,6 +37,12 @@ const MAX_ATTEMPTS: u32 = 3;
 /// This is not a business limit. It exists only to bound recursive planning and
 /// recovery expansion so a run cannot append nodes forever.
 const MAX_GRAPH_NODES: usize = 100;
+
+/// Scheduler circuit breaker for recursive planning depth.
+///
+/// This is not a business rule. It only bounds Plan ancestry so recursive
+/// Plan expansion and Split recovery cannot create infinitely deep plan chains.
+const MAX_PLAN_DEPTH: usize = 10;
 use super::event::{
     IntegrationFailure, IntegrationOutcome, IntegrationOutput, NodeFailure, NodeOutcome,
     NodeOutcome::*, NodeRequest, RecoveryAction, SchedulerEvent, WorkOutput,
@@ -136,6 +142,7 @@ impl SchedulerMachine {
             dependencies: vec![],
             status: NodeStatus::Pending,
             attempt: 0,
+            plan_depth: 0,
             model_tier: ModelTier::Cheap,
             summary: None,
             origin: NodeOrigin::Root,
@@ -267,9 +274,11 @@ impl SchedulerMachine {
         parent_id: &NodeId,
         children: Vec<NodeRequest>,
     ) -> RunGraph {
+        let parent_depth = Self::get_node(&graph, parent_id).plan_depth;
         for req in children {
             let id = NodeId(format!("{}-child-{}", parent_id.0, graph.next_id));
             graph.next_id += 1;
+            let plan_depth = Self::plan_child_depth(parent_depth, &req.kind);
             graph.nodes.push(Node {
                 id,
                 kind: req.kind,
@@ -277,6 +286,7 @@ impl SchedulerMachine {
                 dependencies: req.dependencies,
                 status: NodeStatus::Pending,
                 attempt: 0,
+                plan_depth,
                 model_tier: ModelTier::Cheap,
                 summary: None,
                 origin: NodeOrigin::PlanExpansion,
@@ -414,6 +424,39 @@ impl SchedulerMachine {
         )
     }
 
+    fn plan_depth_limit_reason(depth: usize) -> String {
+        format!("plan depth limit exceeded: requested depth {depth}; limit is {MAX_PLAN_DEPTH}")
+    }
+
+    fn plan_child_depth(parent_depth: usize, kind: &NodeKind) -> usize {
+        match kind {
+            NodeKind::Plan => parent_depth + 1,
+            NodeKind::Work => parent_depth,
+        }
+    }
+
+    fn validate_plan_child_depths(
+        parent_depth: usize,
+        children: &[NodeRequest],
+    ) -> Result<(), String> {
+        for child in children {
+            let child_depth = Self::plan_child_depth(parent_depth, &child.kind);
+            if child_depth > MAX_PLAN_DEPTH {
+                return Err(Self::plan_depth_limit_reason(child_depth));
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_split_depth(original_depth: usize) -> Result<(), String> {
+        let split_depth = original_depth + 1;
+        if split_depth > MAX_PLAN_DEPTH {
+            Err(Self::plan_depth_limit_reason(split_depth))
+        } else {
+            Ok(())
+        }
+    }
+
     fn failed_transition(
         graph: RunGraph,
         reason: String,
@@ -481,13 +524,14 @@ impl SchedulerMachine {
     /// referenced `node_id` are remapped to reference `replacement_id` so that
     /// the graph does not deadlock waiting for a `Failed` node to complete.
     fn apply_retry(graph: RunGraph, node_id: &NodeId) -> RunGraph {
-        let (kind, objective, deps, attempt, model_tier) = {
+        let (kind, objective, deps, attempt, plan_depth, model_tier) = {
             let n = Self::get_node(&graph, node_id);
             (
                 n.kind.clone(),
                 n.objective.clone(),
                 n.dependencies.clone(),
                 n.attempt,
+                n.plan_depth,
                 n.model_tier.clone(),
             )
         };
@@ -499,6 +543,7 @@ impl SchedulerMachine {
             dependencies: deps,
             status: NodeStatus::Pending,
             attempt: attempt + 1,
+            plan_depth,
             model_tier,
             summary: None,
             origin: NodeOrigin::Retry {
@@ -520,9 +565,9 @@ impl SchedulerMachine {
     /// The original node is marked `Failed` (not `Cancelled`) so the audit trail
     /// is unambiguous: it attempted its objective and could not complete it.
     fn apply_split(graph: RunGraph, node_id: &NodeId, message: String) -> RunGraph {
-        let (deps, attempt) = {
+        let (deps, attempt, plan_depth) = {
             let n = Self::get_node(&graph, node_id);
-            (n.dependencies.clone(), n.attempt)
+            (n.dependencies.clone(), n.attempt, n.plan_depth + 1)
         };
         let split_id = NodeId(format!("{}-split-{}", node_id.0, graph.next_id));
         let split_node = Node {
@@ -532,6 +577,7 @@ impl SchedulerMachine {
             dependencies: deps,
             status: NodeStatus::Pending,
             attempt: attempt + 1,
+            plan_depth,
             model_tier: ModelTier::Strong,
             summary: None,
             origin: NodeOrigin::Split {
@@ -584,7 +630,9 @@ impl SchedulerMachine {
             }
 
             RecoveryAction::Split { message } => {
-                let exhausted = Self::attempts_exhausted(Self::get_node(&graph, node_id));
+                let node = Self::get_node(&graph, node_id);
+                let exhausted = Self::attempts_exhausted(node);
+                let split_depth_result = Self::validate_split_depth(node.plan_depth);
                 if exhausted {
                     let reason = format!(
                         "node {} exhausted all {} attempts (Split)",
@@ -601,6 +649,9 @@ impl SchedulerMachine {
                 } else if !Self::graph_has_capacity(&graph, 1) {
                     let graph = Self::mark_node(graph, node_id, NodeStatus::Failed);
                     Self::failed_transition(graph, Self::graph_size_limit_reason(1))
+                } else if let Err(reason) = split_depth_result {
+                    let graph = Self::mark_node(graph, node_id, NodeStatus::Failed);
+                    Self::failed_transition(graph, reason)
                 } else {
                     let graph = Self::apply_split(graph, node_id, message);
                     Transition {
@@ -714,13 +765,14 @@ impl SchedulerMachine {
     }
 
     fn apply_elevate(graph: RunGraph, node_id: &NodeId) -> RunGraph {
-        let (kind, objective, deps, attempt) = {
+        let (kind, objective, deps, attempt, plan_depth) = {
             let n = Self::get_node(&graph, node_id);
             (
                 n.kind.clone(),
                 n.objective.clone(),
                 n.dependencies.clone(),
                 n.attempt,
+                n.plan_depth,
             )
         };
         let elevated_id = NodeId(format!("{}-elevated-{}", node_id.0, graph.next_id));
@@ -731,6 +783,7 @@ impl SchedulerMachine {
             dependencies: deps,
             status: NodeStatus::Pending,
             attempt: attempt + 1,
+            plan_depth,
             model_tier: ModelTier::Strong,
             summary: None,
             origin: NodeOrigin::ElevateModel {
@@ -860,8 +913,10 @@ impl Machine for SchedulerMachine {
                     // nodes. The scheduler then re-scans for ready nodes.
                     //
                     // Validation runs first, before any mutation, so an invalid plan
-                    // leaves the graph entirely unchanged and fails the run immediately.
+                    // does not insert children. A plan-depth violation additionally
+                    // marks the original plan Failed as the circuit breaker source.
                     PlanAccepted(plan) => {
+                        let parent_depth = Self::get_node(&graph, &node_id).plan_depth;
                         match Self::validate_plan_dependencies(&graph, &plan.children) {
                             Err(reason) => Transition {
                                 state: SchedulerState::Failed {
@@ -881,6 +936,13 @@ impl Machine for SchedulerMachine {
                                 }
                             }
                             Ok(()) => {
+                                if let Err(reason) =
+                                    Self::validate_plan_child_depths(parent_depth, &plan.children)
+                                {
+                                    let graph =
+                                        Self::mark_node(graph, &node_id, NodeStatus::Failed);
+                                    return Self::failed_transition(graph, reason);
+                                }
                                 let graph = Self::mark_node(graph, &node_id, NodeStatus::Completed);
                                 let graph = Self::insert_children(graph, &node_id, plan.children);
                                 Transition {
@@ -1099,6 +1161,7 @@ mod tests {
             dependencies: deps.iter().map(|d| NodeId(d.to_string())).collect(),
             status: NodeStatus::Pending,
             attempt: 0,
+            plan_depth: 0,
             model_tier: ModelTier::Cheap,
             summary: None,
             origin: NodeOrigin::Root,
@@ -1113,6 +1176,7 @@ mod tests {
             dependencies: deps.iter().map(|d| NodeId(d.to_string())).collect(),
             status: NodeStatus::Pending,
             attempt: 0,
+            plan_depth: 0,
             model_tier: ModelTier::Cheap,
             summary: None,
             origin: NodeOrigin::Root,
@@ -1279,6 +1343,48 @@ mod tests {
     }
 
     #[test]
+    fn plan_child_depth_limit_fails_scheduler() {
+        let mut graph = RunGraph {
+            nodes: vec![plan_node("P", "plan something", &[])],
+            next_id: 0,
+        };
+        graph.nodes[0].plan_depth = MAX_PLAN_DEPTH;
+
+        let t = do_transition(
+            SchedulerState::Waiting {
+                graph: running(graph, "P"),
+                running: NodeId("P".to_string()),
+            },
+            SchedulerEvent::NodeReturned {
+                node_id: NodeId("P".to_string()),
+                outcome: NodeOutcome::PlanAccepted(PlanOutput {
+                    children: vec![NodeRequest {
+                        kind: NodeKind::Plan,
+                        objective: "nested plan".to_string(),
+                        dependencies: vec![NodeId("P".to_string())],
+                    }],
+                }),
+            },
+        );
+
+        let SchedulerState::Failed { graph, reason } = t.state else {
+            panic!("expected Failed, got {:#?}", t.state);
+        };
+        assert_eq!(graph.nodes.len(), 1, "must not insert child plan");
+        assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
+        assert!(
+            reason.contains("plan depth limit") && reason.contains(&MAX_PLAN_DEPTH.to_string()),
+            "unexpected reason: {reason:?}"
+        );
+        assert!(matches!(
+            t.effects.as_slice(),
+            [SchedulerEffect::ReturnFailed { reason, .. }]
+                if reason.contains("plan depth limit")
+                    && reason.contains(&MAX_PLAN_DEPTH.to_string())
+        ));
+    }
+
+    #[test]
     fn work_node_accepted_marks_integrating_and_emits_integrate_work() {
         let graph = single_work_graph();
         let t = do_transition(
@@ -1380,6 +1486,38 @@ mod tests {
     }
 
     #[test]
+    fn retry_preserves_depth() {
+        let mut graph = RunGraph {
+            nodes: vec![work_node("W", "do retry", &[])],
+            next_id: 0,
+        };
+        graph.nodes[0].plan_depth = 7;
+
+        let t = do_transition(
+            SchedulerState::Waiting {
+                graph: running(graph, "W"),
+                running: NodeId("W".to_string()),
+            },
+            SchedulerEvent::NodeReturned {
+                node_id: NodeId("W".to_string()),
+                outcome: NodeOutcome::Failed(NodeFailure {
+                    reason: "first try failed".to_string(),
+                    recovery: RecoveryAction::Retry {
+                        message: "try again".to_string(),
+                    },
+                }),
+            },
+        );
+
+        let SchedulerState::Running { graph } = t.state else {
+            panic!("expected Running, got {:#?}", t.state);
+        };
+        assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
+        assert_eq!(graph.nodes.len(), 2);
+        assert_eq!(graph.nodes[1].plan_depth, 7);
+    }
+
+    #[test]
     fn elevate_creates_replacement_node_with_strong_tier() {
         let graph = RunGraph {
             nodes: vec![work_node("W", "do elevate", &[])],
@@ -1414,6 +1552,38 @@ mod tests {
     }
 
     #[test]
+    fn elevate_preserves_depth() {
+        let mut graph = RunGraph {
+            nodes: vec![work_node("W", "do elevate", &[])],
+            next_id: 0,
+        };
+        graph.nodes[0].plan_depth = 7;
+
+        let t = do_transition(
+            SchedulerState::Waiting {
+                graph: running(graph, "W"),
+                running: NodeId("W".to_string()),
+            },
+            SchedulerEvent::NodeReturned {
+                node_id: NodeId("W".to_string()),
+                outcome: NodeOutcome::Failed(NodeFailure {
+                    reason: "needs stronger model".to_string(),
+                    recovery: RecoveryAction::ElevateModel {
+                        message: "use strong".to_string(),
+                    },
+                }),
+            },
+        );
+
+        let SchedulerState::Running { graph } = t.state else {
+            panic!("expected Running, got {:#?}", t.state);
+        };
+        assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
+        assert_eq!(graph.nodes.len(), 2);
+        assert_eq!(graph.nodes[1].plan_depth, 7);
+    }
+
+    #[test]
     fn terminal_failure_produces_failed_scheduler_output() {
         let graph = RunGraph {
             nodes: vec![Node {
@@ -1423,6 +1593,7 @@ mod tests {
                 dependencies: vec![],
                 status: NodeStatus::Pending,
                 attempt: 0,
+                plan_depth: 0,
                 model_tier: ModelTier::Cheap,
                 summary: None,
                 origin: NodeOrigin::Root,
@@ -2293,6 +2464,7 @@ mod tests {
                     dependencies: vec![],
                     status: NodeStatus::Failed,
                     attempt: 0,
+                    plan_depth: 0,
                     model_tier: ModelTier::Cheap,
                     summary: None,
                     origin: NodeOrigin::Root,
@@ -2304,6 +2476,7 @@ mod tests {
                     dependencies: vec![],
                     status: NodeStatus::Completed,
                     attempt: 1,
+                    plan_depth: 1,
                     model_tier: ModelTier::Strong,
                     summary: Some("planned".to_string()),
                     origin: NodeOrigin::Split { source: source_id },
@@ -2386,6 +2559,47 @@ mod tests {
             c.dependencies.contains(&split.id),
             "C must depend on the split Plan node"
         );
+    }
+
+    #[test]
+    fn split_depth_limit_fails_scheduler() {
+        let mut graph = RunGraph {
+            nodes: vec![work_node("W", "complex task", &[])],
+            next_id: 0,
+        };
+        graph.nodes[0].plan_depth = MAX_PLAN_DEPTH;
+
+        let t = do_transition(
+            SchedulerState::Waiting {
+                graph: running(graph, "W"),
+                running: NodeId("W".to_string()),
+            },
+            SchedulerEvent::NodeReturned {
+                node_id: NodeId("W".to_string()),
+                outcome: NodeOutcome::Failed(NodeFailure {
+                    reason: "task too complex".to_string(),
+                    recovery: RecoveryAction::Split {
+                        message: "decompose the work".to_string(),
+                    },
+                }),
+            },
+        );
+
+        let SchedulerState::Failed { graph, reason } = t.state else {
+            panic!("expected Failed, got {:#?}", t.state);
+        };
+        assert_eq!(graph.nodes.len(), 1, "must not insert split plan");
+        assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
+        assert!(
+            reason.contains("plan depth limit") && reason.contains(&MAX_PLAN_DEPTH.to_string()),
+            "unexpected reason: {reason:?}"
+        );
+        assert!(matches!(
+            t.effects.as_slice(),
+            [SchedulerEffect::ReturnFailed { reason, .. }]
+                if reason.contains("plan depth limit")
+                    && reason.contains(&MAX_PLAN_DEPTH.to_string())
+        ));
     }
 
     #[test]

@@ -135,6 +135,12 @@ pub struct Node {
     /// created for this objective, giving the runner observability into how
     /// many previous attempts have been made.
     pub attempt: u32,
+    /// Scheduler circuit breaker metadata for recursive planning.
+    ///
+    /// This is not a business rule. It records ancestry through `Plan` nodes
+    /// so the scheduler can bound plan chains without traversing the graph.
+    /// Work nodes inherit their parent's depth without increasing it.
+    pub plan_depth: usize,
     /// The model capability level to use when running this node.
     pub model_tier: ModelTier,
     /// A brief human-readable description of the outcome, set when the node
