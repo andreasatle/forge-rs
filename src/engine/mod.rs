@@ -32,6 +32,12 @@
 //! When a transition produces no effects, the runner re-sends `start_event` as
 //! a free tick so that machines can advance through pure bookkeeping states
 //! without waiting for external results.
+//!
+//! # Engine invariant: single-effect contract
+//!
+//! A transition may emit **zero or one** effect per tick.
+//! Emitting two or more effects is unsupported and treated as a bug: the runner
+//! panics immediately rather than silently discarding effects.
 
 /// The generic machine runner loop and the `Machine` trait.
 pub mod runner;

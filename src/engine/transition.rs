@@ -11,8 +11,8 @@
 pub struct Transition<S, E> {
     /// The machine's new durable state after the transition.
     pub state: S,
-    /// Side-effect commands produced by this transition, in dispatch order.
-    /// The runner processes at most one effect per tick; if you emit multiple,
-    /// only the first is dispatched and the rest are currently dropped.
+    /// Side-effect commands produced by this transition.
+    /// The runner enforces exactly zero or one effect per tick; emitting two or
+    /// more effects is a bug and causes an immediate panic.
     pub effects: Vec<E>,
 }

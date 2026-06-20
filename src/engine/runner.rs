@@ -56,7 +56,7 @@ pub trait Machine {
 /// 1. Send start_event to kick off the first transition.
 /// 2. transition(state, event)  →  next_state + effects
 /// 3. If output(next_state) is Some, return it — the machine is done.
-/// 4. If effects is non-empty, dispatch the first effect through handle_effect
+/// 4. If effects is non-empty, dispatch the single effect through handle_effect
 ///    to get the next event; otherwise re-send start_event as a free tick.
 /// 5. Repeat from step 2.
 /// ```
@@ -64,6 +64,13 @@ pub trait Machine {
 /// Re-sending `start_event` when there are no effects lets machines advance
 /// through pure bookkeeping steps — states that need a nudge but not a real
 /// external result — without blocking.
+///
+/// # Engine invariant
+///
+/// A transition may emit **zero or one** effect per tick.  Emitting two or more
+/// effects is treated as a bug and causes an immediate panic.  This contract is
+/// intentional: the engine has no effect queue, and silently discarding effects
+/// would hide bugs in transition logic.
 pub fn run_machine<M>(machine: M, mut state: M::State) -> M::Output
 where
     M: Machine,
@@ -78,10 +85,73 @@ where
             return output;
         }
 
-        event = match transition.effects.into_iter().next() {
-            Some(effect) => machine.handle_effect(effect),
+        let mut effects = transition.effects.into_iter();
+        event = match effects.next() {
+            Some(effect) => {
+                assert!(
+                    effects.next().is_none(),
+                    "Machine emitted multiple effects but the engine currently supports exactly one effect per transition."
+                );
+                machine.handle_effect(effect)
+            }
             // No effects produced: nudge the machine forward with another tick.
             None => machine.start_event(),
         };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine::transition::Transition;
+
+    // Minimal machine that emits two effects on the first tick, then halts.
+    struct MultiEffectMachine;
+
+    #[derive(Clone, Copy)]
+    enum MeState {
+        Start,
+        Done,
+    }
+
+    impl Machine for MultiEffectMachine {
+        type State = MeState;
+        type Event = ();
+        type Effect = &'static str;
+        type Output = ();
+
+        fn start_event(&self) -> () {
+            ()
+        }
+
+        fn transition(&self, state: MeState, _event: ()) -> Transition<MeState, &'static str> {
+            match state {
+                MeState::Start => Transition {
+                    state: MeState::Done,
+                    effects: vec!["effect-one", "effect-two"],
+                },
+                MeState::Done => Transition {
+                    state: MeState::Done,
+                    effects: vec![],
+                },
+            }
+        }
+
+        fn handle_effect(&self, _effect: &'static str) -> () {
+            ()
+        }
+
+        fn output(&self, state: &MeState) -> Option<()> {
+            match state {
+                MeState::Done => None, // never reached after panic
+                MeState::Start => None,
+            }
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "multiple effects")]
+    fn run_machine_panics_on_multiple_effects() {
+        run_machine(MultiEffectMachine, MeState::Start);
     }
 }
