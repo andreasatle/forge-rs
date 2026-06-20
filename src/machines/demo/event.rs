@@ -14,11 +14,20 @@ pub enum DemoEvent {
     Start,
 
     /// The producer has finished and returned its text output.
-    ProducerReturned { producer_response: ProducerResponse },
+    ProducerReturned {
+        /// The output returned by the producer.
+        producer_response: ProducerResponse,
+    },
 
     /// The critic has finished evaluating the producer's output.
-    CriticReturned { critic_response: CriticResponse },
+    CriticReturned {
+        /// The critic's evaluation of the producer's output.
+        critic_response: CriticResponse,
+    },
 
     /// The referee has made its final decision.
-    RefereeReturned { referee_response: RefereeResponse },
+    RefereeReturned {
+        /// The referee's final verdict.
+        referee_response: RefereeResponse,
+    },
 }

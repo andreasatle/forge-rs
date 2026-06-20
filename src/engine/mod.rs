@@ -33,7 +33,9 @@
 //! a free tick so that machines can advance through pure bookkeeping states
 //! without waiting for external results.
 
+/// The generic machine runner loop and the `Machine` trait.
 pub mod runner;
+/// The `Transition` return type shared by all machine transition functions.
 pub mod transition;
 
 pub use runner::{Machine, run_machine};

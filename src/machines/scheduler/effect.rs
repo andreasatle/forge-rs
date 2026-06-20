@@ -24,10 +24,15 @@ pub enum SchedulerEffect {
     /// Carrying `kind`, `objective`, `model_tier`, and `attempt` here means
     /// the handler does not need to re-read the graph.
     RunNode {
+        /// The ID of the node to run, used to match the returned event.
         node_id: NodeId,
+        /// Whether the node should plan or execute.
         kind: NodeKind,
+        /// Natural-language description of what the node should accomplish.
         objective: String,
+        /// The model capability level the runner should use.
         model_tier: ModelTier,
+        /// Zero-based retry count; 0 on the first attempt.
         attempt: u32,
     },
 
@@ -38,12 +43,20 @@ pub enum SchedulerEffect {
     /// development) intercepts it to extract the final graph. It is never
     /// forwarded to `handle_effect`; reaching this effect in the handler is a
     /// bug.
-    ReturnComplete { graph: RunGraph },
+    ReturnComplete {
+        /// The final graph with every node in a terminal status.
+        graph: RunGraph,
+    },
 
     /// Signal that the run ended in an unrecoverable failure.
     ///
     /// Emitted alongside the transition to `SchedulerState::Failed`. Like
     /// `ReturnComplete`, it is a sentinel for the parent context and must not
     /// reach `handle_effect`.
-    ReturnFailed { graph: RunGraph, reason: String },
+    ReturnFailed {
+        /// The graph at the point of failure, for post-mortem inspection.
+        graph: RunGraph,
+        /// A human-readable explanation of why the run was halted.
+        reason: String,
+    },
 }

@@ -41,7 +41,12 @@ pub enum SchedulerOutput {
     /// A `Terminal` recovery was triggered, halting the run. The graph is
     /// returned in its current state so the caller can inspect what succeeded
     /// before the failure.
-    Failed { graph: RunGraph, reason: String },
+    Failed {
+        /// The graph at the point of failure, for post-mortem inspection.
+        graph: RunGraph,
+        /// A human-readable explanation of why the run was halted.
+        reason: String,
+    },
 }
 
 /// The scheduler state machine.

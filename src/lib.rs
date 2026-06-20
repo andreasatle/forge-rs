@@ -21,6 +21,7 @@
 //! - [`models`] — shared domain data used across machines and handlers
 //! - [`services`] — stateless data-transformation utilities
 
+#![deny(missing_docs)]
 pub mod engine;
 pub mod handlers;
 pub mod machines;

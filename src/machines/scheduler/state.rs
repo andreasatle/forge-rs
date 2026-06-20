@@ -158,24 +158,48 @@ pub struct RunGraph {
 #[derive(Clone, Debug, PartialEq)]
 pub enum SchedulerState {
     /// The scheduler has been created but has not yet processed its first tick.
-    NotStarted { graph: RunGraph },
+    NotStarted {
+        /// The initial run graph provided by the caller.
+        graph: RunGraph,
+    },
     /// The scheduler is scanning the graph to find nodes whose dependencies are
     /// all `Completed` and that are themselves still `Pending`.
-    SelectingReady { graph: RunGraph },
+    SelectingReady {
+        /// The run graph being scanned.
+        graph: RunGraph,
+    },
     /// At least one ready node has been identified. The scheduler will dispatch
     /// the first one on the next tick.
     ///
     /// Note: only one node is dispatched per tick even when multiple are ready.
     /// Parallel dispatch is a future concern.
-    Dispatching { graph: RunGraph, ready: Vec<NodeId> },
+    Dispatching {
+        /// The run graph at the time ready nodes were found.
+        graph: RunGraph,
+        /// IDs of nodes eligible to run; the first is dispatched next tick.
+        ready: Vec<NodeId>,
+    },
     /// One node has been dispatched and the scheduler is waiting for its result.
     /// No further dispatch happens until `NodeReturned` arrives.
-    Waiting { graph: RunGraph, running: NodeId },
+    Waiting {
+        /// The run graph with the dispatched node marked `Running`.
+        graph: RunGraph,
+        /// The ID of the node currently executing.
+        running: NodeId,
+    },
     /// All nodes have reached a terminal status (`Completed`, `Failed`, or
     /// `Cancelled`) with no failures that halted the run. The graph is the
     /// complete execution record.
-    Complete { graph: RunGraph },
+    Complete {
+        /// The final graph with every node in a terminal status.
+        graph: RunGraph,
+    },
     /// A `Terminal` failure was reported by a node. The run cannot continue.
     /// The graph is preserved for post-mortem inspection.
-    Failed { graph: RunGraph, reason: String },
+    Failed {
+        /// The graph at the point of failure.
+        graph: RunGraph,
+        /// A human-readable explanation of why the run was halted.
+        reason: String,
+    },
 }

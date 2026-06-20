@@ -81,20 +81,32 @@ pub enum RecoveryAction {
     /// Create a replacement node with the same objective and model tier,
     /// incrementing `attempt`. Use when the failure is transient and the same
     /// approach is likely to succeed on a second try.
-    Retry { message: String },
+    Retry {
+        /// A human-readable note about why the retry was requested.
+        message: String,
+    },
     /// Create a new `Plan` node (at `ModelTier::Strong`) whose objective is
     /// `message`. The planner will decompose the failed objective into
     /// sub-tasks. Use when the task proved too large or ambiguous to execute
     /// directly.
-    Split { message: String },
+    Split {
+        /// The objective for the new plan node that will decompose the work.
+        message: String,
+    },
     /// Create a replacement node with `ModelTier::Strong`, incrementing
     /// `attempt`. Use when the failure was caused by the model lacking
     /// sufficient capability, not by a transient error.
-    ElevateModel { message: String },
+    ElevateModel {
+        /// A human-readable note about why model escalation was requested.
+        message: String,
+    },
     /// Halt the entire run immediately. No replacement is created.
     /// Use when the failure is unrecoverable and continuing would be
     /// meaningless or harmful.
-    Terminal { message: String },
+    Terminal {
+        /// The reason the run was halted; preserved in `SchedulerState::Failed`.
+        message: String,
+    },
 }
 
 /// The three possible outcomes when a node finishes.
@@ -128,7 +140,9 @@ pub enum SchedulerEvent {
     Start,
     /// A previously-dispatched node has finished and is reporting its outcome.
     NodeReturned {
+        /// The ID of the node that finished, used to verify it matches `running`.
         node_id: NodeId,
+        /// What the node produced and how the scheduler should react.
         outcome: NodeOutcome,
     },
 }
