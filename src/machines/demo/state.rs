@@ -28,7 +28,9 @@ pub struct TaskResult {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum DemoState {
-    NotStarted { task: Task },
+    NotStarted {
+        task: Task,
+    },
 
     PostProducer {
         task: Task,

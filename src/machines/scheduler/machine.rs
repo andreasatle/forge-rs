@@ -35,7 +35,10 @@ impl SchedulerMachine {
     }
 
     fn all_complete(graph: &RunGraph) -> bool {
-        graph.nodes.iter().all(|n| n.status == NodeStatus::Completed)
+        graph
+            .nodes
+            .iter()
+            .all(|n| n.status == NodeStatus::Completed)
     }
 
     fn mark_node(graph: RunGraph, node_id: &NodeId, status: NodeStatus) -> RunGraph {
@@ -81,7 +84,9 @@ impl Machine for SchedulerMachine {
             (SchedulerState::SelectingReady { graph }, SchedulerEvent::Start) => {
                 if Self::all_complete(&graph) {
                     Transition {
-                        state: SchedulerState::Complete { graph: graph.clone() },
+                        state: SchedulerState::Complete {
+                            graph: graph.clone(),
+                        },
                         effects: vec![SchedulerEffect::ReturnComplete { graph }],
                     }
                 } else {
@@ -120,7 +125,10 @@ impl Machine for SchedulerMachine {
                 SchedulerState::Waiting { graph, running },
                 SchedulerEvent::NodeCompleted { node_id },
             ) => {
-                assert_eq!(running, node_id, "completed node does not match running node");
+                assert_eq!(
+                    running, node_id,
+                    "completed node does not match running node"
+                );
                 let graph = Self::mark_node(graph, &node_id, NodeStatus::Completed);
                 Transition {
                     state: SchedulerState::SelectingReady { graph },
@@ -190,7 +198,9 @@ mod tests {
     }
 
     fn single_node_graph() -> RunGraph {
-        RunGraph { nodes: vec![node("A", &[])] }
+        RunGraph {
+            nodes: vec![node("A", &[])],
+        }
     }
 
     fn chain_graph() -> RunGraph {
@@ -209,7 +219,9 @@ mod tests {
     #[test]
     fn not_started_start_moves_to_selecting_ready() {
         let t = transition(
-            SchedulerState::NotStarted { graph: single_node_graph() },
+            SchedulerState::NotStarted {
+                graph: single_node_graph(),
+            },
             SchedulerEvent::Start,
         );
         assert!(matches!(t.state, SchedulerState::SelectingReady { .. }));
@@ -219,7 +231,9 @@ mod tests {
     #[test]
     fn selecting_ready_with_ready_node_moves_to_dispatching() {
         let t = transition(
-            SchedulerState::SelectingReady { graph: single_node_graph() },
+            SchedulerState::SelectingReady {
+                graph: single_node_graph(),
+            },
             SchedulerEvent::Start,
         );
         assert!(matches!(t.state, SchedulerState::Dispatching { .. }));
@@ -231,7 +245,10 @@ mod tests {
         let mut graph = single_node_graph();
         graph.nodes[0].status = NodeStatus::Completed;
 
-        let t = transition(SchedulerState::SelectingReady { graph }, SchedulerEvent::Start);
+        let t = transition(
+            SchedulerState::SelectingReady { graph },
+            SchedulerEvent::Start,
+        );
         assert!(matches!(t.state, SchedulerState::Complete { .. }));
         assert!(matches!(
             t.effects.as_slice(),
@@ -246,7 +263,10 @@ mod tests {
         };
         graph.nodes[0].status = NodeStatus::Pending;
 
-        let t = transition(SchedulerState::SelectingReady { graph }, SchedulerEvent::Start);
+        let t = transition(
+            SchedulerState::SelectingReady { graph },
+            SchedulerEvent::Start,
+        );
         assert!(matches!(t.state, SchedulerState::Failed { .. }));
         assert!(matches!(
             t.effects.as_slice(),
@@ -285,7 +305,9 @@ mod tests {
                 graph,
                 running: NodeId("A".to_string()),
             },
-            SchedulerEvent::NodeCompleted { node_id: NodeId("A".to_string()) },
+            SchedulerEvent::NodeCompleted {
+                node_id: NodeId("A".to_string()),
+            },
         );
 
         let SchedulerState::SelectingReady { graph } = t.state else {
@@ -332,7 +354,12 @@ mod tests {
         let SchedulerOutput::Complete(graph) = output else {
             panic!("expected Complete");
         };
-        assert!(graph.nodes.iter().all(|n| n.status == NodeStatus::Completed));
+        assert!(
+            graph
+                .nodes
+                .iter()
+                .all(|n| n.status == NodeStatus::Completed)
+        );
         assert_eq!(graph.nodes[0].id.0, "A");
         assert_eq!(graph.nodes[1].id.0, "B");
         assert_eq!(graph.nodes[2].id.0, "C");

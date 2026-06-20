@@ -5,9 +5,7 @@ use crate::engine::{Machine, Transition};
 
 use super::effect::DemoEffect;
 use super::event::DemoEvent;
-use super::state::{
-    CriticResponse, DemoState, ProducerResponse, RefereeResponse, TaskResult,
-};
+use super::state::{CriticResponse, DemoState, ProducerResponse, RefereeResponse, TaskResult};
 
 pub struct DemoMachine;
 
@@ -35,19 +33,18 @@ impl Machine for DemoMachine {
                 effects: vec![DemoEffect::CallProducer { task }],
             },
 
-            (
-                DemoState::NotStarted { task },
-                DemoEvent::ProducerReturned { producer_response },
-            ) => Transition {
-                state: DemoState::PostProducer {
-                    task: task.clone(),
-                    producer_response: producer_response.clone(),
-                },
-                effects: vec![DemoEffect::CallCritic {
-                    task,
-                    producer_response,
-                }],
-            },
+            (DemoState::NotStarted { task }, DemoEvent::ProducerReturned { producer_response }) => {
+                Transition {
+                    state: DemoState::PostProducer {
+                        task: task.clone(),
+                        producer_response: producer_response.clone(),
+                    },
+                    effects: vec![DemoEffect::CallCritic {
+                        task,
+                        producer_response,
+                    }],
+                }
+            }
 
             (
                 DemoState::PostProducer {

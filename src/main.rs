@@ -1,10 +1,10 @@
+use forge_rs::engine::run_machine;
 use forge_rs::machines::demo::state::DemoState;
 use forge_rs::machines::demo::{DemoMachine, Task};
 use forge_rs::machines::scheduler::state::SchedulerState;
 use forge_rs::machines::scheduler::{
     Node, NodeId, NodeStatus, RunGraph, SchedulerMachine, SchedulerOutput,
 };
-use forge_rs::engine::run_machine;
 
 fn main() {
     let task = Task {

@@ -23,25 +23,10 @@ pub struct RunGraph {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum SchedulerState {
-    NotStarted {
-        graph: RunGraph,
-    },
-    SelectingReady {
-        graph: RunGraph,
-    },
-    Dispatching {
-        graph: RunGraph,
-        ready: Vec<NodeId>,
-    },
-    Waiting {
-        graph: RunGraph,
-        running: NodeId,
-    },
-    Complete {
-        graph: RunGraph,
-    },
-    Failed {
-        graph: RunGraph,
-        reason: String,
-    },
+    NotStarted { graph: RunGraph },
+    SelectingReady { graph: RunGraph },
+    Dispatching { graph: RunGraph, ready: Vec<NodeId> },
+    Waiting { graph: RunGraph, running: NodeId },
+    Complete { graph: RunGraph },
+    Failed { graph: RunGraph, reason: String },
 }

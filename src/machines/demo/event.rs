@@ -4,15 +4,9 @@ use super::state::{CriticResponse, ProducerResponse, RefereeResponse};
 pub enum DemoEvent {
     Start,
 
-    ProducerReturned {
-        producer_response: ProducerResponse,
-    },
+    ProducerReturned { producer_response: ProducerResponse },
 
-    CriticReturned {
-        critic_response: CriticResponse,
-    },
+    CriticReturned { critic_response: CriticResponse },
 
-    RefereeReturned {
-        referee_response: RefereeResponse,
-    },
+    RefereeReturned { referee_response: RefereeResponse },
 }
