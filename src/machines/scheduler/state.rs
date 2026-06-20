@@ -29,7 +29,9 @@ pub struct NodeId(pub String);
 ///   [`NodeRequest`](super::event::NodeRequest)s. When accepted, the scheduler
 ///   inserts the requested children and continues graph traversal.
 /// - `Work` nodes are expected to perform a concrete task and return a summary
-///   string. When accepted, the node is marked `Completed`.
+///   string. When the runner reports `WorkAccepted`, the node moves to
+///   `Integrating` and an `IntegrateWork` effect is emitted. The node reaches
+///   `Completed` only after `IntegrationReturned(Succeeded)` arrives.
 #[derive(Clone, Debug, PartialEq)]
 pub enum NodeKind {
     /// A planning node. Decomposes an objective into child nodes.
@@ -103,8 +105,9 @@ pub enum NodeStatus {
     /// Finished unsuccessfully. The node is a permanent historical record.
     /// Recovery creates a replacement node rather than mutating this one.
     Failed,
-    /// Skipped due to an upstream failure. Reserved for future cancellation
-    /// propagation; not yet set by the scheduler.
+    /// Skipped due to an upstream terminal failure. Set by the scheduler on
+    /// every `Pending` node that depends (directly or transitively) on a node
+    /// that received a `Terminal` recovery action.
     Cancelled,
 }
 
@@ -182,15 +185,21 @@ pub struct RunRequest {
 /// ```text
 /// Running
 ///   │ Start
+///   ├─ invalid graph ───────────────→ Failed
 ///   ├─ all nodes terminal ──────────→ Complete
-///   ├─ no ready nodes ──────────────→ Failed
+///   ├─ no ready nodes (deadlock) ───→ Failed
 ///   └─ first ready node found
 ///        mark Running, emit RunNode
 ///              ↓
 ///           Waiting
 ///              │ NodeReturned
-///              ├─ recoverable outcome ─→ Running  (loop)
-///              └─ Terminal failure ────→ Failed
+///              ├─ PlanAccepted ────────→ Running  (insert children)
+///              ├─ WorkAccepted ────────→ Waiting  (mark Integrating, emit IntegrateWork)
+///              │    │ IntegrationReturned
+///              │    ├─ Succeeded ──────→ Running  (mark Completed)
+///              │    └─ Failed ─────────→ Running | Failed  (recovery)
+///              ├─ recoverable failure ─→ Running  (insert replacement)
+///              └─ Terminal failure ────→ Failed   (cancel dependents)
 /// ```
 #[derive(Clone, Debug, PartialEq)]
 pub enum SchedulerState {
@@ -204,11 +213,13 @@ pub enum SchedulerState {
         graph: RunGraph,
     },
     /// One node has been dispatched and the scheduler is waiting for its result.
-    /// No further dispatch happens until `NodeReturned` arrives.
+    /// No further dispatch happens until `NodeReturned` or `IntegrationReturned`
+    /// arrives. If the node reported `WorkAccepted`, the node will be in
+    /// `Integrating` status and the scheduler awaits `IntegrationReturned`.
     Waiting {
-        /// The run graph with the dispatched node marked `Running`.
+        /// The run graph with the dispatched node marked `Running` or `Integrating`.
         graph: RunGraph,
-        /// The ID of the node currently executing.
+        /// The ID of the node currently executing or being integrated.
         running: NodeId,
     },
     /// All nodes have reached a terminal status (`Completed`, `Failed`, or
@@ -218,8 +229,20 @@ pub enum SchedulerState {
         /// The final graph with every node in a terminal status.
         graph: RunGraph,
     },
-    /// A `Terminal` failure was reported by a node. The run cannot continue.
-    /// The graph is preserved for post-mortem inspection.
+    /// The run was halted and cannot continue. The graph is preserved for
+    /// post-mortem inspection.
+    ///
+    /// Causes include:
+    /// - A `Terminal` recovery action (node reported an unrecoverable failure).
+    /// - Attempt exhaustion: `Retry`, `ElevateModel`, or `Split` on a node
+    ///   already at `MAX_ATTEMPTS`.
+    /// - An invalid graph supplied to `Running + Start` (duplicate IDs or
+    ///   missing dependency references).
+    /// - An invalid node outcome: mismatched kind/outcome (e.g. `WorkAccepted`
+    ///   for a `Plan` node, or `PlanAccepted` for a `Work` node).
+    /// - An invalid plan output: a child request references an unknown `NodeId`.
+    /// - A deadlock: no node is ready but the graph is not yet complete
+    ///   (blocked dependency chain or cycle).
     Failed {
         /// The graph at the point of failure.
         graph: RunGraph,

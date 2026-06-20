@@ -111,13 +111,14 @@ pub enum RecoveryAction {
 
 /// The three possible outcomes when a node finishes.
 ///
-/// The scheduler pattern-matches on `NodeOutcome` inside the `Waiting` →
-/// `SelectingReady` transition to decide how to update the graph.
+/// The scheduler pattern-matches on `NodeOutcome` inside the `Waiting +
+/// NodeReturned` transition to decide how to update the graph.
 #[derive(Clone, Debug, PartialEq)]
 pub enum NodeOutcome {
     /// A plan node completed successfully and wants new nodes inserted.
     PlanAccepted(PlanOutput),
-    /// A work node completed successfully and produced a summary.
+    /// A work node produced work that must still pass integration before the
+    /// node is marked `Completed`.
     WorkAccepted(WorkOutput),
     /// The node could not complete. The embedded `NodeFailure` tells the
     /// scheduler which recovery path to take.
@@ -152,17 +153,19 @@ pub enum IntegrationOutcome {
 
 /// Events that the scheduler machine can receive.
 ///
-/// `Start` is a synthetic tick injected by the runner when no effect is
-/// pending. It drives the machine through pure bookkeeping steps
-/// (`NotStarted` → `SelectingReady` → `Dispatching`) without blocking on an
-/// external result.
+/// `Start` is a synthetic tick injected by the runner when the scheduler is
+/// in `Running` state and no external result is pending. It drives the
+/// machine from `Running` to `Waiting` (by dispatching a ready node), to
+/// `Complete`, or to `Failed` — all without blocking on an external result.
 ///
-/// `NodeReturned` carries the real external result: the outcome of a node
-/// that was previously dispatched via a `RunNode` effect.
+/// `NodeReturned` and `IntegrationReturned` carry real external results that
+/// drive the `Waiting` state forward.
 #[derive(Clone, Debug, PartialEq)]
 pub enum SchedulerEvent {
-    /// A synthetic tick. Used to advance the machine through states that
-    /// require no external input.
+    /// A synthetic tick that drives the `Running` state forward. The
+    /// scheduler scans the graph, selects a ready node to dispatch, and
+    /// moves to `Waiting`. If no node is ready the run fails; if all nodes
+    /// are terminal the run completes.
     Start,
     /// A previously-dispatched node has finished and is reporting its outcome.
     NodeReturned {

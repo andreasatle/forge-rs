@@ -27,8 +27,9 @@ use super::effect::SchedulerEffect;
 /// Maximum number of attempts allowed per objective before recovery stops.
 ///
 /// Attempts are zero-based: attempts 0, 1, 2, and 3 are all valid runs.
-/// When `node.attempt >= MAX_ATTEMPTS`, `Retry` and `ElevateModel` recovery
-/// will not create a replacement — the scheduler transitions to `Failed`.
+/// When `node.attempt >= MAX_ATTEMPTS`, `Retry`, `ElevateModel`, and `Split`
+/// recovery will not create a replacement — the scheduler transitions to
+/// `Failed`.
 const MAX_ATTEMPTS: u32 = 3;
 use super::event::{
     IntegrationFailure, IntegrationOutcome, IntegrationOutput, NodeFailure, NodeOutcome,
@@ -166,16 +167,13 @@ impl SchedulerMachine {
             .collect()
     }
 
-    /// Returns `true` when no node is still `Pending` or `Running`.
+    /// Returns `true` when no node is still `Pending`, `Running`, or `Integrating`.
     ///
-    /// `Failed` and `Cancelled` nodes count as "done" for this purpose because
-    /// terminal failures exit immediately via `SchedulerState::Failed` before
-    /// this check is reached. A graph where some nodes are `Failed` but none
-    /// are `Pending` or `Running` means recovery created no further work —
-    /// which is only possible if the graph has genuinely finished.
-    ///
-    /// TODO: track a separate "active leaf count" when cancellation propagation
-    /// is added, so that `Cancelled` nodes are handled distinctly.
+    /// `Failed` and `Cancelled` nodes count as terminal for this scan. Terminal
+    /// recovery transitions directly to `SchedulerState::Failed`, while
+    /// recoverable failures leave failed historical nodes behind and continue
+    /// through replacement nodes. `Integrating` is active and therefore blocks
+    /// completion just like `Pending` and `Running`.
     fn all_complete(graph: &RunGraph) -> bool {
         !graph.nodes.iter().any(|n| {
             matches!(
@@ -389,8 +387,8 @@ impl SchedulerMachine {
 
     /// Returns `true` when the node has already consumed all permitted attempts.
     ///
-    /// Used by `Retry` and `ElevateModel` recovery arms to guard against
-    /// infinite loops. `Split` is intentionally not gated here.
+    /// Used by `Retry`, `ElevateModel`, and `Split` recovery arms to guard
+    /// against infinite recovery loops.
     fn attempts_exhausted(node: &Node) -> bool {
         node.attempt >= MAX_ATTEMPTS
     }
@@ -861,8 +859,9 @@ impl Machine for SchedulerMachine {
                 }
             }
 
-            // Integration finished: on success, mark the node Completed and resume scanning.
-            // Failure recovery is not yet implemented.
+            // Integration finished: success marks the node Completed and
+            // resumes scanning; failure routes through the same recovery
+            // machinery as execution failure.
             (
                 SchedulerState::Waiting { graph, running },
                 SchedulerEvent::IntegrationReturned { node_id, outcome },

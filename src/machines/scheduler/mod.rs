@@ -20,11 +20,16 @@
 //! # Key invariants
 //!
 //! - A node runs only when every node it depends on is `Completed`.
+//! - `WorkAccepted` means work was produced; the node is not `Completed` until
+//!   `IntegrationReturned(Succeeded)` arrives.
 //! - Failed nodes are permanent records; recovery creates replacement nodes.
 //! - Retry preserves the same objective and model tier; attempt count increases.
 //! - ElevateModel preserves the same objective; model tier upgrades to `Strong`.
 //! - Split creates a new `Plan` node at `Strong` tier to decompose the objective.
+//! - Retry, ElevateModel, and Split are attempt-limited.
 //! - A `Terminal` recovery halts the entire run immediately.
+//! - `NodeId` strings are opaque; graph validation must not parse them.
+//! - `RunGraph::next_id` is only an internal generator cursor.
 
 pub mod effect;
 pub mod event;
