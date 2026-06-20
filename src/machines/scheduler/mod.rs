@@ -1,3 +1,8 @@
+//! Scheduler machine.
+//!
+//! Owns graph progression: selecting ready nodes, dispatching work, receiving
+//! node results, and detecting completion.
+
 pub mod effect;
 pub mod event;
 pub mod machine;
