@@ -10,14 +10,13 @@
 //!
 //! - `NodeId` values are unique within a `RunGraph` and never reused.
 //! - Nodes are never removed from the graph; status fields move forward only.
-//! - `RunGraph::next_id` is monotonically increasing and is the sole authority
-//!   for minting new identifiers.
+//! - `RunGraph::next_id` is an internal generator cursor used when the
+//!   scheduler mints new identifiers.
 
 /// An opaque, stable identifier for a node in the run graph.
 ///
-/// IDs are minted by incrementing `RunGraph::next_id` and are unique within a
-/// run. The string form is human-readable but must not be parsed; its internal
-/// structure is an implementation detail.
+/// IDs are unique within a run. The string form is human-readable but must not
+/// be parsed; its internal structure is an implementation detail.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct NodeId(pub String);
 
@@ -145,7 +144,7 @@ pub struct Node {
     pub origin: NodeOrigin,
 }
 
-/// The complete set of nodes for one Forge run, plus the ID counter.
+/// The complete set of nodes for one Forge run, plus the internal ID cursor.
 ///
 /// The graph only grows: nodes are appended on plan expansion and recovery, but
 /// never removed. This ensures the full execution history is always available
@@ -155,8 +154,9 @@ pub struct RunGraph {
     /// All nodes, in insertion order. The ordering has no semantic meaning;
     /// the scheduler scans the vec when computing ready sets.
     pub nodes: Vec<Node>,
-    /// Monotonic counter used to mint fresh `NodeId`s without global state.
-    /// Increment each time a node is inserted.
+    /// Internal cursor used to mint fresh `NodeId`s without global state.
+    /// Graph validation treats existing `NodeId` strings as opaque and does
+    /// not parse them to verify this cursor.
     pub next_id: u32,
 }
 

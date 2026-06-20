@@ -338,11 +338,10 @@ impl SchedulerMachine {
     /// Invariants checked:
     /// 1. No two nodes share the same `NodeId`.
     /// 2. Every dependency in every node references an existing `NodeId`.
-    /// 3. `next_id` is not stale: auto-generated IDs end with `-{N}` where N
-    ///    is the counter value at insertion time; if any existing ID carries a
-    ///    suffix N >= next_id the counter would re-mint that ID on the next
-    ///    insertion. Only numeric suffixes following a `-` are checked; IDs
-    ///    without a numeric suffix (e.g. "root", "A") are skipped.
+    ///
+    /// `RunGraph::next_id` is an internal generator cursor. Validation treats
+    /// `NodeId` values as opaque and does not parse their string form to infer
+    /// whether the cursor is stale.
     fn validate_graph_invariants(graph: &RunGraph) -> Result<(), String> {
         let mut seen: HashSet<&NodeId> = HashSet::new();
         for node in &graph.nodes {
@@ -360,18 +359,6 @@ impl SchedulerMachine {
                         node.id.0, dep.0
                     ));
                 }
-            }
-        }
-
-        for node in &graph.nodes {
-            if let Some(suffix) = node.id.0.rsplit('-').next()
-                && let Ok(n) = suffix.parse::<u32>()
-                && n >= graph.next_id
-            {
-                return Err(format!(
-                    "stale next_id {}: node {} was inserted at counter {}",
-                    graph.next_id, node.id.0, n
-                ));
             }
         }
 
@@ -2331,6 +2318,32 @@ mod tests {
         assert!(matches!(
             t.effects.as_slice(),
             [SchedulerEffect::ReturnFailed { .. }]
+        ));
+    }
+
+    #[test]
+    fn graph_validation_does_not_parse_node_ids() {
+        let graph = RunGraph {
+            nodes: vec![
+                work_node("root", "root task", &[]),
+                work_node("task-999", "numeric-looking task", &["root"]),
+                work_node("custom-123", "custom task", &["task-999"]),
+            ],
+            next_id: 0,
+        };
+        let t = do_transition(SchedulerState::Running { graph }, SchedulerEvent::Start);
+
+        let SchedulerState::Waiting { graph, running } = t.state else {
+            panic!("expected Waiting, got {:#?}", t.state);
+        };
+        assert_eq!(running, NodeId("root".to_string()));
+        assert_eq!(graph.next_id, 0);
+        assert!(matches!(
+            t.effects.as_slice(),
+            [SchedulerEffect::RunNode {
+                node_id,
+                ..
+            }] if *node_id == NodeId("root".to_string())
         ));
     }
 
