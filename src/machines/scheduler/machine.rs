@@ -2222,6 +2222,303 @@ mod tests {
         assert!(t.effects.is_empty());
     }
 
+    #[test]
+    fn integration_failure_elevate_routes_to_strong_replacement() {
+        let mut graph = RunGraph {
+            nodes: vec![
+                work_node("A", "step A", &[]),
+                work_node("B", "step B", &["A"]),
+                work_node("C", "step C", &["B"]),
+            ],
+            next_id: 0,
+        };
+        graph.nodes[0].status = NodeStatus::Completed;
+        graph.nodes[1].status = NodeStatus::Integrating;
+        graph.nodes[1].attempt = 1;
+        let b_attempt = graph.nodes[1].attempt;
+
+        let t = do_transition(
+            SchedulerState::Waiting {
+                graph,
+                running: NodeId("B".to_string()),
+            },
+            SchedulerEvent::IntegrationReturned {
+                node_id: NodeId("B".to_string()),
+                outcome: IntegrationOutcome::Failed(IntegrationFailure {
+                    reason: "integration error".to_string(),
+                    recovery: RecoveryAction::ElevateModel {
+                        message: "use stronger model".to_string(),
+                    },
+                }),
+            },
+        );
+
+        let SchedulerState::Running { graph } = t.state else {
+            panic!("expected Running, got {:#?}", t.state);
+        };
+
+        let b = graph.nodes.iter().find(|n| n.id.0 == "B").expect("B");
+        assert_eq!(b.status, NodeStatus::Failed);
+
+        let b_prime = graph
+            .nodes
+            .iter()
+            .find(|n| n.id.0.starts_with("B-elevated-"))
+            .expect("B' replacement");
+        assert_eq!(b_prime.kind, NodeKind::Work);
+        assert_eq!(b_prime.model_tier, ModelTier::Strong);
+        assert_eq!(b_prime.attempt, b_attempt + 1);
+
+        let c = graph.nodes.iter().find(|n| n.id.0 == "C").expect("C");
+        assert!(
+            !c.dependencies.contains(&NodeId("B".to_string())),
+            "C still depends on failed B"
+        );
+        assert!(
+            c.dependencies.contains(&b_prime.id),
+            "C does not depend on B'"
+        );
+
+        assert!(t.effects.is_empty());
+    }
+
+    #[test]
+    fn integration_failure_split_routes_to_plan_replacement() {
+        let mut graph = RunGraph {
+            nodes: vec![
+                work_node("A", "step A", &[]),
+                work_node("B", "step B", &["A"]),
+                work_node("C", "step C", &["B"]),
+            ],
+            next_id: 0,
+        };
+        graph.nodes[0].status = NodeStatus::Completed;
+        graph.nodes[1].status = NodeStatus::Integrating;
+
+        let t = do_transition(
+            SchedulerState::Waiting {
+                graph,
+                running: NodeId("B".to_string()),
+            },
+            SchedulerEvent::IntegrationReturned {
+                node_id: NodeId("B".to_string()),
+                outcome: IntegrationOutcome::Failed(IntegrationFailure {
+                    reason: "integration error".to_string(),
+                    recovery: RecoveryAction::Split {
+                        message: "decompose step B".to_string(),
+                    },
+                }),
+            },
+        );
+
+        let SchedulerState::Running { graph } = t.state else {
+            panic!("expected Running, got {:#?}", t.state);
+        };
+
+        let b = graph.nodes.iter().find(|n| n.id.0 == "B").expect("B");
+        assert_eq!(b.status, NodeStatus::Failed);
+
+        let replacement = graph
+            .nodes
+            .iter()
+            .find(|n| n.id.0.starts_with("B-split-"))
+            .expect("split replacement");
+        assert_eq!(replacement.kind, NodeKind::Plan);
+        assert_eq!(replacement.model_tier, ModelTier::Strong);
+        assert!(matches!(
+            &replacement.origin,
+            NodeOrigin::Split { source } if *source == NodeId("B".to_string())
+        ));
+
+        let c = graph.nodes.iter().find(|n| n.id.0 == "C").expect("C");
+        assert!(
+            !c.dependencies.contains(&NodeId("B".to_string())),
+            "C still depends on failed B"
+        );
+        assert!(
+            c.dependencies.contains(&replacement.id),
+            "C does not depend on split replacement"
+        );
+
+        assert!(t.effects.is_empty());
+    }
+
+    #[test]
+    fn integration_failure_terminal_cancels_downstream_dependents() {
+        let mut graph = RunGraph {
+            nodes: vec![
+                work_node("A", "step A", &[]),
+                work_node("B", "step B", &["A"]),
+                work_node("C", "step C", &["B"]),
+                work_node("D", "step D", &["C"]),
+            ],
+            next_id: 0,
+        };
+        graph.nodes[0].status = NodeStatus::Completed;
+        graph.nodes[1].status = NodeStatus::Integrating;
+
+        let t = do_transition(
+            SchedulerState::Waiting {
+                graph,
+                running: NodeId("B".to_string()),
+            },
+            SchedulerEvent::IntegrationReturned {
+                node_id: NodeId("B".to_string()),
+                outcome: IntegrationOutcome::Failed(IntegrationFailure {
+                    reason: "integration error".to_string(),
+                    recovery: RecoveryAction::Terminal {
+                        message: "integration cannot be recovered".to_string(),
+                    },
+                }),
+            },
+        );
+
+        let SchedulerState::Failed { graph, .. } = t.state else {
+            panic!("expected Failed, got {:#?}", t.state);
+        };
+
+        let status = |id: &str| {
+            graph
+                .nodes
+                .iter()
+                .find(|n| n.id.0 == id)
+                .unwrap_or_else(|| panic!("node {id} not found"))
+                .status
+                .clone()
+        };
+
+        assert_eq!(status("B"), NodeStatus::Failed);
+        assert_eq!(status("C"), NodeStatus::Cancelled);
+        assert_eq!(status("D"), NodeStatus::Cancelled);
+        assert!(matches!(
+            t.effects.as_slice(),
+            [SchedulerEffect::ReturnFailed { .. }]
+        ));
+    }
+
+    #[test]
+    fn integration_failure_retry_exhaustion_fails_scheduler() {
+        let mut node = work_node("B", "step B", &[]);
+        node.status = NodeStatus::Integrating;
+        node.attempt = MAX_ATTEMPTS;
+        let graph = RunGraph {
+            nodes: vec![node],
+            next_id: 0,
+        };
+
+        let t = do_transition(
+            SchedulerState::Waiting {
+                graph,
+                running: NodeId("B".to_string()),
+            },
+            SchedulerEvent::IntegrationReturned {
+                node_id: NodeId("B".to_string()),
+                outcome: IntegrationOutcome::Failed(IntegrationFailure {
+                    reason: "integration error".to_string(),
+                    recovery: RecoveryAction::Retry {
+                        message: "retry integration".to_string(),
+                    },
+                }),
+            },
+        );
+
+        let SchedulerState::Failed { graph, reason } = t.state else {
+            panic!("expected Failed, got {:#?}", t.state);
+        };
+        assert_eq!(graph.nodes.len(), 1, "no replacement should be created");
+        assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
+        assert!(
+            reason.contains("exhausted"),
+            "reason should mention exhaustion, got: {reason:?}"
+        );
+        assert!(matches!(
+            t.effects.as_slice(),
+            [SchedulerEffect::ReturnFailed { .. }]
+        ));
+    }
+
+    #[test]
+    fn integration_failure_elevate_exhaustion_fails_scheduler() {
+        let mut node = work_node("B", "step B", &[]);
+        node.status = NodeStatus::Integrating;
+        node.attempt = MAX_ATTEMPTS;
+        let graph = RunGraph {
+            nodes: vec![node],
+            next_id: 0,
+        };
+
+        let t = do_transition(
+            SchedulerState::Waiting {
+                graph,
+                running: NodeId("B".to_string()),
+            },
+            SchedulerEvent::IntegrationReturned {
+                node_id: NodeId("B".to_string()),
+                outcome: IntegrationOutcome::Failed(IntegrationFailure {
+                    reason: "integration error".to_string(),
+                    recovery: RecoveryAction::ElevateModel {
+                        message: "use stronger model".to_string(),
+                    },
+                }),
+            },
+        );
+
+        let SchedulerState::Failed { graph, reason } = t.state else {
+            panic!("expected Failed, got {:#?}", t.state);
+        };
+        assert_eq!(graph.nodes.len(), 1, "no replacement should be created");
+        assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
+        assert!(
+            reason.contains("exhausted"),
+            "reason should mention exhaustion, got: {reason:?}"
+        );
+        assert!(matches!(
+            t.effects.as_slice(),
+            [SchedulerEffect::ReturnFailed { .. }]
+        ));
+    }
+
+    #[test]
+    fn integration_failure_split_exhaustion_fails_scheduler() {
+        let mut node = work_node("B", "step B", &[]);
+        node.status = NodeStatus::Integrating;
+        node.attempt = MAX_ATTEMPTS;
+        let graph = RunGraph {
+            nodes: vec![node],
+            next_id: 0,
+        };
+
+        let t = do_transition(
+            SchedulerState::Waiting {
+                graph,
+                running: NodeId("B".to_string()),
+            },
+            SchedulerEvent::IntegrationReturned {
+                node_id: NodeId("B".to_string()),
+                outcome: IntegrationOutcome::Failed(IntegrationFailure {
+                    reason: "integration error".to_string(),
+                    recovery: RecoveryAction::Split {
+                        message: "decompose step B".to_string(),
+                    },
+                }),
+            },
+        );
+
+        let SchedulerState::Failed { graph, reason } = t.state else {
+            panic!("expected Failed, got {:#?}", t.state);
+        };
+        assert_eq!(graph.nodes.len(), 1, "no replacement should be created");
+        assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
+        assert!(
+            reason.contains("exhausted"),
+            "reason should mention exhaustion, got: {reason:?}"
+        );
+        assert!(matches!(
+            t.effects.as_slice(),
+            [SchedulerEffect::ReturnFailed { .. }]
+        ));
+    }
+
     // ── Deadlock diagnostics tests ────────────────────────────────────────────
 
     #[test]
