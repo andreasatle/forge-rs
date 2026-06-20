@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+msg_file="$1"
+msg="$(sed '/^\s*#/d;/^\s*$/d' "$msg_file" | tr -d '[:space:]')"
+if [ -z "$msg" ]; then
+    echo "Commit message cannot be empty."
+    exit 1
+fi
