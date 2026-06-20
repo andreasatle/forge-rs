@@ -272,7 +272,7 @@ impl SchedulerMachine {
         let _ = model_tier; // Split always uses Strong to maximize plan quality.
         let split_id = NodeId(format!("{}-split-{}", node_id.0, graph.next_id));
         let split_node = Node {
-            id: split_id,
+            id: split_id.clone(),
             kind: NodeKind::Plan,
             objective: message,
             dependencies: deps,
@@ -282,7 +282,8 @@ impl SchedulerMachine {
             summary: None,
         };
         let graph = Self::mark_node(graph, node_id, NodeStatus::Failed);
-        Self::push_node(graph, split_node)
+        let graph = Self::push_node(graph, split_node);
+        Self::remap_pending_dependencies(graph, node_id, &split_id)
     }
 
     /// Handle an `ElevateModel` recovery: create a replacement at `Strong` tier.
@@ -983,6 +984,152 @@ mod tests {
 
         // C ran and completed.
         assert_eq!(c.status, NodeStatus::Completed);
+    }
+
+    #[test]
+    fn split_remaps_downstream_dependencies_and_chain_completes() {
+        // A -> B -> C; B fails with Split on its first run.
+        // After Split: B is Failed, a Plan node P is inserted, C's dependency is
+        // rewritten from B to P. P completes (empty plan), then C completes.
+        let graph = RunGraph {
+            nodes: vec![
+                work_node("A", "step A", &[]),
+                work_node("B", "do split", &["A"]),
+                work_node("C", "step C", &["B"]),
+            ],
+            next_id: 0,
+        };
+
+        // Dispatch A.
+        let t = do_transition(SchedulerState::Running { graph }, SchedulerEvent::Start);
+        let SchedulerState::Waiting { graph, .. } = t.state else {
+            panic!("expected Waiting after dispatching A")
+        };
+
+        // A completes.
+        let t = do_transition(
+            SchedulerState::Waiting {
+                graph,
+                running: NodeId("A".to_string()),
+            },
+            SchedulerEvent::NodeReturned {
+                node_id: NodeId("A".to_string()),
+                outcome: NodeOutcome::WorkAccepted(WorkOutput {
+                    summary: "A done".to_string(),
+                }),
+            },
+        );
+        let SchedulerState::Running { graph } = t.state else {
+            panic!("expected Running after A completes")
+        };
+
+        // Dispatch B.
+        let t = do_transition(SchedulerState::Running { graph }, SchedulerEvent::Start);
+        let SchedulerState::Waiting { graph, .. } = t.state else {
+            panic!("expected Waiting after dispatching B")
+        };
+
+        // B fails with Split.
+        let t = do_transition(
+            SchedulerState::Waiting {
+                graph,
+                running: NodeId("B".to_string()),
+            },
+            SchedulerEvent::NodeReturned {
+                node_id: NodeId("B".to_string()),
+                outcome: NodeOutcome::Failed(NodeFailure {
+                    reason: "task too complex".to_string(),
+                    recovery: RecoveryAction::Split {
+                        message: "decompose the work".to_string(),
+                    },
+                }),
+            },
+        );
+        let SchedulerState::Running { graph } = t.state else {
+            panic!("expected Running after Split")
+        };
+
+        // Verify: original B is Failed.
+        let b = graph.nodes.iter().find(|n| n.id.0 == "B").expect("B");
+        assert_eq!(b.status, NodeStatus::Failed);
+
+        // Verify: split Plan node P exists with the right kind.
+        let p = graph
+            .nodes
+            .iter()
+            .find(|n| n.id.0.starts_with("B-split-"))
+            .expect("split Plan node");
+        let split_id = p.id.clone();
+        assert_eq!(p.kind, NodeKind::Plan);
+        assert_eq!(p.status, NodeStatus::Pending);
+
+        // Verify: C's dependency was rewritten from B to P.
+        let c = graph.nodes.iter().find(|n| n.id.0 == "C").expect("C");
+        assert!(
+            !c.dependencies.contains(&NodeId("B".to_string())),
+            "C still depends on failed B"
+        );
+        assert!(
+            c.dependencies.contains(&split_id),
+            "C does not depend on split Plan node"
+        );
+
+        // Dispatch P (ready because A — P's inherited dependency — is Completed).
+        let t = do_transition(SchedulerState::Running { graph }, SchedulerEvent::Start);
+        let SchedulerState::Waiting { graph, .. } = t.state else {
+            panic!("expected Waiting after dispatching P")
+        };
+
+        // P completes as a Plan with no children.
+        let t = do_transition(
+            SchedulerState::Waiting {
+                graph,
+                running: split_id.clone(),
+            },
+            SchedulerEvent::NodeReturned {
+                node_id: split_id.clone(),
+                outcome: NodeOutcome::PlanAccepted(PlanOutput { children: vec![] }),
+            },
+        );
+        let SchedulerState::Running { graph } = t.state else {
+            panic!("expected Running after P completes")
+        };
+
+        // Dispatch C (now ready: P is Completed and C depends on P).
+        let t = do_transition(SchedulerState::Running { graph }, SchedulerEvent::Start);
+        let SchedulerState::Waiting { graph, .. } = t.state else {
+            panic!("expected Waiting after dispatching C")
+        };
+
+        // C completes.
+        let t = do_transition(
+            SchedulerState::Waiting {
+                graph,
+                running: NodeId("C".to_string()),
+            },
+            SchedulerEvent::NodeReturned {
+                node_id: NodeId("C".to_string()),
+                outcome: NodeOutcome::WorkAccepted(WorkOutput {
+                    summary: "C done".to_string(),
+                }),
+            },
+        );
+        let SchedulerState::Running { graph } = t.state else {
+            panic!("expected Running after C completes")
+        };
+
+        // All nodes terminal → scheduler reaches Complete.
+        let t = do_transition(SchedulerState::Running { graph }, SchedulerEvent::Start);
+        let SchedulerState::Complete { graph } = t.state else {
+            panic!("expected Complete, got non-Complete state")
+        };
+
+        // Final assertions.
+        let c = graph.nodes.iter().find(|n| n.id.0 == "C").expect("C");
+        assert_eq!(c.status, NodeStatus::Completed);
+
+        let b = graph.nodes.iter().find(|n| n.id.0 == "B").expect("B");
+        assert_eq!(b.status, NodeStatus::Failed);
     }
 
     #[test]
