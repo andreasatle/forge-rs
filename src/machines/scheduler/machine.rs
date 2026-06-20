@@ -31,8 +31,8 @@ use super::effect::SchedulerEffect;
 /// will not create a replacement — the scheduler transitions to `Failed`.
 const MAX_ATTEMPTS: u32 = 3;
 use super::event::{
-    NodeFailure, NodeOutcome, NodeOutcome::*, NodeRequest, RecoveryAction, SchedulerEvent,
-    WorkOutput,
+    IntegrationOutcome, IntegrationOutput, NodeFailure, NodeOutcome, NodeOutcome::*, NodeRequest,
+    RecoveryAction, SchedulerEvent, WorkOutput,
 };
 use super::state::{
     ModelTier, Node, NodeId, NodeKind, NodeStatus, RunGraph, RunRequest, SchedulerState,
@@ -126,10 +126,12 @@ impl SchedulerMachine {
     /// TODO: track a separate "active leaf count" when cancellation propagation
     /// is added, so that `Cancelled` nodes are handled distinctly.
     fn all_complete(graph: &RunGraph) -> bool {
-        !graph
-            .nodes
-            .iter()
-            .any(|n| matches!(n.status, NodeStatus::Pending | NodeStatus::Running))
+        !graph.nodes.iter().any(|n| {
+            matches!(
+                n.status,
+                NodeStatus::Pending | NodeStatus::Running | NodeStatus::Integrating
+            )
+        })
     }
 
     /// Update a single node's status, leaving all other nodes unchanged.
@@ -546,15 +548,17 @@ impl Machine for SchedulerMachine {
                         }
                     }
 
-                    // A successful worker is marked Completed with its summary attached.
-                    // The summary is kept in the graph as an audit record and may serve
-                    // as context for downstream nodes.
+                    // Work accepted: the node moves to Integrating and an IntegrateWork
+                    // effect is emitted. The node is not yet dependency-satisfying; that
+                    // only happens when IntegrationReturned(Succeeded) arrives.
                     WorkAccepted(work) => {
-                        let graph =
-                            Self::mark_node_completed_with_summary(graph, &node_id, work.summary);
+                        let graph = Self::mark_node(graph, &node_id, NodeStatus::Integrating);
                         Transition {
-                            state: SchedulerState::Running { graph },
-                            effects: vec![],
+                            state: SchedulerState::Waiting {
+                                graph,
+                                running: node_id.clone(),
+                            },
+                            effects: vec![SchedulerEffect::IntegrateWork { node_id, work }],
                         }
                     }
 
@@ -674,6 +678,34 @@ impl Machine for SchedulerMachine {
                 }
             }
 
+            // Integration finished: on success, mark the node Completed and resume scanning.
+            // Failure recovery is not yet implemented.
+            (
+                SchedulerState::Waiting { graph, running },
+                SchedulerEvent::IntegrationReturned { node_id, outcome },
+            ) => {
+                assert_eq!(
+                    running, node_id,
+                    "returned integration does not match running node"
+                );
+                match outcome {
+                    IntegrationOutcome::Succeeded(integration_output) => {
+                        let graph = Self::mark_node_completed_with_summary(
+                            graph,
+                            &node_id,
+                            integration_output.summary,
+                        );
+                        Transition {
+                            state: SchedulerState::Running { graph },
+                            effects: vec![],
+                        }
+                    }
+                    IntegrationOutcome::Failed(_) => {
+                        panic!("IntegrationReturned::Failed is not yet implemented")
+                    }
+                }
+            }
+
             (state, event) => {
                 panic!("invalid transition: state={state:#?}, event={event:#?}");
             }
@@ -763,6 +795,19 @@ impl Machine for SchedulerMachine {
                 SchedulerEvent::NodeReturned { node_id, outcome }
             }
 
+            SchedulerEffect::IntegrateWork { node_id, work } => {
+                println!(
+                    "  -> integrating work from node {}: {:?}",
+                    node_id.0, work.summary
+                );
+                SchedulerEvent::IntegrationReturned {
+                    node_id,
+                    outcome: IntegrationOutcome::Succeeded(IntegrationOutput {
+                        summary: work.summary,
+                    }),
+                }
+            }
+
             SchedulerEffect::ReturnComplete { .. } | SchedulerEffect::ReturnFailed { .. } => {
                 unreachable!("return effects are never dispatched to the effect handler")
             }
@@ -790,7 +835,8 @@ impl Machine for SchedulerMachine {
 mod tests {
     use super::*;
     use crate::machines::scheduler::event::{
-        NodeFailure, NodeOutcome, NodeRequest, PlanOutput, RecoveryAction, WorkOutput,
+        IntegrationOutcome, IntegrationOutput, NodeFailure, NodeOutcome, NodeRequest, PlanOutput,
+        RecoveryAction, WorkOutput,
     };
     use crate::machines::scheduler::state::{Node, RunGraph, RunRequest};
 
@@ -970,7 +1016,7 @@ mod tests {
     }
 
     #[test]
-    fn work_node_accepted_marks_completed_with_summary() {
+    fn work_node_accepted_marks_integrating_and_emits_integrate_work() {
         let graph = single_work_graph();
         let t = do_transition(
             SchedulerState::Waiting {
@@ -985,11 +1031,55 @@ mod tests {
             },
         );
 
-        let SchedulerState::Running { graph } = t.state else {
-            panic!("expected Running")
+        let SchedulerState::Waiting { graph, running } = t.state else {
+            panic!("expected Waiting")
         };
-        assert_eq!(graph.nodes[0].status, NodeStatus::Completed);
-        assert_eq!(graph.nodes[0].summary, Some("done!".to_string()));
+        assert_eq!(running, NodeId("A".to_string()));
+        assert_eq!(graph.nodes[0].status, NodeStatus::Integrating);
+        assert!(matches!(
+            t.effects.as_slice(),
+            [SchedulerEffect::IntegrateWork { .. }]
+        ));
+    }
+
+    #[test]
+    fn work_accepted_emits_integration_and_does_not_complete_node() {
+        let graph = single_work_graph();
+        let node_id = NodeId("A".to_string());
+
+        let t = do_transition(
+            SchedulerState::Waiting {
+                graph: running(graph, "A"),
+                running: node_id.clone(),
+            },
+            SchedulerEvent::NodeReturned {
+                node_id: node_id.clone(),
+                outcome: NodeOutcome::WorkAccepted(WorkOutput {
+                    summary: "work done".to_string(),
+                }),
+            },
+        );
+
+        let SchedulerState::Waiting {
+            ref graph,
+            ref running,
+        } = t.state
+        else {
+            panic!("expected Waiting, got {:#?}", t.state);
+        };
+        assert_eq!(*running, node_id);
+        assert_ne!(
+            graph.nodes[0].status,
+            NodeStatus::Completed,
+            "WorkAccepted must not complete the node"
+        );
+        assert_eq!(graph.nodes[0].status, NodeStatus::Integrating);
+
+        assert_eq!(t.effects.len(), 1, "expected exactly one effect");
+        assert!(matches!(
+            &t.effects[0],
+            SchedulerEffect::IntegrateWork { node_id: id, .. } if *id == node_id
+        ));
     }
 
     #[test]
@@ -1218,7 +1308,7 @@ mod tests {
             panic!("expected Waiting after dispatching A")
         };
 
-        // A completes.
+        // A completes: WorkAccepted → Integrating.
         let t = do_transition(
             SchedulerState::Waiting {
                 graph,
@@ -1231,8 +1321,25 @@ mod tests {
                 }),
             },
         );
+        let SchedulerState::Waiting { graph, running: _ } = t.state else {
+            panic!("expected Waiting after A WorkAccepted")
+        };
+
+        // Integration succeeds → Running.
+        let t = do_transition(
+            SchedulerState::Waiting {
+                graph,
+                running: NodeId("A".to_string()),
+            },
+            SchedulerEvent::IntegrationReturned {
+                node_id: NodeId("A".to_string()),
+                outcome: IntegrationOutcome::Succeeded(IntegrationOutput {
+                    summary: "A integrated".to_string(),
+                }),
+            },
+        );
         let SchedulerState::Running { graph } = t.state else {
-            panic!("expected Running after A completes")
+            panic!("expected Running after A integrates")
         };
 
         // Dispatch B.
@@ -1313,7 +1420,7 @@ mod tests {
             panic!("expected Waiting after dispatching C")
         };
 
-        // C completes.
+        // C completes: WorkAccepted → Integrating.
         let t = do_transition(
             SchedulerState::Waiting {
                 graph,
@@ -1326,8 +1433,25 @@ mod tests {
                 }),
             },
         );
+        let SchedulerState::Waiting { graph, running: _ } = t.state else {
+            panic!("expected Waiting after C WorkAccepted")
+        };
+
+        // Integration succeeds → Running.
+        let t = do_transition(
+            SchedulerState::Waiting {
+                graph,
+                running: NodeId("C".to_string()),
+            },
+            SchedulerEvent::IntegrationReturned {
+                node_id: NodeId("C".to_string()),
+                outcome: IntegrationOutcome::Succeeded(IntegrationOutput {
+                    summary: "C integrated".to_string(),
+                }),
+            },
+        );
         let SchedulerState::Running { graph } = t.state else {
-            panic!("expected Running after C completes")
+            panic!("expected Running after C integrates")
         };
 
         // All nodes terminal → scheduler reaches Complete.

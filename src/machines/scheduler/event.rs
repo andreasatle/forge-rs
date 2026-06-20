@@ -124,6 +124,32 @@ pub enum NodeOutcome {
     Failed(NodeFailure),
 }
 
+/// The structured output of a successful integration.
+#[derive(Clone, Debug, PartialEq)]
+pub struct IntegrationOutput {
+    /// A brief human-readable description of what the integration produced.
+    pub summary: String,
+}
+
+/// The failure report returned when integration cannot complete.
+#[derive(Clone, Debug, PartialEq)]
+pub struct IntegrationFailure {
+    /// Why integration failed.
+    pub reason: String,
+    /// The scheduler's next action after integration failure.
+    pub recovery: RecoveryAction,
+}
+
+/// The two possible outcomes when integration finishes.
+#[derive(Clone, Debug, PartialEq)]
+pub enum IntegrationOutcome {
+    /// Integration completed successfully.
+    Succeeded(IntegrationOutput),
+    /// Integration could not complete. The embedded `IntegrationFailure` tells
+    /// the scheduler which recovery path to take.
+    Failed(IntegrationFailure),
+}
+
 /// Events that the scheduler machine can receive.
 ///
 /// `Start` is a synthetic tick injected by the runner when no effect is
@@ -144,5 +170,12 @@ pub enum SchedulerEvent {
         node_id: NodeId,
         /// What the node produced and how the scheduler should react.
         outcome: NodeOutcome,
+    },
+    /// A previously-dispatched integration has finished and is reporting its outcome.
+    IntegrationReturned {
+        /// The ID of the node whose work was being integrated.
+        node_id: NodeId,
+        /// Whether integration succeeded or failed, and how to proceed.
+        outcome: IntegrationOutcome,
     },
 }

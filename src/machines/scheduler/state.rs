@@ -69,6 +69,9 @@ pub enum NodeStatus {
     Pending,
     /// Dispatched to a runner; awaiting a `NodeReturned` event.
     Running,
+    /// Work has been produced by the runner but is not dependency-satisfying
+    /// until integration succeeds.
+    Integrating,
     /// Finished successfully. Dependencies on this node are now satisfiable.
     Completed,
     /// Finished unsuccessfully. The node is a permanent historical record.

@@ -27,7 +27,8 @@ pub mod state;
 
 pub use effect::SchedulerEffect;
 pub use event::{
-    NodeFailure, NodeOutcome, NodeRequest, PlanOutput, RecoveryAction, SchedulerEvent, WorkOutput,
+    IntegrationFailure, IntegrationOutcome, IntegrationOutput, NodeFailure, NodeOutcome,
+    NodeRequest, PlanOutput, RecoveryAction, SchedulerEvent, WorkOutput,
 };
 pub use machine::{SchedulerMachine, SchedulerOutput};
 pub use state::{

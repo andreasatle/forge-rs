@@ -8,6 +8,7 @@
 //! This module does **not** own scheduler state or events; those live in
 //! `state.rs` and `event.rs`.
 
+use super::event::WorkOutput;
 use super::state::{ModelTier, NodeId, NodeKind, RunGraph};
 
 /// Commands that the scheduler emits to the outside world.
@@ -34,6 +35,17 @@ pub enum SchedulerEffect {
         model_tier: ModelTier,
         /// Zero-based retry count; 0 on the first attempt.
         attempt: u32,
+    },
+
+    /// Dispatch the work produced by a node to the integration handler.
+    ///
+    /// The handler integrates the work and returns an `IntegrationReturned` event.
+    /// The node remains `Integrating` until that event arrives.
+    IntegrateWork {
+        /// The ID of the node whose work is being integrated.
+        node_id: NodeId,
+        /// The work output to integrate.
+        work: WorkOutput,
     },
 
     /// Signal that the entire run completed successfully.
