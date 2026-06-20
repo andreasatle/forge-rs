@@ -588,6 +588,55 @@ impl SchedulerMachine {
     /// After inserting the replacement, all `Pending` downstream nodes that
     /// referenced `node_id` are remapped to reference `replacement_id` so that
     /// the graph does not deadlock waiting for a `Failed` node to complete.
+    /// Find a node by ID without panicking.
+    ///
+    /// Used for validation where a missing node means an invalid event, not an
+    /// internal inconsistency.
+    fn node_for_running<'a>(graph: &'a RunGraph, node_id: &NodeId) -> Option<&'a Node> {
+        graph.nodes.iter().find(|n| &n.id == node_id)
+    }
+
+    /// Return `Some(reason)` when `outcome` is incompatible with `node_kind`.
+    ///
+    /// `Failed` is always valid. `PlanAccepted` is only valid for Plan nodes;
+    /// `WorkAccepted` is only valid for Work nodes.
+    fn invalid_node_outcome_reason(
+        node_id: &NodeId,
+        node_kind: &NodeKind,
+        outcome: &NodeOutcome,
+    ) -> Option<String> {
+        match (node_kind, outcome) {
+            (NodeKind::Work, PlanAccepted(_)) => Some(format!(
+                "node {} is Work but received PlanAccepted outcome",
+                node_id.0
+            )),
+            (NodeKind::Plan, WorkAccepted(_)) => Some(format!(
+                "node {} is Plan but received WorkAccepted outcome",
+                node_id.0
+            )),
+            _ => None,
+        }
+    }
+
+    /// Return `Some(reason)` when `IntegrationReturned` is not valid for the node.
+    ///
+    /// Valid only when the node exists, has `NodeKind::Work`, and is in
+    /// `NodeStatus::Integrating`.
+    fn invalid_integration_reason(graph: &RunGraph, node_id: &NodeId) -> Option<String> {
+        match Self::node_for_running(graph, node_id) {
+            None => Some(format!("node {} not found in graph", node_id.0)),
+            Some(node) if node.kind != NodeKind::Work => Some(format!(
+                "node {} is {:?} but IntegrationReturned requires a Work node",
+                node_id.0, node.kind
+            )),
+            Some(node) if node.status != NodeStatus::Integrating => Some(format!(
+                "node {} has status {:?} but IntegrationReturned requires Integrating",
+                node_id.0, node.status
+            )),
+            _ => None,
+        }
+    }
+
     fn apply_elevate(graph: RunGraph, node_id: &NodeId) -> RunGraph {
         let (kind, objective, deps, attempt) = {
             let n = Self::get_node(&graph, node_id);
@@ -706,6 +755,20 @@ impl Machine for SchedulerMachine {
                     "returned node does not match running node"
                 );
 
+                // Validate that the outcome is compatible with the node's kind.
+                let node_kind = Self::get_node(&graph, &node_id).kind.clone();
+                if let Some(reason) =
+                    Self::invalid_node_outcome_reason(&node_id, &node_kind, &outcome)
+                {
+                    return Transition {
+                        state: SchedulerState::Failed {
+                            graph: graph.clone(),
+                            reason: reason.clone(),
+                        },
+                        effects: vec![SchedulerEffect::ReturnFailed { graph, reason }],
+                    };
+                }
+
                 match outcome {
                     // A successful planner expands the graph: the plan node is marked
                     // Completed and its requested children are inserted as new Pending
@@ -764,6 +827,18 @@ impl Machine for SchedulerMachine {
                     running, node_id,
                     "returned integration does not match running node"
                 );
+
+                // Validate that integration arrives for a Work node in Integrating status.
+                if let Some(reason) = Self::invalid_integration_reason(&graph, &node_id) {
+                    return Transition {
+                        state: SchedulerState::Failed {
+                            graph: graph.clone(),
+                            reason: reason.clone(),
+                        },
+                        effects: vec![SchedulerEffect::ReturnFailed { graph, reason }],
+                    };
+                }
+
                 match outcome {
                     IntegrationOutcome::Succeeded(integration_output) => {
                         let graph = Self::mark_node_completed_with_summary(
@@ -2147,6 +2222,137 @@ mod tests {
             reason.contains("blocked") || reason.contains("cycle"),
             "reason should mention blocked or cycle, got: {reason:?}"
         );
+    }
+
+    // ── Outcome/phase validation tests ───────────────────────────────────────
+
+    #[test]
+    fn plan_node_rejects_work_accepted() {
+        let graph = RunGraph {
+            nodes: vec![plan_node("P", "plan something", &[])],
+            next_id: 0,
+        };
+        let t = do_transition(
+            SchedulerState::Waiting {
+                graph: running(graph, "P"),
+                running: NodeId("P".to_string()),
+            },
+            SchedulerEvent::NodeReturned {
+                node_id: NodeId("P".to_string()),
+                outcome: NodeOutcome::WorkAccepted(WorkOutput {
+                    summary: "work done".to_string(),
+                }),
+            },
+        );
+
+        let SchedulerState::Failed { reason, .. } = t.state else {
+            panic!("expected Failed, got {:#?}", t.state);
+        };
+        assert!(
+            reason.contains("Plan"),
+            "reason should mention Plan, got: {reason:?}"
+        );
+        assert!(
+            reason.contains("WorkAccepted"),
+            "reason should mention WorkAccepted, got: {reason:?}"
+        );
+        assert!(matches!(
+            t.effects.as_slice(),
+            [SchedulerEffect::ReturnFailed { .. }]
+        ));
+    }
+
+    #[test]
+    fn work_node_rejects_plan_accepted() {
+        let graph = single_work_graph();
+        let t = do_transition(
+            SchedulerState::Waiting {
+                graph: running(graph, "A"),
+                running: NodeId("A".to_string()),
+            },
+            SchedulerEvent::NodeReturned {
+                node_id: NodeId("A".to_string()),
+                outcome: NodeOutcome::PlanAccepted(PlanOutput { children: vec![] }),
+            },
+        );
+
+        let SchedulerState::Failed { reason, .. } = t.state else {
+            panic!("expected Failed, got {:#?}", t.state);
+        };
+        assert!(
+            reason.contains("Work"),
+            "reason should mention Work, got: {reason:?}"
+        );
+        assert!(
+            reason.contains("PlanAccepted"),
+            "reason should mention PlanAccepted, got: {reason:?}"
+        );
+        assert!(matches!(
+            t.effects.as_slice(),
+            [SchedulerEffect::ReturnFailed { .. }]
+        ));
+    }
+
+    #[test]
+    fn integration_returned_rejects_non_integrating_work() {
+        // Work node is Running (not Integrating) when IntegrationReturned arrives.
+        let graph = single_work_graph();
+        let t = do_transition(
+            SchedulerState::Waiting {
+                graph: running(graph, "A"),
+                running: NodeId("A".to_string()),
+            },
+            SchedulerEvent::IntegrationReturned {
+                node_id: NodeId("A".to_string()),
+                outcome: IntegrationOutcome::Succeeded(IntegrationOutput {
+                    summary: "done".to_string(),
+                }),
+            },
+        );
+
+        let SchedulerState::Failed { reason, .. } = t.state else {
+            panic!("expected Failed, got {:#?}", t.state);
+        };
+        assert!(
+            reason.contains("Integrating"),
+            "reason should mention Integrating, got: {reason:?}"
+        );
+        assert!(matches!(
+            t.effects.as_slice(),
+            [SchedulerEffect::ReturnFailed { .. }]
+        ));
+    }
+
+    #[test]
+    fn integration_returned_rejects_plan_node() {
+        let graph = RunGraph {
+            nodes: vec![plan_node("P", "plan something", &[])],
+            next_id: 0,
+        };
+        let t = do_transition(
+            SchedulerState::Waiting {
+                graph: running(graph, "P"),
+                running: NodeId("P".to_string()),
+            },
+            SchedulerEvent::IntegrationReturned {
+                node_id: NodeId("P".to_string()),
+                outcome: IntegrationOutcome::Succeeded(IntegrationOutput {
+                    summary: "done".to_string(),
+                }),
+            },
+        );
+
+        let SchedulerState::Failed { reason, .. } = t.state else {
+            panic!("expected Failed, got {:#?}", t.state);
+        };
+        assert!(
+            reason.contains("Work") || reason.contains("Plan"),
+            "reason should mention Work or Plan, got: {reason:?}"
+        );
+        assert!(matches!(
+            t.effects.as_slice(),
+            [SchedulerEffect::ReturnFailed { .. }]
+        ));
     }
 
     #[test]
