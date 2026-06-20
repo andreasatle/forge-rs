@@ -14,7 +14,8 @@ use forge_rs::machines::demo::state::DemoState;
 use forge_rs::machines::demo::{DemoMachine, Task};
 use forge_rs::machines::scheduler::state::SchedulerState;
 use forge_rs::machines::scheduler::{
-    ModelTier, Node, NodeId, NodeKind, NodeStatus, RunGraph, SchedulerMachine, SchedulerOutput,
+    ModelTier, Node, NodeId, NodeKind, NodeStatus, RunGraph, RunRequest, SchedulerMachine,
+    SchedulerOutput,
 };
 
 fn work(id: &str, objective: &str, deps: &[&str]) -> Node {
@@ -30,22 +31,9 @@ fn work(id: &str, objective: &str, deps: &[&str]) -> Node {
     }
 }
 
-fn plan(id: &str, objective: &str, deps: &[&str]) -> Node {
-    Node {
-        id: NodeId(id.to_string()),
-        kind: NodeKind::Plan,
-        objective: objective.to_string(),
-        dependencies: deps.iter().map(|d| NodeId(d.to_string())).collect(),
-        status: NodeStatus::Pending,
-        attempt: 0,
-        model_tier: ModelTier::Cheap,
-        summary: None,
-    }
-}
-
-fn run_demo(label: &str, graph: RunGraph) {
+fn run_demo(label: &str, state: SchedulerState) {
     println!("\n=== {label} ===\n");
-    match run_machine(SchedulerMachine, SchedulerState::Running { graph }) {
+    match run_machine(SchedulerMachine, state) {
         SchedulerOutput::Complete(g) => {
             println!("\nCOMPLETE — {} nodes", g.nodes.len());
             for n in &g.nodes {
@@ -76,49 +64,56 @@ fn main() {
     // 1. Simple work chain: A → B → C
     run_demo(
         "work chain",
-        RunGraph {
-            nodes: vec![
-                work("A", "initialize workspace", &[]),
-                work("B", "build artifacts", &["A"]),
-                work("C", "run verification", &["B"]),
-            ],
-            next_id: 0,
+        SchedulerState::Running {
+            graph: RunGraph {
+                nodes: vec![
+                    work("A", "initialize workspace", &[]),
+                    work("B", "build artifacts", &["A"]),
+                    work("C", "run verification", &["B"]),
+                ],
+                next_id: 0,
+            },
         },
     );
 
-    // 2. Plan node that dynamically creates a work child
+    // 2. Plan node that dynamically creates a work child — primary entry via RunRequest
     run_demo(
-        "plan → work child",
-        RunGraph {
-            nodes: vec![plan("P", "plan the implementation", &[])],
-            next_id: 0,
-        },
+        "plan → work child (via RunRequest)",
+        SchedulerMachine::initial_state(RunRequest {
+            objective: "plan the implementation".to_string(),
+        }),
     );
 
     // 3. Retry: fails on attempt 0, succeeds on attempt 1
     run_demo(
         "retry recovery",
-        RunGraph {
-            nodes: vec![work("R", "retry this job", &[])],
-            next_id: 0,
+        SchedulerState::Running {
+            graph: RunGraph {
+                nodes: vec![work("R", "retry this job", &[])],
+                next_id: 0,
+            },
         },
     );
 
     // 4. ElevateModel: fails on attempt 0, succeeds on attempt 1 with Strong tier
     run_demo(
         "elevate model recovery",
-        RunGraph {
-            nodes: vec![work("E", "elevate this task", &[])],
-            next_id: 0,
+        SchedulerState::Running {
+            graph: RunGraph {
+                nodes: vec![work("E", "elevate this task", &[])],
+                next_id: 0,
+            },
         },
     );
 
     // 5. Terminal failure
     run_demo(
         "terminal failure",
-        RunGraph {
-            nodes: vec![work("X", "terminal task", &[])],
-            next_id: 0,
+        SchedulerState::Running {
+            graph: RunGraph {
+                nodes: vec![work("X", "terminal task", &[])],
+                next_id: 0,
+            },
         },
     );
 }

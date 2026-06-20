@@ -27,7 +27,9 @@ use super::event::{
     NodeFailure, NodeOutcome, NodeOutcome::*, NodeRequest, RecoveryAction, SchedulerEvent,
     WorkOutput,
 };
-use super::state::{ModelTier, Node, NodeId, NodeKind, NodeStatus, RunGraph, SchedulerState};
+use super::state::{
+    ModelTier, Node, NodeId, NodeKind, NodeStatus, RunGraph, RunRequest, SchedulerState,
+};
 
 /// The terminal result of a complete scheduler run.
 ///
@@ -57,6 +59,30 @@ pub enum SchedulerOutput {
 pub struct SchedulerMachine;
 
 impl SchedulerMachine {
+    /// Build the initial scheduler state from an external run request.
+    ///
+    /// Creates a `SchedulerState::Running` containing a single root `Plan` node
+    /// whose objective is taken from the request. All other node fields are set
+    /// to their default starting values.
+    pub fn initial_state(request: RunRequest) -> SchedulerState {
+        let root = Node {
+            id: NodeId("root".to_string()),
+            kind: NodeKind::Plan,
+            objective: request.objective,
+            dependencies: vec![],
+            status: NodeStatus::Pending,
+            attempt: 0,
+            model_tier: ModelTier::Cheap,
+            summary: None,
+        };
+        SchedulerState::Running {
+            graph: RunGraph {
+                nodes: vec![root],
+                next_id: 0,
+            },
+        }
+    }
+
     /// Returns the IDs of all nodes that are `Pending` and whose every
     /// dependency has reached `Completed`.
     ///
@@ -612,7 +638,7 @@ mod tests {
     use crate::machines::scheduler::event::{
         NodeFailure, NodeOutcome, NodeRequest, PlanOutput, RecoveryAction, WorkOutput,
     };
-    use crate::machines::scheduler::state::{Node, RunGraph};
+    use crate::machines::scheduler::state::{Node, RunGraph, RunRequest};
 
     fn work_node(id: &str, objective: &str, deps: &[&str]) -> Node {
         Node {
@@ -672,6 +698,38 @@ mod tests {
         event: SchedulerEvent,
     ) -> Transition<SchedulerState, SchedulerEffect> {
         SchedulerMachine.transition(state, event)
+    }
+
+    // ── RunRequest / initial_state tests ──────────────────────────────────────
+
+    #[test]
+    fn initial_state_creates_root_plan_node() {
+        let request = RunRequest {
+            objective: "plan the project".to_string(),
+        };
+        let state = SchedulerMachine::initial_state(request);
+        let SchedulerState::Running { graph } = state else {
+            panic!("expected Running");
+        };
+        assert_eq!(graph.nodes.len(), 1);
+        let root = &graph.nodes[0];
+        assert_eq!(root.id, NodeId("root".to_string()));
+        assert_eq!(root.kind, NodeKind::Plan);
+        assert_eq!(root.status, NodeStatus::Pending);
+        assert_eq!(root.objective, "plan the project");
+        assert!(root.dependencies.is_empty());
+        assert_eq!(root.attempt, 0);
+        assert_eq!(root.model_tier, ModelTier::Cheap);
+    }
+
+    #[test]
+    fn run_request_starts_scheduler_end_to_end() {
+        let request = RunRequest {
+            objective: "plan demo".to_string(),
+        };
+        let state = SchedulerMachine::initial_state(request);
+        let output = crate::engine::run_machine(SchedulerMachine, state);
+        assert!(matches!(output, SchedulerOutput::Complete(_)));
     }
 
     // ── Running + Start structural tests ──────────────────────────────────────
