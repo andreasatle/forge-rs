@@ -284,6 +284,50 @@ impl SchedulerMachine {
         node.attempt >= MAX_ATTEMPTS
     }
 
+    /// Mark every `Pending` node that depends (directly or indirectly) on
+    /// `failed_id` as `Cancelled`.
+    ///
+    /// The failed node itself must already be marked `Failed` before this is
+    /// called. Only `Pending` nodes are eligible; all other statuses are left
+    /// untouched.
+    fn cancel_pending_dependents(graph: RunGraph, failed_id: &NodeId) -> RunGraph {
+        let mut tainted: HashSet<NodeId> = HashSet::new();
+        tainted.insert(failed_id.clone());
+
+        loop {
+            let mut grew = false;
+            for node in &graph.nodes {
+                if node.status == NodeStatus::Pending
+                    && !tainted.contains(&node.id)
+                    && node.dependencies.iter().any(|dep| tainted.contains(dep))
+                {
+                    tainted.insert(node.id.clone());
+                    grew = true;
+                }
+            }
+            if !grew {
+                break;
+            }
+        }
+
+        tainted.remove(failed_id);
+
+        let next_id = graph.next_id;
+        RunGraph {
+            nodes: graph
+                .nodes
+                .into_iter()
+                .map(|mut n| {
+                    if tainted.contains(&n.id) {
+                        n.status = NodeStatus::Cancelled;
+                    }
+                    n
+                })
+                .collect(),
+            next_id,
+        }
+    }
+
     /// Handle a `Retry` recovery: mark the failed node and create a replacement.
     ///
     /// The replacement carries the same objective, kind, model tier, and
@@ -592,10 +636,11 @@ impl Machine for SchedulerMachine {
                         }
 
                         // Terminal failure: no recovery is possible. The run stops
-                        // immediately. The graph is preserved with the node marked Failed
-                        // so callers can inspect what completed before the failure.
+                        // immediately. Downstream Pending dependents are cancelled
+                        // transitively so the final graph has no misleading Pending nodes.
                         RecoveryAction::Terminal { message } => {
                             let graph = Self::mark_node(graph, &node_id, NodeStatus::Failed);
+                            let graph = Self::cancel_pending_dependents(graph, &node_id);
                             Transition {
                                 state: SchedulerState::Failed {
                                     graph: graph.clone(),
@@ -1477,5 +1522,103 @@ mod tests {
             t.effects.as_slice(),
             [SchedulerEffect::ReturnFailed { .. }]
         ));
+    }
+
+    // ── Cancellation propagation tests ───────────────────────────────────────
+
+    #[test]
+    fn terminal_failure_cancels_downstream_chain() {
+        // Graph: A -> B -> C -> D
+        // A is already Completed, B is Running and fails terminally.
+        // Expected final statuses: A=Completed, B=Failed, C=Cancelled, D=Cancelled.
+        let mut graph = RunGraph {
+            nodes: vec![
+                work_node("A", "step A", &[]),
+                work_node("B", "step B", &["A"]),
+                work_node("C", "step C", &["B"]),
+                work_node("D", "step D", &["C"]),
+            ],
+            next_id: 0,
+        };
+        graph.nodes[0].status = NodeStatus::Completed;
+
+        let t = do_transition(
+            SchedulerState::Waiting {
+                graph: running(graph, "B"),
+                running: NodeId("B".to_string()),
+            },
+            SchedulerEvent::NodeReturned {
+                node_id: NodeId("B".to_string()),
+                outcome: NodeOutcome::Failed(NodeFailure {
+                    reason: "unrecoverable".to_string(),
+                    recovery: RecoveryAction::Terminal {
+                        message: "fatal error".to_string(),
+                    },
+                }),
+            },
+        );
+
+        let SchedulerState::Failed { graph, .. } = t.state else {
+            panic!("expected Failed, got {:#?}", t.state);
+        };
+
+        let status = |id: &str| {
+            graph
+                .nodes
+                .iter()
+                .find(|n| n.id.0 == id)
+                .unwrap_or_else(|| panic!("node {id} not found"))
+                .status
+                .clone()
+        };
+
+        assert_eq!(status("A"), NodeStatus::Completed);
+        assert_eq!(status("B"), NodeStatus::Failed);
+        assert_eq!(status("C"), NodeStatus::Cancelled);
+        assert_eq!(status("D"), NodeStatus::Cancelled);
+    }
+
+    #[test]
+    fn terminal_failure_does_not_touch_completed_nodes() {
+        // Graph: A -> B -> C
+        // A is Completed, B is Running and fails terminally.
+        // A must remain Completed; only C (Pending) should be Cancelled.
+        let mut graph = RunGraph {
+            nodes: vec![
+                work_node("A", "step A", &[]),
+                work_node("B", "step B", &["A"]),
+                work_node("C", "step C", &["B"]),
+            ],
+            next_id: 0,
+        };
+        graph.nodes[0].status = NodeStatus::Completed;
+
+        let t = do_transition(
+            SchedulerState::Waiting {
+                graph: running(graph, "B"),
+                running: NodeId("B".to_string()),
+            },
+            SchedulerEvent::NodeReturned {
+                node_id: NodeId("B".to_string()),
+                outcome: NodeOutcome::Failed(NodeFailure {
+                    reason: "unrecoverable".to_string(),
+                    recovery: RecoveryAction::Terminal {
+                        message: "fatal error".to_string(),
+                    },
+                }),
+            },
+        );
+
+        let SchedulerState::Failed { graph, .. } = t.state else {
+            panic!("expected Failed, got {:#?}", t.state);
+        };
+
+        let a = graph.nodes.iter().find(|n| n.id.0 == "A").unwrap();
+        let b = graph.nodes.iter().find(|n| n.id.0 == "B").unwrap();
+        let c = graph.nodes.iter().find(|n| n.id.0 == "C").unwrap();
+
+        assert_eq!(a.status, NodeStatus::Completed, "A must remain Completed");
+        assert_eq!(b.status, NodeStatus::Failed);
+        assert_eq!(c.status, NodeStatus::Cancelled);
     }
 }
