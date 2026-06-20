@@ -12,5 +12,5 @@
 pub mod runner;
 pub mod transition;
 
-pub use runner::{run_machine, Machine};
+pub use runner::{Machine, run_machine};
 pub use transition::Transition;
