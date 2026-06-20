@@ -291,6 +291,10 @@ impl SchedulerMachine {
     /// goal. Unlike `Retry`, the model tier is unconditionally upgraded to
     /// `Strong`, because the failure signal indicates the task is beyond
     /// `Cheap` tier capacity.
+    ///
+    /// After inserting the replacement, all `Pending` downstream nodes that
+    /// referenced `node_id` are remapped to reference `replacement_id` so that
+    /// the graph does not deadlock waiting for a `Failed` node to complete.
     fn apply_elevate(graph: RunGraph, node_id: &NodeId) -> RunGraph {
         let (kind, objective, deps, attempt) = {
             let n = Self::get_node(&graph, node_id);
@@ -303,7 +307,7 @@ impl SchedulerMachine {
         };
         let elevated_id = NodeId(format!("{}-elevated-{}", node_id.0, graph.next_id));
         let replacement = Node {
-            id: elevated_id,
+            id: elevated_id.clone(),
             kind,
             objective,
             dependencies: deps,
@@ -313,7 +317,8 @@ impl SchedulerMachine {
             summary: None,
         };
         let graph = Self::mark_node(graph, node_id, NodeStatus::Failed);
-        Self::push_node(graph, replacement)
+        let graph = Self::push_node(graph, replacement);
+        Self::remap_pending_dependencies(graph, node_id, &elevated_id)
     }
 }
 
@@ -914,6 +919,56 @@ mod tests {
             .expect("B'");
         assert_eq!(b_prime.status, NodeStatus::Completed);
         assert_eq!(b_prime.attempt, 1);
+
+        // C's dependency was rewritten from B to B'.
+        let c = graph.nodes.iter().find(|n| n.id.0 == "C").expect("C");
+        assert!(
+            !c.dependencies.contains(&NodeId("B".to_string())),
+            "C still depends on failed B"
+        );
+        assert!(
+            c.dependencies.contains(&b_prime.id),
+            "C does not depend on B'"
+        );
+
+        // C ran and completed.
+        assert_eq!(c.status, NodeStatus::Completed);
+    }
+
+    #[test]
+    fn elevate_remaps_downstream_dependencies_and_chain_completes() {
+        // A -> B -> C; B fails with ElevateModel on attempt 0, succeeds on attempt 1.
+        // The stub handler returns ElevateModel on attempt 0 and WorkAccepted on attempt 1
+        // because "do elevate" contains "elevate".
+        let graph = RunGraph {
+            nodes: vec![
+                work_node("A", "step A", &[]),
+                work_node("B", "do elevate", &["A"]),
+                work_node("C", "step C", &["B"]),
+            ],
+            next_id: 0,
+        };
+
+        let output =
+            crate::engine::run_machine(SchedulerMachine, SchedulerState::Running { graph });
+
+        let SchedulerOutput::Complete(graph) = output else {
+            panic!("expected Complete, got Failed")
+        };
+
+        // Original B is Failed (historical record).
+        let b = graph.nodes.iter().find(|n| n.id.0 == "B").expect("B");
+        assert_eq!(b.status, NodeStatus::Failed);
+
+        // Replacement B' exists, used Strong tier, and completed.
+        let b_prime = graph
+            .nodes
+            .iter()
+            .find(|n| n.id.0.starts_with("B-elevated-"))
+            .expect("B'");
+        assert_eq!(b_prime.model_tier, ModelTier::Strong);
+        assert_eq!(b_prime.attempt, 1);
+        assert_eq!(b_prime.status, NodeStatus::Completed);
 
         // C's dependency was rewritten from B to B'.
         let c = graph.nodes.iter().find(|n| n.id.0 == "C").expect("C");
