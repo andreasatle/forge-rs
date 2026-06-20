@@ -330,6 +330,54 @@ impl SchedulerMachine {
         Ok(())
     }
 
+    /// Validate structural invariants of an externally supplied `RunGraph`.
+    ///
+    /// Returns `Err` with a human-readable reason on the first violation found.
+    /// Called once at `Running + Start` before any scheduling logic runs.
+    ///
+    /// Invariants checked:
+    /// 1. No two nodes share the same `NodeId`.
+    /// 2. Every dependency in every node references an existing `NodeId`.
+    /// 3. `next_id` is not stale: auto-generated IDs end with `-{N}` where N
+    ///    is the counter value at insertion time; if any existing ID carries a
+    ///    suffix N >= next_id the counter would re-mint that ID on the next
+    ///    insertion. Only numeric suffixes following a `-` are checked; IDs
+    ///    without a numeric suffix (e.g. "root", "A") are skipped.
+    fn validate_graph_invariants(graph: &RunGraph) -> Result<(), String> {
+        let mut seen: HashSet<&NodeId> = HashSet::new();
+        for node in &graph.nodes {
+            if !seen.insert(&node.id) {
+                return Err(format!("duplicate node id: {}", node.id.0));
+            }
+        }
+
+        let all_ids: HashSet<&NodeId> = graph.nodes.iter().map(|n| &n.id).collect();
+        for node in &graph.nodes {
+            for dep in &node.dependencies {
+                if !all_ids.contains(dep) {
+                    return Err(format!(
+                        "missing dependency: node {} depends on unknown id {}",
+                        node.id.0, dep.0
+                    ));
+                }
+            }
+        }
+
+        for node in &graph.nodes {
+            if let Some(suffix) = node.id.0.rsplit('-').next()
+                && let Ok(n) = suffix.parse::<u32>()
+                && n >= graph.next_id
+            {
+                return Err(format!(
+                    "stale next_id {}: node {} was inserted at counter {}",
+                    graph.next_id, node.id.0, n
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
     /// Classify why no node became ready when the graph is not yet complete.
     ///
     /// Checks pending nodes for missing dependencies first. If all referenced
@@ -693,6 +741,15 @@ impl Machine for SchedulerMachine {
             //   2. Some nodes are Pending but none are ready → deadlock; emit ReturnFailed.
             //   3. At least one node is ready → mark it Running, emit RunNode, move to Waiting.
             (SchedulerState::Running { graph }, SchedulerEvent::Start) => {
+                if let Err(reason) = Self::validate_graph_invariants(&graph) {
+                    return Transition {
+                        state: SchedulerState::Failed {
+                            graph: graph.clone(),
+                            reason: reason.clone(),
+                        },
+                        effects: vec![SchedulerEffect::ReturnFailed { graph, reason }],
+                    };
+                }
                 if Self::all_complete(&graph) {
                     Transition {
                         state: SchedulerState::Complete {
@@ -2222,6 +2279,59 @@ mod tests {
             reason.contains("blocked") || reason.contains("cycle"),
             "reason should mention blocked or cycle, got: {reason:?}"
         );
+    }
+
+    // ── Graph invariant validation tests ─────────────────────────────────────
+
+    #[test]
+    fn duplicate_node_ids_fail_graph_validation() {
+        let graph = RunGraph {
+            nodes: vec![
+                work_node("A", "first task", &[]),
+                work_node("A", "second task", &[]),
+            ],
+            next_id: 0,
+        };
+        let t = do_transition(SchedulerState::Running { graph }, SchedulerEvent::Start);
+        let SchedulerState::Failed { reason, .. } = t.state else {
+            panic!("expected Failed, got {:#?}", t.state);
+        };
+        assert!(
+            reason.contains("duplicate node id"),
+            "reason should mention duplicate node id, got: {reason:?}"
+        );
+        assert!(
+            reason.contains('A'),
+            "reason should contain the duplicated id, got: {reason:?}"
+        );
+        assert!(matches!(
+            t.effects.as_slice(),
+            [SchedulerEffect::ReturnFailed { .. }]
+        ));
+    }
+
+    #[test]
+    fn missing_dependency_fails_graph_validation() {
+        let graph = RunGraph {
+            nodes: vec![work_node("A", "do something", &["ghost"])],
+            next_id: 0,
+        };
+        let t = do_transition(SchedulerState::Running { graph }, SchedulerEvent::Start);
+        let SchedulerState::Failed { reason, .. } = t.state else {
+            panic!("expected Failed, got {:#?}", t.state);
+        };
+        assert!(
+            reason.contains("missing dependency"),
+            "reason should mention missing dependency, got: {reason:?}"
+        );
+        assert!(
+            reason.contains("ghost"),
+            "reason should contain the missing dependency id, got: {reason:?}"
+        );
+        assert!(matches!(
+            t.effects.as_slice(),
+            [SchedulerEffect::ReturnFailed { .. }]
+        ));
     }
 
     // ── Outcome/phase validation tests ───────────────────────────────────────
