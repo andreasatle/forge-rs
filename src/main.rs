@@ -3,48 +3,111 @@ use forge_rs::machines::demo::state::DemoState;
 use forge_rs::machines::demo::{DemoMachine, Task};
 use forge_rs::machines::scheduler::state::SchedulerState;
 use forge_rs::machines::scheduler::{
-    Node, NodeId, NodeStatus, RunGraph, SchedulerMachine, SchedulerOutput,
+    ModelTier, Node, NodeId, NodeKind, NodeStatus, RunGraph, SchedulerMachine, SchedulerOutput,
 };
 
-fn main() {
-    let task = Task {
-        name: "demo task".to_string(),
-    };
+fn work(id: &str, objective: &str, deps: &[&str]) -> Node {
+    Node {
+        id: NodeId(id.to_string()),
+        kind: NodeKind::Work,
+        objective: objective.to_string(),
+        dependencies: deps.iter().map(|d| NodeId(d.to_string())).collect(),
+        status: NodeStatus::Pending,
+        attempt: 0,
+        model_tier: ModelTier::Cheap,
+        summary: None,
+    }
+}
 
-    let result = run_machine(DemoMachine, DemoState::NotStarted { task });
+fn plan(id: &str, objective: &str, deps: &[&str]) -> Node {
+    Node {
+        id: NodeId(id.to_string()),
+        kind: NodeKind::Plan,
+        objective: objective.to_string(),
+        dependencies: deps.iter().map(|d| NodeId(d.to_string())).collect(),
+        status: NodeStatus::Pending,
+        attempt: 0,
+        model_tier: ModelTier::Cheap,
+        summary: None,
+    }
+}
 
-    println!("DEMO FINAL RESULT:\n{result:#?}");
-
-    println!("\n--- Scheduler Demo ---\n");
-
-    let graph = RunGraph {
-        nodes: vec![
-            Node {
-                id: NodeId("A".to_string()),
-                dependencies: vec![],
-                status: NodeStatus::Pending,
-            },
-            Node {
-                id: NodeId("B".to_string()),
-                dependencies: vec![NodeId("A".to_string())],
-                status: NodeStatus::Pending,
-            },
-            Node {
-                id: NodeId("C".to_string()),
-                dependencies: vec![NodeId("B".to_string())],
-                status: NodeStatus::Pending,
-            },
-        ],
-    };
-
-    let output = run_machine(SchedulerMachine, SchedulerState::NotStarted { graph });
-
-    match output {
-        SchedulerOutput::Complete(graph) => {
-            println!("SCHEDULER COMPLETE:\n{graph:#?}");
+fn run_demo(label: &str, graph: RunGraph) {
+    println!("\n=== {label} ===\n");
+    match run_machine(SchedulerMachine, SchedulerState::NotStarted { graph }) {
+        SchedulerOutput::Complete(g) => {
+            println!("\nCOMPLETE — {} nodes", g.nodes.len());
+            for n in &g.nodes {
+                println!("  [{:?}] {} {:?}", n.status, n.id.0, n.summary);
+            }
         }
-        SchedulerOutput::Failed { graph, reason } => {
-            println!("SCHEDULER FAILED: {reason}\n{graph:#?}");
+        SchedulerOutput::Failed { graph: g, reason } => {
+            println!("\nFAILED: {reason}");
+            for n in &g.nodes {
+                println!("  [{:?}] {} {:?}", n.status, n.id.0, n.summary);
+            }
         }
     }
+}
+
+fn main() {
+    // Demo machine (unchanged)
+    let result = run_machine(
+        DemoMachine,
+        DemoState::NotStarted {
+            task: Task {
+                name: "demo task".to_string(),
+            },
+        },
+    );
+    println!("DEMO RESULT: {result:#?}");
+
+    // 1. Simple work chain: A → B → C
+    run_demo(
+        "work chain",
+        RunGraph {
+            nodes: vec![
+                work("A", "initialize workspace", &[]),
+                work("B", "build artifacts", &["A"]),
+                work("C", "run verification", &["B"]),
+            ],
+            next_id: 0,
+        },
+    );
+
+    // 2. Plan node that dynamically creates a work child
+    run_demo(
+        "plan → work child",
+        RunGraph {
+            nodes: vec![plan("P", "plan the implementation", &[])],
+            next_id: 0,
+        },
+    );
+
+    // 3. Retry: fails on attempt 0, succeeds on attempt 1
+    run_demo(
+        "retry recovery",
+        RunGraph {
+            nodes: vec![work("R", "retry this job", &[])],
+            next_id: 0,
+        },
+    );
+
+    // 4. ElevateModel: fails on attempt 0, succeeds on attempt 1 with Strong tier
+    run_demo(
+        "elevate model recovery",
+        RunGraph {
+            nodes: vec![work("E", "elevate this task", &[])],
+            next_id: 0,
+        },
+    );
+
+    // 5. Terminal failure
+    run_demo(
+        "terminal failure",
+        RunGraph {
+            nodes: vec![work("X", "terminal task", &[])],
+            next_id: 0,
+        },
+    );
 }
