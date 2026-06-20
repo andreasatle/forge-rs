@@ -252,6 +252,30 @@ impl SchedulerMachine {
         }
     }
 
+    /// Verify that every dependency listed in every child request already exists
+    /// in the graph.
+    ///
+    /// Returns `Err` with a descriptive message on the first unknown reference.
+    /// The graph is not mutated; callers must not insert children when this
+    /// returns `Err`.
+    fn validate_plan_dependencies(
+        graph: &RunGraph,
+        children: &[NodeRequest],
+    ) -> Result<(), String> {
+        let known: HashSet<&NodeId> = graph.nodes.iter().map(|n| &n.id).collect();
+        for child in children {
+            for dep in &child.dependencies {
+                if !known.contains(dep) {
+                    return Err(format!(
+                        "plan output references unknown node id: {:?}",
+                        dep.0
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Returns `true` when the node has already consumed all permitted attempts.
     ///
     /// Used by `Retry` and `ElevateModel` recovery arms to guard against
@@ -456,12 +480,26 @@ impl Machine for SchedulerMachine {
                     // A successful planner expands the graph: the plan node is marked
                     // Completed and its requested children are inserted as new Pending
                     // nodes. The scheduler then re-scans for ready nodes.
+                    //
+                    // Validation runs first, before any mutation, so an invalid plan
+                    // leaves the graph entirely unchanged and fails the run immediately.
                     PlanAccepted(plan) => {
-                        let graph = Self::mark_node(graph, &node_id, NodeStatus::Completed);
-                        let graph = Self::insert_children(graph, &node_id, plan.children);
-                        Transition {
-                            state: SchedulerState::Running { graph },
-                            effects: vec![],
+                        match Self::validate_plan_dependencies(&graph, &plan.children) {
+                            Err(reason) => Transition {
+                                state: SchedulerState::Failed {
+                                    graph: graph.clone(),
+                                    reason: reason.clone(),
+                                },
+                                effects: vec![SchedulerEffect::ReturnFailed { graph, reason }],
+                            },
+                            Ok(()) => {
+                                let graph = Self::mark_node(graph, &node_id, NodeStatus::Completed);
+                                let graph = Self::insert_children(graph, &node_id, plan.children);
+                                Transition {
+                                    state: SchedulerState::Running { graph },
+                                    effects: vec![],
+                                }
+                            }
                         }
                     }
 
@@ -1312,6 +1350,83 @@ mod tests {
             t.effects.as_slice(),
             [SchedulerEffect::ReturnFailed { .. }]
         ));
+    }
+
+    // ── Plan dependency validation tests ─────────────────────────────────────
+
+    #[test]
+    fn plan_with_unknown_dependency_fails_scheduler() {
+        let graph = RunGraph {
+            nodes: vec![plan_node("P", "plan something", &[])],
+            next_id: 0,
+        };
+        let graph_before = running(graph, "P");
+        let t = do_transition(
+            SchedulerState::Waiting {
+                graph: graph_before.clone(),
+                running: NodeId("P".to_string()),
+            },
+            SchedulerEvent::NodeReturned {
+                node_id: NodeId("P".to_string()),
+                outcome: NodeOutcome::PlanAccepted(PlanOutput {
+                    children: vec![NodeRequest {
+                        kind: NodeKind::Work,
+                        objective: "child work".to_string(),
+                        dependencies: vec![NodeId("missing".to_string())],
+                    }],
+                }),
+            },
+        );
+
+        let SchedulerState::Failed { graph, reason } = t.state else {
+            panic!("expected Failed, got {:#?}", t.state);
+        };
+        assert_eq!(graph.nodes.len(), 1, "no children should be inserted");
+        assert_eq!(graph.nodes[0].id, NodeId("P".to_string()));
+        assert_eq!(
+            graph.nodes[0].status,
+            NodeStatus::Running,
+            "plan node should be unchanged"
+        );
+        assert!(
+            reason.contains("missing"),
+            "reason should mention the missing id, got: {reason:?}"
+        );
+        assert!(matches!(
+            t.effects.as_slice(),
+            [SchedulerEffect::ReturnFailed { .. }]
+        ));
+    }
+
+    #[test]
+    fn plan_with_valid_dependencies_still_succeeds() {
+        let graph = RunGraph {
+            nodes: vec![plan_node("P", "plan something", &[])],
+            next_id: 0,
+        };
+        let t = do_transition(
+            SchedulerState::Waiting {
+                graph: running(graph, "P"),
+                running: NodeId("P".to_string()),
+            },
+            SchedulerEvent::NodeReturned {
+                node_id: NodeId("P".to_string()),
+                outcome: NodeOutcome::PlanAccepted(PlanOutput {
+                    children: vec![NodeRequest {
+                        kind: NodeKind::Work,
+                        objective: "child work".to_string(),
+                        dependencies: vec![NodeId("P".to_string())],
+                    }],
+                }),
+            },
+        );
+
+        let SchedulerState::Running { graph } = t.state else {
+            panic!("expected Running, got {:#?}", t.state);
+        };
+        assert_eq!(graph.nodes.len(), 2, "child should be inserted");
+        assert_eq!(graph.nodes[0].status, NodeStatus::Completed);
+        assert_eq!(graph.nodes[1].status, NodeStatus::Pending);
     }
 
     #[test]
