@@ -35,18 +35,68 @@ use super::event::{
     NodeOutcome::*, NodeRequest, RecoveryAction, SchedulerEvent, WorkOutput,
 };
 use super::state::{
-    ModelTier, Node, NodeId, NodeKind, NodeStatus, RunGraph, RunRequest, SchedulerState,
+    ModelTier, Node, NodeId, NodeKind, NodeOrigin, NodeStatus, RunGraph, RunRequest, SchedulerState,
 };
+
+/// A typed summary of what recovery actions occurred during a successful run.
+///
+/// Derived from the final `RunGraph` by inspecting each node's `NodeOrigin`.
+/// A clean run where no recovery was needed has all counts at zero and
+/// `recovered == false`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RecoverySummary {
+    /// `true` if any recovery action (Retry, ElevateModel, or Split) occurred.
+    pub recovered: bool,
+    /// Number of nodes created by `Retry` recovery.
+    pub retry_count: usize,
+    /// Number of nodes created by `ElevateModel` recovery.
+    pub elevate_count: usize,
+    /// Number of nodes created by `Split` recovery.
+    pub split_count: usize,
+}
+
+impl RecoverySummary {
+    fn from_graph(graph: &RunGraph) -> Self {
+        let mut retry_count = 0usize;
+        let mut elevate_count = 0usize;
+        let mut split_count = 0usize;
+        for node in &graph.nodes {
+            match &node.origin {
+                NodeOrigin::Retry { .. } => retry_count += 1,
+                NodeOrigin::ElevateModel { .. } => elevate_count += 1,
+                NodeOrigin::Split { .. } => split_count += 1,
+                NodeOrigin::Root | NodeOrigin::PlanExpansion => {}
+            }
+        }
+        let recovered = retry_count + elevate_count + split_count > 0;
+        RecoverySummary {
+            recovered,
+            retry_count,
+            elevate_count,
+            split_count,
+        }
+    }
+}
 
 /// The terminal result of a complete scheduler run.
 ///
 /// The caller (`run_machine` or `RunMachine`) receives this when the scheduler
 /// reaches either of its two terminal states.
+///
+/// `Complete` distinguishes a clean run (no recovery) from a run that reached
+/// completion only after one or more recovery actions (Retry, ElevateModel, or
+/// Split). Inspect `recovery_summary` to determine which path was taken without
+/// re-scanning the graph.
 #[derive(Clone, Debug, PartialEq)]
 pub enum SchedulerOutput {
-    /// Every node in the graph reached `Completed`. The final graph is returned
-    /// for audit and to extract work summaries.
-    Complete(RunGraph),
+    /// Every node reached a terminal status and the run succeeded.
+    Complete {
+        /// The final graph with every node in a terminal status.
+        graph: RunGraph,
+        /// A typed account of which recovery actions occurred during the run.
+        /// All counts are zero and `recovered` is `false` for a clean run.
+        recovery_summary: RecoverySummary,
+    },
     /// A `Terminal` recovery was triggered, halting the run. The graph is
     /// returned in its current state so the caller can inspect what succeeded
     /// before the failure.
@@ -81,6 +131,7 @@ impl SchedulerMachine {
             attempt: 0,
             model_tier: ModelTier::Cheap,
             summary: None,
+            origin: NodeOrigin::Root,
         };
         SchedulerState::Running {
             graph: RunGraph {
@@ -224,6 +275,7 @@ impl SchedulerMachine {
                 attempt: 0,
                 model_tier: ModelTier::Cheap,
                 summary: None,
+                origin: NodeOrigin::PlanExpansion,
             });
         }
         graph
@@ -360,6 +412,9 @@ impl SchedulerMachine {
             attempt: attempt + 1,
             model_tier,
             summary: None,
+            origin: NodeOrigin::Retry {
+                source: node_id.clone(),
+            },
         };
         let graph = Self::mark_node(graph, node_id, NodeStatus::Failed);
         let graph = Self::push_node(graph, replacement);
@@ -390,6 +445,9 @@ impl SchedulerMachine {
             attempt: attempt + 1,
             model_tier: ModelTier::Strong,
             summary: None,
+            origin: NodeOrigin::Split {
+                source: node_id.clone(),
+            },
         };
         let graph = Self::mark_node(graph, node_id, NodeStatus::Failed);
         let graph = Self::push_node(graph, split_node);
@@ -528,6 +586,9 @@ impl SchedulerMachine {
             attempt: attempt + 1,
             model_tier: ModelTier::Strong,
             summary: None,
+            origin: NodeOrigin::ElevateModel {
+                source: node_id.clone(),
+            },
         };
         let graph = Self::mark_node(graph, node_id, NodeStatus::Failed);
         let graph = Self::push_node(graph, replacement);
@@ -815,7 +876,10 @@ impl Machine for SchedulerMachine {
     /// `None` to keep the runner loop going.
     fn output(&self, state: &Self::State) -> Option<Self::Output> {
         match state {
-            SchedulerState::Complete { graph } => Some(SchedulerOutput::Complete(graph.clone())),
+            SchedulerState::Complete { graph } => Some(SchedulerOutput::Complete {
+                recovery_summary: RecoverySummary::from_graph(graph),
+                graph: graph.clone(),
+            }),
             SchedulerState::Failed { graph, reason } => Some(SchedulerOutput::Failed {
                 graph: graph.clone(),
                 reason: reason.clone(),
@@ -844,6 +908,7 @@ mod tests {
             attempt: 0,
             model_tier: ModelTier::Cheap,
             summary: None,
+            origin: NodeOrigin::Root,
         }
     }
 
@@ -857,6 +922,7 @@ mod tests {
             attempt: 0,
             model_tier: ModelTier::Cheap,
             summary: None,
+            origin: NodeOrigin::Root,
         }
     }
 
@@ -923,7 +989,7 @@ mod tests {
         };
         let state = SchedulerMachine::initial_state(request);
         let output = crate::engine::run_machine(SchedulerMachine, state);
-        assert!(matches!(output, SchedulerOutput::Complete(_)));
+        assert!(matches!(output, SchedulerOutput::Complete { .. }));
     }
 
     // ── Running + Start structural tests ──────────────────────────────────────
@@ -1156,6 +1222,7 @@ mod tests {
                 attempt: 0,
                 model_tier: ModelTier::Cheap,
                 summary: None,
+                origin: NodeOrigin::Root,
             }],
             next_id: 0,
         };
@@ -1200,7 +1267,7 @@ mod tests {
         let output =
             crate::engine::run_machine(SchedulerMachine, SchedulerState::Running { graph });
 
-        let SchedulerOutput::Complete(graph) = output else {
+        let SchedulerOutput::Complete { graph, .. } = output else {
             panic!("expected Complete")
         };
 
@@ -1249,7 +1316,7 @@ mod tests {
         let output =
             crate::engine::run_machine(SchedulerMachine, SchedulerState::Running { graph });
 
-        let SchedulerOutput::Complete(graph) = output else {
+        let SchedulerOutput::Complete { graph, .. } = output else {
             panic!("expected Complete, got Failed")
         };
 
@@ -1470,7 +1537,7 @@ mod tests {
                 graph: chain_graph(),
             },
         );
-        let SchedulerOutput::Complete(graph) = output else {
+        let SchedulerOutput::Complete { graph, .. } = output else {
             panic!("expected Complete")
         };
         assert!(
@@ -1760,6 +1827,130 @@ mod tests {
             t.effects.as_slice(),
             [SchedulerEffect::ReturnFailed { .. }]
         ));
+    }
+
+    // ── RecoverySummary / output classification tests ─────────────────────────
+
+    #[test]
+    fn clean_success_has_no_recovery() {
+        let output = crate::engine::run_machine(
+            SchedulerMachine,
+            SchedulerState::Running {
+                graph: single_work_graph(),
+            },
+        );
+        let SchedulerOutput::Complete {
+            recovery_summary, ..
+        } = output
+        else {
+            panic!("expected Complete");
+        };
+        assert!(!recovery_summary.recovered);
+        assert_eq!(recovery_summary.retry_count, 0);
+        assert_eq!(recovery_summary.elevate_count, 0);
+        assert_eq!(recovery_summary.split_count, 0);
+    }
+
+    #[test]
+    fn retry_success_reports_recovery() {
+        // The stub handler triggers Retry on attempt 0 and succeeds on attempt 1
+        // for any objective containing "retry".
+        let output = crate::engine::run_machine(
+            SchedulerMachine,
+            SchedulerState::Running {
+                graph: RunGraph {
+                    nodes: vec![work_node("R", "retry this", &[])],
+                    next_id: 0,
+                },
+            },
+        );
+        let SchedulerOutput::Complete {
+            recovery_summary, ..
+        } = output
+        else {
+            panic!("expected Complete");
+        };
+        assert!(recovery_summary.recovered);
+        assert_eq!(recovery_summary.retry_count, 1);
+        assert_eq!(recovery_summary.elevate_count, 0);
+        assert_eq!(recovery_summary.split_count, 0);
+    }
+
+    #[test]
+    fn elevate_success_reports_recovery() {
+        // The stub handler triggers ElevateModel on attempt 0 and succeeds on
+        // attempt 1 for any objective containing "elevate".
+        let output = crate::engine::run_machine(
+            SchedulerMachine,
+            SchedulerState::Running {
+                graph: RunGraph {
+                    nodes: vec![work_node("E", "elevate this", &[])],
+                    next_id: 0,
+                },
+            },
+        );
+        let SchedulerOutput::Complete {
+            recovery_summary, ..
+        } = output
+        else {
+            panic!("expected Complete");
+        };
+        assert!(recovery_summary.recovered);
+        assert_eq!(recovery_summary.retry_count, 0);
+        assert_eq!(recovery_summary.elevate_count, 1);
+        assert_eq!(recovery_summary.split_count, 0);
+    }
+
+    #[test]
+    fn split_success_reports_recovery() {
+        // Construct a completed graph that reflects a Split recovery: the original
+        // work node failed, a Split plan node replaced it and completed. We call
+        // `output()` directly on the terminal state rather than using the stub
+        // handler, since the stub would re-trigger Split on the plan node's
+        // derived objective.
+        let source_id = NodeId("S".to_string());
+        let split_id = NodeId("S-split-0".to_string());
+        let graph = RunGraph {
+            nodes: vec![
+                Node {
+                    id: source_id.clone(),
+                    kind: NodeKind::Work,
+                    objective: "complex task".to_string(),
+                    dependencies: vec![],
+                    status: NodeStatus::Failed,
+                    attempt: 0,
+                    model_tier: ModelTier::Cheap,
+                    summary: None,
+                    origin: NodeOrigin::Root,
+                },
+                Node {
+                    id: split_id,
+                    kind: NodeKind::Plan,
+                    objective: "decompose complex task".to_string(),
+                    dependencies: vec![],
+                    status: NodeStatus::Completed,
+                    attempt: 1,
+                    model_tier: ModelTier::Strong,
+                    summary: Some("planned".to_string()),
+                    origin: NodeOrigin::Split { source: source_id },
+                },
+            ],
+            next_id: 1,
+        };
+        let state = SchedulerState::Complete { graph };
+        let output = SchedulerMachine
+            .output(&state)
+            .expect("Complete is a terminal state");
+        let SchedulerOutput::Complete {
+            recovery_summary, ..
+        } = output
+        else {
+            panic!("expected Complete");
+        };
+        assert!(recovery_summary.recovered);
+        assert_eq!(recovery_summary.retry_count, 0);
+        assert_eq!(recovery_summary.elevate_count, 0);
+        assert_eq!(recovery_summary.split_count, 1);
     }
 
     #[test]

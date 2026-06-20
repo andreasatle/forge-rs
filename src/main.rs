@@ -14,8 +14,8 @@ use forge_rs::machines::demo::state::DemoState;
 use forge_rs::machines::demo::{DemoMachine, Task};
 use forge_rs::machines::scheduler::state::SchedulerState;
 use forge_rs::machines::scheduler::{
-    ModelTier, Node, NodeId, NodeKind, NodeStatus, RunGraph, RunRequest, SchedulerMachine,
-    SchedulerOutput,
+    ModelTier, Node, NodeId, NodeKind, NodeOrigin, NodeStatus, RunGraph, RunRequest,
+    SchedulerMachine, SchedulerOutput,
 };
 
 fn work(id: &str, objective: &str, deps: &[&str]) -> Node {
@@ -28,14 +28,25 @@ fn work(id: &str, objective: &str, deps: &[&str]) -> Node {
         attempt: 0,
         model_tier: ModelTier::Cheap,
         summary: None,
+        origin: NodeOrigin::Root,
     }
 }
 
 fn run_demo(label: &str, state: SchedulerState) {
     println!("\n=== {label} ===\n");
     match run_machine(SchedulerMachine, state) {
-        SchedulerOutput::Complete(g) => {
-            println!("\nCOMPLETE — {} nodes", g.nodes.len());
+        SchedulerOutput::Complete {
+            graph: g,
+            recovery_summary: rs,
+        } => {
+            println!(
+                "\nCOMPLETE — {} nodes (recovered={}, retry={}, elevate={}, split={})",
+                g.nodes.len(),
+                rs.recovered,
+                rs.retry_count,
+                rs.elevate_count,
+                rs.split_count,
+            );
             for n in &g.nodes {
                 println!("  [{:?}] {} {:?}", n.status, n.id.0, n.summary);
             }

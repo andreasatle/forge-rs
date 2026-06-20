@@ -54,6 +54,33 @@ pub enum ModelTier {
     Strong,
 }
 
+/// How a node was introduced into the run graph.
+///
+/// Stored on every node so the scheduler can derive a typed `RecoverySummary`
+/// from the final graph without inspecting IDs or objective strings.
+#[derive(Clone, Debug, PartialEq)]
+pub enum NodeOrigin {
+    /// The root plan node created directly from a `RunRequest`.
+    Root,
+    /// A node inserted by a plan node's `PlanOutput` during graph expansion.
+    PlanExpansion,
+    /// A replacement node created by `Retry` recovery.
+    Retry {
+        /// The node that failed and triggered this replacement.
+        source: NodeId,
+    },
+    /// A replacement node created by `ElevateModel` recovery.
+    ElevateModel {
+        /// The node that failed and triggered this replacement.
+        source: NodeId,
+    },
+    /// A replacement `Plan` node created by `Split` recovery.
+    Split {
+        /// The node that failed and triggered this plan node.
+        source: NodeId,
+    },
+}
+
 /// The lifecycle position of a node within the run graph.
 ///
 /// Status only moves forward; no transition goes backward. Terminals
@@ -111,6 +138,11 @@ pub struct Node {
     /// A brief human-readable description of the outcome, set when the node
     /// reaches `Completed`. `None` until then.
     pub summary: Option<String>,
+    /// How this node was introduced into the graph.
+    ///
+    /// Used by `RecoverySummary::from_graph` to classify a completed run
+    /// without inspecting IDs or objective strings.
+    pub origin: NodeOrigin,
 }
 
 /// The complete set of nodes for one Forge run, plus the ID counter.

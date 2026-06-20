@@ -6,10 +6,16 @@
 //!
 //! # Module layout
 //!
-//! - `state.rs` — `RunGraph`, `Node`, `SchedulerState`, and all node descriptor types
+//! - `state.rs` — `RunGraph`, `Node`, `NodeOrigin`, `SchedulerState`, and all node descriptor types
 //! - `event.rs` — `SchedulerEvent`, `NodeOutcome`, `RecoveryAction`, and outcome payloads
 //! - `effect.rs` — `SchedulerEffect` (commands emitted by transitions)
-//! - `machine.rs` — `SchedulerMachine`, graph helpers, and the `Machine` implementation
+//! - `machine.rs` — `SchedulerMachine`, `SchedulerOutput`, `RecoverySummary`, graph helpers, and the `Machine` implementation
+//!
+//! # Output classification
+//!
+//! `SchedulerOutput::Complete` carries a `RecoverySummary` derived from node
+//! `NodeOrigin` values, so the caller can distinguish a clean run from one that
+//! required Retry, ElevateModel, or Split recovery without re-scanning the graph.
 //!
 //! # Key invariants
 //!
@@ -30,7 +36,7 @@ pub use event::{
     IntegrationFailure, IntegrationOutcome, IntegrationOutput, NodeFailure, NodeOutcome,
     NodeRequest, PlanOutput, RecoveryAction, SchedulerEvent, WorkOutput,
 };
-pub use machine::{SchedulerMachine, SchedulerOutput};
+pub use machine::{RecoverySummary, SchedulerMachine, SchedulerOutput};
 pub use state::{
-    ModelTier, Node, NodeId, NodeKind, NodeStatus, RunGraph, RunRequest, SchedulerState,
+    ModelTier, Node, NodeId, NodeKind, NodeOrigin, NodeStatus, RunGraph, RunRequest, SchedulerState,
 };
