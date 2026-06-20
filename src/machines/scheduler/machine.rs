@@ -374,11 +374,10 @@ impl SchedulerMachine {
     /// The original node is marked `Failed` (not `Cancelled`) so the audit trail
     /// is unambiguous: it attempted its objective and could not complete it.
     fn apply_split(graph: RunGraph, node_id: &NodeId, message: String) -> RunGraph {
-        let (deps, model_tier) = {
+        let (deps, attempt) = {
             let n = Self::get_node(&graph, node_id);
-            (n.dependencies.clone(), n.model_tier.clone())
+            (n.dependencies.clone(), n.attempt)
         };
-        let _ = model_tier; // Split always uses Strong to maximize plan quality.
         let split_id = NodeId(format!("{}-split-{}", node_id.0, graph.next_id));
         let split_node = Node {
             id: split_id.clone(),
@@ -386,7 +385,7 @@ impl SchedulerMachine {
             objective: message,
             dependencies: deps,
             status: NodeStatus::Pending,
-            attempt: 0,
+            attempt: attempt + 1,
             model_tier: ModelTier::Strong,
             summary: None,
         };
@@ -597,11 +596,30 @@ impl Machine for SchedulerMachine {
                         // A new Plan node at Strong tier is inserted to decompose it.
                         // The original node is marked Failed; the plan result will create
                         // the actual replacement work.
+                        // When attempts are exhausted, no replacement is created and the
+                        // scheduler transitions directly to Failed, matching Retry/ElevateModel.
                         RecoveryAction::Split { message } => {
-                            let graph = Self::apply_split(graph, &node_id, message);
-                            Transition {
-                                state: SchedulerState::Running { graph },
-                                effects: vec![],
+                            let exhausted =
+                                Self::attempts_exhausted(Self::get_node(&graph, &node_id));
+                            if exhausted {
+                                let reason = format!(
+                                    "node {} exhausted all {} attempts (Split)",
+                                    node_id.0, MAX_ATTEMPTS
+                                );
+                                let graph = Self::mark_node(graph, &node_id, NodeStatus::Failed);
+                                Transition {
+                                    state: SchedulerState::Failed {
+                                        graph: graph.clone(),
+                                        reason: reason.clone(),
+                                    },
+                                    effects: vec![SchedulerEffect::ReturnFailed { graph, reason }],
+                                }
+                            } else {
+                                let graph = Self::apply_split(graph, &node_id, message);
+                                Transition {
+                                    state: SchedulerState::Running { graph },
+                                    effects: vec![],
+                                }
                             }
                         }
 
@@ -1576,6 +1594,115 @@ mod tests {
         assert_eq!(status("B"), NodeStatus::Failed);
         assert_eq!(status("C"), NodeStatus::Cancelled);
         assert_eq!(status("D"), NodeStatus::Cancelled);
+    }
+
+    // ── Split attempt-limit tests ─────────────────────────────────────────────
+
+    #[test]
+    fn split_exhaustion_fails_scheduler() {
+        // A node already at MAX_ATTEMPTS that returns Split must not create a
+        // replacement Plan node; the scheduler transitions to Failed immediately.
+        let mut node = work_node("W", "complex task", &[]);
+        node.attempt = MAX_ATTEMPTS;
+        let graph = RunGraph {
+            nodes: vec![node],
+            next_id: 0,
+        };
+
+        let t = do_transition(
+            SchedulerState::Waiting {
+                graph: running(graph, "W"),
+                running: NodeId("W".to_string()),
+            },
+            SchedulerEvent::NodeReturned {
+                node_id: NodeId("W".to_string()),
+                outcome: NodeOutcome::Failed(NodeFailure {
+                    reason: "task too complex".to_string(),
+                    recovery: RecoveryAction::Split {
+                        message: "decompose the work".to_string(),
+                    },
+                }),
+            },
+        );
+
+        let SchedulerState::Failed { graph, reason } = t.state else {
+            panic!("expected Failed, got {:#?}", t.state);
+        };
+        assert_eq!(
+            graph.nodes.len(),
+            1,
+            "no split replacement node should be created"
+        );
+        assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
+        assert!(
+            reason.contains("exhausted"),
+            "reason should mention exhaustion, got: {reason:?}"
+        );
+        assert!(matches!(
+            t.effects.as_slice(),
+            [SchedulerEffect::ReturnFailed { .. }]
+        ));
+    }
+
+    #[test]
+    fn split_below_attempt_limit_still_creates_plan_node() {
+        // A node at attempt 0 (below MAX_ATTEMPTS) must still produce a Split
+        // Plan node with attempt incremented to 1, and must remap downstream deps.
+        let mut graph = RunGraph {
+            nodes: vec![
+                work_node("A", "step A", &[]),
+                work_node("W", "complex task", &["A"]),
+                work_node("C", "step C", &["W"]),
+            ],
+            next_id: 0,
+        };
+        graph.nodes[0].status = NodeStatus::Completed;
+
+        let t = do_transition(
+            SchedulerState::Waiting {
+                graph: running(graph, "W"),
+                running: NodeId("W".to_string()),
+            },
+            SchedulerEvent::NodeReturned {
+                node_id: NodeId("W".to_string()),
+                outcome: NodeOutcome::Failed(NodeFailure {
+                    reason: "task too complex".to_string(),
+                    recovery: RecoveryAction::Split {
+                        message: "decompose the work".to_string(),
+                    },
+                }),
+            },
+        );
+
+        let SchedulerState::Running { graph } = t.state else {
+            panic!("expected Running, got {:#?}", t.state);
+        };
+
+        // Original W is Failed.
+        let w = graph.nodes.iter().find(|n| n.id.0 == "W").expect("W");
+        assert_eq!(w.status, NodeStatus::Failed);
+
+        // Split Plan node exists with attempt=1 and Strong tier.
+        let split = graph
+            .nodes
+            .iter()
+            .find(|n| n.id.0.starts_with("W-split-"))
+            .expect("split Plan node");
+        assert_eq!(split.kind, NodeKind::Plan);
+        assert_eq!(split.status, NodeStatus::Pending);
+        assert_eq!(split.attempt, 1, "split Plan node must carry attempt + 1");
+        assert_eq!(split.model_tier, ModelTier::Strong);
+
+        // C's dependency was rewritten from W to the split Plan node.
+        let c = graph.nodes.iter().find(|n| n.id.0 == "C").expect("C");
+        assert!(
+            !c.dependencies.contains(&NodeId("W".to_string())),
+            "C must not depend on failed W"
+        );
+        assert!(
+            c.dependencies.contains(&split.id),
+            "C must depend on the split Plan node"
+        );
     }
 
     #[test]
