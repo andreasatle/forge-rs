@@ -1,4 +1,4 @@
-use crate::transition::Transition;
+use crate::engine::transition::Transition;
 
 pub trait Machine {
     type State;

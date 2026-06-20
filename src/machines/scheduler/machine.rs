@@ -1,7 +1,6 @@
 use std::collections::HashSet;
 
-use crate::runner::Machine;
-use crate::transition::Transition;
+use crate::engine::{Machine, Transition};
 
 use super::effect::SchedulerEffect;
 use super::event::SchedulerEvent;
@@ -325,7 +324,7 @@ mod tests {
 
     #[test]
     fn full_chain_run() {
-        use crate::runner::run_machine;
+        use crate::engine::run_machine;
 
         let graph = chain_graph();
         let output = run_machine(SchedulerMachine, SchedulerState::NotStarted { graph });

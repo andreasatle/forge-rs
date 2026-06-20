@@ -1,8 +1,7 @@
 use std::thread::sleep;
 use std::time::Duration;
 
-use crate::runner::Machine;
-use crate::transition::Transition;
+use crate::engine::{Machine, Transition};
 
 use super::effect::DemoEffect;
 use super::event::DemoEvent;
