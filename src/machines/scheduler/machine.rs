@@ -23,6 +23,13 @@ use std::collections::HashSet;
 use crate::engine::{Machine, Transition};
 
 use super::effect::SchedulerEffect;
+
+/// Maximum number of attempts allowed per objective before recovery stops.
+///
+/// Attempts are zero-based: attempts 0, 1, 2, and 3 are all valid runs.
+/// When `node.attempt >= MAX_ATTEMPTS`, `Retry` and `ElevateModel` recovery
+/// will not create a replacement — the scheduler transitions to `Failed`.
+const MAX_ATTEMPTS: u32 = 3;
 use super::event::{
     NodeFailure, NodeOutcome, NodeOutcome::*, NodeRequest, RecoveryAction, SchedulerEvent,
     WorkOutput,
@@ -243,6 +250,14 @@ impl SchedulerMachine {
                 .collect(),
             next_id,
         }
+    }
+
+    /// Returns `true` when the node has already consumed all permitted attempts.
+    ///
+    /// Used by `Retry` and `ElevateModel` recovery arms to guard against
+    /// infinite loops. `Split` is intentionally not gated here.
+    fn attempts_exhausted(node: &Node) -> bool {
+        node.attempt >= MAX_ATTEMPTS
     }
 
     /// Handle a `Retry` recovery: mark the failed node and create a replacement.
@@ -469,11 +484,30 @@ impl Machine for SchedulerMachine {
                         // Retry: the same objective is worth attempting again as-is.
                         // A replacement node with the same tier is inserted;
                         // the original node remains in the graph as Failed.
+                        // When attempts are exhausted, no replacement is created
+                        // and the scheduler transitions directly to Failed.
                         RecoveryAction::Retry { .. } => {
-                            let graph = Self::apply_retry(graph, &node_id);
-                            Transition {
-                                state: SchedulerState::Running { graph },
-                                effects: vec![],
+                            let exhausted =
+                                Self::attempts_exhausted(Self::get_node(&graph, &node_id));
+                            if exhausted {
+                                let reason = format!(
+                                    "node {} exhausted all {} attempts (Retry)",
+                                    node_id.0, MAX_ATTEMPTS
+                                );
+                                let graph = Self::mark_node(graph, &node_id, NodeStatus::Failed);
+                                Transition {
+                                    state: SchedulerState::Failed {
+                                        graph: graph.clone(),
+                                        reason: reason.clone(),
+                                    },
+                                    effects: vec![SchedulerEffect::ReturnFailed { graph, reason }],
+                                }
+                            } else {
+                                let graph = Self::apply_retry(graph, &node_id);
+                                Transition {
+                                    state: SchedulerState::Running { graph },
+                                    effects: vec![],
+                                }
                             }
                         }
 
@@ -492,11 +526,30 @@ impl Machine for SchedulerMachine {
                         // Model escalation: the same objective is retried at Strong tier.
                         // The original node is marked Failed; model escalation preserves
                         // the objective exactly — only the capability level changes.
+                        // When attempts are exhausted, no replacement is created
+                        // and the scheduler transitions directly to Failed.
                         RecoveryAction::ElevateModel { .. } => {
-                            let graph = Self::apply_elevate(graph, &node_id);
-                            Transition {
-                                state: SchedulerState::Running { graph },
-                                effects: vec![],
+                            let exhausted =
+                                Self::attempts_exhausted(Self::get_node(&graph, &node_id));
+                            if exhausted {
+                                let reason = format!(
+                                    "node {} exhausted all {} attempts (ElevateModel)",
+                                    node_id.0, MAX_ATTEMPTS
+                                );
+                                let graph = Self::mark_node(graph, &node_id, NodeStatus::Failed);
+                                Transition {
+                                    state: SchedulerState::Failed {
+                                        graph: graph.clone(),
+                                        reason: reason.clone(),
+                                    },
+                                    effects: vec![SchedulerEffect::ReturnFailed { graph, reason }],
+                                }
+                            } else {
+                                let graph = Self::apply_elevate(graph, &node_id);
+                                Transition {
+                                    state: SchedulerState::Running { graph },
+                                    effects: vec![],
+                                }
                             }
                         }
 
@@ -1207,5 +1260,107 @@ mod tests {
                 .iter()
                 .all(|n| n.status == NodeStatus::Completed)
         );
+    }
+
+    // ── Attempt-limit tests ───────────────────────────────────────────────────
+
+    #[test]
+    fn retry_exhaustion_fails_scheduler() {
+        // Verify that a Retry recovery on a node already at MAX_ATTEMPTS:
+        //   1. does not insert a replacement node,
+        //   2. marks the original node Failed,
+        //   3. transitions the scheduler to SchedulerState::Failed.
+        let mut node = work_node("W", "failing task", &[]);
+        node.attempt = MAX_ATTEMPTS;
+        let graph = RunGraph {
+            nodes: vec![node],
+            next_id: 0,
+        };
+
+        let t = do_transition(
+            SchedulerState::Waiting {
+                graph: running(graph, "W"),
+                running: NodeId("W".to_string()),
+            },
+            SchedulerEvent::NodeReturned {
+                node_id: NodeId("W".to_string()),
+                outcome: NodeOutcome::Failed(NodeFailure {
+                    reason: "transient error".to_string(),
+                    recovery: RecoveryAction::Retry {
+                        message: "try again".to_string(),
+                    },
+                }),
+            },
+        );
+
+        let SchedulerState::Failed { graph, reason } = t.state else {
+            panic!("expected Failed, got {:#?}", t.state);
+        };
+        // No replacement node was created.
+        assert_eq!(
+            graph.nodes.len(),
+            1,
+            "no replacement node should be created"
+        );
+        assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
+        assert!(
+            reason.contains("exhausted"),
+            "reason should mention exhaustion, got: {reason:?}"
+        );
+        // The ReturnFailed effect was emitted.
+        assert!(matches!(
+            t.effects.as_slice(),
+            [SchedulerEffect::ReturnFailed { .. }]
+        ));
+    }
+
+    #[test]
+    fn elevate_exhaustion_fails_scheduler() {
+        // Verify that an ElevateModel recovery on a node already at MAX_ATTEMPTS:
+        //   1. does not insert a replacement node,
+        //   2. marks the original node Failed,
+        //   3. transitions the scheduler to SchedulerState::Failed.
+        let mut node = work_node("W", "hard task", &[]);
+        node.attempt = MAX_ATTEMPTS;
+        let graph = RunGraph {
+            nodes: vec![node],
+            next_id: 0,
+        };
+
+        let t = do_transition(
+            SchedulerState::Waiting {
+                graph: running(graph, "W"),
+                running: NodeId("W".to_string()),
+            },
+            SchedulerEvent::NodeReturned {
+                node_id: NodeId("W".to_string()),
+                outcome: NodeOutcome::Failed(NodeFailure {
+                    reason: "capability ceiling".to_string(),
+                    recovery: RecoveryAction::ElevateModel {
+                        message: "escalate model".to_string(),
+                    },
+                }),
+            },
+        );
+
+        let SchedulerState::Failed { graph, reason } = t.state else {
+            panic!("expected Failed, got {:#?}", t.state);
+        };
+        // No replacement node was created.
+        assert_eq!(
+            graph.nodes.len(),
+            1,
+            "no replacement node should be created"
+        );
+        assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
+        assert!(
+            reason.contains("exhausted"),
+            "reason should mention exhaustion, got: {reason:?}"
+        );
+        // The ReturnFailed effect was emitted.
+        assert!(matches!(
+            t.effects.as_slice(),
+            [SchedulerEffect::ReturnFailed { .. }]
+        ));
     }
 }
