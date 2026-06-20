@@ -6,3 +6,5 @@ echo "==> cargo test"
 cargo test
 echo "==> cargo clippy"
 cargo clippy -- -D warnings
+echo "==> cargo doc"
+cargo doc --no-deps
