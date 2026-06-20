@@ -1,3 +1,13 @@
+//! Demo machine — transition logic and stub handlers.
+//!
+//! This machine implements the three-stage producer/critic/referee pipeline
+//! defined in the sibling state, event, and effect modules. It is used to
+//! verify that the generic `Machine` trait and `run_machine` runner work
+//! correctly before the scheduler is exercised.
+//!
+//! The `handle_effect` implementation sleeps to simulate latency. In a real
+//! machine the sleep would be replaced by actual provider calls.
+
 use std::thread::sleep;
 use std::time::Duration;
 
@@ -7,6 +17,8 @@ use super::effect::DemoEffect;
 use super::event::DemoEvent;
 use super::state::{CriticResponse, DemoState, ProducerResponse, RefereeResponse, TaskResult};
 
+/// The demo machine. Carries no state of its own; all data travels in
+/// `DemoState` variants.
 pub struct DemoMachine;
 
 impl Machine for DemoMachine {
@@ -28,11 +40,15 @@ impl Machine for DemoMachine {
         println!("EVENT: {event:#?}");
 
         match (state, event) {
+            // Bootstrap: Start kicks off the pipeline by emitting CallProducer.
+            // The state stays NotStarted; the transition to PostProducer happens
+            // when ProducerReturned arrives in the next arm.
             (DemoState::NotStarted { task }, DemoEvent::Start) => Transition {
                 state: DemoState::NotStarted { task: task.clone() },
                 effects: vec![DemoEffect::CallProducer { task }],
             },
 
+            // Producer returned: store its response and immediately call the critic.
             (DemoState::NotStarted { task }, DemoEvent::ProducerReturned { producer_response }) => {
                 Transition {
                     state: DemoState::PostProducer {
@@ -46,6 +62,8 @@ impl Machine for DemoMachine {
                 }
             }
 
+            // Critic returned: store its response and immediately call the referee.
+            // Both prior outputs are forwarded so the referee has full context.
             (
                 DemoState::PostProducer {
                     task,
@@ -65,6 +83,8 @@ impl Machine for DemoMachine {
                 }],
             },
 
+            // Referee returned: assemble the final result and move to the terminal state.
+            // No effects — the runner will call `output` next and halt the loop.
             (
                 DemoState::PostCritic {
                     task,
@@ -141,6 +161,7 @@ impl Machine for DemoMachine {
         }
     }
 
+    /// Returns the final `TaskResult` once all three stages have completed.
     fn output(&self, state: &Self::State) -> Option<Self::Output> {
         match state {
             DemoState::PostReferee { result } => Some(result.clone()),

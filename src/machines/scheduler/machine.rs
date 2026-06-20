@@ -1,3 +1,23 @@
+//! Scheduler machine — transition logic and graph helpers.
+//!
+//! This module owns the `SchedulerMachine` implementation of `Machine`. It
+//! contains:
+//!
+//! - Pure graph-inspection helpers (`find_ready`, `all_complete`).
+//! - Pure graph-mutation helpers (`mark_node`, `push_node`, `insert_children`,
+//!   `apply_retry`, `apply_split`, `apply_elevate`).
+//! - The `transition` function, which is the only place where state advances.
+//! - The `handle_effect` function, which simulates runners during development.
+//! - An `output` recogniser that identifies terminal states.
+//!
+//! # What this module does NOT own
+//!
+//! - The definitions of state, events, and effects — those live in their
+//!   respective sibling modules.
+//! - The generic runner loop — that is in `engine::runner`.
+//! - Real provider or tool execution — this stub dispatches keyword-based
+//!   outcomes for demonstration purposes only.
+
 use std::collections::HashSet;
 
 use crate::engine::{Machine, Transition};
@@ -9,15 +29,35 @@ use super::event::{
 };
 use super::state::{ModelTier, Node, NodeId, NodeKind, NodeStatus, RunGraph, SchedulerState};
 
+/// The terminal result of a complete scheduler run.
+///
+/// The caller (`run_machine` or `RunMachine`) receives this when the scheduler
+/// reaches either of its two terminal states.
 #[derive(Clone, Debug, PartialEq)]
 pub enum SchedulerOutput {
+    /// Every node in the graph reached `Completed`. The final graph is returned
+    /// for audit and to extract work summaries.
     Complete(RunGraph),
+    /// A `Terminal` recovery was triggered, halting the run. The graph is
+    /// returned in its current state so the caller can inspect what succeeded
+    /// before the failure.
     Failed { graph: RunGraph, reason: String },
 }
 
+/// The scheduler state machine.
+///
+/// `SchedulerMachine` is a zero-sized marker struct; all of its data travels
+/// inside `SchedulerState`. This follows the project pattern where machines do
+/// not own mutable fields — they are pure transition logic carriers.
 pub struct SchedulerMachine;
 
 impl SchedulerMachine {
+    /// Returns the IDs of all nodes that are `Pending` and whose every
+    /// dependency has reached `Completed`.
+    ///
+    /// A node is eligible to run only when its full dependency set is satisfied.
+    /// `Running`, `Failed`, and `Cancelled` dependencies do *not* satisfy the
+    /// check — only `Completed` does.
     fn find_ready(graph: &RunGraph) -> Vec<NodeId> {
         let completed: HashSet<&NodeId> = graph
             .nodes
@@ -37,9 +77,16 @@ impl SchedulerMachine {
             .collect()
     }
 
-    /// Complete when no node is still Pending or Running.
-    /// Failed/Cancelled nodes are dead; Terminal failures exit immediately via SchedulerState::Failed.
-    /// TODO: track a separate "active leaf count" when cancellation propagation is added.
+    /// Returns `true` when no node is still `Pending` or `Running`.
+    ///
+    /// `Failed` and `Cancelled` nodes count as "done" for this purpose because
+    /// terminal failures exit immediately via `SchedulerState::Failed` before
+    /// this check is reached. A graph where some nodes are `Failed` but none
+    /// are `Pending` or `Running` means recovery created no further work —
+    /// which is only possible if the graph has genuinely finished.
+    ///
+    /// TODO: track a separate "active leaf count" when cancellation propagation
+    /// is added, so that `Cancelled` nodes are handled distinctly.
     fn all_complete(graph: &RunGraph) -> bool {
         !graph
             .nodes
@@ -47,6 +94,11 @@ impl SchedulerMachine {
             .any(|n| matches!(n.status, NodeStatus::Pending | NodeStatus::Running))
     }
 
+    /// Update a single node's status, leaving all other nodes unchanged.
+    ///
+    /// The entire `nodes` vec is rebuilt via iterator to keep ownership simple.
+    /// This is intentionally not `O(1)`, but graphs are small enough that the
+    /// difference is irrelevant at this stage.
     fn mark_node(graph: RunGraph, node_id: &NodeId, status: NodeStatus) -> RunGraph {
         let next_id = graph.next_id;
         RunGraph {
@@ -64,6 +116,10 @@ impl SchedulerMachine {
         }
     }
 
+    /// Mark a node `Completed` and attach the work summary in one pass.
+    ///
+    /// Doing both mutations together avoids a second vec scan that `mark_node`
+    /// would require if called separately.
     fn mark_node_completed_with_summary(
         graph: RunGraph,
         node_id: &NodeId,
@@ -86,6 +142,11 @@ impl SchedulerMachine {
         }
     }
 
+    /// Look up a node by ID, panicking if it is absent.
+    ///
+    /// Every node that the scheduler dispatches is present in the graph by
+    /// construction. A missing node_id here indicates a bug in the event
+    /// routing, not a recoverable runtime condition.
     fn get_node<'a>(graph: &'a RunGraph, node_id: &NodeId) -> &'a Node {
         graph
             .nodes
@@ -94,13 +155,18 @@ impl SchedulerMachine {
             .expect("node not found in graph")
     }
 
-    /// Push a new node and advance the ID counter.
+    /// Append a node to the graph and advance the ID counter.
     fn push_node(mut graph: RunGraph, node: Node) -> RunGraph {
         graph.nodes.push(node);
         graph.next_id += 1;
         graph
     }
 
+    /// Insert children produced by a plan node into the graph.
+    ///
+    /// Each `NodeRequest` becomes a real node with a fresh ID derived from the
+    /// parent's ID and the current counter. Children always start at `attempt 0`
+    /// with `ModelTier::Cheap`; the planner specifies everything else.
     fn insert_children(
         mut graph: RunGraph,
         parent_id: &NodeId,
@@ -123,6 +189,16 @@ impl SchedulerMachine {
         graph
     }
 
+    /// Handle a `Retry` recovery: mark the failed node and create a replacement.
+    ///
+    /// The replacement carries the same objective, kind, model tier, and
+    /// dependencies as the original, with `attempt` incremented. The original
+    /// node is marked `Failed` — it is never removed or mutated further.
+    ///
+    /// TODO: downstream nodes that depend on `node_id` will stall because
+    /// `node_id` is now `Failed`, not `Completed`. Fixing this requires either
+    /// remapping dependencies to point at the replacement, or making
+    /// `find_ready` aware of retry chains.
     fn apply_retry(graph: RunGraph, node_id: &NodeId) -> RunGraph {
         let (kind, objective, deps, attempt, model_tier) = {
             let n = Self::get_node(&graph, node_id);
@@ -147,17 +223,23 @@ impl SchedulerMachine {
         };
         let graph = Self::mark_node(graph, node_id, NodeStatus::Failed);
         Self::push_node(graph, replacement)
-        // TODO: dependency rewiring — downstream nodes that depend on node_id will stall
-        // because node_id is Failed, not Completed. Resolution requires remapping or
-        // making completion-check dependency-aware of retry chains.
     }
 
+    /// Handle a `Split` recovery: mark the failed node and insert a plan node.
+    ///
+    /// The new plan node is always `ModelTier::Strong`, regardless of the tier
+    /// the original node used. Planning quality directly determines how much
+    /// downstream work is created, so maximum capability is warranted here even
+    /// if it is expensive.
+    ///
+    /// The original node is marked `Failed` (not `Cancelled`) so the audit trail
+    /// is unambiguous: it attempted its objective and could not complete it.
     fn apply_split(graph: RunGraph, node_id: &NodeId, message: String) -> RunGraph {
         let (deps, model_tier) = {
             let n = Self::get_node(&graph, node_id);
             (n.dependencies.clone(), n.model_tier.clone())
         };
-        let _ = model_tier; // Split always uses Strong to maximize plan quality
+        let _ = model_tier; // Split always uses Strong to maximize plan quality.
         let split_id = NodeId(format!("{}-split-{}", node_id.0, graph.next_id));
         let split_node = Node {
             id: split_id,
@@ -169,11 +251,16 @@ impl SchedulerMachine {
             model_tier: ModelTier::Strong,
             summary: None,
         };
-        // Mark original Failed (not Cancelled) so the audit trail is unambiguous.
         let graph = Self::mark_node(graph, node_id, NodeStatus::Failed);
         Self::push_node(graph, split_node)
     }
 
+    /// Handle an `ElevateModel` recovery: create a replacement at `Strong` tier.
+    ///
+    /// Preserves the exact same objective so the stronger model retries the same
+    /// goal. Unlike `Retry`, the model tier is unconditionally upgraded to
+    /// `Strong`, because the failure signal indicates the task is beyond
+    /// `Cheap` tier capacity.
     fn apply_elevate(graph: RunGraph, node_id: &NodeId) -> RunGraph {
         let (kind, objective, deps, attempt) = {
             let n = Self::get_node(&graph, node_id);
@@ -219,11 +306,19 @@ impl Machine for SchedulerMachine {
         println!("EVENT: {event:#?}");
 
         match (state, event) {
+            // Bootstrap: move immediately to SelectingReady so the next tick
+            // can scan the graph. No effects — this is pure bookkeeping.
             (SchedulerState::NotStarted { graph }, SchedulerEvent::Start) => Transition {
                 state: SchedulerState::SelectingReady { graph },
                 effects: vec![],
             },
 
+            // Graph scan: decide whether to complete, fail (deadlock), or dispatch.
+            //
+            // Three outcomes:
+            //   1. All nodes are terminal → emit ReturnComplete and stop.
+            //   2. Some nodes are Pending but none are ready → deadlock; emit ReturnFailed.
+            //   3. At least one node is ready → move to Dispatching for dispatch on the next tick.
             (SchedulerState::SelectingReady { graph }, SchedulerEvent::Start) => {
                 if Self::all_complete(&graph) {
                     Transition {
@@ -252,6 +347,11 @@ impl Machine for SchedulerMachine {
                 }
             }
 
+            // Dispatch: pick the first ready node, mark it Running, and emit RunNode.
+            //
+            // Only one node is dispatched per tick. Parallel dispatch — emitting
+            // multiple RunNode effects — is a future concern that requires the runner
+            // loop to process effects concurrently.
             (SchedulerState::Dispatching { graph, ready }, SchedulerEvent::Start) => {
                 let node_id = ready[0].clone();
                 let (kind, objective, model_tier, attempt) = {
@@ -280,6 +380,11 @@ impl Machine for SchedulerMachine {
                 }
             }
 
+            // Node returned: react to what the node produced.
+            //
+            // The assertion guards against a race condition that cannot happen in the
+            // single-threaded runner but would be catastrophic if it did: a result for
+            // a node that was never dispatched.
             (
                 SchedulerState::Waiting { graph, running },
                 SchedulerEvent::NodeReturned { node_id, outcome },
@@ -290,6 +395,9 @@ impl Machine for SchedulerMachine {
                 );
 
                 match outcome {
+                    // A successful planner expands the graph: the plan node is marked
+                    // Completed and its requested children are inserted as new Pending
+                    // nodes. The scheduler then re-scans for ready nodes.
                     PlanAccepted(plan) => {
                         let graph = Self::mark_node(graph, &node_id, NodeStatus::Completed);
                         let graph = Self::insert_children(graph, &node_id, plan.children);
@@ -299,6 +407,9 @@ impl Machine for SchedulerMachine {
                         }
                     }
 
+                    // A successful worker is marked Completed with its summary attached.
+                    // The summary is kept in the graph as an audit record and may serve
+                    // as context for downstream nodes.
                     WorkAccepted(work) => {
                         let graph =
                             Self::mark_node_completed_with_summary(graph, &node_id, work.summary);
@@ -312,6 +423,9 @@ impl Machine for SchedulerMachine {
                         reason: _,
                         recovery,
                     }) => match recovery {
+                        // Retry: the same objective is worth attempting again as-is.
+                        // A replacement node with the same tier is inserted;
+                        // the original node remains in the graph as Failed.
                         RecoveryAction::Retry { .. } => {
                             let graph = Self::apply_retry(graph, &node_id);
                             Transition {
@@ -320,6 +434,10 @@ impl Machine for SchedulerMachine {
                             }
                         }
 
+                        // Split: the task was too large or ambiguous to execute directly.
+                        // A new Plan node at Strong tier is inserted to decompose it.
+                        // The original node is marked Failed; the plan result will create
+                        // the actual replacement work.
                         RecoveryAction::Split { message } => {
                             let graph = Self::apply_split(graph, &node_id, message);
                             Transition {
@@ -328,6 +446,9 @@ impl Machine for SchedulerMachine {
                             }
                         }
 
+                        // Model escalation: the same objective is retried at Strong tier.
+                        // The original node is marked Failed; model escalation preserves
+                        // the objective exactly — only the capability level changes.
                         RecoveryAction::ElevateModel { .. } => {
                             let graph = Self::apply_elevate(graph, &node_id);
                             Transition {
@@ -336,6 +457,9 @@ impl Machine for SchedulerMachine {
                             }
                         }
 
+                        // Terminal failure: no recovery is possible. The run stops
+                        // immediately. The graph is preserved with the node marked Failed
+                        // so callers can inspect what completed before the failure.
                         RecoveryAction::Terminal { message } => {
                             let graph = Self::mark_node(graph, &node_id, NodeStatus::Failed);
                             Transition {
@@ -359,6 +483,16 @@ impl Machine for SchedulerMachine {
         }
     }
 
+    /// Stub effect handler used during development.
+    ///
+    /// In production this would be replaced by a real `RunMachine` handler that
+    /// dispatches nodes to actual LLM providers. For now, outcomes are determined
+    /// by keyword matching on the objective string so that the scenarios in
+    /// `main.rs` can exercise all recovery paths without a provider.
+    ///
+    /// `ReturnComplete` and `ReturnFailed` effects must never reach this method;
+    /// the `output` recogniser intercepts terminal states before the runner has
+    /// a chance to dispatch their effects.
     fn handle_effect(&self, effect: Self::Effect) -> Self::Event {
         println!("EFFECT: {effect:#?}");
 
@@ -438,6 +572,11 @@ impl Machine for SchedulerMachine {
         }
     }
 
+    /// Recognise terminal states and extract the final output.
+    ///
+    /// Returns `Some` only for `Complete` and `Failed`, the two states from
+    /// which the scheduler cannot advance further. All other states return
+    /// `None` to keep the runner loop going.
     fn output(&self, state: &Self::State) -> Option<Self::Output> {
         match state {
             SchedulerState::Complete { graph } => Some(SchedulerOutput::Complete(graph.clone())),

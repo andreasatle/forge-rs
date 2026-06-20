@@ -1,3 +1,14 @@
+//! Binary entry point — development harness for exercising the machines.
+//!
+//! This binary is not the production Forge CLI. It runs the demo machine and
+//! several scheduler scenarios through `run_machine` so that the core state
+//! machine logic can be verified without a real provider or network.
+//!
+//! Each `run_demo` call constructs a `RunGraph`, feeds it into `SchedulerMachine`,
+//! and prints the final node statuses. The scenarios cover the main recovery
+//! paths: serial chains, plan expansion, retry, model escalation, and terminal
+//! failure.
+
 use forge_rs::engine::run_machine;
 use forge_rs::machines::demo::state::DemoState;
 use forge_rs::machines::demo::{DemoMachine, Task};
