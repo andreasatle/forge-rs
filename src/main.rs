@@ -45,7 +45,7 @@ fn plan(id: &str, objective: &str, deps: &[&str]) -> Node {
 
 fn run_demo(label: &str, graph: RunGraph) {
     println!("\n=== {label} ===\n");
-    match run_machine(SchedulerMachine, SchedulerState::NotStarted { graph }) {
+    match run_machine(SchedulerMachine, SchedulerState::Running { graph }) {
         SchedulerOutput::Complete(g) => {
             println!("\nCOMPLETE — {} nodes", g.nodes.len());
             for n in &g.nodes {

@@ -311,20 +311,13 @@ impl Machine for SchedulerMachine {
         println!("EVENT: {event:#?}");
 
         match (state, event) {
-            // Bootstrap: move immediately to SelectingReady so the next tick
-            // can scan the graph. No effects — this is pure bookkeeping.
-            (SchedulerState::NotStarted { graph }, SchedulerEvent::Start) => Transition {
-                state: SchedulerState::SelectingReady { graph },
-                effects: vec![],
-            },
-
-            // Graph scan: decide whether to complete, fail (deadlock), or dispatch.
+            // Scan the graph, then in the same tick either complete, fail, or dispatch.
             //
             // Three outcomes:
             //   1. All nodes are terminal → emit ReturnComplete and stop.
             //   2. Some nodes are Pending but none are ready → deadlock; emit ReturnFailed.
-            //   3. At least one node is ready → move to Dispatching for dispatch on the next tick.
-            (SchedulerState::SelectingReady { graph }, SchedulerEvent::Start) => {
+            //   3. At least one node is ready → mark it Running, emit RunNode, move to Waiting.
+            (SchedulerState::Running { graph }, SchedulerEvent::Start) => {
                 if Self::all_complete(&graph) {
                     Transition {
                         state: SchedulerState::Complete {
@@ -344,44 +337,32 @@ impl Machine for SchedulerMachine {
                             effects: vec![SchedulerEffect::ReturnFailed { graph, reason }],
                         }
                     } else {
+                        let node_id = ready[0].clone();
+                        let (kind, objective, model_tier, attempt) = {
+                            let n = Self::get_node(&graph, &node_id);
+                            (
+                                n.kind.clone(),
+                                n.objective.clone(),
+                                n.model_tier.clone(),
+                                n.attempt,
+                            )
+                        };
+                        let effect = SchedulerEffect::RunNode {
+                            node_id: node_id.clone(),
+                            kind,
+                            objective,
+                            model_tier,
+                            attempt,
+                        };
+                        let graph = Self::mark_node(graph, &node_id, NodeStatus::Running);
                         Transition {
-                            state: SchedulerState::Dispatching { graph, ready },
-                            effects: vec![],
+                            state: SchedulerState::Waiting {
+                                graph,
+                                running: node_id,
+                            },
+                            effects: vec![effect],
                         }
                     }
-                }
-            }
-
-            // Dispatch: pick the first ready node, mark it Running, and emit RunNode.
-            //
-            // Only one node is dispatched per tick. Parallel dispatch — emitting
-            // multiple RunNode effects — is a future concern that requires the runner
-            // loop to process effects concurrently.
-            (SchedulerState::Dispatching { graph, ready }, SchedulerEvent::Start) => {
-                let node_id = ready[0].clone();
-                let (kind, objective, model_tier, attempt) = {
-                    let n = Self::get_node(&graph, &node_id);
-                    (
-                        n.kind.clone(),
-                        n.objective.clone(),
-                        n.model_tier.clone(),
-                        n.attempt,
-                    )
-                };
-                let effect = SchedulerEffect::RunNode {
-                    node_id: node_id.clone(),
-                    kind,
-                    objective,
-                    model_tier,
-                    attempt,
-                };
-                let graph = Self::mark_node(graph, &node_id, NodeStatus::Running);
-                Transition {
-                    state: SchedulerState::Waiting {
-                        graph,
-                        running: node_id,
-                    },
-                    effects: vec![effect],
                 }
             }
 
@@ -407,7 +388,7 @@ impl Machine for SchedulerMachine {
                         let graph = Self::mark_node(graph, &node_id, NodeStatus::Completed);
                         let graph = Self::insert_children(graph, &node_id, plan.children);
                         Transition {
-                            state: SchedulerState::SelectingReady { graph },
+                            state: SchedulerState::Running { graph },
                             effects: vec![],
                         }
                     }
@@ -419,7 +400,7 @@ impl Machine for SchedulerMachine {
                         let graph =
                             Self::mark_node_completed_with_summary(graph, &node_id, work.summary);
                         Transition {
-                            state: SchedulerState::SelectingReady { graph },
+                            state: SchedulerState::Running { graph },
                             effects: vec![],
                         }
                     }
@@ -434,7 +415,7 @@ impl Machine for SchedulerMachine {
                         RecoveryAction::Retry { .. } => {
                             let graph = Self::apply_retry(graph, &node_id);
                             Transition {
-                                state: SchedulerState::SelectingReady { graph },
+                                state: SchedulerState::Running { graph },
                                 effects: vec![],
                             }
                         }
@@ -446,7 +427,7 @@ impl Machine for SchedulerMachine {
                         RecoveryAction::Split { message } => {
                             let graph = Self::apply_split(graph, &node_id, message);
                             Transition {
-                                state: SchedulerState::SelectingReady { graph },
+                                state: SchedulerState::Running { graph },
                                 effects: vec![],
                             }
                         }
@@ -457,7 +438,7 @@ impl Machine for SchedulerMachine {
                         RecoveryAction::ElevateModel { .. } => {
                             let graph = Self::apply_elevate(graph, &node_id);
                             Transition {
-                                state: SchedulerState::SelectingReady { graph },
+                                state: SchedulerState::Running { graph },
                                 effects: vec![],
                             }
                         }
@@ -662,40 +643,13 @@ mod tests {
         SchedulerMachine.transition(state, event)
     }
 
-    // ── existing structural tests ──────────────────────────────────────────────
+    // ── Running + Start structural tests ──────────────────────────────────────
 
     #[test]
-    fn not_started_start_moves_to_selecting_ready() {
-        let t = do_transition(
-            SchedulerState::NotStarted {
-                graph: single_work_graph(),
-            },
-            SchedulerEvent::Start,
-        );
-        assert!(matches!(t.state, SchedulerState::SelectingReady { .. }));
-        assert!(t.effects.is_empty());
-    }
-
-    #[test]
-    fn selecting_ready_with_ready_node_moves_to_dispatching() {
-        let t = do_transition(
-            SchedulerState::SelectingReady {
-                graph: single_work_graph(),
-            },
-            SchedulerEvent::Start,
-        );
-        assert!(matches!(t.state, SchedulerState::Dispatching { .. }));
-        assert!(t.effects.is_empty());
-    }
-
-    #[test]
-    fn selecting_ready_all_complete_moves_to_complete() {
+    fn running_start_all_complete_moves_to_complete() {
         let mut graph = single_work_graph();
         graph.nodes[0].status = NodeStatus::Completed;
-        let t = do_transition(
-            SchedulerState::SelectingReady { graph },
-            SchedulerEvent::Start,
-        );
+        let t = do_transition(SchedulerState::Running { graph }, SchedulerEvent::Start);
         assert!(matches!(t.state, SchedulerState::Complete { .. }));
         assert!(matches!(
             t.effects.as_slice(),
@@ -704,15 +658,12 @@ mod tests {
     }
 
     #[test]
-    fn selecting_ready_no_ready_moves_to_failed() {
+    fn running_start_no_ready_moves_to_failed() {
         let graph = RunGraph {
             nodes: vec![work_node("B", "blocked", &["A"])],
             next_id: 0,
         };
-        let t = do_transition(
-            SchedulerState::SelectingReady { graph },
-            SchedulerEvent::Start,
-        );
+        let t = do_transition(SchedulerState::Running { graph }, SchedulerEvent::Start);
         assert!(matches!(t.state, SchedulerState::Failed { .. }));
         assert!(matches!(
             t.effects.as_slice(),
@@ -721,11 +672,11 @@ mod tests {
     }
 
     #[test]
-    fn dispatching_start_emits_run_node_and_marks_running() {
-        let graph = single_work_graph();
-        let ready = vec![NodeId("A".to_string())];
+    fn running_start_dispatches_ready_node_and_waits() {
         let t = do_transition(
-            SchedulerState::Dispatching { graph, ready },
+            SchedulerState::Running {
+                graph: single_work_graph(),
+            },
             SchedulerEvent::Start,
         );
 
@@ -765,8 +716,8 @@ mod tests {
             },
         );
 
-        let SchedulerState::SelectingReady { graph } = t.state else {
-            panic!("expected SelectingReady")
+        let SchedulerState::Running { graph } = t.state else {
+            panic!("expected Running")
         };
         assert_eq!(graph.nodes[0].status, NodeStatus::Completed);
         assert_eq!(graph.nodes.len(), 2);
@@ -791,8 +742,8 @@ mod tests {
             },
         );
 
-        let SchedulerState::SelectingReady { graph } = t.state else {
-            panic!("expected SelectingReady")
+        let SchedulerState::Running { graph } = t.state else {
+            panic!("expected Running")
         };
         assert_eq!(graph.nodes[0].status, NodeStatus::Completed);
         assert_eq!(graph.nodes[0].summary, Some("done!".to_string()));
@@ -820,8 +771,8 @@ mod tests {
             },
         );
 
-        let SchedulerState::SelectingReady { graph } = t.state else {
-            panic!("expected SelectingReady")
+        let SchedulerState::Running { graph } = t.state else {
+            panic!("expected Running")
         };
         assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
         assert_eq!(graph.nodes.len(), 2);
@@ -854,8 +805,8 @@ mod tests {
             },
         );
 
-        let SchedulerState::SelectingReady { graph } = t.state else {
-            panic!("expected SelectingReady")
+        let SchedulerState::Running { graph } = t.state else {
+            panic!("expected Running")
         };
         assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
         assert_eq!(graph.nodes.len(), 2);
@@ -882,7 +833,7 @@ mod tests {
             next_id: 0,
         };
         let output =
-            crate::engine::run_machine(SchedulerMachine, SchedulerState::NotStarted { graph });
+            crate::engine::run_machine(SchedulerMachine, SchedulerState::Running { graph });
         assert!(matches!(output, SchedulerOutput::Failed { .. }));
     }
 
@@ -909,7 +860,7 @@ mod tests {
     fn full_chain_run() {
         let output = crate::engine::run_machine(
             SchedulerMachine,
-            SchedulerState::NotStarted {
+            SchedulerState::Running {
                 graph: chain_graph(),
             },
         );

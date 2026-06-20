@@ -63,9 +63,7 @@ pub trait Machine {
 ///
 /// Re-sending `start_event` when there are no effects lets machines advance
 /// through pure bookkeeping steps — states that need a nudge but not a real
-/// external result — without blocking. For example, the scheduler uses this to
-/// move from `NotStarted` → `SelectingReady` → `Dispatching` in successive
-/// ticks before the first `RunNode` effect is emitted.
+/// external result — without blocking.
 pub fn run_machine<M>(machine: M, mut state: M::State) -> M::Output
 where
     M: Machine,

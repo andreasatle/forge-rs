@@ -134,50 +134,28 @@ pub struct RunGraph {
 /// # State flow
 ///
 /// ```text
-/// NotStarted
-///   └─ Start ──────────────────────→ SelectingReady
-///                                          │
-///                          ┌──────────────┤
-///                          │              │ ready nodes found
-///                          │              ↓
-///                          │         Dispatching
-///                          │              │ RunNode effect dispatched
-///                          │              ↓
-///                          │           Waiting
-///                          │              │ NodeReturned event received
-///                          │              │
-///                          │  ┌───────────┤
-///                          │  │ outcomes  │
-///                          │  └───────────┘
-///                          │    ↑ loops back to SelectingReady
-///                          │
-///                    ──────┴──────
-///                   /             \
-///              Complete          Failed
+/// Running
+///   │ Start
+///   ├─ all nodes terminal ──────────→ Complete
+///   ├─ no ready nodes ──────────────→ Failed
+///   └─ first ready node found
+///        mark Running, emit RunNode
+///              ↓
+///           Waiting
+///              │ NodeReturned
+///              ├─ recoverable outcome ─→ Running  (loop)
+///              └─ Terminal failure ────→ Failed
 /// ```
 #[derive(Clone, Debug, PartialEq)]
 pub enum SchedulerState {
-    /// The scheduler has been created but has not yet processed its first tick.
-    NotStarted {
-        /// The initial run graph provided by the caller.
-        graph: RunGraph,
-    },
-    /// The scheduler is scanning the graph to find nodes whose dependencies are
-    /// all `Completed` and that are themselves still `Pending`.
-    SelectingReady {
-        /// The run graph being scanned.
-        graph: RunGraph,
-    },
-    /// At least one ready node has been identified. The scheduler will dispatch
-    /// the first one on the next tick.
+    /// The scheduler is ready to scan the graph and dispatch the next node.
     ///
-    /// Note: only one node is dispatched per tick even when multiple are ready.
-    /// Parallel dispatch is a future concern.
-    Dispatching {
-        /// The run graph at the time ready nodes were found.
+    /// On a `Start` event the scheduler checks whether all nodes are terminal
+    /// (→ `Complete`), whether the graph is deadlocked (→ `Failed`), or picks
+    /// the first ready node to dispatch (→ `Waiting`).
+    Running {
+        /// The run graph to scan and advance.
         graph: RunGraph,
-        /// IDs of nodes eligible to run; the first is dispatched next tick.
-        ready: Vec<NodeId>,
     },
     /// One node has been dispatched and the scheduler is waiting for its result.
     /// No further dispatch happens until `NodeReturned` arrives.
