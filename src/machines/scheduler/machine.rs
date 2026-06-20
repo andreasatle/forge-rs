@@ -330,6 +330,28 @@ impl SchedulerMachine {
         Ok(())
     }
 
+    /// Classify why no node became ready when the graph is not yet complete.
+    ///
+    /// Checks pending nodes for missing dependencies first. If all referenced
+    /// IDs exist but no node is ready, the graph is stuck in a cycle or a
+    /// mutually blocked chain.
+    fn diagnose_no_ready(graph: &RunGraph) -> String {
+        let existing: HashSet<&NodeId> = graph.nodes.iter().map(|n| &n.id).collect();
+        for node in &graph.nodes {
+            if node.status == NodeStatus::Pending {
+                for dep in &node.dependencies {
+                    if !existing.contains(dep) {
+                        return format!(
+                            "pending node {} has missing dependency {}",
+                            node.id.0, dep.0
+                        );
+                    }
+                }
+            }
+        }
+        "no ready nodes: blocked dependency chain or possible cycle".to_string()
+    }
+
     /// Returns `true` when the node has already consumed all permitted attempts.
     ///
     /// Used by `Retry` and `ElevateModel` recovery arms to guard against
@@ -632,7 +654,7 @@ impl Machine for SchedulerMachine {
                 } else {
                     let ready = Self::find_ready(&graph);
                     if ready.is_empty() {
-                        let reason = "no ready nodes and graph is not complete".to_string();
+                        let reason = Self::diagnose_no_ready(&graph);
                         Transition {
                             state: SchedulerState::Failed {
                                 graph: graph.clone(),
@@ -2080,6 +2102,51 @@ mod tests {
         );
 
         assert!(t.effects.is_empty());
+    }
+
+    // ── Deadlock diagnostics tests ────────────────────────────────────────────
+
+    #[test]
+    fn no_ready_reports_missing_dependency() {
+        // C is Pending and depends on B, but B does not exist in the graph.
+        let graph = RunGraph {
+            nodes: vec![work_node("C", "do C", &["B"])],
+            next_id: 0,
+        };
+        let t = do_transition(SchedulerState::Running { graph }, SchedulerEvent::Start);
+
+        let SchedulerState::Failed { reason, .. } = t.state else {
+            panic!("expected Failed, got {:#?}", t.state);
+        };
+        assert!(
+            reason.contains("missing dependency"),
+            "reason should mention missing dependency, got: {reason:?}"
+        );
+        assert!(
+            reason.contains('B'),
+            "reason should contain the missing node id, got: {reason:?}"
+        );
+    }
+
+    #[test]
+    fn no_ready_reports_blocked_or_possible_cycle() {
+        // A depends on B, B depends on A — neither can ever become ready.
+        let graph = RunGraph {
+            nodes: vec![
+                work_node("A", "do A", &["B"]),
+                work_node("B", "do B", &["A"]),
+            ],
+            next_id: 0,
+        };
+        let t = do_transition(SchedulerState::Running { graph }, SchedulerEvent::Start);
+
+        let SchedulerState::Failed { reason, .. } = t.state else {
+            panic!("expected Failed, got {:#?}", t.state);
+        };
+        assert!(
+            reason.contains("blocked") || reason.contains("cycle"),
+            "reason should mention blocked or cycle, got: {reason:?}"
+        );
     }
 
     #[test]
