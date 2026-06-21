@@ -36,11 +36,13 @@
 
 pub mod effect;
 pub mod event;
+pub mod handler;
 pub mod machine;
 pub mod state;
 
 pub use effect::DeliberationEffect;
 pub use event::{DeliberationEvent, RoleResult};
+pub use handler::ProviderBackedDeliberationHandler;
 pub use machine::DeliberationMachine;
 pub use state::{
     DeliberationOutput, DeliberationRequest, DeliberationRole, DeliberationState,
