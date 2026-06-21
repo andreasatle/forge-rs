@@ -30,6 +30,18 @@ pub struct DeliberationOutput {
     pub content: String,
 }
 
+/// Terminal result returned by `run_machine` for the deliberation pipeline.
+#[derive(Clone, Debug, PartialEq)]
+pub enum DeliberationTerminalOutput {
+    /// The pipeline completed successfully.
+    Complete(DeliberationOutput),
+    /// The pipeline failed before producing accepted content.
+    Failed {
+        /// Human-readable description of why the pipeline failed.
+        reason: String,
+    },
+}
+
 /// The three roles that participate in the deliberation pipeline.
 #[derive(Clone, Debug, PartialEq)]
 pub enum DeliberationRole {

@@ -28,5 +28,6 @@ pub use effect::DeliberationEffect;
 pub use event::{DeliberationEvent, RoleResult};
 pub use machine::DeliberationMachine;
 pub use state::{
-    DeliberationOutput, DeliberationRequest, DeliberationRole, DeliberationState, RevisionFeedback,
+    DeliberationOutput, DeliberationRequest, DeliberationRole, DeliberationState,
+    DeliberationTerminalOutput, RevisionFeedback,
 };

@@ -47,7 +47,10 @@ use crate::engine::{Machine, Transition};
 
 use super::effect::DeliberationEffect;
 use super::event::{DeliberationEvent, RoleResult};
-use super::state::{DeliberationOutput, DeliberationRole, DeliberationState, RevisionFeedback};
+use super::state::{
+    DeliberationOutput, DeliberationRole, DeliberationState, DeliberationTerminalOutput,
+    RevisionFeedback,
+};
 
 /// The deliberation machine. All durable data travels in `DeliberationState`.
 pub struct DeliberationMachine;
@@ -56,7 +59,7 @@ impl Machine for DeliberationMachine {
     type State = DeliberationState;
     type Event = DeliberationEvent;
     type Effect = DeliberationEffect;
-    type Output = DeliberationOutput;
+    type Output = DeliberationTerminalOutput;
 
     fn start_event(&self) -> Self::Event {
         DeliberationEvent::Start
@@ -381,7 +384,12 @@ impl Machine for DeliberationMachine {
 
     fn output(&self, state: &Self::State) -> Option<Self::Output> {
         match state {
-            DeliberationState::Complete { output } => Some(output.clone()),
+            DeliberationState::Complete { output } => {
+                Some(DeliberationTerminalOutput::Complete(output.clone()))
+            }
+            DeliberationState::Failed { reason } => Some(DeliberationTerminalOutput::Failed {
+                reason: reason.clone(),
+            }),
             _ => None,
         }
     }
@@ -1057,7 +1065,7 @@ mod tests {
             type State = DeliberationState;
             type Event = DeliberationEvent;
             type Effect = DeliberationEffect;
-            type Output = DeliberationOutput;
+            type Output = DeliberationTerminalOutput;
 
             fn start_event(&self) -> DeliberationEvent {
                 DeliberationEvent::Start
@@ -1129,7 +1137,7 @@ mod tests {
                 }
             }
 
-            fn output(&self, state: &DeliberationState) -> Option<DeliberationOutput> {
+            fn output(&self, state: &DeliberationState) -> Option<DeliberationTerminalOutput> {
                 DeliberationMachine.output(state)
             }
         }
@@ -1145,10 +1153,13 @@ mod tests {
             producer_call: std::cell::Cell::new(0),
         };
         let output = run_machine(fake, initial);
-        assert_eq!(
-            output.content, "draft v2",
-            "final output should be revised producer content"
-        );
+        match output {
+            DeliberationTerminalOutput::Complete(out) => assert_eq!(
+                out.content, "draft v2",
+                "final output should be revised producer content"
+            ),
+            other => panic!("expected Complete, got {:?}", other),
+        }
     }
 
     // Smoke test: Producer → Accepted("draft"), Critic → Accepted("looks good"),
@@ -1161,7 +1172,7 @@ mod tests {
             type State = DeliberationState;
             type Event = DeliberationEvent;
             type Effect = DeliberationEffect;
-            type Output = DeliberationOutput;
+            type Output = DeliberationTerminalOutput;
 
             fn start_event(&self) -> DeliberationEvent {
                 DeliberationEvent::Start
@@ -1211,7 +1222,7 @@ mod tests {
                 }
             }
 
-            fn output(&self, state: &DeliberationState) -> Option<DeliberationOutput> {
+            fn output(&self, state: &DeliberationState) -> Option<DeliberationTerminalOutput> {
                 DeliberationMachine.output(state)
             }
         }
@@ -1224,6 +1235,84 @@ mod tests {
         };
 
         let output = run_machine(FakeMachine, initial);
-        assert_eq!(output.content, "draft");
+        match output {
+            DeliberationTerminalOutput::Complete(out) => assert_eq!(out.content, "draft"),
+            other => panic!("expected Complete, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn output_returns_failed_for_failed_state() {
+        let failed_state = DeliberationState::Failed {
+            reason: "something went wrong".to_string(),
+        };
+        let output = machine().output(&failed_state);
+        match output {
+            Some(DeliberationTerminalOutput::Failed { reason }) => {
+                assert_eq!(reason, "something went wrong");
+            }
+            other => panic!("expected Some(Failed), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn run_machine_producer_rejection_returns_failed_output() {
+        struct FakeMachine;
+
+        impl Machine for FakeMachine {
+            type State = DeliberationState;
+            type Event = DeliberationEvent;
+            type Effect = DeliberationEffect;
+            type Output = DeliberationTerminalOutput;
+
+            fn start_event(&self) -> DeliberationEvent {
+                DeliberationEvent::Start
+            }
+
+            fn transition(
+                &self,
+                state: DeliberationState,
+                event: DeliberationEvent,
+            ) -> Transition<DeliberationState, DeliberationEffect> {
+                DeliberationMachine.transition(state, event)
+            }
+
+            fn handle_effect(&self, effect: DeliberationEffect) -> DeliberationEvent {
+                match effect {
+                    DeliberationEffect::RunRole {
+                        role: DeliberationRole::Producer,
+                        ..
+                    } => DeliberationEvent::RoleReturned {
+                        role: DeliberationRole::Producer,
+                        result: RoleResult::Rejected {
+                            reason: "bad draft".into(),
+                        },
+                    },
+                    other => panic!("unexpected effect: {:?}", other),
+                }
+            }
+
+            fn output(&self, state: &DeliberationState) -> Option<DeliberationTerminalOutput> {
+                DeliberationMachine.output(state)
+            }
+        }
+
+        let initial = DeliberationState::Ready {
+            request: DeliberationRequest {
+                objective: "write something".to_string(),
+                max_revisions: 0,
+            },
+        };
+
+        let output = run_machine(FakeMachine, initial);
+        match &output {
+            DeliberationTerminalOutput::Failed { reason } => {
+                assert!(
+                    reason.contains("bad draft"),
+                    "expected reason to contain 'bad draft', got: {reason}"
+                );
+            }
+            other => panic!("expected Failed, got {:?}", other),
+        }
     }
 }
