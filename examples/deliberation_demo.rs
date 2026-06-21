@@ -17,18 +17,18 @@ use forge_rs::providers::{
 
 // Prepended before the task prompt.
 const PROTOCOL_PREFIX: &str = "\
-Do not think step by step. Do not explain. Output one line only.\n\
-Reply with exactly one of:\n\
-  ACCEPT: <your response>\n\
-  REJECT: <reason>";
+Return exactly one JSON object. No markdown. No code fence. No explanation.\n\
+No text before or after the JSON.\n\
+Accepted schema: {\"status\":\"accepted\",\"content\":\"...\"}\n\
+Rejected schema: {\"status\":\"rejected\",\"reason\":\"...\"}";
 
 // Appended after the task prompt.
 const PROTOCOL_SUFFIX: &str = "\n\
-Do not think step by step. Do not explain. Output one line only.\n\
-Your response must start with ACCEPT: or REJECT:";
+Return exactly one JSON object. No markdown. No code fence. No explanation.\n\
+Your response must be valid JSON with \"status\" set to \"accepted\" or \"rejected\".";
 
 /// Wraps any provider and sandwiches the task prompt between the protocol
-/// instruction so that both the top and the bottom of the context reinforce
+/// instructions so that both the top and bottom of the context reinforce
 /// the expected output format.
 struct InstructedProvider<P> {
     inner: P,
@@ -123,7 +123,7 @@ mod tests {
     }
 
     #[test]
-    fn instructed_provider_contains_protocol_markers() {
+    fn instructed_provider_contains_json_protocol() {
         let provider = InstructedProvider {
             inner: EchoProvider,
         };
@@ -137,12 +137,16 @@ mod tests {
             "original prompt must be preserved"
         );
         assert!(
-            resp.content.contains("ACCEPT:"),
-            "wrapped prompt must contain ACCEPT:"
+            resp.content.contains("\"status\""),
+            "wrapped prompt must contain JSON status field instruction"
         );
         assert!(
-            resp.content.contains("REJECT:"),
-            "wrapped prompt must contain REJECT:"
+            resp.content.contains("\"accepted\""),
+            "wrapped prompt must contain accepted schema"
+        );
+        assert!(
+            resp.content.contains("\"rejected\""),
+            "wrapped prompt must contain rejected schema"
         );
     }
 
@@ -157,14 +161,14 @@ mod tests {
             })
             .unwrap();
         let pos_prompt = resp.content.find("my prompt").unwrap();
-        let pos_first_accept = resp.content.find("ACCEPT:").unwrap();
-        let pos_last_accept = resp.content.rfind("ACCEPT:").unwrap();
+        let pos_prefix = resp.content.find(PROTOCOL_PREFIX).unwrap();
+        let pos_suffix = resp.content.rfind(PROTOCOL_SUFFIX).unwrap();
         assert!(
-            pos_first_accept < pos_prompt,
+            pos_prefix < pos_prompt,
             "protocol prefix must precede the task prompt"
         );
         assert!(
-            pos_prompt < pos_last_accept,
+            pos_prompt < pos_suffix,
             "protocol suffix must follow the task prompt"
         );
     }

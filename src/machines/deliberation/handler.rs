@@ -1,8 +1,10 @@
 //! Provider-backed handler for `DeliberationEffect::RunRole`.
 //!
-//! Connects `DeliberationMachine` to the provider boundary without touching
-//! `SchedulerMachine` or `AgentMachine`. No async, no streaming, no JSON
-//! role protocol — just synchronous provider calls and string-prefix parsing.
+//! Connects `DeliberationMachine` to the provider boundary. The provider
+//! returns raw text; this handler extracts and parses a structured JSON role
+//! response before surfacing a `RoleResult` to the machine layer above.
+
+use serde::Deserialize;
 
 use crate::providers::{ProviderClient, ProviderRequest};
 
@@ -69,10 +71,18 @@ impl<P: ProviderClient> ProviderBackedDeliberationHandler<P> {
     }
 }
 
+/// Internal serde type for JSON role responses from the provider.
+#[derive(Deserialize)]
+#[serde(tag = "status", rename_all = "lowercase")]
+enum JsonRoleResponse {
+    Accepted { content: String },
+    Rejected { reason: String },
+}
+
 /// Build a prompt for a single role invocation.
 ///
-/// Includes the objective, role, prior-stage content when present, and any
-/// accumulated revision feedback. Kept intentionally simple — no templates.
+/// Includes the objective, role, prior-stage content when present, any
+/// accumulated revision feedback, and the required JSON output schema.
 fn render_role_prompt(
     role: &DeliberationRole,
     objective: &str,
@@ -93,35 +103,90 @@ fn render_role_prompt(
         let reasons: Vec<&str> = feedback.iter().map(|f| f.reason.as_str()).collect();
         parts.push(format!("Revision feedback: {}", reasons.join("; ")));
     }
+    parts.push(
+        "Return exactly one JSON object. No markdown. No code fence. No explanation. \
+         No text before or after the JSON.\n\
+         Accepted: {\"status\":\"accepted\",\"content\":\"...\"}\n\
+         Rejected: {\"status\":\"rejected\",\"reason\":\"...\"}\n\
+         Producer returns accepted content. \
+         Critic accepts with a review or rejects with a reason. \
+         Referee accepts approval or rejects with revision feedback. \
+         Execution failures are handled by the framework, not the model."
+            .to_string(),
+    );
     parts.join("\n")
 }
 
 /// Parse the raw content string returned by the provider into a `RoleResult`.
 ///
-/// Scans for the first `ACCEPT:` or `REJECT:` marker anywhere in the response
-/// so that chain-of-thought preamble does not cause spurious failures.
-///
-/// - First `ACCEPT:` wins over a later `REJECT:`, and vice-versa.
-/// - If neither marker is present → `Failed`.
+/// Steps:
+/// 1. Trim whitespace.
+/// 2. Strip optional markdown code fence (` ```json ` / ` ``` `).
+/// 3. Extract the first JSON object (between outermost `{` and `}`).
+/// 4. Parse with serde_json into `JsonRoleResponse`.
+/// 5. Validate that required string fields are non-empty.
+/// 6. Map any parse or validation failure to `RoleResult::Failed`.
 fn parse_role_response(content: &str) -> RoleResult {
-    let accept_pos = content.find("ACCEPT:");
-    let reject_pos = content.find("REJECT:");
-    match (accept_pos, reject_pos) {
-        (Some(a), Some(r)) if a <= r => RoleResult::Accepted {
-            content: content[a + 7..].trim().to_string(),
+    let text = strip_code_fence(content.trim());
+    let json_str = match extract_json_object(text) {
+        Some(s) => s,
+        None => {
+            return RoleResult::Failed {
+                reason: format!("no JSON object found in role response: {content:?}"),
+            };
+        }
+    };
+    match serde_json::from_str::<JsonRoleResponse>(json_str) {
+        Ok(JsonRoleResponse::Accepted { content }) => {
+            if content.trim().is_empty() {
+                RoleResult::Failed {
+                    reason: "accepted response has empty content".to_string(),
+                }
+            } else {
+                RoleResult::Accepted { content }
+            }
+        }
+        Ok(JsonRoleResponse::Rejected { reason }) => {
+            if reason.trim().is_empty() {
+                RoleResult::Failed {
+                    reason: "rejected response has empty reason".to_string(),
+                }
+            } else {
+                RoleResult::Rejected { reason }
+            }
+        }
+        Err(err) => RoleResult::Failed {
+            reason: format!("JSON parse error: {err}"),
         },
-        (Some(_), Some(r)) => RoleResult::Rejected {
-            reason: content[r + 7..].trim().to_string(),
-        },
-        (Some(a), None) => RoleResult::Accepted {
-            content: content[a + 7..].trim().to_string(),
-        },
-        (None, Some(r)) => RoleResult::Rejected {
-            reason: content[r + 7..].trim().to_string(),
-        },
-        (None, None) => RoleResult::Failed {
-            reason: format!("malformed role response: {content:?}"),
-        },
+    }
+}
+
+/// Strip a leading ` ```json ` or ` ``` ` fence and its matching closing ` ``` `.
+fn strip_code_fence(s: &str) -> &str {
+    let s = s.trim();
+    let after_open = if let Some(rest) = s.strip_prefix("```json") {
+        rest
+    } else if let Some(rest) = s.strip_prefix("```") {
+        rest
+    } else {
+        return s;
+    };
+    let after_newline = after_open.trim_start_matches('\r').trim_start_matches('\n');
+    if let Some(body) = after_newline.strip_suffix("```") {
+        body.trim()
+    } else {
+        after_newline.trim()
+    }
+}
+
+/// Extract the substring from the first `{` to the last `}` (inclusive).
+fn extract_json_object(s: &str) -> Option<&str> {
+    let start = s.find('{')?;
+    let end = s.rfind('}')?;
+    if end >= start {
+        Some(&s[start..=end])
+    } else {
+        None
     }
 }
 
@@ -140,16 +205,6 @@ mod tests {
     use crate::providers::types::{ProviderError, ProviderErrorKind, ProviderResponse};
 
     // --- fake providers ---
-
-    struct ConstantProvider(String);
-
-    impl ProviderClient for ConstantProvider {
-        fn call(&self, _req: ProviderRequest) -> Result<ProviderResponse, ProviderError> {
-            Ok(ProviderResponse {
-                content: self.0.clone(),
-            })
-        }
-    }
 
     struct FailingProvider {
         kind: ProviderErrorKind,
@@ -248,58 +303,90 @@ mod tests {
         }
     }
 
-    // --- tests ---
+    // --- parse_role_response unit tests ---
 
     #[test]
-    fn provider_accept_response_maps_to_role_accepted() {
-        let handler =
-            ProviderBackedDeliberationHandler::new(ConstantProvider("ACCEPT: draft".to_string()));
-        let event = handler.handle_effect(run_role(
-            DeliberationRole::Producer,
-            "write a poem",
-            None,
-            None,
-            vec![],
-        ));
+    fn json_accepted_response_maps_to_role_accepted() {
+        let result = parse_role_response(r#"{"status":"accepted","content":"draft"}"#);
         assert!(
-            matches!(
-                &event,
-                DeliberationEvent::RoleReturned {
-                    role: DeliberationRole::Producer,
-                    result: RoleResult::Accepted { content },
-                } if content == "draft"
-            ),
-            "expected RoleReturned(Producer, Accepted {{ 'draft' }}), got {event:?}"
+            matches!(result, RoleResult::Accepted { ref content } if content == "draft"),
+            "expected Accepted {{ 'draft' }}, got {result:?}"
         );
     }
 
     #[test]
-    fn provider_reject_response_maps_to_role_rejected() {
-        let handler = ProviderBackedDeliberationHandler::new(ConstantProvider(
-            "REJECT: needs changes".to_string(),
-        ));
-        let event = handler.handle_effect(run_role(
-            DeliberationRole::Referee,
-            "write a poem",
-            Some("draft"),
-            Some("review"),
-            vec![],
-        ));
+    fn json_rejected_response_maps_to_role_rejected() {
+        let result = parse_role_response(r#"{"status":"rejected","reason":"needs changes"}"#);
         assert!(
-            matches!(
-                &event,
-                DeliberationEvent::RoleReturned {
-                    result: RoleResult::Rejected { reason },
-                    ..
-                } if reason == "needs changes"
-            ),
-            "expected Rejected {{ 'needs changes' }}, got {event:?}"
+            matches!(result, RoleResult::Rejected { ref reason } if reason == "needs changes"),
+            "expected Rejected {{ 'needs changes' }}, got {result:?}"
         );
     }
 
     #[test]
-    fn malformed_provider_response_maps_to_failed() {
-        let handler = ProviderBackedDeliberationHandler::new(ConstantProvider("hello".to_string()));
+    fn json_accepted_empty_content_fails() {
+        let result = parse_role_response(r#"{"status":"accepted","content":""}"#);
+        assert!(
+            matches!(result, RoleResult::Failed { .. }),
+            "empty content must produce Failed, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn json_rejected_empty_reason_fails() {
+        let result = parse_role_response(r#"{"status":"rejected","reason":""}"#);
+        assert!(
+            matches!(result, RoleResult::Failed { .. }),
+            "empty reason must produce Failed, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn json_unknown_status_fails() {
+        let result = parse_role_response(r#"{"status":"pending","content":"draft"}"#);
+        assert!(
+            matches!(result, RoleResult::Failed { .. }),
+            "unknown status must produce Failed, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn malformed_json_fails() {
+        let result = parse_role_response("not json at all");
+        assert!(
+            matches!(result, RoleResult::Failed { .. }),
+            "malformed JSON must produce Failed, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn fenced_json_parses() {
+        let input = "```json\n{\"status\":\"accepted\",\"content\":\"draft\"}\n```";
+        let result = parse_role_response(input);
+        assert!(
+            matches!(result, RoleResult::Accepted { ref content } if content == "draft"),
+            "fenced JSON must parse to Accepted {{ 'draft' }}, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn preamble_then_json_parses_if_object_extractable() {
+        let input = "Here is the result:\n{\"status\":\"accepted\",\"content\":\"draft\"}";
+        let result = parse_role_response(input);
+        assert!(
+            matches!(result, RoleResult::Accepted { ref content } if content == "draft"),
+            "JSON after preamble must parse to Accepted {{ 'draft' }}, got {result:?}"
+        );
+    }
+
+    // --- handler-level tests (provider → RoleResult) ---
+
+    #[test]
+    fn provider_error_still_maps_to_failed() {
+        let handler = ProviderBackedDeliberationHandler::new(FailingProvider {
+            kind: ProviderErrorKind::Retryable,
+            message: "rate limited".to_string(),
+        });
         let event = handler.handle_effect(run_role(
             DeliberationRole::Producer,
             "write a poem",
@@ -315,32 +402,8 @@ mod tests {
                     ..
                 }
             ),
-            "expected Failed for malformed response, got {event:?}"
+            "provider error must map to Failed, not Rejected, got {event:?}"
         );
-    }
-
-    #[test]
-    fn provider_retryable_error_maps_to_failed() {
-        let handler = ProviderBackedDeliberationHandler::new(FailingProvider {
-            kind: ProviderErrorKind::Retryable,
-            message: "rate limited".to_string(),
-        });
-        let event = handler.handle_effect(run_role(
-            DeliberationRole::Producer,
-            "write a poem",
-            None,
-            None,
-            vec![],
-        ));
-        match &event {
-            DeliberationEvent::RoleReturned { result, .. } => {
-                assert!(
-                    matches!(result, RoleResult::Failed { .. }),
-                    "retryable provider error must map to Failed, not {result:?}"
-                );
-            }
-            other => panic!("expected RoleReturned, got {other:?}"),
-        }
     }
 
     #[test]
@@ -387,15 +450,21 @@ mod tests {
             prompt.contains("write a poem"),
             "expected prompt to include objective, got: {prompt}"
         );
+        assert!(
+            prompt.contains("\"status\""),
+            "expected prompt to include JSON schema instructions, got: {prompt}"
+        );
     }
+
+    // --- run_machine integration tests ---
 
     #[test]
     fn run_machine_with_provider_handler_success() {
         let machine = ProvidedMachine {
             handler: ProviderBackedDeliberationHandler::new(ScriptedProvider::from_strs(&[
-                "ACCEPT: draft",
-                "ACCEPT: review",
-                "ACCEPT: approved",
+                r#"{"status":"accepted","content":"draft"}"#,
+                r#"{"status":"accepted","content":"review"}"#,
+                r#"{"status":"accepted","content":"approved"}"#,
             ])),
         };
         let output = run_machine(machine, ready("write a poem", 0));
@@ -411,12 +480,12 @@ mod tests {
     fn run_machine_with_provider_handler_revision() {
         let machine = ProvidedMachine {
             handler: ProviderBackedDeliberationHandler::new(ScriptedProvider::from_strs(&[
-                "ACCEPT: draft v1",      // Producer call 1
-                "ACCEPT: review",        // Critic call 1
-                "REJECT: needs changes", // Referee call 1 → revision loop
-                "ACCEPT: draft v2",      // Producer call 2
-                "ACCEPT: review ok",     // Critic call 2
-                "ACCEPT: approved",      // Referee call 2
+                r#"{"status":"accepted","content":"draft v1"}"#,
+                r#"{"status":"accepted","content":"review"}"#,
+                r#"{"status":"rejected","reason":"needs changes"}"#,
+                r#"{"status":"accepted","content":"draft v2"}"#,
+                r#"{"status":"accepted","content":"review ok"}"#,
+                r#"{"status":"accepted","content":"approved"}"#,
             ])),
         };
         let output = run_machine(machine, ready("write a poem", 1));
@@ -426,47 +495,5 @@ mod tests {
             }
             other => panic!("expected Complete with 'draft v2', got {other:?}"),
         }
-    }
-
-    #[test]
-    fn response_with_preamble_then_accept_parses() {
-        let result = parse_role_response("Sure, here is my answer.\nACCEPT: the content");
-        assert!(
-            matches!(result, RoleResult::Accepted { ref content } if content == "the content"),
-            "expected Accepted {{ 'the content' }}, got {result:?}"
-        );
-    }
-
-    #[test]
-    fn response_with_preamble_then_reject_parses() {
-        let result = parse_role_response("Let me think about this.\nREJECT: needs more work");
-        assert!(
-            matches!(result, RoleResult::Rejected { ref reason } if reason == "needs more work"),
-            "expected Rejected {{ 'needs more work' }}, got {result:?}"
-        );
-    }
-
-    #[test]
-    fn response_with_both_markers_uses_first() {
-        let result = parse_role_response("REJECT: bad ACCEPT: good");
-        assert!(
-            matches!(result, RoleResult::Rejected { ref reason } if reason == "bad ACCEPT: good"),
-            "expected Rejected when REJECT: precedes ACCEPT:, got {result:?}"
-        );
-
-        let result = parse_role_response("ACCEPT: first REJECT: second");
-        assert!(
-            matches!(result, RoleResult::Accepted { ref content } if content == "first REJECT: second"),
-            "expected Accepted when ACCEPT: precedes REJECT:, got {result:?}"
-        );
-    }
-
-    #[test]
-    fn response_without_marker_still_fails() {
-        let result = parse_role_response("I have no idea what you want.");
-        assert!(
-            matches!(result, RoleResult::Failed { .. }),
-            "expected Failed when no marker present, got {result:?}"
-        );
     }
 }
