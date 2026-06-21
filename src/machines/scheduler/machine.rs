@@ -806,6 +806,26 @@ impl SchedulerMachine {
         }
     }
 
+    /// Check that `running` names a node that exists and is in an active status.
+    ///
+    /// Called before processing any event in `Waiting` to catch externally
+    /// constructed states where `running` points to a missing or terminal node.
+    fn validate_waiting_state(graph: &RunGraph, running: &NodeId) -> Result<(), String> {
+        match graph.nodes.iter().find(|n| &n.id == running) {
+            None => Err(format!(
+                "invalid waiting state: running node missing node id {}",
+                running.0
+            )),
+            Some(node) if !matches!(node.status, NodeStatus::Running | NodeStatus::Integrating) => {
+                Err(format!(
+                    "invalid waiting state: node {} has status {:?}",
+                    running.0, node.status
+                ))
+            }
+            _ => Ok(()),
+        }
+    }
+
     fn apply_elevate(graph: RunGraph, node_id: &NodeId) -> RunGraph {
         let (kind, objective, deps, attempt, plan_depth) = {
             let n = Self::get_node(&graph, node_id);
@@ -930,6 +950,10 @@ impl Machine for SchedulerMachine {
                 SchedulerState::Waiting { graph, running },
                 SchedulerEvent::NodeReturned { node_id, outcome },
             ) => {
+                if let Err(reason) = Self::validate_waiting_state(&graph, &running) {
+                    return Self::failed_transition(graph, reason);
+                }
+
                 if running != node_id {
                     let reason = format!(
                         "protocol violation: expected result for node {} but received {}",
@@ -1026,6 +1050,10 @@ impl Machine for SchedulerMachine {
                 SchedulerState::Waiting { graph, running },
                 SchedulerEvent::IntegrationReturned { node_id, outcome },
             ) => {
+                if let Err(reason) = Self::validate_waiting_state(&graph, &running) {
+                    return Self::failed_transition(graph, reason);
+                }
+
                 if running != node_id {
                     let reason = format!(
                         "protocol violation: expected integration result for node {} but received {}",
@@ -3584,6 +3612,110 @@ mod tests {
         assert!(matches!(
             t.effects.as_slice(),
             [SchedulerEffect::ReturnFailed { .. }]
+        ));
+    }
+
+    // ── Waiting-state invariant validation tests ──────────────────────────────
+
+    #[test]
+    fn waiting_with_missing_running_node_fails() {
+        let graph = single_work_graph();
+        let t = do_transition(
+            SchedulerState::Waiting {
+                graph,
+                running: NodeId("missing".to_string()),
+            },
+            SchedulerEvent::NodeReturned {
+                node_id: NodeId("missing".to_string()),
+                outcome: NodeOutcome::WorkAccepted(WorkOutput {
+                    summary: "irrelevant".to_string(),
+                }),
+            },
+        );
+
+        let SchedulerState::Failed { reason, .. } = t.state else {
+            panic!("expected Failed, got {:#?}", t.state);
+        };
+        assert!(
+            reason.contains("invalid waiting state"),
+            "reason should contain 'invalid waiting state', got: {reason:?}"
+        );
+        assert!(
+            reason.contains("missing"),
+            "reason should contain the missing node id, got: {reason:?}"
+        );
+        assert!(matches!(
+            t.effects.as_slice(),
+            [SchedulerEffect::ReturnFailed { .. }]
+        ));
+    }
+
+    #[test]
+    fn waiting_with_completed_running_node_fails() {
+        let mut graph = RunGraph {
+            nodes: vec![
+                work_node("A", "done", &[]),
+                work_node("B", "also done", &["A"]),
+            ],
+            next_id: 0,
+        };
+        graph.nodes[0].status = NodeStatus::Completed;
+        graph.nodes[1].status = NodeStatus::Completed;
+
+        let t = do_transition(
+            SchedulerState::Waiting {
+                graph,
+                running: NodeId("B".to_string()),
+            },
+            SchedulerEvent::NodeReturned {
+                node_id: NodeId("B".to_string()),
+                outcome: NodeOutcome::WorkAccepted(WorkOutput {
+                    summary: "irrelevant".to_string(),
+                }),
+            },
+        );
+
+        let SchedulerState::Failed { reason, .. } = t.state else {
+            panic!("expected Failed, got {:#?}", t.state);
+        };
+        assert!(
+            reason.contains("invalid waiting state"),
+            "reason should contain 'invalid waiting state', got: {reason:?}"
+        );
+        assert!(
+            reason.contains("Completed"),
+            "reason should contain the actual status, got: {reason:?}"
+        );
+        assert!(matches!(
+            t.effects.as_slice(),
+            [SchedulerEffect::ReturnFailed { .. }]
+        ));
+    }
+
+    #[test]
+    fn waiting_with_running_node_still_works() {
+        let graph = single_work_graph();
+        let t = do_transition(
+            SchedulerState::Waiting {
+                graph: running(graph, "A"),
+                running: NodeId("A".to_string()),
+            },
+            SchedulerEvent::NodeReturned {
+                node_id: NodeId("A".to_string()),
+                outcome: NodeOutcome::WorkAccepted(WorkOutput {
+                    summary: "success".to_string(),
+                }),
+            },
+        );
+
+        assert!(
+            matches!(t.state, SchedulerState::Waiting { .. }),
+            "expected Waiting (Integrating), got {:#?}",
+            t.state
+        );
+        assert!(matches!(
+            t.effects.as_slice(),
+            [SchedulerEffect::IntegrateWork { .. }]
         ));
     }
 
