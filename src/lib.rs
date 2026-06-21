@@ -19,6 +19,7 @@
 //! - [`machines`] — concrete state machines (scheduler, demo, …)
 //! - [`handlers`] — effect executors that perform I/O and produce events
 //! - [`models`] — shared domain data used across machines and handlers
+//! - [`providers`] — `ProviderClient` trait and typed request/response/error types
 //! - [`services`] — stateless data-transformation utilities
 
 #![deny(missing_docs)]
@@ -26,4 +27,5 @@ pub mod engine;
 pub mod handlers;
 pub mod machines;
 pub mod models;
+pub mod providers;
 pub mod services;
