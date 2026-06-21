@@ -42,8 +42,18 @@ pub struct WorkOutput {
 /// `NodeRequest` is the currency planners use to expand the graph. The
 /// scheduler assigns a fresh `NodeId` and wraps this into a real `Node`.
 /// Initial `attempt` and `model_tier` are always reset to defaults on creation.
+///
+/// The `id` field is a planner-supplied local name used solely for same-batch
+/// dependency detection during validation. It does not become the node's graph
+/// `NodeId`; actual graph IDs are generated from the `RunGraph::next_id` counter
+/// at insertion time.
 #[derive(Clone, Debug, PartialEq)]
 pub struct NodeRequest {
+    /// Planner-assigned local name for this request.
+    ///
+    /// Used by `validate_plan_dependencies` to identify same-batch sibling
+    /// references. Not used as or mapped to the resulting graph `NodeId`.
+    pub id: NodeId,
     /// Whether the new node should plan or execute.
     pub kind: NodeKind,
     /// Natural-language description of what the new node should accomplish.

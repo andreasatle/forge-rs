@@ -323,22 +323,39 @@ impl SchedulerMachine {
     /// Verify that every dependency listed in every child request already exists
     /// in the graph.
     ///
-    /// Returns `Err` with a descriptive message on the first unknown reference.
+    /// Returns `Err` with a descriptive message on the first invalid reference.
     /// The graph is not mutated; callers must not insert children when this
     /// returns `Err`.
+    ///
+    /// Two failure modes are distinguished:
+    /// - A dependency that matches another sibling's `id` in the same batch →
+    ///   "same-batch sibling dependency" (explicit unsupported-policy rejection).
+    /// - A dependency that exists nowhere → "unknown node id" (existing error).
+    ///
+    /// Sibling dependencies inside a single PlanOutput are intentionally unsupported.
+    /// Dependencies may only reference nodes that already exist in the graph.
+    /// This is a phase decision, not a limitation of the overall architecture.
     fn validate_plan_dependencies(
         graph: &RunGraph,
         children: &[NodeRequest],
     ) -> Result<(), String> {
         let known: HashSet<&NodeId> = graph.nodes.iter().map(|n| &n.id).collect();
+        let sibling_ids: HashSet<&NodeId> = children.iter().map(|c| &c.id).collect();
         for child in children {
             for dep in &child.dependencies {
-                if !known.contains(dep) {
+                if known.contains(dep) {
+                    continue;
+                }
+                if sibling_ids.contains(dep) {
                     return Err(format!(
-                        "plan output references unknown node id: {:?}",
-                        dep.0
+                        "same-batch sibling dependency: node {} depends on sibling {}",
+                        child.id.0, dep.0
                     ));
                 }
+                return Err(format!(
+                    "plan output references unknown node id: {:?}",
+                    dep.0
+                ));
             }
         }
         Ok(())
@@ -1149,6 +1166,7 @@ impl Machine for SchedulerMachine {
                 let outcome = if objective.contains("plan") {
                     NodeOutcome::PlanAccepted(super::event::PlanOutput {
                         children: vec![NodeRequest {
+                            id: NodeId(format!("work-from-{}", node_id.0)),
                             kind: NodeKind::Work,
                             objective: format!("work from {}", node_id.0),
                             dependencies: vec![node_id.clone()],
@@ -1422,6 +1440,7 @@ mod tests {
                 node_id: NodeId("P".to_string()),
                 outcome: NodeOutcome::PlanAccepted(PlanOutput {
                     children: vec![NodeRequest {
+                        id: NodeId("child-1".to_string()),
                         kind: NodeKind::Work,
                         objective: "child work".to_string(),
                         dependencies: vec![NodeId("P".to_string())],
@@ -1457,6 +1476,7 @@ mod tests {
                 node_id: NodeId("P".to_string()),
                 outcome: NodeOutcome::PlanAccepted(PlanOutput {
                     children: vec![NodeRequest {
+                        id: NodeId("nested-plan".to_string()),
                         kind: NodeKind::Plan,
                         objective: "nested plan".to_string(),
                         dependencies: vec![NodeId("P".to_string())],
@@ -2090,6 +2110,7 @@ mod tests {
                 node_id: NodeId("P".to_string()),
                 outcome: NodeOutcome::PlanAccepted(PlanOutput {
                     children: vec![NodeRequest {
+                        id: NodeId("child-1".to_string()),
                         kind: NodeKind::Work,
                         objective: "child work".to_string(),
                         dependencies: vec![NodeId("missing".to_string())],
@@ -2133,6 +2154,7 @@ mod tests {
                 node_id: NodeId("P".to_string()),
                 outcome: NodeOutcome::PlanAccepted(PlanOutput {
                     children: vec![NodeRequest {
+                        id: NodeId("child-1".to_string()),
                         kind: NodeKind::Work,
                         objective: "child work".to_string(),
                         dependencies: vec![NodeId("P".to_string())],
@@ -2147,6 +2169,106 @@ mod tests {
         assert_eq!(graph.nodes.len(), 2, "child should be inserted");
         assert_eq!(graph.nodes[0].status, NodeStatus::Completed);
         assert_eq!(graph.nodes[1].status, NodeStatus::Pending);
+    }
+
+    #[test]
+    fn same_batch_sibling_dependency_fails() {
+        // A plan output where B depends on A from the same batch.
+        // Sibling dependencies inside a single PlanOutput are intentionally unsupported.
+        let graph = RunGraph {
+            nodes: vec![plan_node("P", "plan something", &[])],
+            next_id: 0,
+        };
+        let t = do_transition(
+            SchedulerState::Waiting {
+                graph: running(graph, "P"),
+                running: NodeId("P".to_string()),
+            },
+            SchedulerEvent::NodeReturned {
+                node_id: NodeId("P".to_string()),
+                outcome: NodeOutcome::PlanAccepted(PlanOutput {
+                    children: vec![
+                        NodeRequest {
+                            id: NodeId("A".to_string()),
+                            kind: NodeKind::Work,
+                            objective: "step A".to_string(),
+                            dependencies: vec![],
+                        },
+                        NodeRequest {
+                            id: NodeId("B".to_string()),
+                            kind: NodeKind::Work,
+                            objective: "step B".to_string(),
+                            dependencies: vec![NodeId("A".to_string())],
+                        },
+                    ],
+                }),
+            },
+        );
+
+        let SchedulerState::Failed { graph, reason } = t.state else {
+            panic!("expected Failed, got {:#?}", t.state);
+        };
+        assert_eq!(graph.nodes.len(), 1, "no children should be inserted");
+        assert!(
+            reason.contains("same-batch sibling dependency"),
+            "reason should name the policy, got: {reason:?}"
+        );
+        assert!(
+            reason.contains("A"),
+            "reason should name the referenced sibling, got: {reason:?}"
+        );
+        assert!(
+            reason.contains("B"),
+            "reason should name the dependent node, got: {reason:?}"
+        );
+        assert!(matches!(
+            t.effects.as_slice(),
+            [SchedulerEffect::ReturnFailed { .. }]
+        ));
+    }
+
+    #[test]
+    fn ordinary_missing_dependency_still_reports_unknown_node() {
+        // A dependency that does not appear in the graph OR the current batch
+        // should still produce the existing "unknown node id" diagnostic.
+        let graph = RunGraph {
+            nodes: vec![plan_node("P", "plan something", &[])],
+            next_id: 0,
+        };
+        let t = do_transition(
+            SchedulerState::Waiting {
+                graph: running(graph, "P"),
+                running: NodeId("P".to_string()),
+            },
+            SchedulerEvent::NodeReturned {
+                node_id: NodeId("P".to_string()),
+                outcome: NodeOutcome::PlanAccepted(PlanOutput {
+                    children: vec![NodeRequest {
+                        id: NodeId("child-1".to_string()),
+                        kind: NodeKind::Work,
+                        objective: "step".to_string(),
+                        dependencies: vec![NodeId("ghost".to_string())],
+                    }],
+                }),
+            },
+        );
+
+        let SchedulerState::Failed { graph, reason } = t.state else {
+            panic!("expected Failed, got {:#?}", t.state);
+        };
+        assert_eq!(graph.nodes.len(), 1, "no children should be inserted");
+        assert!(
+            !reason.contains("same-batch sibling dependency"),
+            "unknown dep should not be reported as sibling, got: {reason:?}"
+        );
+        assert!(
+            reason.contains("ghost"),
+            "reason should name the unknown id, got: {reason:?}"
+        );
+        assert!(matches!(
+            t.effects.as_slice(),
+            [SchedulerEffect::ReturnFailed { .. }]
+        ));
     }
 
     #[test]
@@ -2165,11 +2287,13 @@ mod tests {
                 outcome: NodeOutcome::PlanAccepted(PlanOutput {
                     children: vec![
                         NodeRequest {
+                            id: NodeId("child-1".to_string()),
                             kind: NodeKind::Work,
                             objective: "child one".to_string(),
                             dependencies: vec![NodeId("P".to_string())],
                         },
                         NodeRequest {
+                            id: NodeId("child-2".to_string()),
                             kind: NodeKind::Work,
                             objective: "child two".to_string(),
                             dependencies: vec![NodeId("P".to_string())],
