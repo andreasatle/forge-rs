@@ -15,22 +15,32 @@ use forge_rs::providers::{
     RetryingProvider,
 };
 
-// Appended to every prompt so the local model knows what prefix to use.
-const PROTOCOL_SUFFIX: &str = "\n\n\
-Reply with exactly one of these two forms and nothing else before the prefix:\n\
+// Prepended before the task prompt.
+const PROTOCOL_PREFIX: &str = "\
+Do not think step by step. Do not explain. Output one line only.\n\
+Reply with exactly one of:\n\
   ACCEPT: <your response>\n\
-  REJECT: <reason>\n\
-Do not use markdown. Do not add any preamble before ACCEPT: or REJECT:.";
+  REJECT: <reason>";
 
-/// Wraps any provider and appends the ACCEPT/REJECT protocol instruction.
+// Appended after the task prompt.
+const PROTOCOL_SUFFIX: &str = "\n\
+Do not think step by step. Do not explain. Output one line only.\n\
+Your response must start with ACCEPT: or REJECT:";
+
+/// Wraps any provider and sandwiches the task prompt between the protocol
+/// instruction so that both the top and the bottom of the context reinforce
+/// the expected output format.
 struct InstructedProvider<P> {
     inner: P,
 }
 
 impl<P: ProviderClient> ProviderClient for InstructedProvider<P> {
     fn call(&self, req: ProviderRequest) -> Result<ProviderResponse, ProviderError> {
-        let extended = format!("{}{}", req.prompt, PROTOCOL_SUFFIX);
-        self.inner.call(ProviderRequest { prompt: extended })
+        let wrapped = format!(
+            "{}\n\n{}\n\n{}",
+            PROTOCOL_PREFIX, req.prompt, PROTOCOL_SUFFIX
+        );
+        self.inner.call(ProviderRequest { prompt: wrapped })
     }
 }
 
@@ -74,7 +84,7 @@ fn main() {
     println!("Max revisions: {max_revisions}");
     println!();
 
-    let llama = LlamaCppProvider::new("http://localhost:8080").with_n_predict(256);
+    let llama = LlamaCppProvider::new("http://localhost:8080").with_n_predict(80);
     let retrying = RetryingProvider::new(llama, 3);
     let instructed = InstructedProvider { inner: retrying };
     let handler = ProviderBackedDeliberationHandler::new(instructed);
@@ -113,7 +123,7 @@ mod tests {
     }
 
     #[test]
-    fn instructed_provider_appends_protocol_suffix() {
+    fn instructed_provider_contains_protocol_markers() {
         let provider = InstructedProvider {
             inner: EchoProvider,
         };
@@ -128,16 +138,16 @@ mod tests {
         );
         assert!(
             resp.content.contains("ACCEPT:"),
-            "protocol suffix must be appended"
+            "wrapped prompt must contain ACCEPT:"
         );
         assert!(
             resp.content.contains("REJECT:"),
-            "protocol suffix must include REJECT:"
+            "wrapped prompt must contain REJECT:"
         );
     }
 
     #[test]
-    fn instructed_provider_suffix_follows_prompt() {
+    fn instructed_provider_wraps_prompt() {
         let provider = InstructedProvider {
             inner: EchoProvider,
         };
@@ -147,10 +157,15 @@ mod tests {
             })
             .unwrap();
         let pos_prompt = resp.content.find("my prompt").unwrap();
-        let pos_accept = resp.content.find("ACCEPT:").unwrap();
+        let pos_first_accept = resp.content.find("ACCEPT:").unwrap();
+        let pos_last_accept = resp.content.rfind("ACCEPT:").unwrap();
         assert!(
-            pos_prompt < pos_accept,
-            "original prompt must appear before the protocol suffix"
+            pos_first_accept < pos_prompt,
+            "protocol prefix must precede the task prompt"
+        );
+        assert!(
+            pos_prompt < pos_last_accept,
+            "protocol suffix must follow the task prompt"
         );
     }
 }
