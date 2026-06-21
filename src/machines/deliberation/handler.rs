@@ -179,15 +179,41 @@ fn strip_code_fence(s: &str) -> &str {
     }
 }
 
-/// Extract the substring from the first `{` to the last `}` (inclusive).
+/// Extract the first balanced JSON object from `s`.
+///
+/// Starts at the first `{`, then scans forward tracking brace depth while
+/// respecting string literals (including `\"` escapes) so that braces inside
+/// strings do not affect the depth count. Returns the substring from the
+/// opening `{` through its matching `}`, ignoring any trailing text.
 fn extract_json_object(s: &str) -> Option<&str> {
     let start = s.find('{')?;
-    let end = s.rfind('}')?;
-    if end >= start {
-        Some(&s[start..=end])
-    } else {
-        None
+    let bytes = s.as_bytes();
+    let mut depth: usize = 0;
+    let mut in_string = false;
+    let mut i = start;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\\' if in_string => {
+                i += 2; // skip escaped character
+                continue;
+            }
+            b'"' => {
+                in_string = !in_string;
+            }
+            b'{' if !in_string => {
+                depth += 1;
+            }
+            b'}' if !in_string => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(&s[start..=i]);
+                }
+            }
+            _ => {}
+        }
+        i += 1;
     }
+    None
 }
 
 #[cfg(test)]
@@ -376,6 +402,35 @@ mod tests {
         assert!(
             matches!(result, RoleResult::Accepted { ref content } if content == "draft"),
             "JSON after preamble must parse to Accepted {{ 'draft' }}, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn json_with_trailing_text_parses_first_object() {
+        let input = r#"{"status":"accepted","content":"draft"}\nSome trailing explanation the model added."#;
+        let result = parse_role_response(input);
+        assert!(
+            matches!(result, RoleResult::Accepted { ref content } if content == "draft"),
+            "trailing text after JSON must be ignored, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn json_with_braces_inside_string_parses() {
+        let input = r#"{"status":"accepted","content":"use {} in templates"}"#;
+        let result = parse_role_response(input);
+        assert!(
+            matches!(result, RoleResult::Accepted { ref content } if content == "use {} in templates"),
+            "braces inside string must not affect depth count, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn unbalanced_json_object_fails() {
+        let result = parse_role_response(r#"{"status":"accepted","content":"oops""#);
+        assert!(
+            matches!(result, RoleResult::Failed { .. }),
+            "unbalanced JSON must produce Failed, got {result:?}"
         );
     }
 
