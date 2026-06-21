@@ -804,6 +804,21 @@ impl SchedulerMachine {
         }
     }
 
+    /// Return `Some(reason)` when `NodeReturned` is not valid for the node.
+    ///
+    /// Valid only when the node has `NodeStatus::Running`. A node in
+    /// `Integrating` status must use `IntegrationReturned` instead.
+    fn invalid_node_return_reason(graph: &RunGraph, node_id: &NodeId) -> Option<String> {
+        match Self::node_for_running(graph, node_id) {
+            None => Some(format!("node {} not found in graph", node_id.0)),
+            Some(node) if node.status != NodeStatus::Running => Some(format!(
+                "protocol violation: NodeReturned for node {} expected Running but found {:?}",
+                node_id.0, node.status
+            )),
+            _ => None,
+        }
+    }
+
     /// Return `Some(reason)` when `IntegrationReturned` is not valid for the node.
     ///
     /// Valid only when the node exists, has `NodeKind::Work`, and is in
@@ -1022,6 +1037,11 @@ impl Machine for SchedulerMachine {
                         "protocol violation: expected result for node {} but received {}",
                         running.0, node_id.0
                     );
+                    return Self::failed_transition(graph, reason);
+                }
+
+                // Validate that the node is in Running status (not Integrating or other).
+                if let Some(reason) = Self::invalid_node_return_reason(&graph, &node_id) {
                     return Self::failed_transition(graph, reason);
                 }
 
@@ -3532,6 +3552,54 @@ mod tests {
         assert!(
             reason.contains("PlanAccepted"),
             "reason should mention PlanAccepted, got: {reason:?}"
+        );
+        assert!(matches!(
+            t.effects.as_slice(),
+            [SchedulerEffect::ReturnFailed { .. }]
+        ));
+    }
+
+    #[test]
+    fn node_returned_rejects_integrating_node() {
+        // Waiting { running: B } with B status = Integrating.
+        // NodeReturned must be rejected: it is for the execution phase only.
+        let mut graph = RunGraph {
+            nodes: vec![work_node("B", "do work", &[])],
+            next_id: 0,
+        };
+        graph.nodes[0].status = NodeStatus::Integrating;
+
+        let t = do_transition(
+            SchedulerState::Waiting {
+                graph,
+                running: NodeId("B".to_string()),
+            },
+            SchedulerEvent::NodeReturned {
+                node_id: NodeId("B".to_string()),
+                outcome: NodeOutcome::WorkAccepted(WorkOutput {
+                    summary: "spurious result".to_string(),
+                }),
+            },
+        );
+
+        let SchedulerState::Failed { reason, .. } = t.state else {
+            panic!("expected Failed, got {:#?}", t.state);
+        };
+        assert!(
+            reason.contains("protocol violation"),
+            "reason should contain 'protocol violation', got: {reason:?}"
+        );
+        assert!(
+            reason.contains("NodeReturned"),
+            "reason should contain 'NodeReturned', got: {reason:?}"
+        );
+        assert!(
+            reason.contains("Running"),
+            "reason should mention expected status Running, got: {reason:?}"
+        );
+        assert!(
+            reason.contains("Integrating"),
+            "reason should mention actual status Integrating, got: {reason:?}"
         );
         assert!(matches!(
             t.effects.as_slice(),
