@@ -15,8 +15,9 @@ use forge_rs::machines::demo::{DemoMachine, Task};
 use forge_rs::machines::scheduler::state::SchedulerState;
 use forge_rs::machines::scheduler::{
     ModelTier, Node, NodeId, NodeKind, NodeOrigin, NodeStatus, RunGraph, RunRequest,
-    SchedulerMachine, SchedulerOutput,
+    SchedulerHandler, SchedulerMachine, SchedulerOutput,
 };
+use forge_rs::node_runner::StaticNodeRunner;
 
 fn work(id: &str, objective: &str, deps: &[&str]) -> Node {
     Node {
@@ -35,7 +36,7 @@ fn work(id: &str, objective: &str, deps: &[&str]) -> Node {
 
 fn run_demo(label: &str, state: SchedulerState) {
     println!("\n=== {label} ===\n");
-    match run_machine(SchedulerMachine, state) {
+    match run_machine(SchedulerHandler::new(StaticNodeRunner), state) {
         SchedulerOutput::Complete {
             graph: g,
             recovery_summary: rs,
@@ -96,34 +97,23 @@ fn main() {
         }),
     );
 
-    // 3. Retry: fails on attempt 0, succeeds on attempt 1
+    // 3. A work node that succeeds (StaticNodeRunner: no "fail" keyword)
     run_demo(
-        "retry recovery",
+        "single work node",
         SchedulerState::Running {
             graph: RunGraph {
-                nodes: vec![work("R", "retry this job", &[])],
+                nodes: vec![work("R", "run this job", &[])],
                 next_id: 0,
             },
         },
     );
 
-    // 4. ElevateModel: fails on attempt 0, succeeds on attempt 1 with Strong tier
-    run_demo(
-        "elevate model recovery",
-        SchedulerState::Running {
-            graph: RunGraph {
-                nodes: vec![work("E", "elevate this task", &[])],
-                next_id: 0,
-            },
-        },
-    );
-
-    // 5. Terminal failure
+    // 4. Terminal failure (StaticNodeRunner: "fail" in objective → Terminal recovery)
     run_demo(
         "terminal failure",
         SchedulerState::Running {
             graph: RunGraph {
-                nodes: vec![work("X", "terminal task", &[])],
+                nodes: vec![work("X", "fail this step", &[])],
                 next_id: 0,
             },
         },

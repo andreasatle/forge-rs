@@ -33,6 +33,7 @@
 
 pub mod effect;
 pub mod event;
+pub mod handler;
 pub mod machine;
 pub mod state;
 
@@ -41,6 +42,7 @@ pub use event::{
     IntegrationFailure, IntegrationOutcome, IntegrationOutput, NodeFailure, NodeOutcome,
     NodeRequest, PlanOutput, RecoveryAction, SchedulerEvent, WorkOutput,
 };
+pub use handler::SchedulerHandler;
 pub use machine::{RecoverySummary, SchedulerMachine, SchedulerOutput};
 pub use state::{
     ModelTier, Node, NodeId, NodeKind, NodeOrigin, NodeStatus, RunGraph, RunRequest, SchedulerState,

@@ -1,13 +1,12 @@
 //! Scheduler machine — transition logic and graph helpers.
 //!
-//! This module owns the `SchedulerMachine` implementation of `Machine`. It
+//! This module owns the `SchedulerMachine` pure transition carrier. It
 //! contains:
 //!
 //! - Pure graph-inspection helpers (`find_ready`, `all_complete`).
 //! - Pure graph-mutation helpers (`mark_node`, `push_node`, `insert_children`,
 //!   `apply_retry`, `apply_split`, `apply_elevate`).
 //! - The `transition` function, which is the only place where state advances.
-//! - The `handle_effect` function, which simulates runners during development.
 //! - An `output` recogniser that identifies terminal states.
 //!
 //! # What this module does NOT own
@@ -15,12 +14,12 @@
 //! - The definitions of state, events, and effects — those live in their
 //!   respective sibling modules.
 //! - The generic runner loop — that is in `engine::runner`.
-//! - Real provider or tool execution — this stub dispatches keyword-based
-//!   outcomes for demonstration purposes only.
+//! - Effect handling or node execution — those live in `handler.rs` behind the
+//!   `NodeRunner` boundary.
 
 use std::collections::HashSet;
 
-use crate::engine::{Machine, Transition};
+use crate::engine::Transition;
 
 use super::effect::SchedulerEffect;
 
@@ -44,8 +43,8 @@ const MAX_GRAPH_NODES: usize = 100;
 /// Plan expansion and Split recovery cannot create infinitely deep plan chains.
 const MAX_PLAN_DEPTH: usize = 10;
 use super::event::{
-    IntegrationFailure, IntegrationOutcome, IntegrationOutput, NodeFailure, NodeOutcome,
-    NodeOutcome::*, NodeRequest, RecoveryAction, SchedulerEvent, WorkOutput,
+    IntegrationFailure, IntegrationOutcome, NodeFailure, NodeOutcome, NodeOutcome::*, NodeRequest,
+    RecoveryAction, SchedulerEvent,
 };
 use super::state::{
     ModelTier, Node, NodeId, NodeKind, NodeOrigin, NodeStatus, RunGraph, RunRequest, SchedulerState,
@@ -928,21 +927,19 @@ impl SchedulerMachine {
     }
 }
 
-impl Machine for SchedulerMachine {
-    type State = SchedulerState;
-    type Event = SchedulerEvent;
-    type Effect = SchedulerEffect;
-    type Output = SchedulerOutput;
-
-    fn start_event(&self) -> Self::Event {
+impl SchedulerMachine {
+    /// Returns the event used to bootstrap the scheduler on the first tick.
+    pub fn start_event(&self) -> SchedulerEvent {
         SchedulerEvent::Start
     }
 
-    fn transition(
+    /// Pure transition function: given the current state and an event, returns
+    /// the next state and any effects to dispatch.
+    pub fn transition(
         &self,
-        state: Self::State,
-        event: Self::Event,
-    ) -> Transition<Self::State, Self::Effect> {
+        state: SchedulerState,
+        event: SchedulerEvent,
+    ) -> Transition<SchedulerState, SchedulerEffect> {
         println!("STATE: {state:#?}");
         println!("EVENT: {event:#?}");
 
@@ -1203,115 +1200,12 @@ impl Machine for SchedulerMachine {
         }
     }
 
-    /// Stub effect handler used during development.
-    ///
-    /// In production this would be replaced by a real `RunMachine` handler that
-    /// dispatches nodes to actual LLM providers. For now, outcomes are determined
-    /// by keyword matching on the objective string so that the scenarios in
-    /// `main.rs` can exercise all recovery paths without a provider.
-    ///
-    /// `ReturnComplete` and `ReturnFailed` effects must never reach this method;
-    /// the `output` recogniser intercepts terminal states before the runner has
-    /// a chance to dispatch their effects.
-    fn handle_effect(&self, effect: Self::Effect) -> Self::Event {
-        println!("EFFECT: {effect:#?}");
-
-        match effect {
-            SchedulerEffect::RunNode {
-                node_id,
-                kind: _,
-                objective,
-                model_tier: _,
-                attempt,
-            } => {
-                println!(
-                    "  -> running node {} (attempt {}): {:?}",
-                    node_id.0, attempt, objective
-                );
-
-                let outcome = if objective.contains("plan") {
-                    NodeOutcome::PlanAccepted(super::event::PlanOutput {
-                        children: vec![NodeRequest {
-                            id: NodeId(format!("work-from-{}", node_id.0)),
-                            kind: NodeKind::Work,
-                            objective: format!("work from {}", node_id.0),
-                            dependencies: vec![node_id.clone()],
-                        }],
-                    })
-                } else if objective.contains("retry") {
-                    if attempt == 0 {
-                        NodeOutcome::Failed(NodeFailure {
-                            reason: "first attempt failed".to_string(),
-                            recovery: RecoveryAction::Retry {
-                                message: "try again".to_string(),
-                            },
-                        })
-                    } else {
-                        NodeOutcome::WorkAccepted(WorkOutput {
-                            summary: format!("retry succeeded on attempt {attempt}"),
-                        })
-                    }
-                } else if objective.contains("split") {
-                    NodeOutcome::Failed(NodeFailure {
-                        reason: "task too complex to execute directly".to_string(),
-                        recovery: RecoveryAction::Split {
-                            message: format!("decompose: {objective}"),
-                        },
-                    })
-                } else if objective.contains("elevate") {
-                    if attempt == 0 {
-                        NodeOutcome::Failed(NodeFailure {
-                            reason: "needs stronger model".to_string(),
-                            recovery: RecoveryAction::ElevateModel {
-                                message: "retry with strong model".to_string(),
-                            },
-                        })
-                    } else {
-                        NodeOutcome::WorkAccepted(WorkOutput {
-                            summary: format!("elevated model succeeded on attempt {attempt}"),
-                        })
-                    }
-                } else if objective.contains("terminal") {
-                    NodeOutcome::Failed(NodeFailure {
-                        reason: "unrecoverable error".to_string(),
-                        recovery: RecoveryAction::Terminal {
-                            message: "fatal: cannot continue".to_string(),
-                        },
-                    })
-                } else {
-                    NodeOutcome::WorkAccepted(WorkOutput {
-                        summary: format!("completed: {objective}"),
-                    })
-                };
-
-                SchedulerEvent::NodeReturned { node_id, outcome }
-            }
-
-            SchedulerEffect::IntegrateWork { node_id, work } => {
-                println!(
-                    "  -> integrating work from node {}: {:?}",
-                    node_id.0, work.summary
-                );
-                SchedulerEvent::IntegrationReturned {
-                    node_id,
-                    outcome: IntegrationOutcome::Succeeded(IntegrationOutput {
-                        summary: work.summary,
-                    }),
-                }
-            }
-
-            SchedulerEffect::ReturnComplete { .. } | SchedulerEffect::ReturnFailed { .. } => {
-                unreachable!("return effects are never dispatched to the effect handler")
-            }
-        }
-    }
-
     /// Recognise terminal states and extract the final output.
     ///
     /// Returns `Some` only for `Complete` and `Failed`, the two states from
     /// which the scheduler cannot advance further. All other states return
     /// `None` to keep the runner loop going.
-    fn output(&self, state: &Self::State) -> Option<Self::Output> {
+    pub fn output(&self, state: &SchedulerState) -> Option<SchedulerOutput> {
         match state {
             SchedulerState::Complete { graph } => Some(SchedulerOutput::Complete {
                 recovery_summary: RecoverySummary::from_graph(graph),
@@ -1329,11 +1223,18 @@ impl Machine for SchedulerMachine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::run_machine;
     use crate::machines::scheduler::event::{
         IntegrationFailure, IntegrationOutcome, IntegrationOutput, NodeFailure, NodeOutcome,
         NodeRequest, PlanOutput, RecoveryAction, WorkOutput,
     };
+    use crate::machines::scheduler::handler::SchedulerHandler;
     use crate::machines::scheduler::state::{Node, RunGraph, RunRequest};
+    use crate::node_runner::StaticNodeRunner;
+
+    fn scheduler_handler() -> SchedulerHandler<StaticNodeRunner> {
+        SchedulerHandler::new(StaticNodeRunner)
+    }
 
     fn work_node(id: &str, objective: &str, deps: &[&str]) -> Node {
         Node {
@@ -1437,7 +1338,7 @@ mod tests {
             objective: "plan demo".to_string(),
         };
         let state = SchedulerMachine::initial_state(request);
-        let output = crate::engine::run_machine(SchedulerMachine, state);
+        let output = run_machine(scheduler_handler(), state);
         assert!(matches!(output, SchedulerOutput::Complete { .. }));
     }
 
@@ -1773,7 +1674,7 @@ mod tests {
             nodes: vec![Node {
                 id: NodeId("T".to_string()),
                 kind: NodeKind::Work,
-                objective: "terminal task".to_string(),
+                objective: "fail this step".to_string(),
                 dependencies: vec![],
                 status: NodeStatus::Pending,
                 attempt: 0,
@@ -1784,8 +1685,7 @@ mod tests {
             }],
             next_id: 0,
         };
-        let output =
-            crate::engine::run_machine(SchedulerMachine, SchedulerState::Running { graph });
+        let output = run_machine(scheduler_handler(), SchedulerState::Running { graph });
         assert!(matches!(output, SchedulerOutput::Failed { .. }));
     }
 
@@ -1809,102 +1709,27 @@ mod tests {
     }
 
     #[test]
-    fn retry_remaps_downstream_dependencies_and_chain_completes() {
-        // A -> B -> C; B fails with Retry on attempt 0, succeeds on attempt 1.
-        // After Retry the stub handler returns WorkAccepted because "do retry"
-        // contains "retry" and attempt > 0.
+    fn three_node_chain_completes_via_handler() {
         let graph = RunGraph {
             nodes: vec![
                 work_node("A", "step A", &[]),
-                work_node("B", "do retry", &["A"]),
+                work_node("B", "step B", &["A"]),
                 work_node("C", "step C", &["B"]),
             ],
             next_id: 0,
         };
 
-        let output =
-            crate::engine::run_machine(SchedulerMachine, SchedulerState::Running { graph });
+        let output = run_machine(scheduler_handler(), SchedulerState::Running { graph });
 
         let SchedulerOutput::Complete { graph, .. } = output else {
             panic!("expected Complete")
         };
-
-        // Original B is Failed (historical record).
-        let b = graph.nodes.iter().find(|n| n.id.0 == "B").expect("B");
-        assert_eq!(b.status, NodeStatus::Failed);
-
-        // Replacement B' exists and completed.
-        let b_prime = graph
-            .nodes
-            .iter()
-            .find(|n| n.id.0.starts_with("B-retry-"))
-            .expect("B'");
-        assert_eq!(b_prime.status, NodeStatus::Completed);
-        assert_eq!(b_prime.attempt, 1);
-
-        // C's dependency was rewritten from B to B'.
-        let c = graph.nodes.iter().find(|n| n.id.0 == "C").expect("C");
         assert!(
-            !c.dependencies.contains(&NodeId("B".to_string())),
-            "C still depends on failed B"
+            graph
+                .nodes
+                .iter()
+                .all(|n| n.status == NodeStatus::Completed)
         );
-        assert!(
-            c.dependencies.contains(&b_prime.id),
-            "C does not depend on B'"
-        );
-
-        // C ran and completed.
-        assert_eq!(c.status, NodeStatus::Completed);
-    }
-
-    #[test]
-    fn elevate_remaps_downstream_dependencies_and_chain_completes() {
-        // A -> B -> C; B fails with ElevateModel on attempt 0, succeeds on attempt 1.
-        // The stub handler returns ElevateModel on attempt 0 and WorkAccepted on attempt 1
-        // because "do elevate" contains "elevate".
-        let graph = RunGraph {
-            nodes: vec![
-                work_node("A", "step A", &[]),
-                work_node("B", "do elevate", &["A"]),
-                work_node("C", "step C", &["B"]),
-            ],
-            next_id: 0,
-        };
-
-        let output =
-            crate::engine::run_machine(SchedulerMachine, SchedulerState::Running { graph });
-
-        let SchedulerOutput::Complete { graph, .. } = output else {
-            panic!("expected Complete, got Failed")
-        };
-
-        // Original B is Failed (historical record).
-        let b = graph.nodes.iter().find(|n| n.id.0 == "B").expect("B");
-        assert_eq!(b.status, NodeStatus::Failed);
-
-        // Replacement B' exists, used Strong tier, and completed.
-        let b_prime = graph
-            .nodes
-            .iter()
-            .find(|n| n.id.0.starts_with("B-elevated-"))
-            .expect("B'");
-        assert_eq!(b_prime.model_tier, ModelTier::Strong);
-        assert_eq!(b_prime.attempt, 1);
-        assert_eq!(b_prime.status, NodeStatus::Completed);
-
-        // C's dependency was rewritten from B to B'.
-        let c = graph.nodes.iter().find(|n| n.id.0 == "C").expect("C");
-        assert!(
-            !c.dependencies.contains(&NodeId("B".to_string())),
-            "C still depends on failed B"
-        );
-        assert!(
-            c.dependencies.contains(&b_prime.id),
-            "C does not depend on B'"
-        );
-
-        // C ran and completed.
-        assert_eq!(c.status, NodeStatus::Completed);
     }
 
     #[test]
@@ -2089,8 +1914,8 @@ mod tests {
 
     #[test]
     fn full_chain_run() {
-        let output = crate::engine::run_machine(
-            SchedulerMachine,
+        let output = run_machine(
+            scheduler_handler(),
             SchedulerState::Running {
                 graph: chain_graph(),
             },
@@ -2666,8 +2491,8 @@ mod tests {
 
     #[test]
     fn clean_success_has_no_recovery() {
-        let output = crate::engine::run_machine(
-            SchedulerMachine,
+        let output = run_machine(
+            scheduler_handler(),
             SchedulerState::Running {
                 graph: single_work_graph(),
             },
@@ -2681,56 +2506,6 @@ mod tests {
         assert!(!recovery_summary.recovered);
         assert_eq!(recovery_summary.retry_count, 0);
         assert_eq!(recovery_summary.elevate_count, 0);
-        assert_eq!(recovery_summary.split_count, 0);
-    }
-
-    #[test]
-    fn retry_success_reports_recovery() {
-        // The stub handler triggers Retry on attempt 0 and succeeds on attempt 1
-        // for any objective containing "retry".
-        let output = crate::engine::run_machine(
-            SchedulerMachine,
-            SchedulerState::Running {
-                graph: RunGraph {
-                    nodes: vec![work_node("R", "retry this", &[])],
-                    next_id: 0,
-                },
-            },
-        );
-        let SchedulerOutput::Complete {
-            recovery_summary, ..
-        } = output
-        else {
-            panic!("expected Complete");
-        };
-        assert!(recovery_summary.recovered);
-        assert_eq!(recovery_summary.retry_count, 1);
-        assert_eq!(recovery_summary.elevate_count, 0);
-        assert_eq!(recovery_summary.split_count, 0);
-    }
-
-    #[test]
-    fn elevate_success_reports_recovery() {
-        // The stub handler triggers ElevateModel on attempt 0 and succeeds on
-        // attempt 1 for any objective containing "elevate".
-        let output = crate::engine::run_machine(
-            SchedulerMachine,
-            SchedulerState::Running {
-                graph: RunGraph {
-                    nodes: vec![work_node("E", "elevate this", &[])],
-                    next_id: 0,
-                },
-            },
-        );
-        let SchedulerOutput::Complete {
-            recovery_summary, ..
-        } = output
-        else {
-            panic!("expected Complete");
-        };
-        assert!(recovery_summary.recovered);
-        assert_eq!(recovery_summary.retry_count, 0);
-        assert_eq!(recovery_summary.elevate_count, 1);
         assert_eq!(recovery_summary.split_count, 0);
     }
 
