@@ -3,7 +3,7 @@
 //! This machine owns the multi-role deliberation pipeline. A single
 //! `DeliberationRequest` enters; a `DeliberationOutput` (or failure) exits.
 //!
-//! **Phase 2** wires Producer → Critic:
+//! Deliberation runs producer output through critic review before completion:
 //! - `Ready + Start` dispatches `RunRole(Producer, input=None)` → `Waiting(Producer)`.
 //! - `Waiting(Producer) + RoleReturned(Producer, Accepted { content })`
 //!   → `Waiting(Critic)` + `RunRole(Critic, input=Some(content))`.
@@ -15,8 +15,9 @@
 //! - `Waiting(Critic)` with no producer content → `Failed` ("invalid deliberation state").
 //! - Any role mismatch → `Failed` with a "protocol violation" reason.
 //!
-//! Referee and revision loops are future work. All provider calls are external
-//! and represented as `DeliberationEffect::RunRole`.
+//! `Referee` is represented in the role enum but not yet part of the transition path.
+//! Revision loops are not yet implemented. All provider calls are external and
+//! represented as `DeliberationEffect::RunRole`.
 
 pub mod effect;
 pub mod event;

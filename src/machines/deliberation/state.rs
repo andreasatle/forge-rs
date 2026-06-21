@@ -1,7 +1,7 @@
 //! DeliberationMachine state types.
 //!
 //! The deliberation machine owns the Producer → Critic → Referee revision loop.
-//! Phase 2 wires Producer → Critic. Referee and revision loops are future work.
+//! Producer output is routed through critic review before the pipeline completes.
 
 /// The input submitted to the deliberation pipeline.
 #[derive(Clone, Debug, PartialEq)]
@@ -19,8 +19,9 @@ pub struct DeliberationOutput {
 
 /// The three roles that participate in the deliberation loop.
 ///
-/// Phase 2 activates `Producer` and `Critic`. `Referee` is present so the
-/// full finite space is visible; unimplemented paths fail clearly.
+/// `Producer` and `Critic` are active in the current transition path. `Referee`
+/// is represented here but not yet part of the transition logic; unimplemented
+/// paths fail clearly.
 #[derive(Clone, Debug, PartialEq)]
 pub enum DeliberationRole {
     /// Generates the initial content for the objective.

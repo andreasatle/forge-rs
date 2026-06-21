@@ -1,6 +1,6 @@
 //! DeliberationMachine — transition logic and `Machine` implementation.
 //!
-//! **Phase 2** wires Producer → Critic:
+//! Deliberation runs producer output through critic review before completion:
 //!
 //! ```text
 //! Ready + Start
@@ -24,7 +24,8 @@
 //! Role mismatches → Failed + ReturnFailed (protocol violation)
 //! ```
 //!
-//! Referee and revision loops are future work.
+//! `Referee` is represented in the role enum but not yet part of the transition path.
+//! Revision loops are not yet implemented.
 //! Critic acceptance approves producer content; it does not replace it.
 
 use crate::engine::{Machine, Transition};
