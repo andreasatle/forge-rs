@@ -8,9 +8,12 @@
 //!
 //! - `types.rs` — [`NodeRunRequest`] and [`NodeRunResult`]
 //! - `runner.rs` — [`NodeRunner`] trait and [`StaticNodeRunner`] fake implementation
+//! - `deliberating.rs` — [`DeliberatingNodeRunner`] backed by [`DeliberationMachine`](crate::machines::deliberation::DeliberationMachine)
 
+pub mod deliberating;
 pub mod runner;
 pub mod types;
 
+pub use deliberating::DeliberatingNodeRunner;
 pub use runner::{NodeRunner, StaticNodeRunner};
 pub use types::{NodeRunRequest, NodeRunResult};

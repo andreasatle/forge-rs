@@ -8,6 +8,12 @@ pub trait ProviderClient {
     fn call(&self, request: ProviderRequest) -> Result<ProviderResponse, ProviderError>;
 }
 
+impl<P: ProviderClient> ProviderClient for &P {
+    fn call(&self, request: ProviderRequest) -> Result<ProviderResponse, ProviderError> {
+        P::call(self, request)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
