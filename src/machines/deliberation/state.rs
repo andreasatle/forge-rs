@@ -1,13 +1,26 @@
 //! DeliberationMachine state types.
 //!
 //! The deliberation machine runs Producer → Critic → Referee before completing.
-//! Final output is always the producer content; critic and referee do not replace it.
+//! When the Referee rejects, the machine loops back to Producer with accumulated
+//! feedback, up to `max_revisions` times. Final output is always the producer
+//! content; critic and referee do not replace it.
+
+/// Feedback recorded when the Referee rejects a producer draft.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RevisionFeedback {
+    /// The reason the Referee gave for rejecting the draft.
+    pub reason: String,
+}
 
 /// The input submitted to the deliberation pipeline.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DeliberationRequest {
     /// The objective the pipeline should address.
     pub objective: String,
+    /// Maximum number of revision loops allowed.
+    ///
+    /// `0` means no revisions: the first Referee rejection fails immediately.
+    pub max_revisions: usize,
 }
 
 /// The final output produced by the deliberation pipeline.
@@ -49,6 +62,10 @@ pub enum DeliberationState {
         /// Content accepted by the Critic. `None` until Critic completes;
         /// `Some` while waiting for Referee.
         critic_content: Option<String>,
+        /// Number of revision loops completed so far.
+        revision_count: usize,
+        /// Feedback accumulated from each Referee rejection.
+        feedback: Vec<RevisionFeedback>,
     },
 
     /// The pipeline finished successfully. Terminal state.

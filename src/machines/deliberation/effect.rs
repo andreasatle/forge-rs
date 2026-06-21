@@ -3,7 +3,7 @@
 //! Effects are commands. The machine emits them; the handler executes them and
 //! converts the external result back into a `DeliberationEvent`.
 
-use super::state::{DeliberationOutput, DeliberationRole};
+use super::state::{DeliberationOutput, DeliberationRole, RevisionFeedback};
 
 /// Commands emitted by the deliberation machine.
 #[derive(Clone, Debug, PartialEq)]
@@ -11,9 +11,10 @@ pub enum DeliberationEffect {
     /// Dispatch the given role with the supplied objective and prior-stage content.
     ///
     /// Semantics by role:
-    /// - Producer: both fields are `None`.
+    /// - Producer: `producer_content` and `critic_content` are `None`;
+    ///   `feedback` carries accumulated Referee rejections (empty on the first pass).
     /// - Critic: `producer_content` is `Some`; `critic_content` is `None`.
-    /// - Referee: both fields are `Some`.
+    /// - Referee: both `producer_content` and `critic_content` are `Some`.
     RunRole {
         /// The role to invoke.
         role: DeliberationRole,
@@ -23,6 +24,8 @@ pub enum DeliberationEffect {
         producer_content: Option<String>,
         /// Content produced by the Critic. `None` when dispatching Producer or Critic.
         critic_content: Option<String>,
+        /// Accumulated Referee rejection feedback. Empty on the first pass.
+        feedback: Vec<RevisionFeedback>,
     },
     /// Signal successful completion to the caller.
     ReturnComplete {

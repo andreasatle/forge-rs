@@ -1,24 +1,25 @@
 //! DeliberationMachine — transition logic and `Machine` implementation.
 //!
-//! Deliberation runs Producer → Critic → Referee before completing. Final output
-//! is always the producer content; critic and referee content do not replace it.
-//! Revision loops are not yet implemented.
+//! Deliberation runs Producer → Critic → Referee before completing. When the
+//! Referee rejects, the machine loops back to Producer with accumulated feedback,
+//! up to `max_revisions` times. Final output is always the producer content;
+//! critic and referee content do not replace it.
 //!
 //! ```text
 //! Ready + Start
-//!     → Waiting(Producer, producer_content=None, critic_content=None)
-//!     + RunRole(Producer, producer_content=None, critic_content=None)
+//!     → Waiting(Producer, revision_count=0, feedback=[])
+//!     + RunRole(Producer, feedback=[])
 //!
 //! Waiting(Producer) + RoleReturned(Producer, Accepted { content })
-//!     → Waiting(Critic, producer_content=Some(content), critic_content=None)
-//!     + RunRole(Critic, producer_content=Some(content), critic_content=None)
+//!     → Waiting(Critic, producer_content=Some(content))
+//!     + RunRole(Critic, producer_content=Some(content))
 //!
 //! Waiting(Producer) + RoleReturned(Producer, Rejected { reason })
 //!     → Failed + ReturnFailed
 //!
 //! Waiting(Critic, Some(pc)) + RoleReturned(Critic, Accepted { content })
 //!     → Waiting(Referee, producer_content=Some(pc), critic_content=Some(content))
-//!     + RunRole(Referee, producer_content=Some(pc), critic_content=Some(content))
+//!     + RunRole(Referee, …)
 //!
 //! Waiting(Critic, Some(_)) + RoleReturned(Critic, Rejected { reason })
 //!     → Failed + ReturnFailed
@@ -29,8 +30,12 @@
 //! Waiting(Referee, Some(pc), Some(_)) + RoleReturned(Referee, Accepted)
 //!     → Complete { output: pc } + ReturnComplete   ← output is producer content
 //!
-//! Waiting(Referee, Some(_), Some(_)) + RoleReturned(Referee, Rejected { reason })
-//!     → Failed + ReturnFailed
+//! Waiting(Referee, …) + RoleReturned(Referee, Rejected { reason })
+//!     revision_count < max_revisions:
+//!         → Waiting(Producer, revision_count+1, feedback+[reason])
+//!         + RunRole(Producer, feedback+[reason])
+//!     revision_count >= max_revisions:
+//!         → Failed("revision limit exhausted") + ReturnFailed
 //!
 //! Waiting(Referee, None, _) or Waiting(Referee, _, None) + RoleReturned(…)
 //!     → Failed + ReturnFailed  (invalid deliberation state)
@@ -42,7 +47,7 @@ use crate::engine::{Machine, Transition};
 
 use super::effect::DeliberationEffect;
 use super::event::{DeliberationEvent, RoleResult};
-use super::state::{DeliberationOutput, DeliberationRole, DeliberationState};
+use super::state::{DeliberationOutput, DeliberationRole, DeliberationState, RevisionFeedback};
 
 /// The deliberation machine. All durable data travels in `DeliberationState`.
 pub struct DeliberationMachine;
@@ -70,12 +75,15 @@ impl Machine for DeliberationMachine {
                     objective: request.objective.clone(),
                     producer_content: None,
                     critic_content: None,
+                    feedback: vec![],
                 }],
                 state: DeliberationState::Waiting {
                     request,
                     role: DeliberationRole::Producer,
                     producer_content: None,
                     critic_content: None,
+                    revision_count: 0,
+                    feedback: vec![],
                 },
             },
 
@@ -84,6 +92,8 @@ impl Machine for DeliberationMachine {
                 DeliberationState::Waiting {
                     request,
                     role: DeliberationRole::Producer,
+                    revision_count,
+                    feedback,
                     ..
                 },
                 DeliberationEvent::RoleReturned {
@@ -96,12 +106,15 @@ impl Machine for DeliberationMachine {
                     objective: request.objective.clone(),
                     producer_content: Some(content.clone()),
                     critic_content: None,
+                    feedback: feedback.clone(),
                 }],
                 state: DeliberationState::Waiting {
                     request,
                     role: DeliberationRole::Critic,
                     producer_content: Some(content),
                     critic_content: None,
+                    revision_count,
+                    feedback,
                 },
             },
 
@@ -168,6 +181,8 @@ impl Machine for DeliberationMachine {
                     request,
                     role: DeliberationRole::Critic,
                     producer_content: Some(producer_content),
+                    revision_count,
+                    feedback,
                     ..
                 },
                 DeliberationEvent::RoleReturned {
@@ -183,12 +198,15 @@ impl Machine for DeliberationMachine {
                     objective: request.objective.clone(),
                     producer_content: Some(producer_content.clone()),
                     critic_content: Some(critic_content.clone()),
+                    feedback: feedback.clone(),
                 }],
                 state: DeliberationState::Waiting {
                     request,
                     role: DeliberationRole::Referee,
                     producer_content: Some(producer_content),
                     critic_content: Some(critic_content),
+                    revision_count,
+                    feedback,
                 },
             },
 
@@ -275,24 +293,55 @@ impl Machine for DeliberationMachine {
                 }
             }
 
-            // Referee rejected → failed.
+            // Referee rejected → loop back to Producer if revisions remain, otherwise fail.
             (
                 DeliberationState::Waiting {
+                    request,
                     role: DeliberationRole::Referee,
                     producer_content: Some(_),
                     critic_content: Some(_),
-                    ..
+                    revision_count,
+                    feedback,
                 },
                 DeliberationEvent::RoleReturned {
                     role: DeliberationRole::Referee,
                     result: RoleResult::Rejected { reason },
                 },
-            ) => Transition {
-                effects: vec![DeliberationEffect::ReturnFailed {
-                    reason: reason.clone(),
-                }],
-                state: DeliberationState::Failed { reason },
-            },
+            ) => {
+                if revision_count < request.max_revisions {
+                    let mut new_feedback = feedback;
+                    new_feedback.push(RevisionFeedback {
+                        reason: reason.clone(),
+                    });
+                    Transition {
+                        effects: vec![DeliberationEffect::RunRole {
+                            role: DeliberationRole::Producer,
+                            objective: request.objective.clone(),
+                            producer_content: None,
+                            critic_content: None,
+                            feedback: new_feedback.clone(),
+                        }],
+                        state: DeliberationState::Waiting {
+                            request,
+                            role: DeliberationRole::Producer,
+                            producer_content: None,
+                            critic_content: None,
+                            revision_count: revision_count + 1,
+                            feedback: new_feedback,
+                        },
+                    }
+                } else {
+                    let fail_reason = format!("revision limit exhausted: {reason}");
+                    Transition {
+                        effects: vec![DeliberationEffect::ReturnFailed {
+                            reason: fail_reason.clone(),
+                        }],
+                        state: DeliberationState::Failed {
+                            reason: fail_reason,
+                        },
+                    }
+                }
+            }
 
             // Role mismatch while waiting for Referee → protocol violation.
             (
@@ -340,7 +389,7 @@ impl Machine for DeliberationMachine {
 
 #[cfg(test)]
 mod tests {
-    use super::super::state::DeliberationRequest;
+    use super::super::state::{DeliberationRequest, RevisionFeedback};
     use super::*;
     use crate::engine::run_machine;
 
@@ -348,6 +397,7 @@ mod tests {
         DeliberationState::Ready {
             request: DeliberationRequest {
                 objective: objective.to_string(),
+                max_revisions: 0,
             },
         }
     }
@@ -374,10 +424,11 @@ mod tests {
                     role: DeliberationRole::Producer,
                     producer_content: None,
                     critic_content: None,
+                    revision_count: 0,
                     ..
                 }
             ),
-            "expected Waiting(Producer, None, None), got {:?}",
+            "expected Waiting(Producer, None, None, revision_count=0), got {:?}",
             t.state
         );
 
@@ -390,9 +441,10 @@ mod tests {
                     objective,
                     producer_content: None,
                     critic_content: None,
-                } if objective == "write a poem"
+                    feedback,
+                } if objective == "write a poem" && feedback.is_empty()
             ),
-            "expected RunRole(Producer, producer_content=None, critic_content=None), got {:?}",
+            "expected RunRole(Producer, feedback=[]), got {:?}",
             t.effects[0]
         );
     }
@@ -595,10 +647,13 @@ mod tests {
         let invalid_state = DeliberationState::Waiting {
             request: DeliberationRequest {
                 objective: "write a poem".to_string(),
+                max_revisions: 0,
             },
             role: DeliberationRole::Critic,
             producer_content: None,
             critic_content: None,
+            revision_count: 0,
+            feedback: vec![],
         };
 
         let t = step(
@@ -719,7 +774,7 @@ mod tests {
     }
 
     #[test]
-    fn referee_rejection_fails() {
+    fn referee_rejection_fails_when_no_revisions_allowed() {
         let after_critic = step(
             step(
                 step(ready("write a poem"), DeliberationEvent::Start).state,
@@ -751,15 +806,15 @@ mod tests {
         );
 
         assert!(
-            matches!(&t.state, DeliberationState::Failed { reason } if reason == "not acceptable"),
-            "expected Failed, got {:?}",
+            matches!(&t.state, DeliberationState::Failed { reason } if reason.contains("revision limit exhausted")),
+            "expected Failed with 'revision limit exhausted', got {:?}",
             t.state
         );
 
         assert_eq!(t.effects.len(), 1);
         assert!(
-            matches!(&t.effects[0], DeliberationEffect::ReturnFailed { reason } if reason == "not acceptable"),
-            "expected ReturnFailed, got {:?}",
+            matches!(&t.effects[0], DeliberationEffect::ReturnFailed { reason } if reason.contains("revision limit exhausted")),
+            "expected ReturnFailed with 'revision limit exhausted', got {:?}",
             t.effects[0]
         );
     }
@@ -769,10 +824,13 @@ mod tests {
         let invalid_state = DeliberationState::Waiting {
             request: DeliberationRequest {
                 objective: "write a poem".to_string(),
+                max_revisions: 0,
             },
             role: DeliberationRole::Referee,
             producer_content: Some("draft".to_string()),
             critic_content: None,
+            revision_count: 0,
+            feedback: vec![],
         };
 
         let t = step(
@@ -806,10 +864,13 @@ mod tests {
         let waiting_referee = DeliberationState::Waiting {
             request: DeliberationRequest {
                 objective: "write a poem".to_string(),
+                max_revisions: 0,
             },
             role: DeliberationRole::Referee,
             producer_content: Some("draft".to_string()),
             critic_content: Some("looks good".to_string()),
+            revision_count: 0,
+            feedback: vec![],
         };
 
         for wrong_role in [DeliberationRole::Producer, DeliberationRole::Critic] {
@@ -838,6 +899,256 @@ mod tests {
                 "expected 'protocol violation' in reason, got: {reason}"
             );
         }
+    }
+
+    #[test]
+    fn referee_rejection_loops_to_producer_with_feedback() {
+        let waiting_referee = DeliberationState::Waiting {
+            request: DeliberationRequest {
+                objective: "write a poem".to_string(),
+                max_revisions: 1,
+            },
+            role: DeliberationRole::Referee,
+            producer_content: Some("draft".to_string()),
+            critic_content: Some("review".to_string()),
+            revision_count: 0,
+            feedback: vec![],
+        };
+
+        let t = step(
+            waiting_referee,
+            DeliberationEvent::RoleReturned {
+                role: DeliberationRole::Referee,
+                result: RoleResult::Rejected {
+                    reason: "needs changes".to_string(),
+                },
+            },
+        );
+
+        // State must be Waiting(Producer) with revision_count=1 and feedback populated.
+        match &t.state {
+            DeliberationState::Waiting {
+                role: DeliberationRole::Producer,
+                revision_count,
+                feedback,
+                producer_content,
+                critic_content,
+                ..
+            } => {
+                assert_eq!(*revision_count, 1, "revision_count should be 1");
+                assert_eq!(feedback.len(), 1, "feedback should have one entry");
+                assert_eq!(
+                    feedback[0].reason, "needs changes",
+                    "feedback reason mismatch"
+                );
+                assert!(
+                    producer_content.is_none(),
+                    "producer_content should be None"
+                );
+                assert!(critic_content.is_none(), "critic_content should be None");
+            }
+            other => panic!("expected Waiting(Producer), got {:?}", other),
+        }
+
+        // Effect must be RunRole(Producer) with the same feedback.
+        assert_eq!(t.effects.len(), 1);
+        match &t.effects[0] {
+            DeliberationEffect::RunRole {
+                role: DeliberationRole::Producer,
+                feedback,
+                producer_content,
+                critic_content,
+                ..
+            } => {
+                assert_eq!(feedback.len(), 1);
+                assert_eq!(feedback[0].reason, "needs changes");
+                assert!(producer_content.is_none());
+                assert!(critic_content.is_none());
+            }
+            other => panic!("expected RunRole(Producer), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn referee_rejection_exhausts_revision_limit() {
+        let waiting_referee = DeliberationState::Waiting {
+            request: DeliberationRequest {
+                objective: "write a poem".to_string(),
+                max_revisions: 1,
+            },
+            role: DeliberationRole::Referee,
+            producer_content: Some("draft".to_string()),
+            critic_content: Some("review".to_string()),
+            revision_count: 1, // already at the limit
+            feedback: vec![RevisionFeedback {
+                reason: "earlier rejection".to_string(),
+            }],
+        };
+
+        let t = step(
+            waiting_referee,
+            DeliberationEvent::RoleReturned {
+                role: DeliberationRole::Referee,
+                result: RoleResult::Rejected {
+                    reason: "still not good enough".to_string(),
+                },
+            },
+        );
+
+        assert!(
+            matches!(&t.state, DeliberationState::Failed { reason } if reason.contains("revision limit exhausted")),
+            "expected Failed with 'revision limit exhausted', got {:?}",
+            t.state
+        );
+
+        assert_eq!(t.effects.len(), 1);
+        assert!(
+            matches!(&t.effects[0], DeliberationEffect::ReturnFailed { reason } if reason.contains("revision limit exhausted")),
+            "expected ReturnFailed with 'revision limit exhausted', got {:?}",
+            t.effects[0]
+        );
+    }
+
+    #[test]
+    fn max_revisions_zero_fails_on_first_referee_rejection() {
+        let waiting_referee = DeliberationState::Waiting {
+            request: DeliberationRequest {
+                objective: "write a poem".to_string(),
+                max_revisions: 0,
+            },
+            role: DeliberationRole::Referee,
+            producer_content: Some("draft".to_string()),
+            critic_content: Some("review".to_string()),
+            revision_count: 0,
+            feedback: vec![],
+        };
+
+        let t = step(
+            waiting_referee,
+            DeliberationEvent::RoleReturned {
+                role: DeliberationRole::Referee,
+                result: RoleResult::Rejected {
+                    reason: "not good".to_string(),
+                },
+            },
+        );
+
+        assert!(
+            matches!(&t.state, DeliberationState::Failed { reason } if reason.contains("revision limit exhausted")),
+            "expected Failed with 'revision limit exhausted', got {:?}",
+            t.state
+        );
+
+        assert_eq!(t.effects.len(), 1);
+        assert!(
+            matches!(&t.effects[0], DeliberationEffect::ReturnFailed { reason } if reason.contains("revision limit exhausted")),
+            "expected ReturnFailed, got {:?}",
+            t.effects[0]
+        );
+    }
+
+    #[test]
+    fn revision_then_acceptance_completes_with_revised_producer_content() {
+        struct FakeMachine {
+            producer_call: std::cell::Cell<usize>,
+        }
+
+        impl Machine for FakeMachine {
+            type State = DeliberationState;
+            type Event = DeliberationEvent;
+            type Effect = DeliberationEffect;
+            type Output = DeliberationOutput;
+
+            fn start_event(&self) -> DeliberationEvent {
+                DeliberationEvent::Start
+            }
+
+            fn transition(
+                &self,
+                state: DeliberationState,
+                event: DeliberationEvent,
+            ) -> Transition<DeliberationState, DeliberationEffect> {
+                DeliberationMachine.transition(state, event)
+            }
+
+            fn handle_effect(&self, effect: DeliberationEffect) -> DeliberationEvent {
+                match effect {
+                    DeliberationEffect::RunRole {
+                        role: DeliberationRole::Producer,
+                        ..
+                    } => {
+                        let call = self.producer_call.get();
+                        self.producer_call.set(call + 1);
+                        let content = if call == 0 {
+                            "draft v1".to_string()
+                        } else {
+                            "draft v2".to_string()
+                        };
+                        DeliberationEvent::RoleReturned {
+                            role: DeliberationRole::Producer,
+                            result: RoleResult::Accepted { content },
+                        }
+                    }
+                    DeliberationEffect::RunRole {
+                        role: DeliberationRole::Critic,
+                        ..
+                    } => DeliberationEvent::RoleReturned {
+                        role: DeliberationRole::Critic,
+                        result: RoleResult::Accepted {
+                            content: "looks fine".to_string(),
+                        },
+                    },
+                    DeliberationEffect::RunRole {
+                        role: DeliberationRole::Referee,
+                        producer_content: Some(ref pc),
+                        ..
+                    } => {
+                        if pc == "draft v1" {
+                            DeliberationEvent::RoleReturned {
+                                role: DeliberationRole::Referee,
+                                result: RoleResult::Rejected {
+                                    reason: "needs changes".to_string(),
+                                },
+                            }
+                        } else {
+                            DeliberationEvent::RoleReturned {
+                                role: DeliberationRole::Referee,
+                                result: RoleResult::Accepted {
+                                    content: "approved".to_string(),
+                                },
+                            }
+                        }
+                    }
+                    DeliberationEffect::RunRole { .. } => {
+                        panic!("unexpected RunRole variant")
+                    }
+                    DeliberationEffect::ReturnComplete { .. } => {
+                        unreachable!("ReturnComplete should not re-enter the loop")
+                    }
+                    other => panic!("unexpected effect: {:?}", other),
+                }
+            }
+
+            fn output(&self, state: &DeliberationState) -> Option<DeliberationOutput> {
+                DeliberationMachine.output(state)
+            }
+        }
+
+        let initial = DeliberationState::Ready {
+            request: DeliberationRequest {
+                objective: "write a poem".to_string(),
+                max_revisions: 1,
+            },
+        };
+
+        let fake = FakeMachine {
+            producer_call: std::cell::Cell::new(0),
+        };
+        let output = run_machine(fake, initial);
+        assert_eq!(
+            output.content, "draft v2",
+            "final output should be revised producer content"
+        );
     }
 
     // Smoke test: Producer → Accepted("draft"), Critic → Accepted("looks good"),
@@ -908,6 +1219,7 @@ mod tests {
         let initial = DeliberationState::Ready {
             request: DeliberationRequest {
                 objective: "smoke test".to_string(),
+                max_revisions: 0,
             },
         };
 
