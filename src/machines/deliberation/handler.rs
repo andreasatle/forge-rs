@@ -98,23 +98,30 @@ fn render_role_prompt(
 
 /// Parse the raw content string returned by the provider into a `RoleResult`.
 ///
-/// Convention:
-/// - `"ACCEPT: <content>"` → `Accepted { content }`
-/// - `"REJECT: <reason>"` → `Rejected { reason }`
-/// - anything else → `Failed { reason: "malformed role response …" }`
+/// Scans for the first `ACCEPT:` or `REJECT:` marker anywhere in the response
+/// so that chain-of-thought preamble does not cause spurious failures.
+///
+/// - First `ACCEPT:` wins over a later `REJECT:`, and vice-versa.
+/// - If neither marker is present → `Failed`.
 fn parse_role_response(content: &str) -> RoleResult {
-    if let Some(rest) = content.strip_prefix("ACCEPT:") {
-        RoleResult::Accepted {
-            content: rest.trim().to_string(),
-        }
-    } else if let Some(rest) = content.strip_prefix("REJECT:") {
-        RoleResult::Rejected {
-            reason: rest.trim().to_string(),
-        }
-    } else {
-        RoleResult::Failed {
+    let accept_pos = content.find("ACCEPT:");
+    let reject_pos = content.find("REJECT:");
+    match (accept_pos, reject_pos) {
+        (Some(a), Some(r)) if a <= r => RoleResult::Accepted {
+            content: content[a + 7..].trim().to_string(),
+        },
+        (Some(_), Some(r)) => RoleResult::Rejected {
+            reason: content[r + 7..].trim().to_string(),
+        },
+        (Some(a), None) => RoleResult::Accepted {
+            content: content[a + 7..].trim().to_string(),
+        },
+        (None, Some(r)) => RoleResult::Rejected {
+            reason: content[r + 7..].trim().to_string(),
+        },
+        (None, None) => RoleResult::Failed {
             reason: format!("malformed role response: {content:?}"),
-        }
+        },
     }
 }
 
@@ -419,5 +426,47 @@ mod tests {
             }
             other => panic!("expected Complete with 'draft v2', got {other:?}"),
         }
+    }
+
+    #[test]
+    fn response_with_preamble_then_accept_parses() {
+        let result = parse_role_response("Sure, here is my answer.\nACCEPT: the content");
+        assert!(
+            matches!(result, RoleResult::Accepted { ref content } if content == "the content"),
+            "expected Accepted {{ 'the content' }}, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn response_with_preamble_then_reject_parses() {
+        let result = parse_role_response("Let me think about this.\nREJECT: needs more work");
+        assert!(
+            matches!(result, RoleResult::Rejected { ref reason } if reason == "needs more work"),
+            "expected Rejected {{ 'needs more work' }}, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn response_with_both_markers_uses_first() {
+        let result = parse_role_response("REJECT: bad ACCEPT: good");
+        assert!(
+            matches!(result, RoleResult::Rejected { ref reason } if reason == "bad ACCEPT: good"),
+            "expected Rejected when REJECT: precedes ACCEPT:, got {result:?}"
+        );
+
+        let result = parse_role_response("ACCEPT: first REJECT: second");
+        assert!(
+            matches!(result, RoleResult::Accepted { ref content } if content == "first REJECT: second"),
+            "expected Accepted when ACCEPT: precedes REJECT:, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn response_without_marker_still_fails() {
+        let result = parse_role_response("I have no idea what you want.");
+        assert!(
+            matches!(result, RoleResult::Failed { .. }),
+            "expected Failed when no marker present, got {result:?}"
+        );
     }
 }
