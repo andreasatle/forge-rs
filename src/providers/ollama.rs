@@ -1,0 +1,135 @@
+//! Ollama provider — calls the local Ollama `/api/generate` endpoint.
+
+use serde::{Deserialize, Serialize};
+
+use crate::providers::client::ProviderClient;
+use crate::providers::types::{
+    ProviderError, ProviderErrorKind, ProviderRequest, ProviderResponse,
+};
+
+/// Calls the Ollama generate API at the given base URL.
+pub struct OllamaProvider {
+    base_url: String,
+    model: String,
+}
+
+impl OllamaProvider {
+    /// Create a new provider targeting `base_url` (e.g. `"http://localhost:11434"`) with `model`.
+    pub fn new(base_url: impl Into<String>, model: impl Into<String>) -> Self {
+        Self {
+            base_url: base_url.into(),
+            model: model.into(),
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct GenerateRequest {
+    model: String,
+    prompt: String,
+    stream: bool,
+}
+
+#[derive(Deserialize)]
+struct GenerateResponse {
+    response: Option<String>,
+}
+
+fn classify_status(status: u16) -> ProviderErrorKind {
+    match status {
+        429 | 500..=599 => ProviderErrorKind::Retryable,
+        _ => ProviderErrorKind::Terminal,
+    }
+}
+
+fn map_generate_response(r: GenerateResponse) -> Result<ProviderResponse, ProviderError> {
+    match r.response {
+        Some(content) => Ok(ProviderResponse { content }),
+        None => Err(ProviderError {
+            kind: ProviderErrorKind::Terminal,
+            message: "response field missing from Ollama reply".to_string(),
+        }),
+    }
+}
+
+impl ProviderClient for OllamaProvider {
+    fn call(&self, request: ProviderRequest) -> Result<ProviderResponse, ProviderError> {
+        let url = format!("{}/api/generate", self.base_url);
+        let body = GenerateRequest {
+            model: self.model.clone(),
+            prompt: request.prompt,
+            stream: false,
+        };
+
+        let http_response = ureq::post(&url).send_json(&body).map_err(|err| match err {
+            ureq::Error::Status(status, _) => ProviderError {
+                kind: classify_status(status),
+                message: format!("HTTP {status}"),
+            },
+            ureq::Error::Transport(transport_err) => ProviderError {
+                kind: ProviderErrorKind::Retryable,
+                message: format!("connection error: {transport_err}"),
+            },
+        })?;
+
+        let parsed: GenerateResponse = http_response.into_json().map_err(|err| ProviderError {
+            kind: ProviderErrorKind::Terminal,
+            message: format!("invalid JSON response: {err}"),
+        })?;
+
+        map_generate_response(parsed)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ollama_response_parses_content() {
+        let json = r#"{"response":"hello"}"#;
+        let parsed: GenerateResponse = serde_json::from_str(json).unwrap();
+        let result = map_generate_response(parsed).unwrap();
+        assert_eq!(result.content, "hello");
+    }
+
+    #[test]
+    fn ollama_response_missing_response_is_terminal() {
+        let json = r#"{"other_field":"value"}"#;
+        let parsed: GenerateResponse = serde_json::from_str(json).unwrap();
+        let err = map_generate_response(parsed).unwrap_err();
+        assert_eq!(err.kind, ProviderErrorKind::Terminal);
+    }
+
+    #[test]
+    fn ollama_http_429_is_retryable() {
+        assert_eq!(classify_status(429), ProviderErrorKind::Retryable);
+    }
+
+    #[test]
+    fn ollama_http_500_is_retryable() {
+        assert_eq!(classify_status(500), ProviderErrorKind::Retryable);
+    }
+
+    #[test]
+    fn ollama_http_503_is_retryable() {
+        assert_eq!(classify_status(503), ProviderErrorKind::Retryable);
+    }
+
+    #[test]
+    fn ollama_http_404_is_terminal() {
+        assert_eq!(classify_status(404), ProviderErrorKind::Terminal);
+    }
+
+    #[test]
+    fn ollama_http_400_is_terminal() {
+        assert_eq!(classify_status(400), ProviderErrorKind::Terminal);
+    }
+
+    #[test]
+    fn ollama_provider_new_stores_fields() {
+        let p = OllamaProvider::new("http://localhost:11434", "llama3");
+        assert_eq!(p.base_url, "http://localhost:11434");
+        assert_eq!(p.model, "llama3");
+    }
+}
