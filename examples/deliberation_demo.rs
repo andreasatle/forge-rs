@@ -84,7 +84,7 @@ fn main() {
     println!("Max revisions: {max_revisions}");
     println!();
 
-    let llama = LlamaCppProvider::new("http://localhost:8080").with_n_predict(80);
+    let llama = LlamaCppProvider::new("http://localhost:8080").with_n_predict(512);
     let retrying = RetryingProvider::new(llama, 3);
     let instructed = InstructedProvider { inner: retrying };
     let handler = ProviderBackedDeliberationHandler::new(instructed);
