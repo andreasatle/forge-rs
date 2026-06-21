@@ -27,5 +27,6 @@ pub mod engine;
 pub mod handlers;
 pub mod machines;
 pub mod models;
+pub mod node_runner;
 pub mod providers;
 pub mod services;
