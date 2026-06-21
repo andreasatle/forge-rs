@@ -1,8 +1,7 @@
 //! DeliberationMachine state types.
 //!
 //! The deliberation machine owns the Producer → Critic → Referee revision loop.
-//! Phase 1 wires only the Producer role. Critic and Referee transitions will be
-//! added in later phases once the single-role path is stable.
+//! Phase 2 wires Producer → Critic. Referee and revision loops are future work.
 
 /// The input submitted to the deliberation pipeline.
 #[derive(Clone, Debug, PartialEq)]
@@ -20,8 +19,8 @@ pub struct DeliberationOutput {
 
 /// The three roles that participate in the deliberation loop.
 ///
-/// Phase 1 activates only `Producer`. `Critic` and `Referee` are present so
-/// the full finite space is visible and unimplemented paths fail clearly.
+/// Phase 2 activates `Producer` and `Critic`. `Referee` is present so the
+/// full finite space is visible; unimplemented paths fail clearly.
 #[derive(Clone, Debug, PartialEq)]
 pub enum DeliberationRole {
     /// Generates the initial content for the objective.
@@ -47,6 +46,9 @@ pub enum DeliberationState {
         request: DeliberationRequest,
         /// The role that was dispatched and has not yet responded.
         role: DeliberationRole,
+        /// Content accepted by the Producer, available once Producer completes.
+        /// `None` while waiting for Producer; `Some` while waiting for Critic.
+        producer_content: Option<String>,
     },
 
     /// The pipeline finished successfully. Terminal state.

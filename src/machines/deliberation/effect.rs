@@ -14,6 +14,9 @@ pub enum DeliberationEffect {
         role: DeliberationRole,
         /// The objective to pass to the role.
         objective: String,
+        /// Prior-stage content to pass to the role. `None` for Producer;
+        /// `Some(producer_content)` for Critic.
+        input: Option<String>,
     },
     /// Signal successful completion to the caller.
     ReturnComplete {
