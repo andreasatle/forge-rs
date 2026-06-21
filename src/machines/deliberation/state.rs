@@ -1,7 +1,7 @@
 //! DeliberationMachine state types.
 //!
-//! The deliberation machine owns the Producer → Critic → Referee revision loop.
-//! Producer output is routed through critic review before the pipeline completes.
+//! The deliberation machine runs Producer → Critic → Referee before completing.
+//! Final output is always the producer content; critic and referee do not replace it.
 
 /// The input submitted to the deliberation pipeline.
 #[derive(Clone, Debug, PartialEq)]
@@ -13,15 +13,11 @@ pub struct DeliberationRequest {
 /// The final output produced by the deliberation pipeline.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DeliberationOutput {
-    /// The accepted content from the active role.
+    /// The accepted producer content.
     pub content: String,
 }
 
-/// The three roles that participate in the deliberation loop.
-///
-/// `Producer` and `Critic` are active in the current transition path. `Referee`
-/// is represented here but not yet part of the transition logic; unimplemented
-/// paths fail clearly.
+/// The three roles that participate in the deliberation pipeline.
 #[derive(Clone, Debug, PartialEq)]
 pub enum DeliberationRole {
     /// Generates the initial content for the objective.
@@ -47,9 +43,12 @@ pub enum DeliberationState {
         request: DeliberationRequest,
         /// The role that was dispatched and has not yet responded.
         role: DeliberationRole,
-        /// Content accepted by the Producer, available once Producer completes.
-        /// `None` while waiting for Producer; `Some` while waiting for Critic.
+        /// Content accepted by the Producer. `None` while waiting for Producer;
+        /// `Some` while waiting for Critic or Referee.
         producer_content: Option<String>,
+        /// Content accepted by the Critic. `None` until Critic completes;
+        /// `Some` while waiting for Referee.
+        critic_content: Option<String>,
     },
 
     /// The pipeline finished successfully. Terminal state.
