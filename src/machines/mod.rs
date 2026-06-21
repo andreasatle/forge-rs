@@ -13,5 +13,6 @@
 //! Not everything in Forge-rs should be a machine. Use machines for components
 //! that remember where they are over time.
 
+pub mod deliberation;
 pub mod demo;
 pub mod scheduler;
