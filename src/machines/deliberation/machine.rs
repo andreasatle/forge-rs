@@ -17,12 +17,18 @@
 //! Waiting(Producer) + RoleReturned(Producer, Rejected { reason })
 //!     → Failed + ReturnFailed
 //!
+//! Waiting(Producer) + RoleReturned(Producer, Failed { reason })
+//!     → Failed + ReturnFailed  (execution failure, not semantic rejection)
+//!
 //! Waiting(Critic, Some(pc)) + RoleReturned(Critic, Accepted { content })
 //!     → Waiting(Referee, producer_content=Some(pc), critic_content=Some(content))
 //!     + RunRole(Referee, …)
 //!
 //! Waiting(Critic, Some(_)) + RoleReturned(Critic, Rejected { reason })
 //!     → Failed + ReturnFailed
+//!
+//! Waiting(Critic, Some(_)) + RoleReturned(Critic, Failed { reason })
+//!     → Failed + ReturnFailed  (execution failure, not semantic rejection)
 //!
 //! Waiting(Critic, None) + RoleReturned(Critic, …)
 //!     → Failed + ReturnFailed  (invalid deliberation state)
@@ -36,6 +42,9 @@
 //!         + RunRole(Producer, feedback+[reason])
 //!     revision_count >= max_revisions:
 //!         → Failed("revision limit exhausted") + ReturnFailed
+//!
+//! Waiting(Referee, Some(_), Some(_)) + RoleReturned(Referee, Failed { reason })
+//!     → Failed + ReturnFailed  (execution failure — must NOT enter the revision loop)
 //!
 //! Waiting(Referee, None, _) or Waiting(Referee, _, None) + RoleReturned(…)
 //!     → Failed + ReturnFailed  (invalid deliberation state)
@@ -138,6 +147,23 @@ impl Machine for DeliberationMachine {
                 state: DeliberationState::Failed { reason },
             },
 
+            // Producer execution failure → terminal.
+            (
+                DeliberationState::Waiting {
+                    role: DeliberationRole::Producer,
+                    ..
+                },
+                DeliberationEvent::RoleReturned {
+                    role: DeliberationRole::Producer,
+                    result: RoleResult::Failed { reason },
+                },
+            ) => Transition {
+                effects: vec![DeliberationEffect::ReturnFailed {
+                    reason: reason.clone(),
+                }],
+                state: DeliberationState::Failed { reason },
+            },
+
             // Role mismatch while waiting for Producer → protocol violation.
             (
                 DeliberationState::Waiting {
@@ -223,6 +249,24 @@ impl Machine for DeliberationMachine {
                 DeliberationEvent::RoleReturned {
                     role: DeliberationRole::Critic,
                     result: RoleResult::Rejected { reason },
+                },
+            ) => Transition {
+                effects: vec![DeliberationEffect::ReturnFailed {
+                    reason: reason.clone(),
+                }],
+                state: DeliberationState::Failed { reason },
+            },
+
+            // Critic execution failure → terminal.
+            (
+                DeliberationState::Waiting {
+                    role: DeliberationRole::Critic,
+                    producer_content: Some(_),
+                    ..
+                },
+                DeliberationEvent::RoleReturned {
+                    role: DeliberationRole::Critic,
+                    result: RoleResult::Failed { reason },
                 },
             ) => Transition {
                 effects: vec![DeliberationEffect::ReturnFailed {
@@ -345,6 +389,25 @@ impl Machine for DeliberationMachine {
                     }
                 }
             }
+
+            // Referee execution failure → terminal. Must NOT enter the revision loop.
+            (
+                DeliberationState::Waiting {
+                    role: DeliberationRole::Referee,
+                    producer_content: Some(_),
+                    critic_content: Some(_),
+                    ..
+                },
+                DeliberationEvent::RoleReturned {
+                    role: DeliberationRole::Referee,
+                    result: RoleResult::Failed { reason },
+                },
+            ) => Transition {
+                effects: vec![DeliberationEffect::ReturnFailed {
+                    reason: reason.clone(),
+                }],
+                state: DeliberationState::Failed { reason },
+            },
 
             // Role mismatch while waiting for Referee → protocol violation.
             (
@@ -1252,6 +1315,211 @@ mod tests {
                 assert_eq!(reason, "something went wrong");
             }
             other => panic!("expected Some(Failed), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn producer_failed_is_terminal() {
+        let waiting = step(ready("write a poem"), DeliberationEvent::Start).state;
+
+        let t = step(
+            waiting,
+            DeliberationEvent::RoleReturned {
+                role: DeliberationRole::Producer,
+                result: RoleResult::Failed {
+                    reason: "timeout".to_string(),
+                },
+            },
+        );
+
+        assert!(
+            matches!(&t.state, DeliberationState::Failed { reason } if reason == "timeout"),
+            "expected Failed, got {:?}",
+            t.state
+        );
+
+        assert_eq!(t.effects.len(), 1);
+        assert!(
+            matches!(&t.effects[0], DeliberationEffect::ReturnFailed { reason } if reason == "timeout"),
+            "expected ReturnFailed, got {:?}",
+            t.effects[0]
+        );
+    }
+
+    #[test]
+    fn critic_failed_is_terminal() {
+        let after_producer = step(
+            step(ready("write a poem"), DeliberationEvent::Start).state,
+            DeliberationEvent::RoleReturned {
+                role: DeliberationRole::Producer,
+                result: RoleResult::Accepted {
+                    content: "draft content".to_string(),
+                },
+            },
+        )
+        .state;
+
+        let t = step(
+            after_producer,
+            DeliberationEvent::RoleReturned {
+                role: DeliberationRole::Critic,
+                result: RoleResult::Failed {
+                    reason: "provider unavailable".to_string(),
+                },
+            },
+        );
+
+        assert!(
+            matches!(&t.state, DeliberationState::Failed { reason } if reason == "provider unavailable"),
+            "expected Failed, got {:?}",
+            t.state
+        );
+
+        assert_eq!(t.effects.len(), 1);
+        assert!(
+            matches!(&t.effects[0], DeliberationEffect::ReturnFailed { reason } if reason == "provider unavailable"),
+            "expected ReturnFailed, got {:?}",
+            t.effects[0]
+        );
+    }
+
+    #[test]
+    fn referee_failed_is_terminal() {
+        // max_revisions=1 to confirm Failed does not enter the revision loop
+        // even when revisions are available.
+        let waiting_referee = DeliberationState::Waiting {
+            request: DeliberationRequest {
+                objective: "write a poem".to_string(),
+                max_revisions: 1,
+            },
+            role: DeliberationRole::Referee,
+            producer_content: Some("draft".to_string()),
+            critic_content: Some("review".to_string()),
+            revision_count: 0,
+            feedback: vec![],
+        };
+
+        let t = step(
+            waiting_referee,
+            DeliberationEvent::RoleReturned {
+                role: DeliberationRole::Referee,
+                result: RoleResult::Failed {
+                    reason: "authentication error".to_string(),
+                },
+            },
+        );
+
+        assert!(
+            matches!(&t.state, DeliberationState::Failed { reason } if reason == "authentication error"),
+            "expected Failed (not a revision loop), got {:?}",
+            t.state
+        );
+
+        assert_eq!(t.effects.len(), 1);
+        assert!(
+            matches!(&t.effects[0], DeliberationEffect::ReturnFailed { reason } if reason == "authentication error"),
+            "expected ReturnFailed, got {:?}",
+            t.effects[0]
+        );
+    }
+
+    #[test]
+    fn referee_rejected_still_revises() {
+        // Rejected (semantic outcome) continues to loop; Failed (execution) must not.
+        let waiting_referee = DeliberationState::Waiting {
+            request: DeliberationRequest {
+                objective: "write a poem".to_string(),
+                max_revisions: 1,
+            },
+            role: DeliberationRole::Referee,
+            producer_content: Some("draft".to_string()),
+            critic_content: Some("review".to_string()),
+            revision_count: 0,
+            feedback: vec![],
+        };
+
+        let t = step(
+            waiting_referee,
+            DeliberationEvent::RoleReturned {
+                role: DeliberationRole::Referee,
+                result: RoleResult::Rejected {
+                    reason: "needs changes".to_string(),
+                },
+            },
+        );
+
+        assert!(
+            matches!(
+                &t.state,
+                DeliberationState::Waiting {
+                    role: DeliberationRole::Producer,
+                    revision_count: 1,
+                    ..
+                }
+            ),
+            "expected Waiting(Producer) revision loop, got {:?}",
+            t.state
+        );
+    }
+
+    #[test]
+    fn run_machine_provider_failure_smoke_test() {
+        struct FakeMachine;
+
+        impl Machine for FakeMachine {
+            type State = DeliberationState;
+            type Event = DeliberationEvent;
+            type Effect = DeliberationEffect;
+            type Output = DeliberationTerminalOutput;
+
+            fn start_event(&self) -> DeliberationEvent {
+                DeliberationEvent::Start
+            }
+
+            fn transition(
+                &self,
+                state: DeliberationState,
+                event: DeliberationEvent,
+            ) -> Transition<DeliberationState, DeliberationEffect> {
+                DeliberationMachine.transition(state, event)
+            }
+
+            fn handle_effect(&self, effect: DeliberationEffect) -> DeliberationEvent {
+                match effect {
+                    DeliberationEffect::RunRole {
+                        role: DeliberationRole::Producer,
+                        ..
+                    } => DeliberationEvent::RoleReturned {
+                        role: DeliberationRole::Producer,
+                        result: RoleResult::Failed {
+                            reason: "timeout".into(),
+                        },
+                    },
+                    other => panic!("unexpected effect: {:?}", other),
+                }
+            }
+
+            fn output(&self, state: &DeliberationState) -> Option<DeliberationTerminalOutput> {
+                DeliberationMachine.output(state)
+            }
+        }
+
+        let initial = DeliberationState::Ready {
+            request: DeliberationRequest {
+                objective: "write something".to_string(),
+                max_revisions: 0,
+            },
+        };
+
+        let output = run_machine(FakeMachine, initial);
+        match &output {
+            DeliberationTerminalOutput::Failed { reason } => {
+                assert!(
+                    reason.contains("timeout"),
+                    "expected reason to contain 'timeout', got: {reason}"
+                );
+            }
+            other => panic!("expected Failed, got {:?}", other),
         }
     }
 
