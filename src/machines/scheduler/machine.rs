@@ -1022,6 +1022,28 @@ impl Machine for SchedulerMachine {
                 }
             }
 
+            (SchedulerState::Running { graph }, SchedulerEvent::NodeReturned { .. }) => {
+                Self::failed_transition(
+                    graph,
+                    "protocol violation: state Running cannot consume NodeReturned".to_string(),
+                )
+            }
+
+            (SchedulerState::Running { graph }, SchedulerEvent::IntegrationReturned { .. }) => {
+                Self::failed_transition(
+                    graph,
+                    "protocol violation: state Running cannot consume IntegrationReturned"
+                        .to_string(),
+                )
+            }
+
+            (SchedulerState::Waiting { graph, .. }, SchedulerEvent::Start) => {
+                Self::failed_transition(
+                    graph,
+                    "protocol violation: state Waiting cannot consume Start".to_string(),
+                )
+            }
+
             (state, event) => {
                 panic!("invalid transition: state={state:#?}, event={event:#?}");
             }
@@ -3305,6 +3327,106 @@ mod tests {
         assert!(
             reason.contains('B'),
             "reason should contain received node B, got: {reason:?}"
+        );
+        assert!(matches!(
+            t.effects.as_slice(),
+            [SchedulerEffect::ReturnFailed { .. }]
+        ));
+    }
+
+    #[test]
+    fn running_rejects_node_returned() {
+        let graph = single_work_graph();
+        let t = do_transition(
+            SchedulerState::Running { graph },
+            SchedulerEvent::NodeReturned {
+                node_id: NodeId("A".to_string()),
+                outcome: NodeOutcome::WorkAccepted(WorkOutput {
+                    summary: "spurious".to_string(),
+                }),
+            },
+        );
+
+        let SchedulerState::Failed { reason, .. } = t.state else {
+            panic!("expected Failed, got {:#?}", t.state);
+        };
+        assert!(
+            reason.contains("protocol violation"),
+            "reason should contain 'protocol violation', got: {reason:?}"
+        );
+        assert!(
+            reason.contains("Running"),
+            "reason should mention Running, got: {reason:?}"
+        );
+        assert!(
+            reason.contains("NodeReturned"),
+            "reason should mention NodeReturned, got: {reason:?}"
+        );
+        assert!(matches!(
+            t.effects.as_slice(),
+            [SchedulerEffect::ReturnFailed { .. }]
+        ));
+    }
+
+    #[test]
+    fn running_rejects_integration_returned() {
+        let graph = single_work_graph();
+        let t = do_transition(
+            SchedulerState::Running { graph },
+            SchedulerEvent::IntegrationReturned {
+                node_id: NodeId("A".to_string()),
+                outcome: IntegrationOutcome::Succeeded(IntegrationOutput {
+                    summary: "spurious".to_string(),
+                }),
+            },
+        );
+
+        let SchedulerState::Failed { reason, .. } = t.state else {
+            panic!("expected Failed, got {:#?}", t.state);
+        };
+        assert!(
+            reason.contains("protocol violation"),
+            "reason should contain 'protocol violation', got: {reason:?}"
+        );
+        assert!(
+            reason.contains("Running"),
+            "reason should mention Running, got: {reason:?}"
+        );
+        assert!(
+            reason.contains("IntegrationReturned"),
+            "reason should mention IntegrationReturned, got: {reason:?}"
+        );
+        assert!(matches!(
+            t.effects.as_slice(),
+            [SchedulerEffect::ReturnFailed { .. }]
+        ));
+    }
+
+    #[test]
+    fn waiting_rejects_start() {
+        let graph = single_work_graph();
+        let t = do_transition(
+            SchedulerState::Waiting {
+                graph,
+                running: NodeId("A".to_string()),
+            },
+            SchedulerEvent::Start,
+        );
+
+        let SchedulerState::Failed { reason, .. } = t.state else {
+            panic!("expected Failed, got {:#?}", t.state);
+        };
+        assert!(
+            reason.contains("protocol violation"),
+            "reason should contain 'protocol violation', got: {reason:?}"
+        );
+        assert!(
+            reason.contains("Waiting"),
+            "reason should mention Waiting, got: {reason:?}"
+        );
+        assert!(
+            reason.contains("Start"),
+            "reason should mention Start, got: {reason:?}"
         );
         assert!(matches!(
             t.effects.as_slice(),
