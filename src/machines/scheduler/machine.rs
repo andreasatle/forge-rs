@@ -888,10 +888,13 @@ impl Machine for SchedulerMachine {
                 SchedulerState::Waiting { graph, running },
                 SchedulerEvent::NodeReturned { node_id, outcome },
             ) => {
-                assert_eq!(
-                    running, node_id,
-                    "returned node does not match running node"
-                );
+                if running != node_id {
+                    let reason = format!(
+                        "protocol violation: expected result for node {} but received {}",
+                        running.0, node_id.0
+                    );
+                    return Self::failed_transition(graph, reason);
+                }
 
                 // Validate that the outcome is compatible with the node's kind.
                 let node_kind = Self::get_node(&graph, &node_id).kind.clone();
@@ -981,10 +984,13 @@ impl Machine for SchedulerMachine {
                 SchedulerState::Waiting { graph, running },
                 SchedulerEvent::IntegrationReturned { node_id, outcome },
             ) => {
-                assert_eq!(
-                    running, node_id,
-                    "returned integration does not match running node"
-                );
+                if running != node_id {
+                    let reason = format!(
+                        "protocol violation: expected integration result for node {} but received {}",
+                        running.0, node_id.0
+                    );
+                    return Self::failed_transition(graph, reason);
+                }
 
                 // Validate that integration arrives for a Work node in Integrating status.
                 if let Some(reason) = Self::invalid_integration_reason(&graph, &node_id) {
@@ -3215,6 +3221,90 @@ mod tests {
         assert!(
             reason.contains("Work") || reason.contains("Plan"),
             "reason should mention Work or Plan, got: {reason:?}"
+        );
+        assert!(matches!(
+            t.effects.as_slice(),
+            [SchedulerEffect::ReturnFailed { .. }]
+        ));
+    }
+
+    // ── Protocol violation tests ──────────────────────────────────────────────
+
+    #[test]
+    fn node_returned_wrong_node_fails_scheduler() {
+        let graph = RunGraph {
+            nodes: vec![work_node("A", "task A", &[])],
+            next_id: 0,
+        };
+        let t = do_transition(
+            SchedulerState::Waiting {
+                graph: running(graph, "A"),
+                running: NodeId("A".to_string()),
+            },
+            SchedulerEvent::NodeReturned {
+                node_id: NodeId("B".to_string()),
+                outcome: NodeOutcome::WorkAccepted(WorkOutput {
+                    summary: "spurious result".to_string(),
+                }),
+            },
+        );
+
+        let SchedulerState::Failed { reason, .. } = t.state else {
+            panic!("expected Failed, got {:#?}", t.state);
+        };
+        assert!(
+            reason.contains("protocol violation"),
+            "reason should contain 'protocol violation', got: {reason:?}"
+        );
+        assert!(
+            reason.contains('A'),
+            "reason should contain expected node A, got: {reason:?}"
+        );
+        assert!(
+            reason.contains('B'),
+            "reason should contain received node B, got: {reason:?}"
+        );
+        assert!(matches!(
+            t.effects.as_slice(),
+            [SchedulerEffect::ReturnFailed { .. }]
+        ));
+    }
+
+    #[test]
+    fn integration_returned_wrong_node_fails_scheduler() {
+        let mut graph = RunGraph {
+            nodes: vec![work_node("A", "task A", &[])],
+            next_id: 0,
+        };
+        graph.nodes[0].status = NodeStatus::Integrating;
+
+        let t = do_transition(
+            SchedulerState::Waiting {
+                graph,
+                running: NodeId("A".to_string()),
+            },
+            SchedulerEvent::IntegrationReturned {
+                node_id: NodeId("B".to_string()),
+                outcome: IntegrationOutcome::Succeeded(IntegrationOutput {
+                    summary: "spurious result".to_string(),
+                }),
+            },
+        );
+
+        let SchedulerState::Failed { reason, .. } = t.state else {
+            panic!("expected Failed, got {:#?}", t.state);
+        };
+        assert!(
+            reason.contains("protocol violation"),
+            "reason should contain 'protocol violation', got: {reason:?}"
+        );
+        assert!(
+            reason.contains('A'),
+            "reason should contain expected node A, got: {reason:?}"
+        );
+        assert!(
+            reason.contains('B'),
+            "reason should contain received node B, got: {reason:?}"
         );
         assert!(matches!(
             t.effects.as_slice(),
