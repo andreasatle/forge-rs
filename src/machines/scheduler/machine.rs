@@ -823,24 +823,62 @@ impl SchedulerMachine {
         }
     }
 
-    /// Check that `running` names a node that exists and is in an active status.
+    /// Return all nodes currently in an active status (Running or Integrating).
+    ///
+    /// The serial scheduler invariant requires exactly one active node while in
+    /// `Waiting` and zero active nodes while in `Running`.
+    fn active_nodes(graph: &RunGraph) -> Vec<&Node> {
+        graph
+            .nodes
+            .iter()
+            .filter(|n| matches!(n.status, NodeStatus::Running | NodeStatus::Integrating))
+            .collect()
+    }
+
+    /// Check that the Waiting state satisfies the serial active-node invariant.
     ///
     /// Called before processing any event in `Waiting` to catch externally
-    /// constructed states where `running` points to a missing or terminal node.
+    /// constructed states. Four conditions are enforced:
+    ///
+    /// 1. `running` names a node that exists in the graph.
+    /// 2. Exactly one node is active (Running or Integrating).
+    /// 3. That active node's ID equals `running`.
     fn validate_waiting_state(graph: &RunGraph, running: &NodeId) -> Result<(), String> {
-        match graph.nodes.iter().find(|n| &n.id == running) {
-            None => Err(format!(
-                "invalid waiting state: running node missing node id {}",
-                running.0
-            )),
-            Some(node) if !matches!(node.status, NodeStatus::Running | NodeStatus::Integrating) => {
-                Err(format!(
-                    "invalid waiting state: node {} has status {:?}",
-                    running.0, node.status
-                ))
+        let running_node = match graph.nodes.iter().find(|n| &n.id == running) {
+            None => {
+                return Err(format!(
+                    "invalid waiting state: running node missing node id {}",
+                    running.0
+                ));
             }
-            _ => Ok(()),
+            Some(n) => n,
+        };
+
+        let active = Self::active_nodes(graph);
+
+        if active.is_empty() {
+            return Err(format!(
+                "invalid waiting state: expected active node for {}; found none (status: {:?})",
+                running.0, running_node.status
+            ));
         }
+
+        if active.len() > 1 {
+            let ids: Vec<String> = active.iter().map(|n| n.id.0.clone()).collect();
+            return Err(format!(
+                "invalid waiting state: multiple active nodes: {}",
+                ids.join(", ")
+            ));
+        }
+
+        if active[0].id != *running {
+            return Err(format!(
+                "invalid waiting state: active node is {} but waiting.running is {}",
+                active[0].id.0, running.0
+            ));
+        }
+
+        Ok(())
     }
 
     fn apply_elevate(graph: RunGraph, node_id: &NodeId) -> RunGraph {
@@ -909,6 +947,14 @@ impl Machine for SchedulerMachine {
                         },
                         effects: vec![SchedulerEffect::ReturnFailed { graph, reason }],
                     };
+                }
+                let active = Self::active_nodes(&graph);
+                if let Some(node) = active.first() {
+                    let reason = format!(
+                        "invalid running state: node {} is {:?}",
+                        node.id.0, node.status
+                    );
+                    return Self::failed_transition(graph, reason);
                 }
                 if Self::all_complete(&graph) {
                     Transition {
@@ -3840,6 +3886,188 @@ mod tests {
         assert!(matches!(
             t.effects.as_slice(),
             [SchedulerEffect::IntegrateWork { .. }]
+        ));
+    }
+
+    // ── Serial active-node invariant tests ───────────────────────────────────
+
+    #[test]
+    fn running_state_rejects_preexisting_active_node() {
+        let mut graph = single_work_graph();
+        graph.nodes[0].status = NodeStatus::Running;
+
+        let t = do_transition(SchedulerState::Running { graph }, SchedulerEvent::Start);
+
+        let SchedulerState::Failed { reason, .. } = t.state else {
+            panic!("expected Failed, got {:#?}", t.state);
+        };
+        assert!(
+            reason.contains("invalid running state"),
+            "reason should contain 'invalid running state', got: {reason:?}"
+        );
+        assert!(
+            reason.contains('A'),
+            "reason should contain the node id, got: {reason:?}"
+        );
+        assert!(
+            reason.contains("Running"),
+            "reason should contain the status, got: {reason:?}"
+        );
+        assert!(matches!(
+            t.effects.as_slice(),
+            [SchedulerEffect::ReturnFailed { .. }]
+        ));
+    }
+
+    #[test]
+    fn running_state_rejects_preexisting_integrating_node() {
+        let mut graph = single_work_graph();
+        graph.nodes[0].status = NodeStatus::Integrating;
+
+        let t = do_transition(SchedulerState::Running { graph }, SchedulerEvent::Start);
+
+        let SchedulerState::Failed { reason, .. } = t.state else {
+            panic!("expected Failed, got {:#?}", t.state);
+        };
+        assert!(
+            reason.contains("invalid running state"),
+            "reason should contain 'invalid running state', got: {reason:?}"
+        );
+        assert!(
+            reason.contains('A'),
+            "reason should contain the node id, got: {reason:?}"
+        );
+        assert!(
+            reason.contains("Integrating"),
+            "reason should contain the status, got: {reason:?}"
+        );
+        assert!(matches!(
+            t.effects.as_slice(),
+            [SchedulerEffect::ReturnFailed { .. }]
+        ));
+    }
+
+    #[test]
+    fn waiting_state_rejects_no_active_nodes() {
+        // B exists but is Pending — no active node in the graph.
+        let graph = RunGraph {
+            nodes: vec![work_node("B", "do B", &[])],
+            next_id: 0,
+        };
+        let t = do_transition(
+            SchedulerState::Waiting {
+                graph,
+                running: NodeId("B".to_string()),
+            },
+            SchedulerEvent::NodeReturned {
+                node_id: NodeId("B".to_string()),
+                outcome: NodeOutcome::WorkAccepted(WorkOutput {
+                    summary: "irrelevant".to_string(),
+                }),
+            },
+        );
+
+        let SchedulerState::Failed { reason, .. } = t.state else {
+            panic!("expected Failed, got {:#?}", t.state);
+        };
+        assert!(
+            reason.contains("invalid waiting state"),
+            "reason should contain 'invalid waiting state', got: {reason:?}"
+        );
+        assert!(
+            reason.contains("found none") || reason.contains("Pending"),
+            "reason should mention 'found none' or equivalent status, got: {reason:?}"
+        );
+        assert!(matches!(
+            t.effects.as_slice(),
+            [SchedulerEffect::ReturnFailed { .. }]
+        ));
+    }
+
+    #[test]
+    fn waiting_state_rejects_multiple_active_nodes() {
+        // B and C are both active — violates the serial invariant.
+        let mut graph = RunGraph {
+            nodes: vec![work_node("B", "do B", &[]), work_node("C", "do C", &[])],
+            next_id: 0,
+        };
+        graph.nodes[0].status = NodeStatus::Running;
+        graph.nodes[1].status = NodeStatus::Running;
+
+        let t = do_transition(
+            SchedulerState::Waiting {
+                graph,
+                running: NodeId("B".to_string()),
+            },
+            SchedulerEvent::NodeReturned {
+                node_id: NodeId("B".to_string()),
+                outcome: NodeOutcome::WorkAccepted(WorkOutput {
+                    summary: "irrelevant".to_string(),
+                }),
+            },
+        );
+
+        let SchedulerState::Failed { reason, .. } = t.state else {
+            panic!("expected Failed, got {:#?}", t.state);
+        };
+        assert!(
+            reason.contains("multiple active nodes"),
+            "reason should contain 'multiple active nodes', got: {reason:?}"
+        );
+        assert!(
+            reason.contains('B'),
+            "reason should contain node id B, got: {reason:?}"
+        );
+        assert!(
+            reason.contains('C'),
+            "reason should contain node id C, got: {reason:?}"
+        );
+        assert!(matches!(
+            t.effects.as_slice(),
+            [SchedulerEffect::ReturnFailed { .. }]
+        ));
+    }
+
+    #[test]
+    fn waiting_state_rejects_active_node_that_differs_from_running() {
+        // C is active, B is non-active — the active node doesn't match waiting.running.
+        let mut graph = RunGraph {
+            nodes: vec![work_node("B", "do B", &[]), work_node("C", "do C", &[])],
+            next_id: 0,
+        };
+        graph.nodes[1].status = NodeStatus::Running;
+
+        let t = do_transition(
+            SchedulerState::Waiting {
+                graph,
+                running: NodeId("B".to_string()),
+            },
+            SchedulerEvent::NodeReturned {
+                node_id: NodeId("B".to_string()),
+                outcome: NodeOutcome::WorkAccepted(WorkOutput {
+                    summary: "irrelevant".to_string(),
+                }),
+            },
+        );
+
+        let SchedulerState::Failed { reason, .. } = t.state else {
+            panic!("expected Failed, got {:#?}", t.state);
+        };
+        assert!(
+            reason.contains("invalid waiting state"),
+            "reason should contain 'invalid waiting state', got: {reason:?}"
+        );
+        assert!(
+            reason.contains('B'),
+            "reason should contain waiting.running id B, got: {reason:?}"
+        );
+        assert!(
+            reason.contains('C'),
+            "reason should contain active node id C, got: {reason:?}"
+        );
+        assert!(matches!(
+            t.effects.as_slice(),
+            [SchedulerEffect::ReturnFailed { .. }]
         ));
     }
 
