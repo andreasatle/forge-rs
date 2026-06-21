@@ -352,6 +352,8 @@ impl SchedulerMachine {
     /// Invariants checked:
     /// 1. No two nodes share the same `NodeId`.
     /// 2. Every dependency in every node references an existing `NodeId`.
+    /// 3. Every origin source (`Retry`, `ElevateModel`, `Split`) references an
+    ///    existing `NodeId`.
     ///
     /// `RunGraph::next_id` is an internal generator cursor. Validation treats
     /// `NodeId` values as opaque and does not parse their string form to infer
@@ -376,6 +378,46 @@ impl SchedulerMachine {
             }
         }
 
+        Self::validate_origin_sources(graph, &all_ids)?;
+
+        Ok(())
+    }
+
+    /// Check that every origin source ID exists in the graph.
+    ///
+    /// `Root` and `PlanExpansion` carry no source reference and are always valid.
+    /// `Retry`, `ElevateModel`, and `Split` each carry a `source` that must
+    /// resolve to an existing node.
+    fn validate_origin_sources(graph: &RunGraph, all_ids: &HashSet<&NodeId>) -> Result<(), String> {
+        for node in &graph.nodes {
+            match &node.origin {
+                NodeOrigin::Retry { source } => {
+                    if !all_ids.contains(source) {
+                        return Err(format!(
+                            "missing origin source: node {} has Retry source {}",
+                            node.id.0, source.0
+                        ));
+                    }
+                }
+                NodeOrigin::ElevateModel { source } => {
+                    if !all_ids.contains(source) {
+                        return Err(format!(
+                            "missing origin source: node {} has ElevateModel source {}",
+                            node.id.0, source.0
+                        ));
+                    }
+                }
+                NodeOrigin::Split { source } => {
+                    if !all_ids.contains(source) {
+                        return Err(format!(
+                            "missing origin source: node {} has Split source {}",
+                            node.id.0, source.0
+                        ));
+                    }
+                }
+                NodeOrigin::Root | NodeOrigin::PlanExpansion => {}
+            }
+        }
         Ok(())
     }
 
@@ -3116,6 +3158,117 @@ mod tests {
                 node_id,
                 ..
             }] if *node_id == NodeId("root".to_string())
+        ));
+    }
+
+    #[test]
+    fn retry_origin_with_missing_source_fails_validation() {
+        let mut node_b = work_node("B", "retry task", &[]);
+        node_b.origin = NodeOrigin::Retry {
+            source: NodeId("missing".to_string()),
+        };
+        let graph = RunGraph {
+            nodes: vec![node_b],
+            next_id: 0,
+        };
+        let t = do_transition(SchedulerState::Running { graph }, SchedulerEvent::Start);
+
+        let SchedulerState::Failed { reason, .. } = t.state else {
+            panic!("expected Failed, got {:#?}", t.state);
+        };
+        assert!(
+            reason.contains("missing origin source"),
+            "reason should contain 'missing origin source', got: {reason:?}"
+        );
+        assert!(
+            reason.contains("Retry"),
+            "reason should mention Retry, got: {reason:?}"
+        );
+        assert!(
+            reason.contains('B'),
+            "reason should contain node id B, got: {reason:?}"
+        );
+        assert!(
+            reason.contains("missing"),
+            "reason should contain missing source id, got: {reason:?}"
+        );
+        assert!(matches!(
+            t.effects.as_slice(),
+            [SchedulerEffect::ReturnFailed { .. }]
+        ));
+    }
+
+    #[test]
+    fn elevate_origin_with_missing_source_fails_validation() {
+        let mut node_b = work_node("B", "elevate task", &[]);
+        node_b.origin = NodeOrigin::ElevateModel {
+            source: NodeId("missing".to_string()),
+        };
+        let graph = RunGraph {
+            nodes: vec![node_b],
+            next_id: 0,
+        };
+        let t = do_transition(SchedulerState::Running { graph }, SchedulerEvent::Start);
+
+        let SchedulerState::Failed { reason, .. } = t.state else {
+            panic!("expected Failed, got {:#?}", t.state);
+        };
+        assert!(
+            reason.contains("missing origin source"),
+            "reason should contain 'missing origin source', got: {reason:?}"
+        );
+        assert!(
+            reason.contains("ElevateModel"),
+            "reason should mention ElevateModel, got: {reason:?}"
+        );
+        assert!(
+            reason.contains('B'),
+            "reason should contain node id B, got: {reason:?}"
+        );
+        assert!(
+            reason.contains("missing"),
+            "reason should contain missing source id, got: {reason:?}"
+        );
+        assert!(matches!(
+            t.effects.as_slice(),
+            [SchedulerEffect::ReturnFailed { .. }]
+        ));
+    }
+
+    #[test]
+    fn split_origin_with_missing_source_fails_validation() {
+        let mut node_b = work_node("B", "split task", &[]);
+        node_b.origin = NodeOrigin::Split {
+            source: NodeId("missing".to_string()),
+        };
+        let graph = RunGraph {
+            nodes: vec![node_b],
+            next_id: 0,
+        };
+        let t = do_transition(SchedulerState::Running { graph }, SchedulerEvent::Start);
+
+        let SchedulerState::Failed { reason, .. } = t.state else {
+            panic!("expected Failed, got {:#?}", t.state);
+        };
+        assert!(
+            reason.contains("missing origin source"),
+            "reason should contain 'missing origin source', got: {reason:?}"
+        );
+        assert!(
+            reason.contains("Split"),
+            "reason should mention Split, got: {reason:?}"
+        );
+        assert!(
+            reason.contains('B'),
+            "reason should contain node id B, got: {reason:?}"
+        );
+        assert!(
+            reason.contains("missing"),
+            "reason should contain missing source id, got: {reason:?}"
+        );
+        assert!(matches!(
+            t.effects.as_slice(),
+            [SchedulerEffect::ReturnFailed { .. }]
         ));
     }
 
