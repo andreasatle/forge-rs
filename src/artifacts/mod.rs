@@ -5,11 +5,13 @@
 //! contents, and integration commits and pushes a new immutable version.
 
 mod artifact;
+mod file_ops;
 mod integration;
 mod update;
 mod workspace;
 
 pub use artifact::{Artifact, ArtifactView};
+pub use file_ops::{ArtifactError, WorkspaceFileOps};
 pub use integration::integrate;
 pub use update::{ArtifactUpdate, UpdatedFile, apply_update};
 pub use workspace::{Workspace, create_workspace};
@@ -140,6 +142,105 @@ mod tests {
         assert_eq!(
             fs::read_to_string(workspace.path.join("artifact.txt")).unwrap(),
             "version one\n"
+        );
+    }
+
+    #[test]
+    fn read_file_returns_contents() {
+        let (temp, artifact) = fixture("read-file");
+        let workspace = create_workspace(&artifact, temp.join("workspace"));
+
+        assert_eq!(
+            workspace.read_file("artifact.txt").unwrap(),
+            "version one\n"
+        );
+    }
+
+    #[test]
+    fn write_file_creates_directories() {
+        let (temp, artifact) = fixture("write-file");
+        let mut workspace = create_workspace(&artifact, temp.join("workspace"));
+
+        workspace
+            .write_file("nested/deeper/file.txt", "new contents\n")
+            .unwrap();
+
+        assert_eq!(
+            fs::read_to_string(workspace.path.join("nested/deeper/file.txt")).unwrap(),
+            "new contents\n"
+        );
+    }
+
+    #[test]
+    fn replace_text_updates_file() {
+        let (temp, artifact) = fixture("replace-text");
+        let mut workspace = create_workspace(&artifact, temp.join("workspace"));
+
+        workspace
+            .replace_text("artifact.txt", "version one", "version two")
+            .unwrap();
+
+        assert_eq!(
+            workspace.read_file("artifact.txt").unwrap(),
+            "version two\n"
+        );
+    }
+
+    #[test]
+    fn replace_text_missing_target_fails() {
+        let (temp, artifact) = fixture("replace-missing");
+        let mut workspace = create_workspace(&artifact, temp.join("workspace"));
+
+        let result = workspace.replace_text("artifact.txt", "not present", "replacement");
+
+        assert_eq!(result, Err(ArtifactError::ReplaceTargetMissing));
+    }
+
+    #[test]
+    fn replace_text_ambiguous_target_fails() {
+        let (temp, artifact) = fixture("replace-ambiguous");
+        let mut workspace = create_workspace(&artifact, temp.join("workspace"));
+        workspace
+            .write_file("artifact.txt", "repeat repeat\n")
+            .unwrap();
+
+        let result = workspace.replace_text("artifact.txt", "repeat", "replacement");
+
+        assert_eq!(result, Err(ArtifactError::ReplaceTargetAmbiguous));
+    }
+
+    #[test]
+    fn delete_file_removes_file() {
+        let (temp, artifact) = fixture("delete-file");
+        let mut workspace = create_workspace(&artifact, temp.join("workspace"));
+
+        workspace.delete_file("artifact.txt").unwrap();
+
+        assert!(!workspace.path.join("artifact.txt").exists());
+    }
+
+    #[test]
+    fn delete_missing_file_fails() {
+        let (temp, artifact) = fixture("delete-missing");
+        let mut workspace = create_workspace(&artifact, temp.join("workspace"));
+
+        let result = workspace.delete_file("missing.txt");
+
+        assert_eq!(result, Err(ArtifactError::FileNotFound));
+    }
+
+    #[test]
+    fn list_files_returns_relative_paths() {
+        let (temp, artifact) = fixture("list-files");
+        let mut workspace = create_workspace(&artifact, temp.join("workspace"));
+        workspace.write_file("nested/file.txt", "nested\n").unwrap();
+
+        assert_eq!(
+            workspace.list_files(),
+            vec![
+                PathBuf::from("artifact.txt"),
+                PathBuf::from("nested/file.txt")
+            ]
         );
     }
 
