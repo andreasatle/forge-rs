@@ -20,29 +20,72 @@ Business logic belongs in pure transition functions. Side effects belong in effe
 ## Architecture
 
 ```text
-User
+Runtime
   ↓
-Scheduler
+SchedulerMachine
   ↓
-SchedulerHandler
+DeliberationMachine
   ↓
-NodeRunner
-  ↓
-ArtifactView
-  ↓
-Deliberation
+Role layer
   ↓
 Provider
-  ↓
-ArtifactUpdate
-  ↓
-WorkspaceFileOps
-  ↓
-Workspace
-  ↓
-Integration
-  ↓
-Artifact
+```
+
+Artifact history is orthogonal:
+
+```text
+Artifact = Git repository
+```
+
+Telemetry is orthogonal:
+
+```text
+Telemetry = file trace
+```
+
+## Configuration
+
+Forge is configured through a `forge.yaml` file:
+
+```yaml
+objective: "Write a short haiku about Rust state machines."
+artifact:
+  repo_path: ".forge/artifacts/main.git"
+  branch: "main"
+provider:
+  base_url: "http://localhost:8080"
+  n_predict: 512
+telemetry:
+  directory: "runs/latest"
+```
+
+## CLI
+
+```text
+cargo run -- run     forge.yaml   — continue from current artifact history
+cargo run -- show    forge.yaml   — display current files from the artifact
+cargo run -- history forge.yaml   — display commit history
+cargo run -- reset   forge.yaml   — delete artifact history and create a fresh Initial commit
+```
+
+### Example session
+
+```
+cargo run -- reset forge.yaml
+cargo run -- run forge.yaml
+cargo run -- show forge.yaml
+```
+
+Example output:
+
+```
+Commit      : a0c3de5
+Files:
+output.txt
+--- output.txt ---
+Rust state machines spin,
+Transitions shift with event triggers—
+Code flows, precise.
 ```
 
 ## Machines
@@ -69,7 +112,7 @@ Events: `Start`, `NodeReturned`, `IntegrationReturned`.
 
 Effects: `RunNode`, `IntegrateWork`, `ReturnComplete`, `ReturnFailed`.
 
-Node execution is sequential. The scheduler selects one pending node whose dependencies are all completed, marks it running, emits `RunNode`, and enters `Waiting`. It does not dispatch another node until the active one finishes. This is a constraint of the current model, not the intended final scheduling model.
+Node execution is sequential. The scheduler selects one pending node whose dependencies are all completed, marks it running, emits `RunNode`, and enters `Waiting`. It does not dispatch another node until the active one finishes.
 
 Node lifecycle:
 
@@ -110,7 +153,7 @@ The final output is always the Producer content. Critic and Referee do not repla
 - `Rejected` — role completed but rejected the content. Triggers a revision loop for the Referee (if revisions remain), terminal failure for Producer and Critic.
 - `Failed` — role could not execute. Always terminal; never enters the revision loop.
 
-These two machines are independent state machines. They share no state and communicate only through the `NodeRunner` boundary.
+The role layer handles protocol retries when a provider response cannot be parsed as valid JSON.
 
 ## Artifact data plane
 
@@ -187,10 +230,6 @@ The `SchedulerHandler` connects the scheduler to the runner. For each `RunNode` 
 2. Passes the view to the runner via `NodeRunRequest`.
 3. If the runner returns `WorkAccepted` with an `ArtifactUpdate`, applies it through a `Workspace` and calls `integrate`, advancing the artifact.
 
-### StaticNodeRunner
-
-A minimal test runner. Returns fixed outcomes: plan nodes produce one child, work nodes accept, and nodes whose objective contains "fail" return a terminal failure.
-
 ### DeliberatingNodeRunner
 
 Runs a node by driving a `DeliberationMachine` backed by a real `ProviderClient`.
@@ -215,6 +254,37 @@ Implemented providers:
 
 Role responses use structured JSON output.
 
+## Telemetry
+
+Traces are written as numbered files under the configured telemetry directory (default: `runs/latest/`).
+
+Example trace files:
+
+```
+000001-scheduler-machine-machine-started.txt
+000005-deliberation-machine-machine-started.txt
+000011-role-machine-parse-failed.txt
+000012-role-machine-protocol-retry.txt
+```
+
+Each file contains structured fields:
+
+```
+source: SchedulerMachine
+kind: MachineStarted
+machine: SchedulerMachine
+```
+
+The trace is intended for human inspection.
+
 ## Testing
 
-194 tests cover machine transitions, emitted effects, integration gating, recovery behavior, graph validation, protocol violations, bounded growth, terminal states, invariant preservation, and artifact data-plane operations. Tests do not require real providers, network access, or persistent filesystem state beyond temporary directories.
+```
+cargo fmt --check
+cargo test
+cargo run -- run forge.yaml
+```
+
+Tests cover machine transitions, emitted effects, integration gating, recovery behavior, graph validation, protocol violations, bounded growth, terminal states, invariant preservation, and artifact data-plane operations. Tests do not require real providers, network access, or persistent filesystem state beyond temporary directories.
+
+Run `cargo test` to see the current test count.
