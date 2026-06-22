@@ -8,8 +8,10 @@ use super::sink::TelemetrySink;
 
 /// A sink that writes one plain-text file per event into a directory.
 ///
-/// Files are named with a six-digit counter, source slug, and event kind slug,
-/// e.g. `000001-scheduler-machine-machine-started.txt`. This produces a
+/// Files are named with a six-digit counter, source slug, optional subsource
+/// slug, and event kind slug separated by `--`, e.g.
+/// `000001--scheduler-machine--machine-started.txt` or
+/// `000020--role-machine--producer--role-prompt-rendered.txt`. This produces a
 /// deterministic, alphabetically-ordered trace of a machine run.
 ///
 /// # File format
@@ -49,12 +51,21 @@ impl TelemetrySink for FileTelemetry {
     fn record(&self, record: TelemetryRecord) {
         let mut n = self.counter.borrow_mut();
         *n += 1;
-        let filename = format!(
-            "{:06}-{}-{}.txt",
-            *n,
-            kebab_case(&record.source),
-            record.event.kind_slug()
-        );
+        let filename = match &record.subsource {
+            Some(sub) => format!(
+                "{:06}--{}--{}--{}.txt",
+                *n,
+                kebab_case(&record.source),
+                kebab_case(sub),
+                record.event.kind_slug()
+            ),
+            None => format!(
+                "{:06}--{}--{}.txt",
+                *n,
+                kebab_case(&record.source),
+                record.event.kind_slug()
+            ),
+        };
         let path = self.root.join(filename);
         std::fs::write(path, record.file_content()).expect("telemetry write failed");
     }
@@ -105,7 +116,7 @@ mod tests {
                 machine: "A".into(),
             },
         ));
-        assert!(dir.join("000001-a-machine-started.txt").exists());
+        assert!(dir.join("000001--a--machine-started.txt").exists());
     }
 
     #[test]
@@ -120,7 +131,7 @@ mod tests {
             },
         ));
         let content =
-            std::fs::read_to_string(dir.join("000001-my-machine-state-entered.txt")).unwrap();
+            std::fs::read_to_string(dir.join("000001--my-machine--state-entered.txt")).unwrap();
         assert!(content.contains("source: MyMachine"));
         assert!(content.contains("kind: StateEntered"));
         assert!(content.contains("machine: MyMachine"));
@@ -139,7 +150,7 @@ mod tests {
             },
         ));
         assert!(
-            dir.join("000001-scheduler-machine-state-entered.txt")
+            dir.join("000001--scheduler-machine--state-entered.txt")
                 .exists()
         );
     }
@@ -157,7 +168,86 @@ mod tests {
             },
         ));
         let content =
-            std::fs::read_to_string(dir.join("000001-role-machine-parse-failed.txt")).unwrap();
+            std::fs::read_to_string(dir.join("000001--role-machine--parse-failed.txt")).unwrap();
         assert!(content.contains("source: RoleMachine"));
+    }
+
+    #[test]
+    fn file_name_uses_double_separator() {
+        let dir = fresh_dir("double-sep");
+        let sink = FileTelemetry::new(dir.clone()).unwrap();
+        sink.record(TelemetryRecord::new(
+            "SchedulerMachine",
+            TelemetryEvent::StateEntered {
+                machine: "SchedulerMachine".into(),
+                state: "Ready".into(),
+            },
+        ));
+        assert!(
+            dir.join("000001--scheduler-machine--state-entered.txt")
+                .exists()
+        );
+    }
+
+    #[test]
+    fn role_event_file_name_contains_role() {
+        let dir = fresh_dir("role-subsource");
+        let sink = FileTelemetry::new(dir.clone()).unwrap();
+
+        sink.record(TelemetryRecord::new_with_subsource(
+            "RoleMachine",
+            "Producer",
+            TelemetryEvent::RolePromptRendered {
+                prompt: "p".into(),
+                attempt_count: 1,
+            },
+        ));
+        sink.record(TelemetryRecord::new_with_subsource(
+            "RoleMachine",
+            "Critic",
+            TelemetryEvent::ParseFailed {
+                raw_response: "bad".into(),
+                parse_error: "err".into(),
+                attempt_count: 1,
+            },
+        ));
+        sink.record(TelemetryRecord::new_with_subsource(
+            "RoleMachine",
+            "Referee",
+            TelemetryEvent::ParseSucceeded { attempt_count: 1 },
+        ));
+
+        assert!(
+            dir.join("000001--role-machine--producer--role-prompt-rendered.txt")
+                .exists()
+        );
+        assert!(
+            dir.join("000002--role-machine--critic--parse-failed.txt")
+                .exists()
+        );
+        assert!(
+            dir.join("000003--role-machine--referee--parse-succeeded.txt")
+                .exists()
+        );
+    }
+
+    #[test]
+    fn file_body_contains_matching_subsource() {
+        let dir = fresh_dir("body-subsource");
+        let sink = FileTelemetry::new(dir.clone()).unwrap();
+        sink.record(TelemetryRecord::new_with_subsource(
+            "RoleMachine",
+            "Producer",
+            TelemetryEvent::RolePromptRendered {
+                prompt: "hello".into(),
+                attempt_count: 1,
+            },
+        ));
+        let content = std::fs::read_to_string(
+            dir.join("000001--role-machine--producer--role-prompt-rendered.txt"),
+        )
+        .unwrap();
+        assert!(content.contains("source: RoleMachine"));
+        assert!(content.contains("subsource: Producer"));
     }
 }

@@ -314,19 +314,19 @@ mod tests {
         let sink = FileTelemetry::new(dir.clone()).unwrap();
         run_machine_with_telemetry(SimpleCountMachine, ScState::Start, &sink);
         assert!(
-            dir.join("000001-simple-count-machine-machine-started.txt")
+            dir.join("000001--simple-count-machine--machine-started.txt")
                 .exists()
         );
         assert!(
-            dir.join("000002-simple-count-machine-state-entered.txt")
+            dir.join("000002--simple-count-machine--state-entered.txt")
                 .exists()
         );
         assert!(
-            dir.join("000003-simple-count-machine-event-received.txt")
+            dir.join("000003--simple-count-machine--event-received.txt")
                 .exists()
         );
         assert!(
-            dir.join("000004-simple-count-machine-effect-emitted.txt")
+            dir.join("000004--simple-count-machine--effect-emitted.txt")
                 .exists()
         );
     }

@@ -4,6 +4,8 @@
 pub struct TelemetryRecord {
     /// Component or conceptual machine that emitted the event.
     pub source: String,
+    /// Optional sub-component within the source (e.g. `Producer`, `Critic`).
+    pub subsource: Option<String>,
     /// The event emitted by the source.
     pub event: TelemetryEvent,
 }
@@ -13,13 +15,35 @@ impl TelemetryRecord {
     pub fn new(source: impl Into<String>, event: TelemetryEvent) -> Self {
         Self {
             source: source.into(),
+            subsource: None,
             event,
         }
     }
 
-    /// Render the source and event payload as a plain-text file body.
+    /// Construct a telemetry record with an explicit subsource.
+    pub fn new_with_subsource(
+        source: impl Into<String>,
+        subsource: impl Into<String>,
+        event: TelemetryEvent,
+    ) -> Self {
+        Self {
+            source: source.into(),
+            subsource: Some(subsource.into()),
+            event,
+        }
+    }
+
+    /// Render the source, optional subsource, and event payload as a plain-text file body.
     pub fn file_content(&self) -> String {
-        format!("source: {}\n{}", self.source, self.event.file_content())
+        match &self.subsource {
+            Some(sub) => format!(
+                "source: {}\nsubsource: {}\n{}",
+                self.source,
+                sub,
+                self.event.file_content()
+            ),
+            None => format!("source: {}\n{}", self.source, self.event.file_content()),
+        }
     }
 }
 

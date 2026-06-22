@@ -67,7 +67,7 @@ impl<P: ProviderClient> ProviderBackedDeliberationHandler<P> {
                     critic_content.as_deref(),
                     &feedback,
                 );
-                let result = self.run_role(original_prompt, telemetry);
+                let result = self.run_role(original_prompt, &role, telemetry);
                 DeliberationEvent::RoleReturned { role, result }
             }
             DeliberationEffect::ReturnComplete { .. } => {
@@ -85,7 +85,13 @@ impl<P: ProviderClient> ProviderBackedDeliberationHandler<P> {
         }
     }
 
-    fn run_role(&self, original_prompt: String, telemetry: &dyn TelemetrySink) -> RoleResult {
+    fn run_role(
+        &self,
+        original_prompt: String,
+        role: &DeliberationRole,
+        telemetry: &dyn TelemetrySink,
+    ) -> RoleResult {
+        let subsource = role_subsource(role);
         let mut attempt = RoleAttempt {
             request: ProviderRequest {
                 prompt: original_prompt.clone(),
@@ -94,8 +100,9 @@ impl<P: ProviderClient> ProviderBackedDeliberationHandler<P> {
         };
 
         loop {
-            telemetry.record(TelemetryRecord::new(
+            telemetry.record(TelemetryRecord::new_with_subsource(
                 "RoleMachine",
+                subsource,
                 TelemetryEvent::RolePromptRendered {
                     prompt: attempt.request.prompt.clone(),
                     attempt_count: attempt.attempt_count,
@@ -109,8 +116,9 @@ impl<P: ProviderClient> ProviderBackedDeliberationHandler<P> {
                     };
                 }
             };
-            telemetry.record(TelemetryRecord::new(
+            telemetry.record(TelemetryRecord::new_with_subsource(
                 "RoleMachine",
+                subsource,
                 TelemetryEvent::ProviderResponseReceived {
                     raw_response: response.content.clone(),
                     attempt_count: attempt.attempt_count,
@@ -119,8 +127,9 @@ impl<P: ProviderClient> ProviderBackedDeliberationHandler<P> {
 
             match try_parse_role_response(&response.content) {
                 Ok(result) => {
-                    telemetry.record(TelemetryRecord::new(
+                    telemetry.record(TelemetryRecord::new_with_subsource(
                         "RoleMachine",
+                        subsource,
                         TelemetryEvent::ParseSucceeded {
                             attempt_count: attempt.attempt_count,
                         },
@@ -128,8 +137,9 @@ impl<P: ProviderClient> ProviderBackedDeliberationHandler<P> {
                     return result;
                 }
                 Err(parse_error) => {
-                    telemetry.record(TelemetryRecord::new(
+                    telemetry.record(TelemetryRecord::new_with_subsource(
                         "RoleMachine",
+                        subsource,
                         TelemetryEvent::ParseFailed {
                             raw_response: response.content.clone(),
                             parse_error: parse_error.clone(),
@@ -142,8 +152,9 @@ impl<P: ProviderClient> ProviderBackedDeliberationHandler<P> {
                         };
                     }
                     let next_attempt = attempt.attempt_count + 1;
-                    telemetry.record(TelemetryRecord::new(
+                    telemetry.record(TelemetryRecord::new_with_subsource(
                         "RoleMachine",
+                        subsource,
                         TelemetryEvent::ProtocolRetry {
                             parse_error: parse_error.clone(),
                             attempt_count: next_attempt,
@@ -158,6 +169,14 @@ impl<P: ProviderClient> ProviderBackedDeliberationHandler<P> {
                 }
             }
         }
+    }
+}
+
+fn role_subsource(role: &DeliberationRole) -> &'static str {
+    match role {
+        DeliberationRole::Producer => "Producer",
+        DeliberationRole::Critic => "Critic",
+        DeliberationRole::Referee => "Referee",
     }
 }
 
@@ -818,11 +837,17 @@ mod tests {
         );
 
         assert!(
-            dir.join("000001-role-machine-role-prompt-rendered.txt")
+            dir.join("000001--role-machine--producer--role-prompt-rendered.txt")
                 .exists()
         );
-        assert!(dir.join("000003-role-machine-parse-failed.txt").exists());
-        assert!(dir.join("000004-role-machine-protocol-retry.txt").exists());
+        assert!(
+            dir.join("000003--role-machine--producer--parse-failed.txt")
+                .exists()
+        );
+        assert!(
+            dir.join("000004--role-machine--producer--protocol-retry.txt")
+                .exists()
+        );
     }
 
     // --- run_machine integration tests ---
