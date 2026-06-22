@@ -90,6 +90,7 @@ pub fn load_or_create_artifact(config: &ArtifactConfig) -> Result<Artifact, Box<
         create_bare_repo(&repo_path, &config.branch)?;
     }
 
+    let repo_path = repo_path.canonicalize()?;
     let commit_sha = git_head(&repo_path)?;
 
     Ok(Artifact {
@@ -255,6 +256,50 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&path);
+    }
+
+    #[test]
+    fn relative_repo_path_canonicalized_and_integrates_from_temp_workspace() {
+        use crate::artifacts::{ArtifactUpdate, FileChange, create_workspace, integrate};
+
+        let seq = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+        let rel = format!("target/forge-relative-test-{}-{seq}", std::process::id());
+        let _ = std::fs::remove_dir_all(&rel);
+
+        let config = ArtifactConfig {
+            repo_path: rel.clone(),
+            branch: "main".to_string(),
+        };
+
+        let artifact = load_or_create_artifact(&config).unwrap();
+
+        assert!(
+            artifact.repo_path.is_absolute(),
+            "repo_path must be canonicalized to absolute"
+        );
+
+        let workspace_path =
+            std::env::temp_dir().join(format!("forge-rel-workspace-{}-{seq}", std::process::id()));
+        let mut workspace = create_workspace(&artifact, workspace_path.clone());
+
+        ArtifactUpdate {
+            changes: vec![FileChange::Write {
+                path: "result.txt".to_string(),
+                content: "from relative repo\n".to_string(),
+            }],
+        }
+        .apply(&mut workspace)
+        .unwrap();
+
+        let integrated = integrate(&artifact, &workspace);
+
+        assert_ne!(
+            integrated.commit_sha, artifact.commit_sha,
+            "integration from temp workspace must produce a new commit"
+        );
+
+        let _ = std::fs::remove_dir_all(&rel);
+        let _ = std::fs::remove_dir_all(&workspace_path);
     }
 
     #[test]
