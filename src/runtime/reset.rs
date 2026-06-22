@@ -11,9 +11,6 @@ pub fn run_reset(config: ForgeConfig) -> Result<(), Box<dyn Error>> {
         std::fs::remove_dir_all(&repo_path)?;
     }
 
-    let telemetry_dir = PathBuf::from(&config.telemetry.directory);
-    let _ = std::fs::remove_dir_all(&telemetry_dir);
-
     let artifact = super::load_or_create_artifact(&config.artifact)?;
 
     let short_sha = &artifact.commit_sha[..artifact.commit_sha.len().min(7)];

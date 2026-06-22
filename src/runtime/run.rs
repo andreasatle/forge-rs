@@ -17,6 +17,7 @@ use crate::providers::{
     LlamaCppProvider, ProviderClient, ProviderError, ProviderRequest, ProviderResponse,
     RetryingProvider,
 };
+use crate::runtime::create_run;
 use crate::telemetry::{FileTelemetry, TelemetrySink};
 
 const PROTOCOL_PREFIX: &str = "\
@@ -58,9 +59,15 @@ impl ForgeRuntime {
     pub fn run(config: ForgeConfig) -> Result<(), Box<dyn Error>> {
         let artifact = load_or_create_artifact(&config.artifact)?;
 
-        let telemetry_dir = PathBuf::from(&config.telemetry.directory);
-        let _ = std::fs::remove_dir_all(&telemetry_dir);
-        let sink: Rc<dyn TelemetrySink> = Rc::new(FileTelemetry::new(telemetry_dir.clone())?);
+        let runs_root = PathBuf::from(&config.telemetry.directory);
+        let run_info = create_run(
+            &runs_root,
+            &config.objective,
+            &config.artifact.repo_path,
+            &config.provider.base_url,
+        )?;
+        let sink: Rc<dyn TelemetrySink> =
+            Rc::new(FileTelemetry::new(run_info.telemetry_dir.clone())?);
 
         let llama = LlamaCppProvider::new(&config.provider.base_url)
             .with_n_predict(config.provider.n_predict as u32);
@@ -78,7 +85,7 @@ impl ForgeRuntime {
         let (output, handler) = run_machine_with_telemetry(handler, initial_state, sink.as_ref());
 
         let final_artifact = handler.artifact();
-        print_summary(&output, &config, final_artifact.as_ref(), &telemetry_dir);
+        print_summary(&output, &config, final_artifact.as_ref(), &run_info);
 
         Ok(())
     }
@@ -160,7 +167,7 @@ fn print_summary(
     output: &SchedulerOutput,
     config: &ForgeConfig,
     artifact: Option<&Artifact>,
-    telemetry_dir: &Path,
+    run_info: &crate::runtime::RunInfo,
 ) {
     let result_str = match output {
         SchedulerOutput::Complete { .. } => "COMPLETE",
@@ -168,12 +175,13 @@ fn print_summary(
     };
 
     println!("Result      : {result_str}");
+    println!("Run ID      : {}", run_info.run_id);
     println!("Artifact repo: {}", config.artifact.repo_path);
 
     if let Some(a) = artifact {
         let short_sha = &a.commit_sha[..a.commit_sha.len().min(7)];
         println!("Commit      : {short_sha}");
-        println!("Telemetry   : {}", telemetry_dir.display());
+        println!("Telemetry   : {}", run_info.telemetry_dir.display());
 
         let view = ArtifactView {
             repo_path: a.repo_path.clone(),
@@ -189,7 +197,7 @@ fn print_summary(
         }
     } else {
         println!("Commit      : unknown");
-        println!("Telemetry   : {}", telemetry_dir.display());
+        println!("Telemetry   : {}", run_info.telemetry_dir.display());
     }
 }
 

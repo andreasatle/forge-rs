@@ -6,4 +6,4 @@ provider:
   base_url: "http://localhost:8080"
   n_predict: 512
 telemetry:
-  directory: "runs/latest"
+  directory: "runs"

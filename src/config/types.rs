@@ -97,7 +97,7 @@ provider:
   base_url: "http://localhost:8080"
   n_predict: 512
 telemetry:
-  directory: "runs/latest"
+  directory: "runs"
 "#;
 
     #[test]
@@ -130,7 +130,7 @@ telemetry:
     fn parses_telemetry_config() {
         let tmp = TempYaml::new(EXAMPLE_YAML);
         let config = ForgeConfig::from_file(tmp.path()).unwrap();
-        assert_eq!(config.telemetry.directory, "runs/latest");
+        assert_eq!(config.telemetry.directory, "runs");
     }
 
     #[test]
