@@ -4,7 +4,7 @@ use crate::machines::scheduler::{
     NodeFailure, NodeId, NodeKind, NodeOutcome, NodeRequest, PlanOutput, RecoveryAction, WorkOutput,
 };
 
-use super::types::{NodeRunRequest, NodeRunResult};
+use super::types::{NodeRunRequest, NodeRunResult, NodeRunWorkResult};
 
 /// Runs a single scheduler node and returns a typed outcome.
 ///
@@ -22,7 +22,8 @@ pub trait NodeRunner {
 /// Rules:
 /// - If `objective` contains `"fail"`, return `Failed` with `Terminal` recovery.
 /// - If `kind` is `Plan`, return `PlanAccepted` with one child work node.
-/// - If `kind` is `Work`, return `WorkAccepted` with a summary derived from the objective.
+/// - If `kind` is `Work`, return `WorkAccepted` with a summary derived from the objective
+///   and `artifact_update = None` (static runner produces no artifact changes).
 pub struct StaticNodeRunner;
 
 impl NodeRunner for StaticNodeRunner {
@@ -44,8 +45,11 @@ impl NodeRunner for StaticNodeRunner {
                     dependencies: vec![],
                 }],
             }),
-            NodeKind::Work => NodeRunResult::WorkAccepted(WorkOutput {
-                summary: format!("completed: {}", request.objective),
+            NodeKind::Work => NodeRunResult::WorkAccepted(NodeRunWorkResult {
+                work: WorkOutput {
+                    summary: format!("completed: {}", request.objective),
+                },
+                artifact_update: None,
             }),
         }
     }
@@ -55,7 +59,8 @@ impl From<NodeRunResult> for NodeOutcome {
     fn from(result: NodeRunResult) -> Self {
         match result {
             NodeRunResult::PlanAccepted(plan) => NodeOutcome::PlanAccepted(plan),
-            NodeRunResult::WorkAccepted(work) => NodeOutcome::WorkAccepted(work),
+            // artifact_update is intentionally discarded: scheduler does not understand artifacts yet.
+            NodeRunResult::WorkAccepted(work_result) => NodeOutcome::WorkAccepted(work_result.work),
             NodeRunResult::Failed(failure) => NodeOutcome::Failed(failure),
         }
     }
@@ -63,7 +68,10 @@ impl From<NodeRunResult> for NodeOutcome {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
+    use crate::artifacts::{ArtifactUpdate, ArtifactView, FileChange};
     use crate::machines::scheduler::{ModelTier, RecoveryAction};
 
     fn plan_request(objective: &str) -> NodeRunRequest {
@@ -72,6 +80,7 @@ mod tests {
             objective: objective.to_string(),
             model_tier: ModelTier::Cheap,
             attempt: 0,
+            artifact_view: None,
         }
     }
 
@@ -81,6 +90,7 @@ mod tests {
             objective: objective.to_string(),
             model_tier: ModelTier::Cheap,
             attempt: 0,
+            artifact_view: None,
         }
     }
 
@@ -91,11 +101,29 @@ mod tests {
             objective: "test objective".to_string(),
             model_tier: ModelTier::Strong,
             attempt: 2,
+            artifact_view: None,
         };
         assert_eq!(req.kind, NodeKind::Work);
         assert_eq!(req.objective, "test objective");
         assert_eq!(req.model_tier, ModelTier::Strong);
         assert_eq!(req.attempt, 2);
+    }
+
+    #[test]
+    fn node_run_request_can_carry_artifact_view() {
+        let view = ArtifactView {
+            repo_path: PathBuf::from("/some/repo.git"),
+            commit_sha: "deadbeef".to_string(),
+        };
+        let req = NodeRunRequest {
+            kind: NodeKind::Work,
+            objective: "test".to_string(),
+            model_tier: ModelTier::Cheap,
+            attempt: 0,
+            artifact_view: Some(view),
+        };
+        let stored = req.artifact_view.expect("artifact_view should be Some");
+        assert_eq!(stored.commit_sha, "deadbeef");
     }
 
     #[test]
@@ -112,11 +140,22 @@ mod tests {
     #[test]
     fn static_runner_work_returns_work_accepted() {
         let result = StaticNodeRunner.run_node(work_request("write some code"));
-        assert!(matches!(result, NodeRunResult::WorkAccepted(_)));
-        let NodeRunResult::WorkAccepted(work) = result else {
-            unreachable!()
+        let NodeRunResult::WorkAccepted(work_result) = result else {
+            panic!("expected WorkAccepted");
         };
-        assert!(work.summary.contains("write some code"));
+        assert!(work_result.work.summary.contains("write some code"));
+    }
+
+    #[test]
+    fn static_work_result_has_no_artifact_update() {
+        let result = StaticNodeRunner.run_node(work_request("do some work"));
+        let NodeRunResult::WorkAccepted(work_result) = result else {
+            panic!("expected WorkAccepted");
+        };
+        assert!(
+            work_result.artifact_update.is_none(),
+            "StaticNodeRunner must not produce artifact changes"
+        );
     }
 
     #[test]
@@ -137,8 +176,11 @@ mod tests {
             NodeOutcome::PlanAccepted(_)
         ));
 
-        let work_result = NodeRunResult::WorkAccepted(WorkOutput {
-            summary: "done".to_string(),
+        let work_result = NodeRunResult::WorkAccepted(NodeRunWorkResult {
+            work: WorkOutput {
+                summary: "done".to_string(),
+            },
+            artifact_update: None,
         });
         assert!(matches!(
             NodeOutcome::from(work_result),
@@ -155,5 +197,26 @@ mod tests {
             NodeOutcome::from(fail_result),
             NodeOutcome::Failed(_)
         ));
+    }
+
+    #[test]
+    fn node_run_result_conversion_discards_artifact_update_for_scheduler() {
+        let work_result = NodeRunWorkResult {
+            work: WorkOutput {
+                summary: "result".to_string(),
+            },
+            artifact_update: Some(ArtifactUpdate {
+                changes: vec![FileChange::Write {
+                    path: "output.txt".to_owned(),
+                    content: "hello".to_owned(),
+                }],
+            }),
+        };
+        let node_result = NodeRunResult::WorkAccepted(work_result);
+        let outcome = NodeOutcome::from(node_result);
+        let NodeOutcome::WorkAccepted(work) = outcome else {
+            panic!("expected WorkAccepted NodeOutcome");
+        };
+        assert_eq!(work.summary, "result");
     }
 }

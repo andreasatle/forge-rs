@@ -65,6 +65,8 @@ impl<R: NodeRunner> Machine for SchedulerHandler<R> {
                     objective,
                     model_tier,
                     attempt,
+                    // The scheduler does not supply an artifact view yet.
+                    artifact_view: None,
                 };
                 let result = self.runner.run_node(request);
                 SchedulerEvent::NodeReturned {

@@ -16,4 +16,4 @@ pub mod types;
 
 pub use deliberating::DeliberatingNodeRunner;
 pub use runner::{NodeRunner, StaticNodeRunner};
-pub use types::{NodeRunRequest, NodeRunResult};
+pub use types::{NodeRunRequest, NodeRunResult, NodeRunWorkResult};
