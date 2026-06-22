@@ -1,7 +1,7 @@
 use std::fmt;
 use std::fs;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use super::Workspace;
 
@@ -16,6 +16,8 @@ pub enum ArtifactError {
     ReplaceTargetAmbiguous,
     /// A filesystem or text-decoding operation failed.
     IoError(String),
+    /// The path escapes the workspace root (absolute path or parent traversal).
+    PathOutsideWorkspace,
 }
 
 impl fmt::Display for ArtifactError {
@@ -27,6 +29,7 @@ impl fmt::Display for ArtifactError {
                 formatter.write_str("replacement target occurs more than once")
             }
             Self::IoError(message) => formatter.write_str(message),
+            Self::PathOutsideWorkspace => formatter.write_str("path escapes the workspace root"),
         }
     }
 }
@@ -56,11 +59,12 @@ impl WorkspaceFileOps for Workspace {
     }
 
     fn read_file(&self, path: &str) -> Result<String, ArtifactError> {
-        fs::read_to_string(self.path.join(path)).map_err(map_file_error)
+        let resolved = resolve_workspace_path(self, path)?;
+        fs::read_to_string(resolved).map_err(map_file_error)
     }
 
     fn write_file(&mut self, path: &str, content: &str) -> Result<(), ArtifactError> {
-        let destination = self.path.join(path);
+        let destination = resolve_workspace_path(self, path)?;
         if let Some(parent) = destination.parent() {
             fs::create_dir_all(parent).map_err(map_io_error)?;
         }
@@ -85,8 +89,35 @@ impl WorkspaceFileOps for Workspace {
     }
 
     fn delete_file(&mut self, path: &str) -> Result<(), ArtifactError> {
-        fs::remove_file(self.path.join(path)).map_err(map_file_error)
+        let resolved = resolve_workspace_path(self, path)?;
+        fs::remove_file(resolved).map_err(map_file_error)
     }
+}
+
+fn resolve_workspace_path(
+    workspace: &Workspace,
+    relative_path: &str,
+) -> Result<PathBuf, ArtifactError> {
+    let path = Path::new(relative_path);
+
+    let mut depth: i64 = 0;
+    for component in path.components() {
+        match component {
+            Component::RootDir | Component::Prefix(_) => {
+                return Err(ArtifactError::PathOutsideWorkspace);
+            }
+            Component::ParentDir => {
+                depth -= 1;
+                if depth < 0 {
+                    return Err(ArtifactError::PathOutsideWorkspace);
+                }
+            }
+            Component::Normal(_) => depth += 1,
+            Component::CurDir => {}
+        }
+    }
+
+    Ok(workspace.path.join(path))
 }
 
 fn collect_files(root: &Path, directory: &Path, files: &mut Vec<PathBuf>) {
@@ -121,4 +152,70 @@ fn map_file_error(error: io::Error) -> ArtifactError {
 
 fn map_io_error(error: io::Error) -> ArtifactError {
     ArtifactError::IoError(error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fake_workspace() -> Workspace {
+        Workspace {
+            path: PathBuf::from("/workspace"),
+            base_commit: String::from("deadbeef"),
+        }
+    }
+
+    #[test]
+    fn read_absolute_path_fails() {
+        let workspace = fake_workspace();
+        assert_eq!(
+            workspace.read_file("/etc/passwd"),
+            Err(ArtifactError::PathOutsideWorkspace),
+        );
+    }
+
+    #[test]
+    fn write_absolute_path_fails() {
+        let mut workspace = fake_workspace();
+        assert_eq!(
+            workspace.write_file("/etc/passwd", "bad"),
+            Err(ArtifactError::PathOutsideWorkspace),
+        );
+    }
+
+    #[test]
+    fn parent_traversal_fails() {
+        let workspace = fake_workspace();
+        assert_eq!(
+            workspace.read_file("../outside.txt"),
+            Err(ArtifactError::PathOutsideWorkspace),
+        );
+    }
+
+    #[test]
+    fn nested_parent_traversal_fails() {
+        let workspace = fake_workspace();
+        assert_eq!(
+            workspace.read_file("a/../../bar"),
+            Err(ArtifactError::PathOutsideWorkspace),
+        );
+    }
+
+    #[test]
+    fn delete_outside_workspace_fails() {
+        let mut workspace = fake_workspace();
+        assert_eq!(
+            workspace.delete_file("../secret"),
+            Err(ArtifactError::PathOutsideWorkspace),
+        );
+    }
+
+    #[test]
+    fn replace_outside_workspace_fails() {
+        let mut workspace = fake_workspace();
+        assert_eq!(
+            workspace.replace_text("/etc/passwd", "old", "new"),
+            Err(ArtifactError::PathOutsideWorkspace),
+        );
+    }
 }
