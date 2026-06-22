@@ -47,10 +47,18 @@ pub trait Machine {
     /// Inspects the current state and returns `Some(output)` if the machine has
     /// reached a terminal state, `None` to continue the loop.
     fn output(&self, state: &Self::State) -> Option<Self::Output>;
+
+    /// Human-readable name recorded in telemetry.
+    ///
+    /// Defaults to the short type name. Override with a domain-meaningful label
+    /// such as `"SchedulerMachine"` or `"DeliberationMachine"`.
+    fn name(&self) -> String {
+        short_type_name::<Self>()
+    }
 }
 
 /// Extracts the short type name (last `::` segment) for use in telemetry.
-fn short_type_name<T>() -> String {
+fn short_type_name<T: ?Sized>() -> String {
     let full = std::any::type_name::<T>();
     full.rsplit("::").next().unwrap_or(full).to_string()
 }
@@ -74,19 +82,18 @@ fn short_type_name<T>() -> String {
 ///
 /// A transition may emit **zero or one** effect per tick. Emitting two or more
 /// effects is treated as a bug and causes an immediate panic.
-pub fn run_machine_with_telemetry<M, T>(
+pub fn run_machine_with_telemetry<M>(
     machine: M,
     mut state: M::State,
-    telemetry: &T,
+    telemetry: &dyn TelemetrySink,
 ) -> (M::Output, M)
 where
     M: Machine,
     M::State: std::fmt::Debug,
     M::Event: std::fmt::Debug,
     M::Effect: std::fmt::Debug,
-    T: TelemetrySink,
 {
-    let machine_name = short_type_name::<M>();
+    let machine_name = machine.name();
     telemetry.record(TelemetryEvent::MachineStarted {
         machine: machine_name.clone(),
     });

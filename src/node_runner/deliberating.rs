@@ -1,7 +1,7 @@
 //! NodeRunner backed by DeliberationMachine.
 
 use crate::artifacts::{ArtifactUpdate, ArtifactView, FileChange};
-use crate::engine::{Machine, Transition, run_machine};
+use crate::engine::{Machine, Transition, run_machine_with_telemetry};
 use crate::machines::deliberation::{
     DeliberationEffect, DeliberationEvent, DeliberationMachine, DeliberationRequest,
     DeliberationState, DeliberationTerminalOutput, ProviderBackedDeliberationHandler,
@@ -10,6 +10,7 @@ use crate::machines::scheduler::{
     NodeFailure, NodeId, NodeKind, NodeRequest, PlanOutput, RecoveryAction, WorkOutput,
 };
 use crate::providers::ProviderClient;
+use crate::telemetry::TelemetrySink;
 
 use super::runner::NodeRunner;
 use super::types::{NodeRunRequest, NodeRunResult, NodeRunWorkResult};
@@ -65,10 +66,14 @@ impl<'a, P: ProviderClient> Machine for DeliberatingMachine<'a, P> {
     fn output(&self, state: &DeliberationState) -> Option<DeliberationTerminalOutput> {
         DeliberationMachine.output(state)
     }
+
+    fn name(&self) -> String {
+        "DeliberationMachine".to_string()
+    }
 }
 
 impl<P: ProviderClient> NodeRunner for DeliberatingNodeRunner<P> {
-    fn run_node(&self, request: NodeRunRequest) -> NodeRunResult {
+    fn run_node(&self, request: NodeRunRequest, telemetry: &dyn TelemetrySink) -> NodeRunResult {
         let objective = enrich_objective(&request);
         let delib_request = DeliberationRequest {
             objective,
@@ -80,7 +85,10 @@ impl<P: ProviderClient> NodeRunner for DeliberatingNodeRunner<P> {
         let machine = DeliberatingMachine {
             handler: ProviderBackedDeliberationHandler::new(&self.provider),
         };
-        map_output(run_machine(machine, initial_state), request.kind)
+        map_output(
+            run_machine_with_telemetry(machine, initial_state, telemetry).0,
+            request.kind,
+        )
     }
 }
 
@@ -159,6 +167,7 @@ mod tests {
     use crate::artifacts::ArtifactView;
     use crate::machines::scheduler::ModelTier;
     use crate::providers::{ProviderError, ProviderErrorKind, ProviderRequest, ProviderResponse};
+    use crate::telemetry::NoopTelemetry;
 
     struct ScriptedProvider {
         responses: RefCell<VecDeque<Result<String, ProviderError>>>,
@@ -324,7 +333,7 @@ mod tests {
             r#"{"status":"accepted","content":"approved"}"#,
         ]);
         let runner = DeliberatingNodeRunner::new(provider);
-        let result = runner.run_node(plan_request("plan the work"));
+        let result = runner.run_node(plan_request("plan the work"), &NoopTelemetry);
         let NodeRunResult::PlanAccepted(plan) = result else {
             panic!("expected PlanAccepted");
         };
@@ -341,7 +350,7 @@ mod tests {
             r#"{"status":"accepted","content":"approved"}"#,
         ]);
         let runner = DeliberatingNodeRunner::new(provider);
-        let result = runner.run_node(work_request("write some code"));
+        let result = runner.run_node(work_request("write some code"), &NoopTelemetry);
         let NodeRunResult::WorkAccepted(work_result) = result else {
             panic!("expected WorkAccepted");
         };
@@ -352,7 +361,7 @@ mod tests {
     fn deliberating_runner_provider_failure_returns_failed() {
         let provider = ScriptedProvider::failing(ProviderErrorKind::Retryable, "timeout");
         let runner = DeliberatingNodeRunner::new(provider);
-        let result = runner.run_node(work_request("do something"));
+        let result = runner.run_node(work_request("do something"), &NoopTelemetry);
         let NodeRunResult::Failed(failure) = result else {
             panic!("expected Failed");
         };
@@ -370,7 +379,7 @@ mod tests {
             r#"{"status":"accepted","content":"approved"}"#,
         ]);
         let runner = DeliberatingNodeRunner::new(provider);
-        let result = runner.run_node(work_request("refine the plan"));
+        let result = runner.run_node(work_request("refine the plan"), &NoopTelemetry);
         let NodeRunResult::WorkAccepted(work_result) = result else {
             panic!("expected WorkAccepted");
         };
@@ -381,7 +390,7 @@ mod tests {
     fn deliberating_runner_preserves_deliberation_failure() {
         let provider = ScriptedProvider::from_strs(&["not valid json at all"]);
         let runner = DeliberatingNodeRunner::new(provider);
-        let result = runner.run_node(work_request("do something"));
+        let result = runner.run_node(work_request("do something"), &NoopTelemetry);
         let NodeRunResult::Failed(failure) = result else {
             panic!("expected Failed");
         };
@@ -398,7 +407,7 @@ mod tests {
             r#"{"status":"accepted","content":"approved"}"#,
         ]);
         let runner = DeliberatingNodeRunner::new(provider);
-        let result = runner.run_node(work_request("produce some output"));
+        let result = runner.run_node(work_request("produce some output"), &NoopTelemetry);
         let NodeRunResult::WorkAccepted(work_result) = result else {
             panic!("expected WorkAccepted");
         };
@@ -433,7 +442,7 @@ mod tests {
             attempt: 0,
             artifact_view: Some(view),
         };
-        runner.run_node(request);
+        runner.run_node(request, &NoopTelemetry);
 
         let prompts = provider.recorded_prompts();
         assert!(!prompts.is_empty(), "provider must have received prompts");

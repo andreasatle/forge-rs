@@ -3,6 +3,7 @@
 use crate::machines::scheduler::{
     NodeFailure, NodeId, NodeKind, NodeOutcome, NodeRequest, PlanOutput, RecoveryAction, WorkOutput,
 };
+use crate::telemetry::TelemetrySink;
 
 use super::types::{NodeRunRequest, NodeRunResult, NodeRunWorkResult};
 
@@ -11,8 +12,8 @@ use super::types::{NodeRunRequest, NodeRunResult, NodeRunWorkResult};
 /// Implementations may call providers, tools, or other I/O. The trait itself
 /// is synchronous; async integration is a later concern.
 pub trait NodeRunner {
-    /// Execute `request` and return the outcome.
-    fn run_node(&self, request: NodeRunRequest) -> NodeRunResult;
+    /// Execute `request` and return the outcome, recording into the shared `telemetry` sink.
+    fn run_node(&self, request: NodeRunRequest, telemetry: &dyn TelemetrySink) -> NodeRunResult;
 }
 
 /// A minimal fake runner for tests and early development.
@@ -27,7 +28,7 @@ pub trait NodeRunner {
 pub struct StaticNodeRunner;
 
 impl NodeRunner for StaticNodeRunner {
-    fn run_node(&self, request: NodeRunRequest) -> NodeRunResult {
+    fn run_node(&self, request: NodeRunRequest, _telemetry: &dyn TelemetrySink) -> NodeRunResult {
         if request.objective.contains("fail") {
             return NodeRunResult::Failed(NodeFailure {
                 reason: "objective contains 'fail'".to_string(),
@@ -73,6 +74,7 @@ mod tests {
     use super::*;
     use crate::artifacts::{ArtifactUpdate, ArtifactView, FileChange};
     use crate::machines::scheduler::{ModelTier, RecoveryAction};
+    use crate::telemetry::NoopTelemetry;
 
     fn plan_request(objective: &str) -> NodeRunRequest {
         NodeRunRequest {
@@ -128,7 +130,7 @@ mod tests {
 
     #[test]
     fn static_runner_plan_returns_plan_accepted() {
-        let result = StaticNodeRunner.run_node(plan_request("build the thing"));
+        let result = StaticNodeRunner.run_node(plan_request("build the thing"), &NoopTelemetry);
         assert!(matches!(result, NodeRunResult::PlanAccepted(_)));
         let NodeRunResult::PlanAccepted(plan) = result else {
             unreachable!()
@@ -139,7 +141,7 @@ mod tests {
 
     #[test]
     fn static_runner_work_returns_work_accepted() {
-        let result = StaticNodeRunner.run_node(work_request("write some code"));
+        let result = StaticNodeRunner.run_node(work_request("write some code"), &NoopTelemetry);
         let NodeRunResult::WorkAccepted(work_result) = result else {
             panic!("expected WorkAccepted");
         };
@@ -148,7 +150,7 @@ mod tests {
 
     #[test]
     fn static_work_result_has_no_artifact_update() {
-        let result = StaticNodeRunner.run_node(work_request("do some work"));
+        let result = StaticNodeRunner.run_node(work_request("do some work"), &NoopTelemetry);
         let NodeRunResult::WorkAccepted(work_result) = result else {
             panic!("expected WorkAccepted");
         };
@@ -160,7 +162,7 @@ mod tests {
 
     #[test]
     fn static_runner_fail_returns_node_failure() {
-        let result = StaticNodeRunner.run_node(work_request("do a failing task"));
+        let result = StaticNodeRunner.run_node(work_request("do a failing task"), &NoopTelemetry);
         assert!(matches!(result, NodeRunResult::Failed(_)));
         let NodeRunResult::Failed(failure) = result else {
             unreachable!()

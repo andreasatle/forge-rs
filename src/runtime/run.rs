@@ -3,6 +3,7 @@
 use std::error::Error;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static SEED_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -16,7 +17,7 @@ use crate::providers::{
     LlamaCppProvider, ProviderClient, ProviderError, ProviderRequest, ProviderResponse,
     RetryingProvider,
 };
-use crate::telemetry::FileTelemetry;
+use crate::telemetry::{FileTelemetry, TelemetrySink};
 
 const PROTOCOL_PREFIX: &str = "\
 Return exactly one JSON object. No markdown. No code fence. No explanation.\n\
@@ -59,7 +60,7 @@ impl ForgeRuntime {
 
         let telemetry_dir = PathBuf::from(&config.telemetry.directory);
         let _ = std::fs::remove_dir_all(&telemetry_dir);
-        let sink = FileTelemetry::new(telemetry_dir.clone())?;
+        let sink: Rc<dyn TelemetrySink> = Rc::new(FileTelemetry::new(telemetry_dir.clone())?);
 
         let llama = LlamaCppProvider::new(&config.provider.base_url)
             .with_n_predict(config.provider.n_predict as u32);
@@ -67,13 +68,14 @@ impl ForgeRuntime {
         let instructed = InstructedProvider { inner: retrying };
 
         let runner = DeliberatingNodeRunner::new(instructed);
-        let handler = SchedulerHandler::with_artifact(runner, artifact);
+        let handler =
+            SchedulerHandler::with_artifact(runner, artifact).with_telemetry(Rc::clone(&sink));
 
         let initial_state = SchedulerMachine::initial_state(RunRequest {
             objective: config.objective.clone(),
         });
 
-        let (output, handler) = run_machine_with_telemetry(handler, initial_state, &sink);
+        let (output, handler) = run_machine_with_telemetry(handler, initial_state, sink.as_ref());
 
         let final_artifact = handler.artifact();
         print_summary(&output, &config, final_artifact.as_ref(), &telemetry_dir);
@@ -327,7 +329,11 @@ mod tests {
 
         struct FileWritingRunner;
         impl NodeRunner for FileWritingRunner {
-            fn run_node(&self, _: NodeRunRequest) -> NodeRunResult {
+            fn run_node(
+                &self,
+                _: NodeRunRequest,
+                _telemetry: &dyn crate::telemetry::TelemetrySink,
+            ) -> NodeRunResult {
                 NodeRunResult::WorkAccepted(NodeRunWorkResult {
                     work: WorkOutput {
                         summary: "wrote result.txt".to_string(),
