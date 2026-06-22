@@ -553,4 +553,74 @@ mod tests {
             "commit SHA must not change when the runner produces no artifact update"
         );
     }
+
+    // ── telemetry tests ───────────────────────────────────────────────────────
+
+    /// A node runner that always fails with a fixed reason.
+    struct AlwaysFailRunner {
+        reason: String,
+    }
+
+    impl NodeRunner for AlwaysFailRunner {
+        fn run_node(&self, _request: NodeRunRequest) -> NodeRunResult {
+            use crate::machines::scheduler::event::{NodeFailure, RecoveryAction};
+            NodeRunResult::Failed(NodeFailure {
+                reason: self.reason.clone(),
+                recovery: RecoveryAction::Terminal {
+                    message: "terminal".to_string(),
+                },
+            })
+        }
+    }
+
+    #[test]
+    fn node_failure_reason_preserved_in_full_in_telemetry() {
+        use crate::engine::run_machine_with_telemetry;
+        use crate::telemetry::FileTelemetry;
+
+        let long_reason = "provider error: connection timed out after 3 retries; \
+            last attempt returned status 503; node objective was 'write the implementation'; \
+            this reason must appear verbatim in the telemetry file and must not be elided to '...'";
+
+        let seq = NEXT_TEST_ID.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!(
+            "forge-handler-telemetry-{}-{seq}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        let sink = FileTelemetry::new(dir.clone()).unwrap();
+
+        let state = SchedulerState::Running {
+            graph: RunGraph {
+                nodes: vec![work_node("fail-node", "do some work")],
+                next_id: 0,
+            },
+        };
+
+        run_machine_with_telemetry(
+            SchedulerHandler::new(AlwaysFailRunner {
+                reason: long_reason.to_string(),
+            }),
+            state,
+            &sink,
+        );
+
+        let all_content: String = fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter_map(|e| fs::read_to_string(e.path()).ok())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let _ = fs::remove_dir_all(&dir);
+
+        assert!(
+            all_content.contains(long_reason),
+            "telemetry must contain the full failure reason; got:\n{all_content}"
+        );
+        assert!(
+            !all_content.contains("reason: \"...\""),
+            "telemetry must not elide the failure reason to '...'; got:\n{all_content}"
+        );
+    }
 }

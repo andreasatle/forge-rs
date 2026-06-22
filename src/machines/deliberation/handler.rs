@@ -124,7 +124,8 @@ fn render_role_prompt(
 /// 2. Strip optional markdown code fence (` ```json ` / ` ``` `).
 /// 3. Extract the first JSON object (between outermost `{` and `}`).
 /// 4. Parse with serde_json into `JsonRoleResponse`.
-/// 5. Validate that required string fields are non-empty.
+/// 5. Validate that required string fields are non-empty and not the `"..."` schema
+///    placeholder that models sometimes echo back literally from the prompt template.
 /// 6. Map any parse or validation failure to `RoleResult::Failed`.
 fn parse_role_response(content: &str) -> RoleResult {
     let text = strip_code_fence(content.trim());
@@ -147,9 +148,9 @@ fn parse_role_response(content: &str) -> RoleResult {
             }
         }
         Ok(JsonRoleResponse::Rejected { reason }) => {
-            if reason.trim().is_empty() {
+            if reason.trim().is_empty() || reason.trim() == "..." {
                 RoleResult::Failed {
-                    reason: "rejected response has empty reason".to_string(),
+                    reason: format!("role response has placeholder reason; raw: {content:?}"),
                 }
             } else {
                 RoleResult::Rejected { reason }
@@ -364,6 +365,22 @@ mod tests {
         assert!(
             matches!(result, RoleResult::Failed { .. }),
             "empty reason must produce Failed, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn json_rejected_placeholder_reason_fails_and_includes_raw() {
+        let result = parse_role_response(r#"{"status":"rejected","reason":"..."}"#);
+        let RoleResult::Failed { reason } = result else {
+            panic!("placeholder '...' reason must produce Failed, got {result:?}");
+        };
+        assert!(
+            reason.contains("placeholder"),
+            "failure reason must mention 'placeholder'; got: {reason}"
+        );
+        assert!(
+            reason.contains("..."),
+            "failure reason must include the '...' placeholder text so telemetry is not elided; got: {reason}"
         );
     }
 
