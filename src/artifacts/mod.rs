@@ -5,7 +5,7 @@
 //! contents, and integration commits and pushes a new immutable version.
 
 mod artifact;
-mod file_ops;
+pub(crate) mod file_ops;
 mod integration;
 mod update;
 mod workspace;
