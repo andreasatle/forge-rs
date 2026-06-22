@@ -451,6 +451,96 @@ mod tests {
     }
 
     #[test]
+    fn artifact_view_reads_committed_file() {
+        let (temp, artifact) = fixture("view-reads-committed");
+        let view = ArtifactView {
+            repo_path: artifact.repo_path.clone(),
+            commit_sha: artifact.commit_sha.clone(),
+        };
+
+        assert_eq!(view.read_file("artifact.txt").unwrap(), "version one\n");
+    }
+
+    #[test]
+    fn artifact_view_does_not_see_unintegrated_workspace_changes() {
+        let (temp, artifact) = fixture("view-no-unintegrated");
+        let mut workspace = create_workspace(&artifact, temp.join("workspace"));
+        workspace
+            .write_file("artifact.txt", "modified in workspace\n")
+            .unwrap();
+        let view = ArtifactView {
+            repo_path: artifact.repo_path.clone(),
+            commit_sha: artifact.commit_sha.clone(),
+        };
+
+        assert_eq!(view.read_file("artifact.txt").unwrap(), "version one\n");
+    }
+
+    #[test]
+    fn artifact_view_sees_new_commit_after_integration() {
+        let (temp, artifact) = fixture("view-after-integration");
+        let mut workspace = create_workspace(&artifact, temp.join("workspace"));
+        write_update("artifact.txt", "version two\n")
+            .apply(&mut workspace)
+            .unwrap();
+        let integrated = integrate(&artifact, &workspace);
+        let view = ArtifactView {
+            repo_path: integrated.repo_path.clone(),
+            commit_sha: integrated.commit_sha.clone(),
+        };
+
+        assert_eq!(view.read_file("artifact.txt").unwrap(), "version two\n");
+    }
+
+    #[test]
+    fn artifact_view_lists_files() {
+        let (temp, artifact) = fixture("view-list-files");
+        let mut workspace = create_workspace(&artifact, temp.join("workspace"));
+        workspace.write_file("nested/file.txt", "nested\n").unwrap();
+        let integrated = integrate(&artifact, &workspace);
+        let view = ArtifactView {
+            repo_path: integrated.repo_path.clone(),
+            commit_sha: integrated.commit_sha.clone(),
+        };
+
+        assert_eq!(
+            view.list_files().unwrap(),
+            vec![
+                PathBuf::from("artifact.txt"),
+                PathBuf::from("nested/file.txt"),
+            ]
+        );
+    }
+
+    #[test]
+    fn artifact_view_rejects_parent_traversal() {
+        let (_temp, artifact) = fixture("view-parent-traversal");
+        let view = ArtifactView {
+            repo_path: artifact.repo_path.clone(),
+            commit_sha: artifact.commit_sha.clone(),
+        };
+
+        assert_eq!(
+            view.read_file("../secret"),
+            Err(ArtifactError::PathOutsideWorkspace),
+        );
+    }
+
+    #[test]
+    fn artifact_view_rejects_absolute_paths() {
+        let (_temp, artifact) = fixture("view-absolute-path");
+        let view = ArtifactView {
+            repo_path: artifact.repo_path.clone(),
+            commit_sha: artifact.commit_sha.clone(),
+        };
+
+        assert_eq!(
+            view.read_file("/etc/passwd"),
+            Err(ArtifactError::PathOutsideWorkspace),
+        );
+    }
+
+    #[test]
     fn path_outside_workspace_propagates() {
         let (temp, artifact) = fixture("path-outside");
         let mut workspace = create_workspace(&artifact, temp.join("workspace"));

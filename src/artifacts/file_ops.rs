@@ -94,12 +94,8 @@ impl WorkspaceFileOps for Workspace {
     }
 }
 
-fn resolve_workspace_path(
-    workspace: &Workspace,
-    relative_path: &str,
-) -> Result<PathBuf, ArtifactError> {
+pub(crate) fn validate_relative_path(relative_path: &str) -> Result<(), ArtifactError> {
     let path = Path::new(relative_path);
-
     let mut depth: i64 = 0;
     for component in path.components() {
         match component {
@@ -116,8 +112,15 @@ fn resolve_workspace_path(
             Component::CurDir => {}
         }
     }
+    Ok(())
+}
 
-    Ok(workspace.path.join(path))
+fn resolve_workspace_path(
+    workspace: &Workspace,
+    relative_path: &str,
+) -> Result<PathBuf, ArtifactError> {
+    validate_relative_path(relative_path)?;
+    Ok(workspace.path.join(relative_path))
 }
 
 fn collect_files(root: &Path, directory: &Path, files: &mut Vec<PathBuf>) {
