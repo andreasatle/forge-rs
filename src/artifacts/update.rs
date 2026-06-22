@@ -1,36 +1,55 @@
-use std::fs;
-
 use super::Workspace;
+use super::file_ops::{ArtifactError, WorkspaceFileOps};
 
-/// Complete file replacements to apply to a workspace.
+/// A single file change to apply to a workspace.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum FileChange {
+    /// Creates or overwrites a file with the given content.
+    Write {
+        /// Path relative to the workspace root.
+        path: String,
+        /// Complete file contents to write.
+        content: String,
+    },
+    /// Replaces the sole exact occurrence of `old` with `new` in a file.
+    Replace {
+        /// Path relative to the workspace root.
+        path: String,
+        /// Text to find (must occur exactly once).
+        old: String,
+        /// Replacement text.
+        new: String,
+    },
+    /// Deletes an existing file.
+    Delete {
+        /// Path relative to the workspace root.
+        path: String,
+    },
+}
+
+/// An ordered sequence of file changes to apply to a workspace.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ArtifactUpdate {
-    /// Files to create or replace.
-    pub files: Vec<UpdatedFile>,
+    /// The changes to apply, in order.
+    pub changes: Vec<FileChange>,
 }
 
-/// A file path and its complete new contents.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct UpdatedFile {
-    /// Path relative to the workspace root.
-    pub path: String,
-    /// Complete contents to write.
-    pub content: String,
-}
-
-/// Applies complete file replacements to a workspace.
-pub fn apply_update(workspace: &Workspace, update: &ArtifactUpdate) {
-    for file in &update.files {
-        let destination = workspace.path.join(&file.path);
-        if let Some(parent) = destination.parent() {
-            fs::create_dir_all(parent).unwrap_or_else(|error| {
-                panic!(
-                    "failed to create parent directories for {}: {error}",
-                    file.path
-                )
-            });
+impl ArtifactUpdate {
+    /// Applies all changes in order, stopping at the first error.
+    pub fn apply(&self, workspace: &mut Workspace) -> Result<(), ArtifactError> {
+        for change in &self.changes {
+            match change {
+                FileChange::Write { path, content } => {
+                    workspace.write_file(path, content)?;
+                }
+                FileChange::Replace { path, old, new } => {
+                    workspace.replace_text(path, old, new)?;
+                }
+                FileChange::Delete { path } => {
+                    workspace.delete_file(path)?;
+                }
+            }
         }
-        fs::write(&destination, &file.content)
-            .unwrap_or_else(|error| panic!("failed to write {}: {error}", file.path));
+        Ok(())
     }
 }
