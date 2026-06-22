@@ -7,7 +7,7 @@
 use serde::Deserialize;
 
 use crate::providers::{ProviderClient, ProviderRequest};
-use crate::telemetry::{NoopTelemetry, TelemetryEvent, TelemetrySink};
+use crate::telemetry::{NoopTelemetry, TelemetryEvent, TelemetryRecord, TelemetrySink};
 
 use super::effect::DeliberationEffect;
 use super::event::{DeliberationEvent, RoleResult};
@@ -94,10 +94,13 @@ impl<P: ProviderClient> ProviderBackedDeliberationHandler<P> {
         };
 
         loop {
-            telemetry.record(TelemetryEvent::RolePromptRendered {
-                prompt: attempt.request.prompt.clone(),
-                attempt_count: attempt.attempt_count,
-            });
+            telemetry.record(TelemetryRecord::new(
+                "RoleMachine",
+                TelemetryEvent::RolePromptRendered {
+                    prompt: attempt.request.prompt.clone(),
+                    attempt_count: attempt.attempt_count,
+                },
+            ));
             let response = match self.provider.call(attempt.request) {
                 Ok(response) => response,
                 Err(err) => {
@@ -106,34 +109,46 @@ impl<P: ProviderClient> ProviderBackedDeliberationHandler<P> {
                     };
                 }
             };
-            telemetry.record(TelemetryEvent::ProviderResponseReceived {
-                raw_response: response.content.clone(),
-                attempt_count: attempt.attempt_count,
-            });
+            telemetry.record(TelemetryRecord::new(
+                "RoleMachine",
+                TelemetryEvent::ProviderResponseReceived {
+                    raw_response: response.content.clone(),
+                    attempt_count: attempt.attempt_count,
+                },
+            ));
 
             match try_parse_role_response(&response.content) {
                 Ok(result) => {
-                    telemetry.record(TelemetryEvent::ParseSucceeded {
-                        attempt_count: attempt.attempt_count,
-                    });
+                    telemetry.record(TelemetryRecord::new(
+                        "RoleMachine",
+                        TelemetryEvent::ParseSucceeded {
+                            attempt_count: attempt.attempt_count,
+                        },
+                    ));
                     return result;
                 }
                 Err(parse_error) => {
-                    telemetry.record(TelemetryEvent::ParseFailed {
-                        raw_response: response.content.clone(),
-                        parse_error: parse_error.clone(),
-                        attempt_count: attempt.attempt_count,
-                    });
+                    telemetry.record(TelemetryRecord::new(
+                        "RoleMachine",
+                        TelemetryEvent::ParseFailed {
+                            raw_response: response.content.clone(),
+                            parse_error: parse_error.clone(),
+                            attempt_count: attempt.attempt_count,
+                        },
+                    ));
                     if attempt.attempt_count > MAX_PROTOCOL_RETRIES {
                         return RoleResult::Failed {
                             reason: parse_error,
                         };
                     }
                     let next_attempt = attempt.attempt_count + 1;
-                    telemetry.record(TelemetryEvent::ProtocolRetry {
-                        parse_error: parse_error.clone(),
-                        attempt_count: next_attempt,
-                    });
+                    telemetry.record(TelemetryRecord::new(
+                        "RoleMachine",
+                        TelemetryEvent::ProtocolRetry {
+                            parse_error: parse_error.clone(),
+                            attempt_count: next_attempt,
+                        },
+                    ));
                     attempt = RoleAttempt {
                         request: ProviderRequest {
                             prompt: render_retry_prompt(&original_prompt, &parse_error),
@@ -745,38 +760,69 @@ mod tests {
             &telemetry,
         );
 
-        let events = telemetry.events();
-        assert!(events.iter().any(|event| matches!(
-            event,
+        let records = telemetry.records();
+        assert!(records.iter().all(|record| record.source == "RoleMachine"));
+        assert!(records.iter().any(|record| matches!(
+            &record.event,
             TelemetryEvent::RolePromptRendered {
                 attempt_count: 2,
                 prompt,
             } if prompt.contains("no JSON object found")
         )));
-        assert!(events.iter().any(|event| matches!(
-            event,
+        assert!(records.iter().any(|record| matches!(
+            &record.event,
             TelemetryEvent::ProviderResponseReceived {
                 attempt_count: 1,
                 raw_response,
             } if raw_response == "invalid text"
         )));
-        assert!(events.iter().any(|event| matches!(
-            event,
+        assert!(records.iter().any(|record| matches!(
+            &record.event,
             TelemetryEvent::ParseFailed { parse_error, .. }
                 if parse_error.contains("no JSON object found")
         )));
-        assert!(events.iter().any(|event| matches!(
-            event,
+        assert!(records.iter().any(|record| matches!(
+            &record.event,
             TelemetryEvent::ProtocolRetry {
                 attempt_count: 2,
                 ..
             }
         )));
-        assert!(
-            events
-                .iter()
-                .any(|event| matches!(event, TelemetryEvent::ParseSucceeded { attempt_count: 2 }))
+        assert!(records.iter().any(|record| matches!(
+            record.event,
+            TelemetryEvent::ParseSucceeded { attempt_count: 2 }
+        )));
+    }
+
+    #[test]
+    fn role_events_use_role_machine_source() {
+        use crate::telemetry::FileTelemetry;
+
+        let dir = std::env::temp_dir().join("forge-role-machine-source-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        let telemetry = FileTelemetry::new(dir.clone()).unwrap();
+        let handler = ProviderBackedDeliberationHandler::new(ScriptedProvider::from_strs(&[
+            "invalid text",
+            r#"{"status":"accepted","content":"recovered"}"#,
+        ]));
+
+        handler.handle_effect_with_telemetry(
+            run_role(
+                DeliberationRole::Producer,
+                "recover output",
+                None,
+                None,
+                vec![],
+            ),
+            &telemetry,
         );
+
+        assert!(
+            dir.join("000001-role-machine-role-prompt-rendered.txt")
+                .exists()
+        );
+        assert!(dir.join("000003-role-machine-parse-failed.txt").exists());
+        assert!(dir.join("000004-role-machine-protocol-retry.txt").exists());
     }
 
     // --- run_machine integration tests ---

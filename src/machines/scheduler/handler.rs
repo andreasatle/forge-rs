@@ -710,10 +710,10 @@ mod tests {
         let handler = SchedulerHandler::new(runner).with_telemetry(Rc::clone(&shared));
         let _ = run_machine_with_telemetry(handler, initial_state, shared.as_ref());
 
-        let events = vec_tel.events();
-        let machine_names: Vec<&str> = events
+        let records = vec_tel.records();
+        let machine_names: Vec<&str> = records
             .iter()
-            .filter_map(|e| match e {
+            .filter_map(|record| match &record.event {
                 TelemetryEvent::MachineStarted { machine } => Some(machine.as_str()),
                 _ => None,
             })
@@ -755,10 +755,10 @@ mod tests {
         let handler = SchedulerHandler::new(runner).with_telemetry(Rc::clone(&shared));
         let _ = run_machine_with_telemetry(handler, initial_state, shared.as_ref());
 
-        let events = vec_tel.events();
-        let machine_seq: Vec<&str> = events
+        let records = vec_tel.records();
+        let machine_seq: Vec<&str> = records
             .iter()
-            .filter_map(|e| match e {
+            .filter_map(|record| match &record.event {
                 TelemetryEvent::MachineStarted { machine } => Some(machine.as_str()),
                 _ => None,
             })
@@ -781,9 +781,9 @@ mod tests {
         // Verify scheduler events appear after deliberation finishes (EffectEmitted
         // is recorded before handle_effect; StateEntered of the next scheduler loop
         // iteration appears after the deliberation run completes).
-        let last_delib_idx = events
+        let last_delib_idx = records
             .iter()
-            .rposition(|e| match e {
+            .rposition(|record| match &record.event {
                 TelemetryEvent::StateEntered { machine, .. }
                 | TelemetryEvent::EventReceived { machine, .. }
                 | TelemetryEvent::EffectEmitted { machine, .. } => machine == "DeliberationMachine",
@@ -791,11 +791,17 @@ mod tests {
             })
             .expect("deliberation must emit at least one event");
 
-        let sched_after = events.iter().skip(last_delib_idx + 1).any(|e| match e {
-            TelemetryEvent::StateEntered { machine, .. }
-            | TelemetryEvent::EventReceived { machine, .. } => machine == "SchedulerMachine",
-            _ => false,
-        });
+        let sched_after =
+            records
+                .iter()
+                .skip(last_delib_idx + 1)
+                .any(|record| match &record.event {
+                    TelemetryEvent::StateEntered { machine, .. }
+                    | TelemetryEvent::EventReceived { machine, .. } => {
+                        machine == "SchedulerMachine"
+                    }
+                    _ => false,
+                });
 
         assert!(
             sched_after,

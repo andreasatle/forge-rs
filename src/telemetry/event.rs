@@ -1,5 +1,28 @@
 //! Telemetry event types.
 
+/// A sourced telemetry observation.
+pub struct TelemetryRecord {
+    /// Component or conceptual machine that emitted the event.
+    pub source: String,
+    /// The event emitted by the source.
+    pub event: TelemetryEvent,
+}
+
+impl TelemetryRecord {
+    /// Construct a telemetry record from a source and event.
+    pub fn new(source: impl Into<String>, event: TelemetryEvent) -> Self {
+        Self {
+            source: source.into(),
+            event,
+        }
+    }
+
+    /// Render the source and event payload as a plain-text file body.
+    pub fn file_content(&self) -> String {
+        format!("source: {}\n{}", self.source, self.event.file_content())
+    }
+}
+
 /// A single observation recorded during a machine run.
 ///
 /// All fields are plain strings. Machine-specific state, event, and effect

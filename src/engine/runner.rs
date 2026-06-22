@@ -1,5 +1,5 @@
 use crate::engine::transition::Transition;
-use crate::telemetry::{NoopTelemetry, TelemetryEvent, TelemetrySink};
+use crate::telemetry::{NoopTelemetry, TelemetryEvent, TelemetryRecord, TelemetrySink};
 
 /// A state machine that can be driven by the generic [`run_machine`] loop.
 ///
@@ -94,21 +94,30 @@ where
     M::Effect: std::fmt::Debug,
 {
     let machine_name = machine.name();
-    telemetry.record(TelemetryEvent::MachineStarted {
-        machine: machine_name.clone(),
-    });
+    telemetry.record(TelemetryRecord::new(
+        &machine_name,
+        TelemetryEvent::MachineStarted {
+            machine: machine_name.clone(),
+        },
+    ));
 
     let mut event = machine.start_event();
 
     loop {
-        telemetry.record(TelemetryEvent::StateEntered {
-            machine: machine_name.clone(),
-            state: format!("{state:#?}"),
-        });
-        telemetry.record(TelemetryEvent::EventReceived {
-            machine: machine_name.clone(),
-            event: format!("{event:#?}"),
-        });
+        telemetry.record(TelemetryRecord::new(
+            &machine_name,
+            TelemetryEvent::StateEntered {
+                machine: machine_name.clone(),
+                state: format!("{state:#?}"),
+            },
+        ));
+        telemetry.record(TelemetryRecord::new(
+            &machine_name,
+            TelemetryEvent::EventReceived {
+                machine: machine_name.clone(),
+                event: format!("{event:#?}"),
+            },
+        ));
 
         let transition = machine.transition(state, event);
         state = transition.state;
@@ -124,10 +133,13 @@ where
                     effects.next().is_none(),
                     "Machine emitted multiple effects but the engine currently supports exactly one effect per transition."
                 );
-                telemetry.record(TelemetryEvent::EffectEmitted {
-                    machine: machine_name.clone(),
-                    effect: format!("{effect:#?}"),
-                });
+                telemetry.record(TelemetryRecord::new(
+                    &machine_name,
+                    TelemetryEvent::EffectEmitted {
+                        machine: machine_name.clone(),
+                        effect: format!("{effect:#?}"),
+                    },
+                ));
                 machine.handle_effect(effect)
             }
             None => machine.start_event(),
@@ -276,11 +288,23 @@ mod tests {
     fn vec_telemetry_records_machine_events() {
         let sink = VecTelemetry::new();
         run_machine_with_telemetry(SimpleCountMachine, ScState::Start, &sink);
-        let events = sink.into_events();
-        assert!(matches!(events[0], TelemetryEvent::MachineStarted { .. }));
-        assert!(matches!(events[1], TelemetryEvent::StateEntered { .. }));
-        assert!(matches!(events[2], TelemetryEvent::EventReceived { .. }));
-        assert!(matches!(events[3], TelemetryEvent::EffectEmitted { .. }));
+        let records = sink.into_records();
+        assert!(matches!(
+            records[0].event,
+            TelemetryEvent::MachineStarted { .. }
+        ));
+        assert!(matches!(
+            records[1].event,
+            TelemetryEvent::StateEntered { .. }
+        ));
+        assert!(matches!(
+            records[2].event,
+            TelemetryEvent::EventReceived { .. }
+        ));
+        assert!(matches!(
+            records[3].event,
+            TelemetryEvent::EffectEmitted { .. }
+        ));
     }
 
     #[test]
@@ -289,9 +313,21 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         let sink = FileTelemetry::new(dir.clone()).unwrap();
         run_machine_with_telemetry(SimpleCountMachine, ScState::Start, &sink);
-        assert!(dir.join("000001-machine-started.txt").exists());
-        assert!(dir.join("000002-state-entered.txt").exists());
-        assert!(dir.join("000003-event-received.txt").exists());
-        assert!(dir.join("000004-effect-emitted.txt").exists());
+        assert!(
+            dir.join("000001-simple-count-machine-machine-started.txt")
+                .exists()
+        );
+        assert!(
+            dir.join("000002-simple-count-machine-state-entered.txt")
+                .exists()
+        );
+        assert!(
+            dir.join("000003-simple-count-machine-event-received.txt")
+                .exists()
+        );
+        assert!(
+            dir.join("000004-simple-count-machine-effect-emitted.txt")
+                .exists()
+        );
     }
 }
