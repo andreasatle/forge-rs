@@ -23,7 +23,8 @@ use crate::machines::scheduler::event::{
 use crate::machines::scheduler::machine::{SchedulerMachine, SchedulerOutput};
 use crate::machines::scheduler::state::{NodeId, SchedulerState};
 use crate::node_runner::{NodeRunRequest, NodeRunResult, NodeRunner};
-use crate::telemetry::{NoopTelemetry, TelemetrySink};
+use crate::telemetry::{NoopTelemetry, TelemetryEvent, TelemetryRecord, TelemetrySink};
+use crate::validation::{AlwaysPassValidator, Validator};
 
 static WORKSPACE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -48,6 +49,7 @@ pub struct SchedulerHandler<R> {
     artifact: RefCell<Option<Artifact>>,
     pending_artifact_updates: RefCell<HashMap<NodeId, ArtifactUpdate>>,
     telemetry: Rc<dyn TelemetrySink>,
+    validator: Rc<dyn Validator>,
 }
 
 impl<R: NodeRunner> SchedulerHandler<R> {
@@ -58,6 +60,7 @@ impl<R: NodeRunner> SchedulerHandler<R> {
             artifact: RefCell::new(None),
             pending_artifact_updates: RefCell::new(HashMap::new()),
             telemetry: Rc::new(NoopTelemetry),
+            validator: Rc::new(AlwaysPassValidator),
         }
     }
 
@@ -69,12 +72,18 @@ impl<R: NodeRunner> SchedulerHandler<R> {
             artifact: RefCell::new(Some(artifact)),
             pending_artifact_updates: RefCell::new(HashMap::new()),
             telemetry: Rc::new(NoopTelemetry),
+            validator: Rc::new(AlwaysPassValidator),
         }
     }
 
     /// Attach a shared telemetry sink so node runs record into the same trace.
     pub fn with_telemetry(self, telemetry: Rc<dyn TelemetrySink>) -> Self {
         Self { telemetry, ..self }
+    }
+
+    /// Replace the default [`AlwaysPassValidator`] with a custom validator.
+    pub fn with_validator(self, validator: Rc<dyn Validator>) -> Self {
+        Self { validator, ..self }
     }
 
     /// Returns a clone of the current artifact, or `None` if no artifact was provided.
@@ -174,8 +183,40 @@ impl<R: NodeRunner> Machine for SchedulerHandler<R> {
                             };
                         }
                         Ok(()) => {
-                            let new_artifact = integrate(&artifact, &workspace);
-                            *self.artifact.borrow_mut() = Some(new_artifact);
+                            self.telemetry.record(TelemetryRecord::new(
+                                "Integration",
+                                TelemetryEvent::ValidationStarted,
+                            ));
+                            let result = self.validator.validate(&workspace);
+                            if result.passed {
+                                self.telemetry.record(TelemetryRecord::new(
+                                    "Integration",
+                                    TelemetryEvent::ValidationPassed {
+                                        summary: result.summary,
+                                    },
+                                ));
+                                let new_artifact = integrate(&artifact, &workspace);
+                                *self.artifact.borrow_mut() = Some(new_artifact);
+                            } else {
+                                self.telemetry.record(TelemetryRecord::new(
+                                    "Integration",
+                                    TelemetryEvent::ValidationFailed {
+                                        summary: result.summary.clone(),
+                                    },
+                                ));
+                                return SchedulerEvent::IntegrationReturned {
+                                    node_id,
+                                    outcome: IntegrationOutcome::Failed(IntegrationFailure {
+                                        reason: format!("validation failed: {}", result.summary),
+                                        recovery: RecoveryAction::Terminal {
+                                            message: format!(
+                                                "validation failed: {}",
+                                                result.summary
+                                            ),
+                                        },
+                                    }),
+                                };
+                            }
                         }
                     }
                 }
@@ -835,6 +876,253 @@ mod tests {
         assert_eq!(
             sha_after, original_sha,
             "commit must not change when no artifact update was pending"
+        );
+    }
+
+    // ── validation tests ──────────────────────────────────────────────────────
+
+    use crate::artifacts::Workspace;
+    use crate::validation::{ValidationResult, Validator};
+
+    struct AlwaysFailValidator;
+
+    impl Validator for AlwaysFailValidator {
+        fn validate(&self, _workspace: &Workspace) -> ValidationResult {
+            ValidationResult {
+                passed: false,
+                summary: "intentional failure".to_string(),
+            }
+        }
+    }
+
+    /// Reads a specific file from the workspace and asserts it exists.
+    struct FileExistsValidator {
+        path: String,
+        found: Rc<RefCell<bool>>,
+    }
+
+    impl Validator for FileExistsValidator {
+        fn validate(&self, workspace: &Workspace) -> ValidationResult {
+            let exists = workspace.path.join(&self.path).exists();
+            *self.found.borrow_mut() = exists;
+            ValidationResult {
+                passed: true,
+                summary: format!("checked {}", self.path),
+            }
+        }
+    }
+
+    struct PanicOnCallValidator;
+
+    impl Validator for PanicOnCallValidator {
+        fn validate(&self, _workspace: &Workspace) -> ValidationResult {
+            panic!("validator must not be called when there is no pending update");
+        }
+    }
+
+    #[test]
+    fn validation_pass_allows_commit() {
+        let (_temp, artifact) = fixture("validation-pass");
+        let original_sha = artifact.commit_sha.clone();
+        let repo_path = artifact.repo_path.clone();
+
+        let runner = FileWritingRunner {
+            path: "output.txt".to_string(),
+            content: "hello\n".to_string(),
+        };
+        let h = SchedulerHandler::with_artifact(runner, artifact);
+
+        h.handle_effect(SchedulerEffect::RunNode {
+            node_id: NodeId("W".to_string()),
+            kind: NodeKind::Work,
+            objective: "write a file".to_string(),
+            model_tier: ModelTier::Cheap,
+            attempt: 0,
+        });
+
+        let event = h.handle_effect(SchedulerEffect::IntegrateWork {
+            node_id: NodeId("W".to_string()),
+            work: WorkOutput {
+                summary: "wrote output.txt".to_string(),
+            },
+        });
+
+        assert!(
+            matches!(
+                event,
+                SchedulerEvent::IntegrationReturned {
+                    outcome: IntegrationOutcome::Succeeded(_),
+                    ..
+                }
+            ),
+            "AlwaysPassValidator must allow integration; got: {event:#?}"
+        );
+
+        let new_sha = git_output(&repo_path, &["rev-parse", "HEAD"]);
+        assert_ne!(
+            new_sha, original_sha,
+            "commit must advance when validation passes"
+        );
+    }
+
+    #[test]
+    fn validation_failure_blocks_commit() {
+        let (_temp, artifact) = fixture("validation-fail");
+        let original_sha = artifact.commit_sha.clone();
+        let repo_path = artifact.repo_path.clone();
+
+        let runner = FileWritingRunner {
+            path: "output.txt".to_string(),
+            content: "hello\n".to_string(),
+        };
+        let h = SchedulerHandler::with_artifact(runner, artifact)
+            .with_validator(Rc::new(AlwaysFailValidator));
+
+        h.handle_effect(SchedulerEffect::RunNode {
+            node_id: NodeId("W".to_string()),
+            kind: NodeKind::Work,
+            objective: "write a file".to_string(),
+            model_tier: ModelTier::Cheap,
+            attempt: 0,
+        });
+
+        let event = h.handle_effect(SchedulerEffect::IntegrateWork {
+            node_id: NodeId("W".to_string()),
+            work: WorkOutput {
+                summary: "wrote output.txt".to_string(),
+            },
+        });
+
+        assert!(
+            matches!(
+                event,
+                SchedulerEvent::IntegrationReturned {
+                    outcome: IntegrationOutcome::Failed(_),
+                    ..
+                }
+            ),
+            "failing validator must block integration; got: {event:#?}"
+        );
+
+        let sha_after = git_output(&repo_path, &["rev-parse", "HEAD"]);
+        assert_eq!(
+            sha_after, original_sha,
+            "commit must not advance when validation fails"
+        );
+    }
+
+    #[test]
+    fn validator_runs_after_update_apply() {
+        let (_temp, artifact) = fixture("validator-after-apply");
+
+        let runner = FileWritingRunner {
+            path: "applied.txt".to_string(),
+            content: "applied content\n".to_string(),
+        };
+
+        let found = Rc::new(RefCell::new(false));
+        let validator = FileExistsValidator {
+            path: "applied.txt".to_string(),
+            found: found.clone(),
+        };
+
+        let h =
+            SchedulerHandler::with_artifact(runner, artifact).with_validator(Rc::new(validator));
+
+        h.handle_effect(SchedulerEffect::RunNode {
+            node_id: NodeId("W".to_string()),
+            kind: NodeKind::Work,
+            objective: "write a file".to_string(),
+            model_tier: ModelTier::Cheap,
+            attempt: 0,
+        });
+
+        h.handle_effect(SchedulerEffect::IntegrateWork {
+            node_id: NodeId("W".to_string()),
+            work: WorkOutput {
+                summary: "wrote applied.txt".to_string(),
+            },
+        });
+
+        assert!(
+            *found.borrow(),
+            "validator must see applied.txt in the workspace after update apply"
+        );
+    }
+
+    #[test]
+    fn no_update_does_not_run_validator() {
+        let (_temp, artifact) = fixture("no-update-no-validator");
+
+        let h = SchedulerHandler::with_artifact(StaticNodeRunner, artifact)
+            .with_validator(Rc::new(PanicOnCallValidator));
+
+        h.handle_effect(SchedulerEffect::RunNode {
+            node_id: NodeId("W".to_string()),
+            kind: NodeKind::Work,
+            objective: "do some work".to_string(),
+            model_tier: ModelTier::Cheap,
+            attempt: 0,
+        });
+
+        // StaticNodeRunner produces no artifact update, so validator must not be called.
+        let event = h.handle_effect(SchedulerEffect::IntegrateWork {
+            node_id: NodeId("W".to_string()),
+            work: WorkOutput {
+                summary: "no file changes".to_string(),
+            },
+        });
+
+        assert!(
+            matches!(
+                event,
+                SchedulerEvent::IntegrationReturned {
+                    outcome: IntegrationOutcome::Succeeded(_),
+                    ..
+                }
+            ),
+            "integration with no pending update must succeed without calling validator; got: {event:#?}"
+        );
+    }
+
+    #[test]
+    fn validation_failure_does_not_leave_artifact_changed() {
+        let (_temp, artifact) = fixture("validation-no-history-change");
+        let original_sha = artifact.commit_sha.clone();
+        let repo_path = artifact.repo_path.clone();
+
+        let runner = FileWritingRunner {
+            path: "output.txt".to_string(),
+            content: "hello\n".to_string(),
+        };
+        let h = SchedulerHandler::with_artifact(runner, artifact)
+            .with_validator(Rc::new(AlwaysFailValidator));
+
+        h.handle_effect(SchedulerEffect::RunNode {
+            node_id: NodeId("W".to_string()),
+            kind: NodeKind::Work,
+            objective: "write a file".to_string(),
+            model_tier: ModelTier::Cheap,
+            attempt: 0,
+        });
+
+        h.handle_effect(SchedulerEffect::IntegrateWork {
+            node_id: NodeId("W".to_string()),
+            work: WorkOutput {
+                summary: "wrote output.txt".to_string(),
+            },
+        });
+
+        let sha_after = git_output(&repo_path, &["rev-parse", "HEAD"]);
+        assert_eq!(
+            sha_after, original_sha,
+            "artifact commit history must remain unchanged after validation failure"
+        );
+
+        let log_count = git_output(&repo_path, &["rev-list", "--count", "HEAD"]);
+        assert_eq!(
+            log_count, "1",
+            "commit history must contain only the initial commit after validation failure"
         );
     }
 

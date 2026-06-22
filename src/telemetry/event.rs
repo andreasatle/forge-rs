@@ -139,6 +139,18 @@ pub enum TelemetryEvent {
         /// Human-readable failure reason.
         reason: String,
     },
+    /// Workspace validation started before artifact integration.
+    ValidationStarted,
+    /// Workspace validation passed; integration may proceed.
+    ValidationPassed {
+        /// Human-readable validation summary.
+        summary: String,
+    },
+    /// Workspace validation failed; artifact commit was blocked.
+    ValidationFailed {
+        /// Human-readable validation summary.
+        summary: String,
+    },
 }
 
 impl TelemetryEvent {
@@ -160,6 +172,9 @@ impl TelemetryEvent {
             TelemetryEvent::ProviderCallFailed { .. } => "provider-call-failed",
             TelemetryEvent::ArtifactCommitCreated { .. } => "artifact-commit-created",
             TelemetryEvent::Failure { .. } => "failure",
+            TelemetryEvent::ValidationStarted => "validation-started",
+            TelemetryEvent::ValidationPassed { .. } => "validation-passed",
+            TelemetryEvent::ValidationFailed { .. } => "validation-failed",
         }
     }
 
@@ -221,6 +236,13 @@ impl TelemetryEvent {
             }
             TelemetryEvent::Failure { component, reason } => {
                 format!("kind: Failure\ncomponent: {component}\nreason: {reason}\n")
+            }
+            TelemetryEvent::ValidationStarted => "kind: ValidationStarted\n".to_string(),
+            TelemetryEvent::ValidationPassed { summary } => {
+                format!("kind: ValidationPassed\nsummary: {summary}\n")
+            }
+            TelemetryEvent::ValidationFailed { summary } => {
+                format!("kind: ValidationFailed\nsummary: {summary}\n")
             }
         }
     }
