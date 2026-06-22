@@ -53,7 +53,7 @@ pub trait WorkspaceFileOps {
 impl WorkspaceFileOps for Workspace {
     fn list_files(&self) -> Vec<PathBuf> {
         let mut files = Vec::new();
-        collect_files(&self.path, &self.path, &mut files);
+        collect_files(self.path(), self.path(), &mut files);
         files.sort();
         files
     }
@@ -120,7 +120,7 @@ fn resolve_workspace_path(
     relative_path: &str,
 ) -> Result<PathBuf, ArtifactError> {
     validate_relative_path(relative_path)?;
-    Ok(workspace.path.join(relative_path))
+    Ok(workspace.path().join(relative_path))
 }
 
 fn collect_files(root: &Path, directory: &Path, files: &mut Vec<PathBuf>) {
@@ -162,10 +162,7 @@ mod tests {
     use super::*;
 
     fn fake_workspace() -> Workspace {
-        Workspace {
-            path: PathBuf::from("/workspace"),
-            base_commit: String::from("deadbeef"),
-        }
+        Workspace::at_path(PathBuf::from("/workspace"), "deadbeef".to_string())
     }
 
     #[test]

@@ -11,9 +11,10 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::artifacts::{Artifact, ArtifactUpdate, ArtifactView, create_workspace, integrate};
+use crate::artifacts::{
+    Artifact, ArtifactUpdate, ArtifactView, create_temporary_workspace, integrate,
+};
 use crate::engine::{Machine, Transition};
 use crate::machines::scheduler::effect::SchedulerEffect;
 use crate::machines::scheduler::event::{
@@ -25,8 +26,6 @@ use crate::machines::scheduler::state::{NodeId, SchedulerState};
 use crate::node_runner::{NodeRunRequest, NodeRunResult, NodeRunner};
 use crate::telemetry::{NoopTelemetry, TelemetryEvent, TelemetryRecord, TelemetrySink};
 use crate::validation::{AlwaysPassValidator, Validator};
-
-static WORKSPACE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// Drives the scheduler machine using a [`NodeRunner`] to execute nodes.
 ///
@@ -165,10 +164,7 @@ impl<R: NodeRunner> Machine for SchedulerHandler<R> {
                 let artifact_snapshot = self.artifact.borrow().clone();
 
                 if let (Some(update), Some(artifact)) = (pending_update, artifact_snapshot) {
-                    let seq = WORKSPACE_COUNTER.fetch_add(1, Ordering::Relaxed);
-                    let workspace_path = std::env::temp_dir()
-                        .join(format!("forge-workspace-{}-{seq}", std::process::id()));
-                    let mut workspace = create_workspace(&artifact, workspace_path);
+                    let mut workspace = create_temporary_workspace(&artifact);
 
                     match update.apply(&mut workspace) {
                         Err(err) => {
@@ -903,7 +899,7 @@ mod tests {
 
     impl Validator for FileExistsValidator {
         fn validate(&self, workspace: &Workspace) -> ValidationResult {
-            let exists = workspace.path.join(&self.path).exists();
+            let exists = workspace.path().join(&self.path).exists();
             *self.found.borrow_mut() = exists;
             ValidationResult {
                 passed: true,
@@ -1123,6 +1119,104 @@ mod tests {
         assert_eq!(
             log_count, "1",
             "commit history must contain only the initial commit after validation failure"
+        );
+    }
+
+    // ── workspace cleanup tests ───────────────────────────────────────────────
+
+    /// Captures the workspace path and controls whether validation passes or fails.
+    struct PathCapturingValidator {
+        captured: Rc<RefCell<Option<std::path::PathBuf>>>,
+        pass: bool,
+    }
+
+    impl Validator for PathCapturingValidator {
+        fn validate(&self, workspace: &Workspace) -> ValidationResult {
+            *self.captured.borrow_mut() = Some(workspace.path().to_path_buf());
+            ValidationResult {
+                passed: self.pass,
+                summary: "path-capturing validator".to_string(),
+            }
+        }
+    }
+
+    #[test]
+    fn temporary_workspace_removed_after_successful_integration() {
+        let (_temp, artifact) = fixture("temp-removed-success");
+        let runner = FileWritingRunner {
+            path: "output.txt".to_string(),
+            content: "hello\n".to_string(),
+        };
+        let captured = Rc::new(RefCell::new(None));
+        let validator = PathCapturingValidator {
+            captured: captured.clone(),
+            pass: true,
+        };
+        let h =
+            SchedulerHandler::with_artifact(runner, artifact).with_validator(Rc::new(validator));
+
+        h.handle_effect(SchedulerEffect::RunNode {
+            node_id: NodeId("W".to_string()),
+            kind: NodeKind::Work,
+            objective: "write a file".to_string(),
+            model_tier: ModelTier::Cheap,
+            attempt: 0,
+        });
+
+        h.handle_effect(SchedulerEffect::IntegrateWork {
+            node_id: NodeId("W".to_string()),
+            work: WorkOutput {
+                summary: "wrote output.txt".to_string(),
+            },
+        });
+
+        let path = captured
+            .borrow()
+            .clone()
+            .expect("validator must have been called");
+        assert!(
+            !path.exists(),
+            "temporary workspace must be removed after successful integration"
+        );
+    }
+
+    #[test]
+    fn temporary_workspace_removed_after_validation_failure() {
+        let (_temp, artifact) = fixture("temp-removed-validation-fail");
+        let runner = FileWritingRunner {
+            path: "output.txt".to_string(),
+            content: "hello\n".to_string(),
+        };
+        let captured = Rc::new(RefCell::new(None));
+        let validator = PathCapturingValidator {
+            captured: captured.clone(),
+            pass: false,
+        };
+        let h =
+            SchedulerHandler::with_artifact(runner, artifact).with_validator(Rc::new(validator));
+
+        h.handle_effect(SchedulerEffect::RunNode {
+            node_id: NodeId("W".to_string()),
+            kind: NodeKind::Work,
+            objective: "write a file".to_string(),
+            model_tier: ModelTier::Cheap,
+            attempt: 0,
+        });
+
+        h.handle_effect(SchedulerEffect::IntegrateWork {
+            node_id: NodeId("W".to_string()),
+            work: WorkOutput {
+                summary: "wrote output.txt".to_string(),
+            },
+        });
+
+        let path = captured
+            .borrow()
+            .clone()
+            .expect("validator must have been called");
+        assert!(
+            !path.exists(),
+            "temporary workspace must be removed after validation failure"
         );
     }
 

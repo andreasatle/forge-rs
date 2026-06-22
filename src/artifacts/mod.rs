@@ -14,7 +14,7 @@ pub use artifact::{Artifact, ArtifactView};
 pub use file_ops::{ArtifactError, WorkspaceFileOps};
 pub use integration::integrate;
 pub use update::{ArtifactUpdate, FileChange};
-pub use workspace::{Workspace, create_workspace};
+pub use workspace::{Workspace, create_temporary_workspace, create_workspace};
 
 #[cfg(test)]
 mod tests {
@@ -132,15 +132,15 @@ mod tests {
             "true"
         );
         assert_eq!(
-            git_output(&workspace.path, &["rev-parse", "--is-bare-repository"]),
+            git_output(workspace.path(), &["rev-parse", "--is-bare-repository"]),
             "false"
         );
         assert_eq!(
-            git_output(&workspace.path, &["rev-parse", "HEAD"]),
+            git_output(workspace.path(), &["rev-parse", "HEAD"]),
             artifact.commit_sha
         );
         assert_eq!(
-            fs::read_to_string(workspace.path.join("artifact.txt")).unwrap(),
+            fs::read_to_string(workspace.path().join("artifact.txt")).unwrap(),
             "version one\n"
         );
     }
@@ -166,7 +166,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            fs::read_to_string(workspace.path.join("nested/deeper/file.txt")).unwrap(),
+            fs::read_to_string(workspace.path().join("nested/deeper/file.txt")).unwrap(),
             "new contents\n"
         );
     }
@@ -216,7 +216,7 @@ mod tests {
 
         workspace.delete_file("artifact.txt").unwrap();
 
-        assert!(!workspace.path.join("artifact.txt").exists());
+        assert!(!workspace.path().join("artifact.txt").exists());
     }
 
     #[test]
@@ -254,7 +254,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            fs::read_to_string(workspace.path.join("nested/artifact.txt")).unwrap(),
+            fs::read_to_string(workspace.path().join("nested/artifact.txt")).unwrap(),
             "replacement\n"
         );
     }
@@ -391,7 +391,7 @@ mod tests {
         .apply(&mut workspace)
         .unwrap();
 
-        assert!(!workspace.path.join("artifact.txt").exists());
+        assert!(!workspace.path().join("artifact.txt").exists());
     }
 
     #[test]
@@ -420,7 +420,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(workspace.read_file("foo.txt").unwrap(), "world\n");
-        assert!(!workspace.path.join("bar.txt").exists());
+        assert!(!workspace.path().join("bar.txt").exists());
     }
 
     #[test]
@@ -447,7 +447,7 @@ mod tests {
         .apply(&mut workspace);
 
         assert_eq!(result, Err(ArtifactError::ReplaceTargetMissing));
-        assert!(workspace.path.join("foo.txt").exists());
+        assert!(workspace.path().join("foo.txt").exists());
     }
 
     #[test]
@@ -554,5 +554,54 @@ mod tests {
         .apply(&mut workspace);
 
         assert_eq!(result, Err(ArtifactError::PathOutsideWorkspace));
+    }
+
+    #[test]
+    fn temporary_workspace_removed_after_drop() {
+        let (temp, artifact) = fixture("temp-removed-drop");
+        let workspace = create_temporary_workspace(&artifact);
+        let path = workspace.path().to_path_buf();
+        assert!(path.exists(), "workspace directory must exist before drop");
+        drop(workspace);
+        assert!(
+            !path.exists(),
+            "temporary workspace must be removed on drop"
+        );
+    }
+
+    #[test]
+    fn temporary_workspace_removed_after_update_apply_failure() {
+        let (temp, artifact) = fixture("temp-removed-apply-fail");
+        let mut workspace = create_temporary_workspace(&artifact);
+        let path = workspace.path().to_path_buf();
+
+        let result = ArtifactUpdate {
+            changes: vec![FileChange::Replace {
+                path: "artifact.txt".to_owned(),
+                old: "this text does not exist".to_owned(),
+                new: "replacement".to_owned(),
+            }],
+        }
+        .apply(&mut workspace);
+
+        assert!(result.is_err(), "apply must fail on missing replace target");
+        drop(workspace);
+        assert!(
+            !path.exists(),
+            "temporary workspace must be removed even after apply failure"
+        );
+    }
+
+    #[test]
+    fn explicit_workspace_path_not_deleted_on_drop() {
+        let (temp, artifact) = fixture("explicit-preserved");
+        let workspace_path = temp.join("my-workspace");
+        let workspace = create_workspace(&artifact, workspace_path.clone());
+        assert!(workspace_path.exists());
+        drop(workspace);
+        assert!(
+            workspace_path.exists(),
+            "explicit-path workspace must not be deleted on drop"
+        );
     }
 }

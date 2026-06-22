@@ -29,7 +29,7 @@ pub fn integrate(artifact: &Artifact, workspace: &Workspace) -> Artifact {
         .args(["push", "--quiet"])
         .arg(&artifact.repo_path)
         .arg(&branch_ref)
-        .current_dir(&workspace.path)
+        .current_dir(workspace.path())
         .output()
         .expect("failed to run git push while integrating artifact");
     assert!(
@@ -48,7 +48,7 @@ pub fn integrate(artifact: &Artifact, workspace: &Workspace) -> Artifact {
 fn run_git(workspace: &Workspace, args: &[&str]) {
     let output = Command::new("git")
         .args(args)
-        .current_dir(&workspace.path)
+        .current_dir(workspace.path())
         .output()
         .unwrap_or_else(|error| panic!("failed to run git {}: {error}", args.join(" ")));
     assert!(
@@ -62,7 +62,7 @@ fn run_git(workspace: &Workspace, args: &[&str]) {
 fn git_stdout(workspace: &Workspace, args: &[&str]) -> String {
     let output = Command::new("git")
         .args(args)
-        .current_dir(&workspace.path)
+        .current_dir(workspace.path())
         .output()
         .unwrap_or_else(|error| panic!("failed to run git {}: {error}", args.join(" ")));
     assert!(
