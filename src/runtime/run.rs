@@ -67,17 +67,16 @@ impl ForgeRuntime {
         let instructed = InstructedProvider { inner: retrying };
 
         let runner = DeliberatingNodeRunner::new(instructed);
-        let repo_path = artifact.repo_path.clone();
         let handler = SchedulerHandler::with_artifact(runner, artifact);
 
         let initial_state = SchedulerMachine::initial_state(RunRequest {
             objective: config.objective.clone(),
         });
 
-        let output = run_machine_with_telemetry(handler, initial_state, &sink);
+        let (output, handler) = run_machine_with_telemetry(handler, initial_state, &sink);
 
-        let final_sha = git_head(&repo_path).unwrap_or_else(|_| "unknown".to_string());
-        print_summary(&output, &config, &final_sha, &telemetry_dir, &repo_path);
+        let final_artifact = handler.artifact();
+        print_summary(&output, &config, final_artifact.as_ref(), &telemetry_dir);
 
         Ok(())
     }
@@ -157,33 +156,37 @@ fn git_head(repo_path: &Path) -> Result<String, Box<dyn Error>> {
 fn print_summary(
     output: &SchedulerOutput,
     config: &ForgeConfig,
-    commit_sha: &str,
+    artifact: Option<&Artifact>,
     telemetry_dir: &Path,
-    repo_path: &Path,
 ) {
     let result_str = match output {
         SchedulerOutput::Complete { .. } => "COMPLETE",
         SchedulerOutput::Failed { .. } => "FAILED",
     };
 
-    let short_sha = &commit_sha[..commit_sha.len().min(7)];
-
     println!("Result      : {result_str}");
     println!("Artifact repo: {}", config.artifact.repo_path);
-    println!("Commit      : {short_sha}");
-    println!("Telemetry   : {}", telemetry_dir.display());
 
-    let view = ArtifactView {
-        repo_path: repo_path.to_path_buf(),
-        commit_sha: commit_sha.to_string(),
-    };
-    if let Ok(files) = view.list_files()
-        && !files.is_empty()
-    {
-        println!("\nGenerated files:");
-        for f in &files {
-            println!("  {}", f.display());
+    if let Some(a) = artifact {
+        let short_sha = &a.commit_sha[..a.commit_sha.len().min(7)];
+        println!("Commit      : {short_sha}");
+        println!("Telemetry   : {}", telemetry_dir.display());
+
+        let view = ArtifactView {
+            repo_path: a.repo_path.clone(),
+            commit_sha: a.commit_sha.clone(),
+        };
+        if let Ok(files) = view.list_files()
+            && !files.is_empty()
+        {
+            println!("\nGenerated files:");
+            for f in &files {
+                println!("  {}", f.display());
+            }
         }
+    } else {
+        println!("Commit      : unknown");
+        println!("Telemetry   : {}", telemetry_dir.display());
     }
 }
 
@@ -264,5 +267,104 @@ mod tests {
         assert!(dir.exists(), "telemetry directory must be created");
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn runtime_summary_uses_post_integration_artifact_commit() {
+        use crate::artifacts::{ArtifactUpdate, FileChange};
+        use crate::machines::scheduler::{
+            RunRequest, SchedulerHandler, SchedulerMachine, WorkOutput,
+        };
+        use crate::node_runner::{NodeRunRequest, NodeRunResult, NodeRunWorkResult, NodeRunner};
+        use crate::telemetry::NoopTelemetry;
+        use std::fs;
+        use std::process::Command;
+
+        struct FileWritingRunner;
+        impl NodeRunner for FileWritingRunner {
+            fn run_node(&self, _: NodeRunRequest) -> NodeRunResult {
+                NodeRunResult::WorkAccepted(NodeRunWorkResult {
+                    work: WorkOutput {
+                        summary: "wrote result.txt".to_string(),
+                    },
+                    artifact_update: Some(ArtifactUpdate {
+                        changes: vec![FileChange::Write {
+                            path: "result.txt".to_string(),
+                            content: "generated\n".to_string(),
+                        }],
+                    }),
+                })
+            }
+        }
+
+        let base = temp_path("post-integration");
+        let _ = fs::remove_dir_all(&base);
+        let seed = base.join("seed");
+        fs::create_dir_all(&seed).unwrap();
+
+        let git = |args: &[&str]| {
+            assert!(
+                Command::new("git")
+                    .args(args)
+                    .current_dir(&seed)
+                    .status()
+                    .unwrap()
+                    .success(),
+                "git {} failed",
+                args.join(" ")
+            );
+        };
+        git(&["init", "--quiet", "--initial-branch=main"]);
+        git(&["config", "user.name", "Runtime Test"]);
+        git(&["config", "user.email", "runtime-test@example.invalid"]);
+        fs::write(seed.join("seed.txt"), "initial\n").unwrap();
+        git(&["add", "seed.txt"]);
+        git(&["commit", "--quiet", "-m", "Initial"]);
+
+        let repo_path = base.join("artifact.git");
+        assert!(
+            Command::new("git")
+                .args(["clone", "--quiet", "--bare"])
+                .arg(&seed)
+                .arg(&repo_path)
+                .status()
+                .unwrap()
+                .success(),
+            "git clone --bare failed"
+        );
+
+        let initial_sha = String::from_utf8(
+            Command::new("git")
+                .args(["rev-parse", "HEAD"])
+                .current_dir(&repo_path)
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap()
+        .trim()
+        .to_owned();
+
+        let artifact = Artifact {
+            repo_path,
+            branch: "main".to_string(),
+            commit_sha: initial_sha.clone(),
+        };
+
+        let handler = SchedulerHandler::with_artifact(FileWritingRunner, artifact);
+        let initial_state = SchedulerMachine::initial_state(RunRequest {
+            objective: "generate a file".to_string(),
+        });
+        let (_output, handler) = run_machine_with_telemetry(handler, initial_state, &NoopTelemetry);
+
+        let final_artifact = handler
+            .artifact()
+            .expect("artifact must be present after run");
+        assert_ne!(
+            final_artifact.commit_sha, initial_sha,
+            "runtime summary must use the post-integration artifact commit, not the initial one"
+        );
+
+        let _ = fs::remove_dir_all(&base);
     }
 }

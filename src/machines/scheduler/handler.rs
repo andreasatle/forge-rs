@@ -59,6 +59,11 @@ impl<R: NodeRunner> SchedulerHandler<R> {
             artifact: RefCell::new(Some(artifact)),
         }
     }
+
+    /// Returns a clone of the current artifact, or `None` if no artifact was provided.
+    pub fn artifact(&self) -> Option<Artifact> {
+        self.artifact.borrow().clone()
+    }
 }
 
 impl<R: NodeRunner> Machine for SchedulerHandler<R> {

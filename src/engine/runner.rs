@@ -74,7 +74,11 @@ fn short_type_name<T>() -> String {
 ///
 /// A transition may emit **zero or one** effect per tick. Emitting two or more
 /// effects is treated as a bug and causes an immediate panic.
-pub fn run_machine_with_telemetry<M, T>(machine: M, mut state: M::State, telemetry: &T) -> M::Output
+pub fn run_machine_with_telemetry<M, T>(
+    machine: M,
+    mut state: M::State,
+    telemetry: &T,
+) -> (M::Output, M)
 where
     M: Machine,
     M::State: std::fmt::Debug,
@@ -103,7 +107,7 @@ where
         state = transition.state;
 
         if let Some(output) = machine.output(&state) {
-            return output;
+            return (output, machine);
         }
 
         let mut effects = transition.effects.into_iter();
@@ -138,7 +142,7 @@ where
     M::Event: std::fmt::Debug,
     M::Effect: std::fmt::Debug,
 {
-    run_machine_with_telemetry(machine, initial_state, &NoopTelemetry)
+    run_machine_with_telemetry(machine, initial_state, &NoopTelemetry).0
 }
 
 #[cfg(test)]
