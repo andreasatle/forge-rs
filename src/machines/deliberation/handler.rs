@@ -136,11 +136,7 @@ impl<P: ProviderClient> ProviderBackedDeliberationHandler<P> {
                     });
                     attempt = RoleAttempt {
                         request: ProviderRequest {
-                            prompt: render_retry_prompt(
-                                &original_prompt,
-                                &parse_error,
-                                &response.content,
-                            ),
+                            prompt: render_retry_prompt(&original_prompt, &parse_error),
                         },
                         attempt_count: next_attempt,
                     };
@@ -150,16 +146,13 @@ impl<P: ProviderClient> ProviderBackedDeliberationHandler<P> {
     }
 }
 
-fn render_retry_prompt(original_prompt: &str, parse_error: &str, raw_response: &str) -> String {
+fn render_retry_prompt(original_prompt: &str, parse_error: &str) -> String {
     format!(
-        "Your previous response could not be parsed.\n\
-         Problem:\n{parse_error}\n\
-         Previous response:\n{raw_response}\n\
-         Return exactly one JSON object.\n\
-         Accepted example:\n{{\n  \"status\": \"accepted\",\n  \"content\": \"...\"\n}}\n\
-         Rejected example:\n{{\n  \"status\": \"rejected\",\n  \"reason\": \"...\"\n}}\n\
-         Return only JSON.\n\n\
-         Original role prompt:\n{original_prompt}"
+        "{original_prompt}\n\n\
+         Your previous response could not be parsed: {parse_error}\n\
+         Return only one JSON object matching one of these schemas:\n\
+         {{\"status\":\"accepted\",\"content\":\"...\"}}\n\
+         {{\"status\":\"rejected\",\"reason\":\"...\"}}"
     )
 }
 
@@ -229,9 +222,7 @@ fn try_parse_role_response(raw_response: &str) -> Result<RoleResult, String> {
     let json_str = match extract_json_object(text) {
         Some(s) => s,
         None => {
-            return Err(format!(
-                "no JSON object found in role response: {raw_response:?}"
-            ));
+            return Err("no JSON object found in role response".to_string());
         }
     };
     let result = match serde_json::from_str::<JsonRoleResponse>(json_str) {
@@ -239,18 +230,14 @@ fn try_parse_role_response(raw_response: &str) -> Result<RoleResult, String> {
             if content.trim().is_empty() {
                 return Err("accepted response has empty content".to_string());
             } else if content.trim() == "..." {
-                return Err(format!(
-                    "role response has placeholder accepted content; raw: {raw_response}"
-                ));
+                return Err("role response has placeholder accepted content".to_string());
             } else {
                 RoleResult::Accepted { content }
             }
         }
         Ok(JsonRoleResponse::Rejected { reason }) => {
             if reason.trim().is_empty() || reason.trim() == "..." {
-                return Err(format!(
-                    "role response has placeholder reason; raw: {raw_response}"
-                ));
+                return Err("role response has placeholder reason".to_string());
             } else {
                 RoleResult::Rejected { reason }
             }
@@ -461,7 +448,7 @@ mod tests {
     }
 
     #[test]
-    fn json_accepted_placeholder_content_fails_and_includes_raw() {
+    fn json_accepted_placeholder_content_fails_without_including_raw() {
         let result = parse_role_response(r#"{"status":"accepted","content":"..."}"#);
         let RoleResult::Failed { reason } = result else {
             panic!("placeholder '...' content must produce Failed, got {result:?}");
@@ -470,10 +457,7 @@ mod tests {
             reason.contains("placeholder"),
             "failure reason must mention 'placeholder'; got: {reason}"
         );
-        assert!(
-            reason.contains(r#"{"status":"accepted","content":"..."}"#),
-            "failure reason must include the raw provider response; got: {reason}"
-        );
+        assert!(!reason.contains("raw:"));
     }
 
     #[test]
@@ -486,7 +470,7 @@ mod tests {
     }
 
     #[test]
-    fn json_rejected_placeholder_reason_fails_and_includes_raw() {
+    fn json_rejected_placeholder_reason_fails_without_including_raw() {
         let result = parse_role_response(r#"{"status":"rejected","reason":"..."}"#);
         let RoleResult::Failed { reason } = result else {
             panic!("placeholder '...' reason must produce Failed, got {result:?}");
@@ -495,10 +479,7 @@ mod tests {
             reason.contains("placeholder"),
             "failure reason must mention 'placeholder'; got: {reason}"
         );
-        assert!(
-            reason.contains("..."),
-            "failure reason must include the '...' placeholder text so telemetry is not elided; got: {reason}"
-        );
+        assert!(!reason.contains("raw:"));
     }
 
     #[test]
@@ -688,8 +669,9 @@ mod tests {
         let requests = handler.provider.requests.borrow();
         let retry_prompt = &requests[1].prompt;
         assert!(retry_prompt.contains("no JSON object found"));
-        assert!(retry_prompt.contains("invalid text"));
+        assert!(!retry_prompt.contains("invalid text"));
         assert!(retry_prompt.contains("Objective: recover output"));
+        assert!(retry_prompt.contains(r#"{"status":"accepted","content":"..."}"#));
     }
 
     #[test]
