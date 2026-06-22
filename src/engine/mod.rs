@@ -44,5 +44,5 @@ pub mod runner;
 /// The `Transition` return type shared by all machine transition functions.
 pub mod transition;
 
-pub use runner::{Machine, run_machine};
+pub use runner::{Machine, run_machine, run_machine_with_telemetry};
 pub use transition::Transition;

@@ -940,9 +940,6 @@ impl SchedulerMachine {
         state: SchedulerState,
         event: SchedulerEvent,
     ) -> Transition<SchedulerState, SchedulerEffect> {
-        println!("STATE: {state:#?}");
-        println!("EVENT: {event:#?}");
-
         match (state, event) {
             // Scan the graph, then in the same tick either complete, fail, or dispatch.
             //

@@ -1,4 +1,5 @@
 use crate::engine::transition::Transition;
+use crate::telemetry::{NoopTelemetry, TelemetryEvent, TelemetrySink};
 
 /// A state machine that can be driven by the generic [`run_machine`] loop.
 ///
@@ -48,36 +49,56 @@ pub trait Machine {
     fn output(&self, state: &Self::State) -> Option<Self::Output>;
 }
 
-/// Drive a machine to completion and return its output.
+/// Extracts the short type name (last `::` segment) for use in telemetry.
+fn short_type_name<T>() -> String {
+    let full = std::any::type_name::<T>();
+    full.rsplit("::").next().unwrap_or(full).to_string()
+}
+
+/// Drive a machine to completion, recording telemetry at each step.
 ///
 /// The loop follows a simple protocol:
 ///
 /// ```text
-/// 1. Send start_event to kick off the first transition.
-/// 2. transition(state, event)  →  next_state + effects
-/// 3. If output(next_state) is Some, return it — the machine is done.
-/// 4. If effects is non-empty, dispatch the single effect through handle_effect
-///    to get the next event; otherwise re-send start_event as a free tick.
-/// 5. Repeat from step 2.
+/// 1. Record MachineStarted.
+/// 2. Send start_event to kick off the first transition.
+/// 3. Record StateEntered and EventReceived.
+/// 4. transition(state, event)  →  next_state + effects
+/// 5. If output(next_state) is Some, return it — the machine is done.
+/// 6. If effects is non-empty, record EffectEmitted, dispatch through
+///    handle_effect to get the next event; otherwise re-send start_event.
+/// 7. Repeat from step 3.
 /// ```
-///
-/// Re-sending `start_event` when there are no effects lets machines advance
-/// through pure bookkeeping steps — states that need a nudge but not a real
-/// external result — without blocking.
 ///
 /// # Engine invariant
 ///
-/// A transition may emit **zero or one** effect per tick.  Emitting two or more
-/// effects is treated as a bug and causes an immediate panic.  This contract is
-/// intentional: the engine has no effect queue, and silently discarding effects
-/// would hide bugs in transition logic.
-pub fn run_machine<M>(machine: M, mut state: M::State) -> M::Output
+/// A transition may emit **zero or one** effect per tick. Emitting two or more
+/// effects is treated as a bug and causes an immediate panic.
+pub fn run_machine_with_telemetry<M, T>(machine: M, mut state: M::State, telemetry: &T) -> M::Output
 where
     M: Machine,
+    M::State: std::fmt::Debug,
+    M::Event: std::fmt::Debug,
+    M::Effect: std::fmt::Debug,
+    T: TelemetrySink,
 {
+    let machine_name = short_type_name::<M>();
+    telemetry.record(TelemetryEvent::MachineStarted {
+        machine: machine_name.clone(),
+    });
+
     let mut event = machine.start_event();
 
     loop {
+        telemetry.record(TelemetryEvent::StateEntered {
+            machine: machine_name.clone(),
+            state: format!("{state:#?}"),
+        });
+        telemetry.record(TelemetryEvent::EventReceived {
+            machine: machine_name.clone(),
+            event: format!("{event:#?}"),
+        });
+
         let transition = machine.transition(state, event);
         state = transition.state;
 
@@ -92,23 +113,45 @@ where
                     effects.next().is_none(),
                     "Machine emitted multiple effects but the engine currently supports exactly one effect per transition."
                 );
+                telemetry.record(TelemetryEvent::EffectEmitted {
+                    machine: machine_name.clone(),
+                    effect: format!("{effect:#?}"),
+                });
                 machine.handle_effect(effect)
             }
-            // No effects produced: nudge the machine forward with another tick.
             None => machine.start_event(),
         };
     }
+}
+
+/// Drive a machine to completion and return its output.
+///
+/// Equivalent to calling [`run_machine_with_telemetry`] with [`NoopTelemetry`].
+/// All telemetry events are silently discarded.
+///
+/// See [`run_machine_with_telemetry`] for the full execution protocol and
+/// the single-effect invariant.
+pub fn run_machine<M>(machine: M, initial_state: M::State) -> M::Output
+where
+    M: Machine,
+    M::State: std::fmt::Debug,
+    M::Event: std::fmt::Debug,
+    M::Effect: std::fmt::Debug,
+{
+    run_machine_with_telemetry(machine, initial_state, &NoopTelemetry)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::engine::transition::Transition;
+    use crate::telemetry::{FileTelemetry, VecTelemetry};
+    use std::path::PathBuf;
 
     // Minimal machine that emits two effects on the first tick, then halts.
     struct MultiEffectMachine;
 
-    #[derive(Clone, Copy)]
+    #[derive(Clone, Copy, Debug)]
     enum MeState {
         Start,
         Done,
@@ -153,5 +196,91 @@ mod tests {
     #[should_panic(expected = "multiple effects")]
     fn run_machine_panics_on_multiple_effects() {
         run_machine(MultiEffectMachine, MeState::Start);
+    }
+
+    // Minimal two-step machine: Start emits one effect, Done is terminal.
+    struct SimpleCountMachine;
+
+    #[derive(Debug)]
+    enum ScState {
+        Start,
+        Done,
+    }
+
+    #[derive(Debug)]
+    enum ScEvent {
+        Kick,
+        Done,
+    }
+
+    #[derive(Debug)]
+    struct ScEffect;
+
+    impl Machine for SimpleCountMachine {
+        type State = ScState;
+        type Event = ScEvent;
+        type Effect = ScEffect;
+        type Output = &'static str;
+
+        fn start_event(&self) -> ScEvent {
+            ScEvent::Kick
+        }
+
+        fn transition(&self, state: ScState, event: ScEvent) -> Transition<ScState, ScEffect> {
+            match (state, event) {
+                (ScState::Start, ScEvent::Kick) => Transition {
+                    state: ScState::Start,
+                    effects: vec![ScEffect],
+                },
+                (ScState::Start, ScEvent::Done) => Transition {
+                    state: ScState::Done,
+                    effects: vec![],
+                },
+                (ScState::Done, _) => Transition {
+                    state: ScState::Done,
+                    effects: vec![],
+                },
+            }
+        }
+
+        fn handle_effect(&self, _effect: ScEffect) -> ScEvent {
+            ScEvent::Done
+        }
+
+        fn output(&self, state: &ScState) -> Option<&'static str> {
+            match state {
+                ScState::Done => Some("finished"),
+                ScState::Start => None,
+            }
+        }
+    }
+
+    #[test]
+    fn run_machine_wrapper_still_works() {
+        let result = run_machine(SimpleCountMachine, ScState::Start);
+        assert_eq!(result, "finished");
+    }
+
+    #[test]
+    fn vec_telemetry_records_machine_events() {
+        let sink = VecTelemetry::new();
+        run_machine_with_telemetry(SimpleCountMachine, ScState::Start, &sink);
+        let events = sink.into_events();
+        assert!(matches!(events[0], TelemetryEvent::MachineStarted { .. }));
+        assert!(matches!(events[1], TelemetryEvent::StateEntered { .. }));
+        assert!(matches!(events[2], TelemetryEvent::EventReceived { .. }));
+        assert!(matches!(events[3], TelemetryEvent::EffectEmitted { .. }));
+    }
+
+    #[test]
+    fn run_machine_with_file_telemetry_writes_trace_files() {
+        let dir: PathBuf = std::env::temp_dir().join("forge-runner-trace-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        let sink = FileTelemetry::new(dir.clone()).unwrap();
+        run_machine_with_telemetry(SimpleCountMachine, ScState::Start, &sink);
+        assert!(dir.join("000001-machine-started.txt").exists());
+        assert!(dir.join("000002-state-entered.txt").exists());
+        assert!(dir.join("000003-event-received.txt").exists());
+        assert!(dir.join("000004-effect-emitted.txt").exists());
     }
 }

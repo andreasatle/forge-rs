@@ -31,3 +31,4 @@ pub mod models;
 pub mod node_runner;
 pub mod providers;
 pub mod services;
+pub mod telemetry;

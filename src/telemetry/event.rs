@@ -1,0 +1,112 @@
+//! Telemetry event types.
+
+/// A single observation recorded during a machine run.
+///
+/// All fields are plain strings. Machine-specific state, event, and effect
+/// values are formatted with `{:#?}` before being stored here so that the
+/// sink receives a self-contained, human-readable record with no type
+/// dependencies.
+pub enum TelemetryEvent {
+    /// A machine started its run loop.
+    MachineStarted {
+        /// Short type name of the machine (e.g. `SchedulerHandler`).
+        machine: String,
+    },
+    /// A state was observed before a transition was applied.
+    StateEntered {
+        /// Short type name of the machine.
+        machine: String,
+        /// Pretty-printed debug representation of the state.
+        state: String,
+    },
+    /// An event was observed before a transition was applied.
+    EventReceived {
+        /// Short type name of the machine.
+        machine: String,
+        /// Pretty-printed debug representation of the event.
+        event: String,
+    },
+    /// An effect was emitted by a transition.
+    EffectEmitted {
+        /// Short type name of the machine.
+        machine: String,
+        /// Pretty-printed debug representation of the effect.
+        effect: String,
+    },
+    /// A provider call completed successfully.
+    ProviderCallSucceeded {
+        /// Identifier of the provider that was called.
+        provider: String,
+    },
+    /// A provider call failed.
+    ProviderCallFailed {
+        /// Identifier of the provider that was called.
+        provider: String,
+        /// Human-readable failure reason.
+        reason: String,
+    },
+    /// An artifact commit was created.
+    ArtifactCommitCreated {
+        /// The SHA of the newly created commit.
+        commit_sha: String,
+    },
+    /// A component encountered a non-recoverable failure.
+    Failure {
+        /// Name of the component that failed.
+        component: String,
+        /// Human-readable failure reason.
+        reason: String,
+    },
+}
+
+impl TelemetryEvent {
+    /// Returns a short kebab-case slug that identifies the variant.
+    ///
+    /// Used to build the filename component in [`FileTelemetry`](crate::telemetry::FileTelemetry).
+    pub fn kind_slug(&self) -> &'static str {
+        match self {
+            TelemetryEvent::MachineStarted { .. } => "machine-started",
+            TelemetryEvent::StateEntered { .. } => "state-entered",
+            TelemetryEvent::EventReceived { .. } => "event-received",
+            TelemetryEvent::EffectEmitted { .. } => "effect-emitted",
+            TelemetryEvent::ProviderCallSucceeded { .. } => "provider-call-succeeded",
+            TelemetryEvent::ProviderCallFailed { .. } => "provider-call-failed",
+            TelemetryEvent::ArtifactCommitCreated { .. } => "artifact-commit-created",
+            TelemetryEvent::Failure { .. } => "failure",
+        }
+    }
+
+    /// Renders the event as a plain-text file body.
+    ///
+    /// Format mirrors the Forge-Py inspection style: one `key: value` line per
+    /// field, with multi-line values (state, event, effect) printed on the line
+    /// following their key.
+    pub fn file_content(&self) -> String {
+        match self {
+            TelemetryEvent::MachineStarted { machine } => {
+                format!("kind: MachineStarted\nmachine: {machine}\n")
+            }
+            TelemetryEvent::StateEntered { machine, state } => {
+                format!("kind: StateEntered\nmachine: {machine}\nstate:\n{state}\n")
+            }
+            TelemetryEvent::EventReceived { machine, event } => {
+                format!("kind: EventReceived\nmachine: {machine}\nevent:\n{event}\n")
+            }
+            TelemetryEvent::EffectEmitted { machine, effect } => {
+                format!("kind: EffectEmitted\nmachine: {machine}\neffect:\n{effect}\n")
+            }
+            TelemetryEvent::ProviderCallSucceeded { provider } => {
+                format!("kind: ProviderCallSucceeded\nprovider: {provider}\n")
+            }
+            TelemetryEvent::ProviderCallFailed { provider, reason } => {
+                format!("kind: ProviderCallFailed\nprovider: {provider}\nreason: {reason}\n")
+            }
+            TelemetryEvent::ArtifactCommitCreated { commit_sha } => {
+                format!("kind: ArtifactCommitCreated\ncommit_sha: {commit_sha}\n")
+            }
+            TelemetryEvent::Failure { component, reason } => {
+                format!("kind: Failure\ncomponent: {component}\nreason: {reason}\n")
+            }
+        }
+    }
+}

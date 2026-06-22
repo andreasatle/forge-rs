@@ -36,9 +36,6 @@ impl Machine for DemoMachine {
         state: Self::State,
         event: Self::Event,
     ) -> Transition<Self::State, Self::Effect> {
-        println!("STATE: {state:#?}");
-        println!("EVENT: {event:#?}");
-
         match (state, event) {
             // Bootstrap: Start kicks off the pipeline by emitting CallProducer.
             // The state stays NotStarted; the transition to PostProducer happens
@@ -113,8 +110,6 @@ impl Machine for DemoMachine {
     }
 
     fn handle_effect(&self, effect: Self::Effect) -> Self::Event {
-        println!("EFFECT: {effect:#?}");
-
         match effect {
             DemoEffect::CallProducer { task } => {
                 sleep(Duration::from_secs(1));
