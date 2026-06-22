@@ -1,4 +1,11 @@
 //! Forge runtime — drives a single run from a [`crate::config::ForgeConfig`].
 
+mod history;
+mod reset;
 mod run;
+mod show;
+
+pub use history::run_history;
+pub use reset::run_reset;
 pub use run::{ForgeRuntime, load_or_create_artifact};
+pub use show::run_show;
