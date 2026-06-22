@@ -318,6 +318,29 @@ mod tests {
     }
 
     #[test]
+    fn integrate_uses_existing_workspace_changes() {
+        let (temp, artifact) = fixture("existing-workspace-changes");
+        let mut workspace = create_workspace(&artifact, temp.join("workspace"));
+
+        workspace
+            .write_file("artifact.txt", "written directly\n")
+            .unwrap();
+
+        let integrated = integrate(&artifact, &workspace);
+
+        assert_ne!(integrated.commit_sha, artifact.commit_sha);
+        assert_eq!(
+            git_output(&integrated.repo_path, &["rev-parse", "main"]),
+            integrated.commit_sha
+        );
+        let content = git_output(
+            &integrated.repo_path,
+            &["show", &format!("{}:artifact.txt", integrated.commit_sha)],
+        );
+        assert_eq!(content, "written directly");
+    }
+
+    #[test]
     fn apply_write_change() {
         let (temp, artifact) = fixture("apply-write");
         let mut workspace = create_workspace(&artifact, temp.join("workspace"));
