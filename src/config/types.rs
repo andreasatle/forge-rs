@@ -54,16 +54,24 @@ mod tests {
     use super::*;
     use std::io::Write;
     use std::path::PathBuf;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static TEMP_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+    fn unique_config_path() -> PathBuf {
+        let id = TEMP_COUNTER.fetch_add(1, Ordering::SeqCst);
+        std::env::temp_dir().join(format!(
+            "forge-config-test-{}-{}.yaml",
+            std::process::id(),
+            id,
+        ))
+    }
 
     struct TempYaml(PathBuf);
 
     impl TempYaml {
         fn new(content: &str) -> Self {
-            let path = std::env::temp_dir().join(format!(
-                "forge-config-test-{}-{}.yaml",
-                std::process::id(),
-                content.len(),
-            ));
+            let path = unique_config_path();
             let mut f = std::fs::File::create(&path).unwrap();
             f.write_all(content.as_bytes()).unwrap();
             Self(path)
