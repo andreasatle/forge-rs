@@ -9,6 +9,9 @@
 //!     → LlamaCppProvider
 //!     → llama-server (http://localhost:8080)
 //!
+//! Start the server with:
+//!     llama-server -hf lm-kit/qwen-3-8b-instruct-gguf:Q4_K_M --temp 0
+//!
 //! Usage:
 //!     cargo run --example scheduler_deliberation_demo
 //!

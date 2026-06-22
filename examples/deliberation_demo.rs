@@ -1,5 +1,8 @@
 //! Live deliberation demo — Producer → Critic → Referee via local llama-server.
 //!
+//! Start the server with:
+//!     llama-server -hf lm-kit/qwen-3-8b-instruct-gguf:Q4_K_M --temp 0
+//!
 //! Usage:
 //!     cargo run --example deliberation_demo
 //!
