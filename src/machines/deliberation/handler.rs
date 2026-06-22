@@ -127,13 +127,13 @@ fn render_role_prompt(
 /// 5. Validate that required string fields are non-empty and not the `"..."` schema
 ///    placeholder that models sometimes echo back literally from the prompt template.
 /// 6. Map any parse or validation failure to `RoleResult::Failed`.
-fn parse_role_response(content: &str) -> RoleResult {
-    let text = strip_code_fence(content.trim());
+fn parse_role_response(raw_response: &str) -> RoleResult {
+    let text = strip_code_fence(raw_response.trim());
     let json_str = match extract_json_object(text) {
         Some(s) => s,
         None => {
             return RoleResult::Failed {
-                reason: format!("no JSON object found in role response: {content:?}"),
+                reason: format!("no JSON object found in role response: {raw_response:?}"),
             };
         }
     };
@@ -143,6 +143,12 @@ fn parse_role_response(content: &str) -> RoleResult {
                 RoleResult::Failed {
                     reason: "accepted response has empty content".to_string(),
                 }
+            } else if content.trim() == "..." {
+                RoleResult::Failed {
+                    reason: format!(
+                        "role response has placeholder accepted content; raw: {raw_response}"
+                    ),
+                }
             } else {
                 RoleResult::Accepted { content }
             }
@@ -150,7 +156,7 @@ fn parse_role_response(content: &str) -> RoleResult {
         Ok(JsonRoleResponse::Rejected { reason }) => {
             if reason.trim().is_empty() || reason.trim() == "..." {
                 RoleResult::Failed {
-                    reason: format!("role response has placeholder reason; raw: {content:?}"),
+                    reason: format!("role response has placeholder reason; raw: {raw_response}"),
                 }
             } else {
                 RoleResult::Rejected { reason }
@@ -356,6 +362,22 @@ mod tests {
         assert!(
             matches!(result, RoleResult::Failed { .. }),
             "empty content must produce Failed, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn json_accepted_placeholder_content_fails_and_includes_raw() {
+        let result = parse_role_response(r#"{"status":"accepted","content":"..."}"#);
+        let RoleResult::Failed { reason } = result else {
+            panic!("placeholder '...' content must produce Failed, got {result:?}");
+        };
+        assert!(
+            reason.contains("placeholder"),
+            "failure reason must mention 'placeholder'; got: {reason}"
+        );
+        assert!(
+            reason.contains(r#"{"status":"accepted","content":"..."}"#),
+            "failure reason must include the raw provider response; got: {reason}"
         );
     }
 
