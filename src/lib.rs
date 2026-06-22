@@ -23,6 +23,7 @@
 //! - [`services`] — stateless data-transformation utilities
 
 #![deny(missing_docs)]
+pub mod artifacts;
 pub mod engine;
 pub mod handlers;
 pub mod machines;
