@@ -1,169 +1,220 @@
 # forge-rs
 
-`forge-rs` is a Rust implementation of Forge organized around explicit, durable state machines. The scheduler currently executes nodes sequentially while it expands a work graph, runs planning and work nodes, integrates accepted work, and applies bounded recovery. Scheduling will become asynchronous once the supporting execution and effect infrastructure is in place.
+`forge-rs` is a Rust implementation of Forge organized around explicit state machines.
 
 ## Core idea
 
-Every machine has a finite set of states, events, and effects:
+Every machine follows the same contract:
 
 ```text
 state + event -> next state + effects
 ```
 
-- **States** are durable checkpoints.
+- **States** are explicit checkpoints.
 - **Events** are facts that have already occurred.
 - **Effects** are commands for work outside the machine.
 - **Transitions** are pure functions that decide the next state and effects.
 
-Recovery is part of this grammar, not an exception around it. Failures arrive as typed events and select an explicit recovery action. Restricting the possible states, events, and effects makes control flow inspectable, invalid combinations easier to reject, and behavior safer to evolve.
+Business logic belongs in pure transition functions. Side effects belong in effect handlers.
 
 ## Architecture
 
 ```text
-RunRequest
-    |
-    v
-SchedulerMachine
-    |
-    | RunNode effect
-    v
-Planner / Worker
-    |
-    | NodeReturned event
-    v
-SchedulerMachine
-    |
-    | IntegrateWork effect (for accepted work)
-    v
+User
+  ↓
+Scheduler
+  ↓
+SchedulerHandler
+  ↓
+NodeRunner
+  ↓
+ArtifactView
+  ↓
+Deliberation
+  ↓
+Provider
+  ↓
+ArtifactUpdate
+  ↓
+WorkspaceFileOps
+  ↓
+Workspace
+  ↓
 Integration
-    |
-    | IntegrationReturned event
-    v
-SchedulerMachine
-    |
-    v
-SchedulerOutput
+  ↓
+Artifact
 ```
 
-The ownership boundary is deliberate:
+## Machines
 
-| Component | Owns | Does not own |
-| --- | --- | --- |
-| Machine state | Durable graph and lifecycle data | I/O or external mutation |
-| Transition function | Pure state advancement and effect selection | Effect execution |
-| Effect handler | Side effects and conversion of results into events | Durable scheduler state |
-| Generic runner | The event/transition/effect loop | Scheduler policy |
+### SchedulerMachine
 
-The runner advances one transition at a time. A transition may emit zero or one effect; there is no effect queue. An empty effect list produces another synthetic start tick, allowing pure bookkeeping to continue.
+The scheduler owns the run graph and decides which node may advance.
 
-## Scheduler
+Responsibilities:
 
-The scheduler owns the run graph and decides which node may advance. It has four durable states:
+- Graph execution and dependency ordering
+- Sequential node dispatch
+- Recovery classification and bounded recovery growth
+- Graph and protocol validation
 
-- `Running`: validate and scan the graph, then dispatch the first ready node.
-- `Waiting`: one node is running or its accepted work is integrating.
-- `Complete`: all graph activity has reached a terminal status without halting the run.
-- `Failed`: the run cannot continue; the graph and failure reason are retained.
+States:
 
-It consumes three events:
+- `Running` — validate the graph and dispatch the first ready node.
+- `Waiting` — one node is executing or its work is integrating.
+- `Complete` — all graph activity reached a terminal status.
+- `Failed` — the run cannot continue; graph and failure reason are retained.
 
-- `Start`
-- `NodeReturned`
-- `IntegrationReturned`
+Events: `Start`, `NodeReturned`, `IntegrationReturned`.
 
-It emits four effects:
+Effects: `RunNode`, `IntegrateWork`, `ReturnComplete`, `ReturnFailed`.
 
-- `RunNode`
-- `IntegrateWork`
-- `ReturnComplete`
-- `ReturnFailed`
+Node execution is sequential. The scheduler selects one pending node whose dependencies are all completed, marks it running, emits `RunNode`, and enters `Waiting`. It does not dispatch another node until the active one finishes. This is a constraint of the current model, not the intended final scheduling model.
 
-Node execution is currently sequential. In `Running`, the scheduler selects the first pending node whose dependencies are all completed, marks it running, emits `RunNode`, and enters `Waiting`. It does not dispatch another node until the active node either completes, enters recovery, or finishes integration. This is a constraint of the current runner and effect model, not the intended final scheduling model; execution will become asynchronous once the supporting infrastructure is in place.
+Node lifecycle:
 
 ```text
 Pending -> Running -> Integrating -> Completed
-                    \-> Failed
+                   \-> Failed
 
 Pending -> Cancelled
 ```
 
-`Failed` nodes remain as history. `Cancelled` is used for pending downstream work that can no longer run after a terminal failure. Only `Completed` satisfies a dependency; `Failed`, `Cancelled`, `Running`, and `Integrating` do not.
+Only `Completed` satisfies a dependency. `Failed` and `Cancelled` nodes remain as history.
 
-Plan nodes expand the graph with validated child requests. Work nodes return work that must pass through integration. The scheduler rejects duplicate graph IDs, unknown dependency or recovery-source references, invalid plan dependencies, node-kind/outcome mismatches, inconsistent waiting states, and deadlocked graphs by transitioning to `Failed`.
+Recovery actions:
 
-## Recovery
+- `Retry` — append a replacement with the same objective and model tier.
+- `ElevateModel` — append a replacement using the stronger model tier.
+- `Split` — append a strong planning node that decomposes the failed work.
+- `Terminal` — fail the run and cancel pending downstream dependents.
 
-Node and integration failures carry one of four recovery actions:
+Recovery growth is bounded by `MAX_ATTEMPTS`, `MAX_GRAPH_NODES`, and `MAX_PLAN_DEPTH`.
 
-- `Retry`: append a replacement with the same objective and model tier.
-- `ElevateModel`: append a replacement using the stronger model tier.
-- `Split`: append a strong planning node that decomposes the failed work.
-- `Terminal`: fail the run and cancel pending downstream dependents.
+### DeliberationMachine
 
-Recovery never resurrects or removes the failed node. The failed node is marked `Failed`, its replacement is appended, and pending nodes that depended on the failed node are remapped to the replacement. This preserves the attempt history while allowing the graph to continue.
+The deliberation machine drives a three-role pipeline: Producer → Critic → Referee.
 
-Recovery growth is bounded by three circuit breakers:
+Responsibilities:
 
-- `MAX_ATTEMPTS` limits repeated recovery for an objective.
-- `MAX_GRAPH_NODES` limits total graph growth.
-- `MAX_PLAN_DEPTH` limits recursive planning ancestry.
+- Running the Producer role to generate content.
+- Running the Critic role to review the content.
+- Running the Referee role to accept or reject the reviewed content.
+- Bounded revision loops when the Referee rejects.
 
-These limits turn otherwise unbounded retry, splitting, or recursive planning into explicit terminal failures. Bounded growth is necessary for the state graph to remain finite in practice and for malformed or unproductive recovery loops to stop deterministically.
+The final output is always the Producer content. Critic and Referee do not replace it.
 
-## Integration
+`RoleResult` distinguishes:
 
-Accepted work is not completed work:
+- `Accepted` — role completed successfully.
+- `Rejected` — role completed but rejected the content. Triggers a revision loop for the Referee (if revisions remain), terminal failure for Producer and Critic.
+- `Failed` — role could not execute. Always terminal; never enters the revision loop.
+
+These two machines are independent state machines. They share no state and communicate only through the `NodeRunner` boundary.
+
+## Artifact data plane
+
+### Artifact
+
+Represents committed truth. Backed by a bare Git repository.
+
+Fields:
+
+- `repo_path` — path to the bare repository.
+- `branch` — logical branch name.
+- `commit_sha` — exact commit pinning this version.
+
+### ArtifactView
+
+A read-only view of a specific commit. Does not require a working tree.
+
+Operations:
+
+- `list_files` — returns all file paths in the commit, sorted.
+- `read_file` — reads a file's contents at the pinned commit.
+
+Path containment is enforced: absolute paths and parent traversals are rejected.
+
+### Workspace
+
+A temporary mutable checkout cloned from an `Artifact`. Used to stage changes before integration.
+
+### WorkspaceFileOps
+
+Safe mutation primitives operating inside a `Workspace`.
+
+Operations:
+
+- `list_files`
+- `read_file`
+- `write_file`
+- `replace_text`
+- `delete_file`
+
+Path containment is enforced on all operations.
+
+`replace_text` fails if the target string is absent or appears more than once.
+
+### ArtifactUpdate
+
+Represents intended changes as an ordered list of `FileChange` variants:
+
+- `Write { path, content }` — create or overwrite a file.
+- `Replace { path, old, new }` — replace a unique substring.
+- `Delete { path }` — remove a file.
+
+Changes are applied in order. The first error stops application.
+
+### Integration
+
+Owns Git concerns only. Given an `Artifact` and a `Workspace`, it stages all changes, commits them to the bare repository, and returns a new `Artifact` pointing at the new commit. The branch is preserved.
+
+## Node execution
+
+Nodes are executed through the `NodeRunner` trait.
 
 ```text
-WorkAccepted != Completed
-
-WorkAccepted
-    |
-    v
-Integrating
-    |
-    | IntegrateWork effect
-    v
-IntegrationReturned
-    |
-    +-- Succeeded -> Completed
-    \-- Failed ----> Recovery or Failed
+ArtifactView
+  ↓
+NodeRunner
+  ↓
+ArtifactUpdate
 ```
 
-When a work node returns `WorkAccepted`, the scheduler marks it `Integrating` and emits `IntegrateWork`. Only a successful `IntegrationReturned` event marks the node `Completed` and stores its integration summary. Downstream nodes therefore wait for integration success, rather than acting on work that was produced but not accepted into the shared result.
+The `SchedulerHandler` connects the scheduler to the runner. For each `RunNode` effect it:
 
-## Invariants
+1. Builds an `ArtifactView` from the current `Artifact` snapshot.
+2. Passes the view to the runner via `NodeRunRequest`.
+3. If the runner returns `WorkAccepted` with an `ArtifactUpdate`, applies it through a `Workspace` and calls `integrate`, advancing the artifact.
 
-- Node IDs are opaque, stable, and unique within a run. Their string representation must not be parsed for meaning.
-- The graph is append-only. Nodes are not removed, and failed nodes are not reused.
-- The current sequential scheduler permits only one active node, represented by its `Waiting` state.
-- Only `Completed` nodes satisfy dependencies.
-- Protocol violations transition the scheduler to `Failed` with a reason instead of panicking.
-- Recovery preserves failed history and records how replacement nodes originated.
-- Transitions are pure; handlers own side effects.
+### StaticNodeRunner
+
+A minimal test runner. Returns fixed outcomes: plan nodes produce one child, work nodes accept, and nodes whose objective contains "fail" return a terminal failure.
+
+### DeliberatingNodeRunner
+
+Runs a node by driving a `DeliberationMachine` backed by a real `ProviderClient`.
+
+When the request carries an `ArtifactView`, a brief context block — file listing and `README.md` if present — is prepended to the deliberation objective so the Producer has file context without any workspace mutation.
+
+Mapping from deliberation output to `NodeRunResult`:
+
+- Plan node: `PlanAccepted` with one child work node whose objective is the Producer content.
+- Work node: `WorkAccepted` with the Producer content as summary and an `ArtifactUpdate` writing `output.txt`.
+- Deliberation failure: `Failed` with `RecoveryAction::Terminal`.
+
+## Providers
+
+`ProviderClient` is the trait boundary for LLM calls. It takes a `ProviderRequest` (prompt string) and returns a `ProviderResponse` (content string) or a `ProviderError`.
+
+Implemented providers:
+
+- `OllamaProvider` — calls a local Ollama instance.
+- `LlamaCppProvider` — calls a local llama.cpp server.
+- `RetryingProvider` — wraps any provider and retries on retryable errors.
+
+Role responses use structured JSON output.
 
 ## Testing
 
-The generic runner and scheduler machine are heavily unit-tested. The tests serve as executable specifications for allowed and forbidden transitions, emitted effects, integration gating, recovery behavior, graph validation, protocol violations, bounded growth, terminal states, and invariant preservation. They do not require real providers, tools, Git operations, network access, or filesystem effects.
-
-## Current scope
-
-Implemented:
-
-- Serial execution
-- Bounded recovery
-- A distinct integration phase
-- Typed scheduler output and recovery classification
-- Graph and protocol validation
-
-Deferred:
-
-- Asynchronous execution and concurrent node dispatch
-- Richer artifact handling
-- Durable integration artifacts
-- Provider, tool, and Git implementations
-- Effect queues
-
-## Philosophy
-
-Restricting the space of possible states, events, and effects makes progress easier. The project favors explicit state machines and typed transitions over implicit behavior and string-driven logic.
+194 tests cover machine transitions, emitted effects, integration gating, recovery behavior, graph validation, protocol violations, bounded growth, terminal states, invariant preservation, and artifact data-plane operations. Tests do not require real providers, network access, or persistent filesystem state beyond temporary directories.
