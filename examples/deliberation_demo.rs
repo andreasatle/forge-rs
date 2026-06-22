@@ -8,7 +8,7 @@
 //!
 //! Requires llama-server running at http://localhost:8080.
 
-use forge_rs::engine::{Machine, Transition, run_machine};
+use forge_rs::engine::{Machine, Transition, run_machine_with_telemetry};
 use forge_rs::machines::deliberation::{
     DeliberationEffect, DeliberationEvent, DeliberationMachine, DeliberationRequest,
     DeliberationState, DeliberationTerminalOutput, ProviderBackedDeliberationHandler,
@@ -17,6 +17,8 @@ use forge_rs::providers::{
     LlamaCppProvider, ProviderClient, ProviderError, ProviderRequest, ProviderResponse,
     RetryingProvider,
 };
+use forge_rs::telemetry::FileTelemetry;
+use std::path::PathBuf;
 
 // Prepended before the task prompt.
 const PROTOCOL_PREFIX: &str = "\
@@ -100,7 +102,11 @@ fn main() {
         },
     };
 
-    match run_machine(machine, initial) {
+    let telemetry_dir = PathBuf::from("runs/latest");
+    let _ = std::fs::remove_dir_all(&telemetry_dir);
+    let sink = FileTelemetry::new(telemetry_dir.clone()).expect("failed to create telemetry dir");
+
+    match run_machine_with_telemetry(machine, initial, &sink) {
         DeliberationTerminalOutput::Complete(out) => {
             println!("COMPLETE");
             println!("{}", out.content);
@@ -109,6 +115,9 @@ fn main() {
             println!("FAILED: {reason}");
         }
     }
+
+    println!();
+    println!("Telemetry written to: runs/latest");
 }
 
 #[cfg(test)]

@@ -17,7 +17,7 @@
 //!
 //! Requires llama-server running at http://localhost:8080.
 
-use forge_rs::engine::run_machine;
+use forge_rs::engine::run_machine_with_telemetry;
 use forge_rs::machines::scheduler::{
     RunRequest, SchedulerHandler, SchedulerMachine, SchedulerOutput,
 };
@@ -26,6 +26,8 @@ use forge_rs::providers::{
     LlamaCppProvider, ProviderClient, ProviderError, ProviderRequest, ProviderResponse,
     RetryingProvider,
 };
+use forge_rs::telemetry::FileTelemetry;
+use std::path::PathBuf;
 
 const PROTOCOL_PREFIX: &str = "\
 Return exactly one JSON object. No markdown. No code fence. No explanation.\n\
@@ -108,8 +110,15 @@ fn main() {
         objective: objective.to_string(),
     });
 
-    let output = run_machine(handler, initial_state);
+    let telemetry_dir = PathBuf::from("runs/latest");
+    let _ = std::fs::remove_dir_all(&telemetry_dir);
+    let sink = FileTelemetry::new(telemetry_dir.clone()).expect("failed to create telemetry dir");
+
+    let output = run_machine_with_telemetry(handler, initial_state, &sink);
     print_output(output);
+
+    println!();
+    println!("Telemetry written to: runs/latest");
 }
 
 #[cfg(test)]
