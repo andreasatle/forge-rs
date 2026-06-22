@@ -320,31 +320,45 @@ mod tests {
     fn runtime_summary_uses_post_integration_artifact_commit() {
         use crate::artifacts::{ArtifactUpdate, FileChange};
         use crate::machines::scheduler::{
-            RunRequest, SchedulerHandler, SchedulerMachine, WorkOutput,
+            NodeId, NodeKind, NodeRequest, PlanOutput, RunRequest, SchedulerHandler,
+            SchedulerMachine, WorkOutput,
         };
         use crate::node_runner::{NodeRunRequest, NodeRunResult, NodeRunWorkResult, NodeRunner};
         use crate::telemetry::NoopTelemetry;
         use std::fs;
         use std::process::Command;
 
+        // Returns PlanAccepted for Plan nodes and WorkAccepted (with an
+        // ArtifactUpdate) for Work nodes, so the full RunNode → IntegrateWork
+        // path is exercised and the artifact commit actually advances.
         struct FileWritingRunner;
         impl NodeRunner for FileWritingRunner {
             fn run_node(
                 &self,
-                _: NodeRunRequest,
+                request: NodeRunRequest,
                 _telemetry: &dyn crate::telemetry::TelemetrySink,
             ) -> NodeRunResult {
-                NodeRunResult::WorkAccepted(NodeRunWorkResult {
-                    work: WorkOutput {
-                        summary: "wrote result.txt".to_string(),
-                    },
-                    artifact_update: Some(ArtifactUpdate {
-                        changes: vec![FileChange::Write {
-                            path: "result.txt".to_string(),
-                            content: "generated\n".to_string(),
+                match request.kind {
+                    NodeKind::Plan => NodeRunResult::PlanAccepted(PlanOutput {
+                        children: vec![NodeRequest {
+                            id: NodeId("work".to_string()),
+                            kind: NodeKind::Work,
+                            objective: "generate result.txt".to_string(),
+                            dependencies: vec![],
                         }],
                     }),
-                })
+                    NodeKind::Work => NodeRunResult::WorkAccepted(NodeRunWorkResult {
+                        work: WorkOutput {
+                            summary: "wrote result.txt".to_string(),
+                        },
+                        artifact_update: Some(ArtifactUpdate {
+                            changes: vec![FileChange::Write {
+                                path: "result.txt".to_string(),
+                                content: "generated\n".to_string(),
+                            }],
+                        }),
+                    }),
+                }
             }
         }
 

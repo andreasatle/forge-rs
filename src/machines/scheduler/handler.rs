@@ -9,17 +9,19 @@
 //! boundary.
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::artifacts::{Artifact, ArtifactView, create_workspace, integrate};
+use crate::artifacts::{Artifact, ArtifactUpdate, ArtifactView, create_workspace, integrate};
 use crate::engine::{Machine, Transition};
 use crate::machines::scheduler::effect::SchedulerEffect;
 use crate::machines::scheduler::event::{
-    IntegrationOutcome, IntegrationOutput, NodeOutcome, SchedulerEvent,
+    IntegrationFailure, IntegrationOutcome, IntegrationOutput, NodeOutcome, RecoveryAction,
+    SchedulerEvent,
 };
 use crate::machines::scheduler::machine::{SchedulerMachine, SchedulerOutput};
-use crate::machines::scheduler::state::SchedulerState;
+use crate::machines::scheduler::state::{NodeId, SchedulerState};
 use crate::node_runner::{NodeRunRequest, NodeRunResult, NodeRunner};
 use crate::telemetry::{NoopTelemetry, TelemetrySink};
 
@@ -36,12 +38,15 @@ static WORKSPACE_COUNTER: AtomicU64 = AtomicU64::new(0);
 ///
 /// - passes an [`ArtifactView`] into every [`NodeRunRequest`] so runners can
 ///   read the current committed state, and
-/// - applies any [`ArtifactUpdate`](crate::artifacts::ArtifactUpdate) returned
-///   by a work node, integrating it into the artifact before returning
-///   `NodeReturned`.
+/// - stores any [`ArtifactUpdate`] returned by a work node so that it can be
+///   applied and committed during the subsequent `IntegrateWork` effect.
+///
+/// Artifact mutation happens exclusively in `IntegrateWork`, not in `RunNode`.
+/// Workers never advance artifact truth; the Integrator is the single writer.
 pub struct SchedulerHandler<R> {
     runner: R,
     artifact: RefCell<Option<Artifact>>,
+    pending_artifact_updates: RefCell<HashMap<NodeId, ArtifactUpdate>>,
     telemetry: Rc<dyn TelemetrySink>,
 }
 
@@ -51,16 +56,18 @@ impl<R: NodeRunner> SchedulerHandler<R> {
         Self {
             runner,
             artifact: RefCell::new(None),
+            pending_artifact_updates: RefCell::new(HashMap::new()),
             telemetry: Rc::new(NoopTelemetry),
         }
     }
 
     /// Create a handler that owns an [`Artifact`] and keeps it current across
-    /// work node executions.
+    /// work node integrations.
     pub fn with_artifact(runner: R, artifact: Artifact) -> Self {
         Self {
             runner,
             artifact: RefCell::new(Some(artifact)),
+            pending_artifact_updates: RefCell::new(HashMap::new()),
             telemetry: Rc::new(NoopTelemetry),
         }
     }
@@ -109,7 +116,7 @@ impl<R: NodeRunner> Machine for SchedulerHandler<R> {
             } => {
                 // Snapshot the current artifact before running the node.
                 // The clone is cheap (three fields) and avoids holding a borrow
-                // across the runner call and the integration that follows.
+                // across the runner call.
                 let artifact_snapshot = self.artifact.borrow().clone();
 
                 let artifact_view = artifact_snapshot.as_ref().map(|a| ArtifactView {
@@ -126,20 +133,15 @@ impl<R: NodeRunner> Machine for SchedulerHandler<R> {
                 };
                 let result = self.runner.run_node(request, self.telemetry.as_ref());
 
-                // If the work node produced file changes and we have an artifact,
-                // apply the update and push a new commit.
+                // If the work node produced file changes, stash them under this
+                // node_id for deferred integration. Artifact truth is never
+                // advanced here; that happens exclusively in IntegrateWork.
                 if let NodeRunResult::WorkAccepted(ref work_result) = result
-                    && let (Some(update), Some(artifact)) =
-                        (&work_result.artifact_update, &artifact_snapshot)
+                    && let Some(update) = work_result.artifact_update.clone()
                 {
-                    let seq = WORKSPACE_COUNTER.fetch_add(1, Ordering::Relaxed);
-                    let workspace_path = std::env::temp_dir()
-                        .join(format!("forge-workspace-{}-{seq}", std::process::id()));
-                    let mut workspace = create_workspace(artifact, workspace_path);
-                    if update.apply(&mut workspace).is_ok() {
-                        let new_artifact = integrate(artifact, &workspace);
-                        *self.artifact.borrow_mut() = Some(new_artifact);
-                    }
+                    self.pending_artifact_updates
+                        .borrow_mut()
+                        .insert(node_id.clone(), update);
                 }
 
                 SchedulerEvent::NodeReturned {
@@ -149,6 +151,35 @@ impl<R: NodeRunner> Machine for SchedulerHandler<R> {
             }
 
             SchedulerEffect::IntegrateWork { node_id, work } => {
+                // Retrieve any artifact update that was stashed during RunNode.
+                let pending_update = self.pending_artifact_updates.borrow_mut().remove(&node_id);
+                let artifact_snapshot = self.artifact.borrow().clone();
+
+                if let (Some(update), Some(artifact)) = (pending_update, artifact_snapshot) {
+                    let seq = WORKSPACE_COUNTER.fetch_add(1, Ordering::Relaxed);
+                    let workspace_path = std::env::temp_dir()
+                        .join(format!("forge-workspace-{}-{seq}", std::process::id()));
+                    let mut workspace = create_workspace(&artifact, workspace_path);
+
+                    match update.apply(&mut workspace) {
+                        Err(err) => {
+                            return SchedulerEvent::IntegrationReturned {
+                                node_id,
+                                outcome: IntegrationOutcome::Failed(IntegrationFailure {
+                                    reason: format!("artifact update apply error: {err}"),
+                                    recovery: RecoveryAction::Terminal {
+                                        message: format!("artifact update apply error: {err}"),
+                                    },
+                                }),
+                            };
+                        }
+                        Ok(()) => {
+                            let new_artifact = integrate(&artifact, &workspace);
+                            *self.artifact.borrow_mut() = Some(new_artifact);
+                        }
+                    }
+                }
+
                 SchedulerEvent::IntegrationReturned {
                     node_id,
                     outcome: IntegrationOutcome::Succeeded(IntegrationOutput {
@@ -181,8 +212,9 @@ mod tests {
     use crate::artifacts::{ArtifactUpdate, FileChange};
     use crate::engine::{Machine, run_machine};
     use crate::machines::scheduler::effect::SchedulerEffect;
-    use crate::machines::scheduler::event::WorkOutput;
-    use crate::machines::scheduler::event::{NodeOutcome, SchedulerEvent};
+    use crate::machines::scheduler::event::{
+        IntegrationOutcome, IntegrationOutput, NodeOutcome, SchedulerEvent, WorkOutput,
+    };
     use crate::machines::scheduler::machine::{SchedulerMachine, SchedulerOutput};
     use crate::machines::scheduler::state::{
         ModelTier, Node, NodeId, NodeKind, NodeOrigin, NodeStatus, RunGraph, RunRequest,
@@ -468,6 +500,31 @@ mod tests {
         }
     }
 
+    /// Returns a work node result with a Replace update that will fail because
+    /// the target text is absent from the fixture file.
+    struct BadReplaceRunner;
+
+    impl NodeRunner for BadReplaceRunner {
+        fn run_node(
+            &self,
+            _request: NodeRunRequest,
+            _telemetry: &dyn TelemetrySink,
+        ) -> NodeRunResult {
+            NodeRunResult::WorkAccepted(NodeRunWorkResult {
+                work: WorkOutput {
+                    summary: "will fail on integrate".to_string(),
+                },
+                artifact_update: Some(ArtifactUpdate {
+                    changes: vec![FileChange::Replace {
+                        path: "artifact.txt".to_string(),
+                        old: "this text does not exist in the file".to_string(),
+                        new: "replacement".to_string(),
+                    }],
+                }),
+            })
+        }
+    }
+
     #[test]
     fn scheduler_handler_passes_artifact_view_to_node_runner() {
         let (_temp, artifact) = fixture("passes-view");
@@ -578,6 +635,206 @@ mod tests {
         assert_eq!(
             sha_after, original_sha,
             "commit SHA must not change when the runner produces no artifact update"
+        );
+    }
+
+    // ── handler boundary tests ─────────────────────────────────────────────────
+
+    #[test]
+    fn run_node_does_not_commit_artifact_update() {
+        let (_temp, artifact) = fixture("no-commit-on-run");
+        let original_sha = artifact.commit_sha.clone();
+        let repo_path = artifact.repo_path.clone();
+
+        let runner = FileWritingRunner {
+            path: "output.txt".to_string(),
+            content: "hello from work node\n".to_string(),
+        };
+        let h = SchedulerHandler::with_artifact(runner, artifact);
+
+        h.handle_effect(SchedulerEffect::RunNode {
+            node_id: NodeId("W".to_string()),
+            kind: NodeKind::Work,
+            objective: "write a file".to_string(),
+            model_tier: ModelTier::Cheap,
+            attempt: 0,
+        });
+
+        let sha_after = git_output(&repo_path, &["rev-parse", "HEAD"]);
+        assert_eq!(
+            sha_after, original_sha,
+            "RunNode must not commit; artifact mutation must happen only during IntegrateWork"
+        );
+    }
+
+    #[test]
+    fn integrate_work_commits_pending_artifact_update() {
+        let (_temp, artifact) = fixture("commit-on-integrate");
+        let original_sha = artifact.commit_sha.clone();
+        let repo_path = artifact.repo_path.clone();
+
+        let runner = FileWritingRunner {
+            path: "output.txt".to_string(),
+            content: "hello from work node\n".to_string(),
+        };
+        let h = SchedulerHandler::with_artifact(runner, artifact);
+
+        h.handle_effect(SchedulerEffect::RunNode {
+            node_id: NodeId("W".to_string()),
+            kind: NodeKind::Work,
+            objective: "write a file".to_string(),
+            model_tier: ModelTier::Cheap,
+            attempt: 0,
+        });
+
+        let event = h.handle_effect(SchedulerEffect::IntegrateWork {
+            node_id: NodeId("W".to_string()),
+            work: WorkOutput {
+                summary: "wrote output.txt".to_string(),
+            },
+        });
+
+        assert!(
+            matches!(
+                event,
+                SchedulerEvent::IntegrationReturned {
+                    outcome: IntegrationOutcome::Succeeded(_),
+                    ..
+                }
+            ),
+            "IntegrateWork must return Succeeded; got: {event:#?}"
+        );
+
+        let new_sha = git_output(&repo_path, &["rev-parse", "HEAD"]);
+        assert_ne!(
+            new_sha, original_sha,
+            "IntegrateWork must advance the artifact commit"
+        );
+
+        let output_content = git_output(&repo_path, &["show", &format!("{new_sha}:output.txt")]);
+        assert_eq!(
+            output_content, "hello from work node",
+            "output.txt must exist in the integrated commit"
+        );
+    }
+
+    #[test]
+    fn artifact_update_apply_failure_returns_integration_failure() {
+        let (_temp, artifact) = fixture("apply-fail");
+        let h = SchedulerHandler::with_artifact(BadReplaceRunner, artifact);
+
+        h.handle_effect(SchedulerEffect::RunNode {
+            node_id: NodeId("W".to_string()),
+            kind: NodeKind::Work,
+            objective: "do work".to_string(),
+            model_tier: ModelTier::Cheap,
+            attempt: 0,
+        });
+
+        let event = h.handle_effect(SchedulerEffect::IntegrateWork {
+            node_id: NodeId("W".to_string()),
+            work: WorkOutput {
+                summary: "done".to_string(),
+            },
+        });
+
+        assert!(
+            matches!(
+                event,
+                SchedulerEvent::IntegrationReturned {
+                    outcome: IntegrationOutcome::Failed(_),
+                    ..
+                }
+            ),
+            "IntegrateWork must return Failed when apply errors; got: {event:#?}"
+        );
+    }
+
+    #[test]
+    fn second_work_node_sees_first_only_after_integration() {
+        let (_temp, artifact) = fixture("second-sees-after-integration");
+        let original_sha = artifact.commit_sha.clone();
+        let repo_path = artifact.repo_path.clone();
+
+        let writer = FileWritingRunner {
+            path: "step1.txt".to_string(),
+            content: "written by node one\n".to_string(),
+        };
+        let h = SchedulerHandler::with_artifact(writer, artifact);
+
+        // RunNode for A: stores the update but does NOT commit.
+        h.handle_effect(SchedulerEffect::RunNode {
+            node_id: NodeId("A".to_string()),
+            kind: NodeKind::Work,
+            objective: "write the file".to_string(),
+            model_tier: ModelTier::Cheap,
+            attempt: 0,
+        });
+        let sha_before_integrate = git_output(&repo_path, &["rev-parse", "HEAD"]);
+        assert_eq!(
+            sha_before_integrate, original_sha,
+            "commit must not advance before IntegrateWork"
+        );
+
+        // IntegrateWork for A: applies the update and commits.
+        h.handle_effect(SchedulerEffect::IntegrateWork {
+            node_id: NodeId("A".to_string()),
+            work: WorkOutput {
+                summary: "wrote step1.txt".to_string(),
+            },
+        });
+        let sha_after_integrate = git_output(&repo_path, &["rev-parse", "HEAD"]);
+        assert_ne!(
+            sha_after_integrate, original_sha,
+            "commit must advance after IntegrateWork"
+        );
+
+        // The handler's artifact now reflects the new commit.
+        let current_sha = h.artifact().expect("artifact must be present").commit_sha;
+        assert_eq!(
+            current_sha, sha_after_integrate,
+            "handler artifact must point at the integrated commit"
+        );
+    }
+
+    #[test]
+    fn work_node_without_update_integrates_without_commit() {
+        let (_temp, artifact) = fixture("no-update-no-commit");
+        let original_sha = artifact.commit_sha.clone();
+        let repo_path = artifact.repo_path.clone();
+
+        let h = SchedulerHandler::with_artifact(StaticNodeRunner, artifact);
+
+        h.handle_effect(SchedulerEffect::RunNode {
+            node_id: NodeId("W".to_string()),
+            kind: NodeKind::Work,
+            objective: "do some work".to_string(),
+            model_tier: ModelTier::Cheap,
+            attempt: 0,
+        });
+
+        let event = h.handle_effect(SchedulerEffect::IntegrateWork {
+            node_id: NodeId("W".to_string()),
+            work: WorkOutput {
+                summary: "completed".to_string(),
+            },
+        });
+
+        assert!(
+            matches!(
+                event,
+                SchedulerEvent::IntegrationReturned {
+                    outcome: IntegrationOutcome::Succeeded(_),
+                    ..
+                }
+            ),
+            "IntegrateWork with no pending update must return Succeeded"
+        );
+
+        let sha_after = git_output(&repo_path, &["rev-parse", "HEAD"]);
+        assert_eq!(
+            sha_after, original_sha,
+            "commit must not change when no artifact update was pending"
         );
     }
 
