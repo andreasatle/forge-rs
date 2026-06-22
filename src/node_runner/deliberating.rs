@@ -39,6 +39,7 @@ impl<P> DeliberatingNodeRunner<P> {
 
 struct DeliberatingMachine<'a, P: ProviderClient> {
     handler: ProviderBackedDeliberationHandler<&'a P>,
+    telemetry: &'a dyn TelemetrySink,
 }
 
 impl<'a, P: ProviderClient> Machine for DeliberatingMachine<'a, P> {
@@ -60,7 +61,8 @@ impl<'a, P: ProviderClient> Machine for DeliberatingMachine<'a, P> {
     }
 
     fn handle_effect(&self, effect: DeliberationEffect) -> DeliberationEvent {
-        self.handler.handle_effect(effect)
+        self.handler
+            .handle_effect_with_telemetry(effect, self.telemetry)
     }
 
     fn output(&self, state: &DeliberationState) -> Option<DeliberationTerminalOutput> {
@@ -84,6 +86,7 @@ impl<P: ProviderClient> NodeRunner for DeliberatingNodeRunner<P> {
         };
         let machine = DeliberatingMachine {
             handler: ProviderBackedDeliberationHandler::new(&self.provider),
+            telemetry,
         };
         map_output(
             run_machine_with_telemetry(machine, initial_state, telemetry).0,
@@ -388,7 +391,11 @@ mod tests {
 
     #[test]
     fn deliberating_runner_preserves_deliberation_failure() {
-        let provider = ScriptedProvider::from_strs(&["not valid json at all"]);
+        let provider = ScriptedProvider::from_strs(&[
+            "not valid json at all",
+            "still not valid json",
+            "also not valid json",
+        ]);
         let runner = DeliberatingNodeRunner::new(provider);
         let result = runner.run_node(work_request("do something"), &NoopTelemetry);
         let NodeRunResult::Failed(failure) = result else {

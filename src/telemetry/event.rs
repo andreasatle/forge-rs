@@ -33,6 +33,41 @@ pub enum TelemetryEvent {
         /// Pretty-printed debug representation of the effect.
         effect: String,
     },
+    /// A role prompt was rendered and is about to be sent to a provider.
+    RolePromptRendered {
+        /// The complete rendered prompt.
+        prompt: String,
+        /// One-based protocol attempt number.
+        attempt_count: usize,
+    },
+    /// A provider returned raw content to the role layer.
+    ProviderResponseReceived {
+        /// The provider's unparsed response.
+        raw_response: String,
+        /// One-based protocol attempt number.
+        attempt_count: usize,
+    },
+    /// The role layer parsed a provider response successfully.
+    ParseSucceeded {
+        /// One-based protocol attempt number.
+        attempt_count: usize,
+    },
+    /// The role layer could not parse or validate a provider response.
+    ParseFailed {
+        /// The provider's unparsed response.
+        raw_response: String,
+        /// The parse or schema validation error.
+        parse_error: String,
+        /// One-based protocol attempt number.
+        attempt_count: usize,
+    },
+    /// The role layer is retrying after a protocol failure.
+    ProtocolRetry {
+        /// The parse error that caused the retry.
+        parse_error: String,
+        /// The next one-based protocol attempt number.
+        attempt_count: usize,
+    },
     /// A provider call completed successfully.
     ProviderCallSucceeded {
         /// Identifier of the provider that was called.
@@ -69,6 +104,11 @@ impl TelemetryEvent {
             TelemetryEvent::StateEntered { .. } => "state-entered",
             TelemetryEvent::EventReceived { .. } => "event-received",
             TelemetryEvent::EffectEmitted { .. } => "effect-emitted",
+            TelemetryEvent::RolePromptRendered { .. } => "role-prompt-rendered",
+            TelemetryEvent::ProviderResponseReceived { .. } => "provider-response-received",
+            TelemetryEvent::ParseSucceeded { .. } => "parse-succeeded",
+            TelemetryEvent::ParseFailed { .. } => "parse-failed",
+            TelemetryEvent::ProtocolRetry { .. } => "protocol-retry",
             TelemetryEvent::ProviderCallSucceeded { .. } => "provider-call-succeeded",
             TelemetryEvent::ProviderCallFailed { .. } => "provider-call-failed",
             TelemetryEvent::ArtifactCommitCreated { .. } => "artifact-commit-created",
@@ -95,6 +135,34 @@ impl TelemetryEvent {
             TelemetryEvent::EffectEmitted { machine, effect } => {
                 format!("kind: EffectEmitted\nmachine: {machine}\neffect:\n{effect}\n")
             }
+            TelemetryEvent::RolePromptRendered {
+                prompt,
+                attempt_count,
+            } => format!(
+                "kind: RolePromptRendered\nattempt_count: {attempt_count}\nprompt:\n{prompt}\n"
+            ),
+            TelemetryEvent::ProviderResponseReceived {
+                raw_response,
+                attempt_count,
+            } => format!(
+                "kind: ProviderResponseReceived\nattempt_count: {attempt_count}\nraw_response:\n{raw_response}\n"
+            ),
+            TelemetryEvent::ParseSucceeded { attempt_count } => {
+                format!("kind: ParseSucceeded\nattempt_count: {attempt_count}\n")
+            }
+            TelemetryEvent::ParseFailed {
+                raw_response,
+                parse_error,
+                attempt_count,
+            } => format!(
+                "kind: ParseFailed\nattempt_count: {attempt_count}\nparse_error: {parse_error}\nraw_response:\n{raw_response}\n"
+            ),
+            TelemetryEvent::ProtocolRetry {
+                parse_error,
+                attempt_count,
+            } => format!(
+                "kind: ProtocolRetry\nattempt_count: {attempt_count}\nparse_error: {parse_error}\n"
+            ),
             TelemetryEvent::ProviderCallSucceeded { provider } => {
                 format!("kind: ProviderCallSucceeded\nprovider: {provider}\n")
             }

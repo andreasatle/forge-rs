@@ -7,6 +7,7 @@
 use serde::Deserialize;
 
 use crate::providers::{ProviderClient, ProviderRequest};
+use crate::telemetry::{NoopTelemetry, TelemetryEvent, TelemetrySink};
 
 use super::effect::DeliberationEffect;
 use super::event::{DeliberationEvent, RoleResult};
@@ -16,6 +17,16 @@ use super::state::{DeliberationRole, RevisionFeedback};
 /// mapping the response into `DeliberationEvent` values.
 pub struct ProviderBackedDeliberationHandler<P> {
     provider: P,
+}
+
+/// Maximum number of additional provider calls after the initial response has
+/// failed protocol parsing or validation.
+const MAX_PROTOCOL_RETRIES: usize = 2;
+
+/// State for one role-layer protocol attempt.
+struct RoleAttempt {
+    request: ProviderRequest,
+    attempt_count: usize,
 }
 
 impl<P> ProviderBackedDeliberationHandler<P> {
@@ -32,6 +43,15 @@ impl<P: ProviderClient> ProviderBackedDeliberationHandler<P> {
     /// checks `output()` before dispatching effects, so reaching them here is
     /// a bug in the caller.
     pub fn handle_effect(&self, effect: DeliberationEffect) -> DeliberationEvent {
+        self.handle_effect_with_telemetry(effect, &NoopTelemetry)
+    }
+
+    /// Execute one deliberation effect and record role-layer protocol telemetry.
+    pub fn handle_effect_with_telemetry(
+        &self,
+        effect: DeliberationEffect,
+        telemetry: &dyn TelemetrySink,
+    ) -> DeliberationEvent {
         match effect {
             DeliberationEffect::RunRole {
                 role,
@@ -40,19 +60,14 @@ impl<P: ProviderClient> ProviderBackedDeliberationHandler<P> {
                 critic_content,
                 feedback,
             } => {
-                let prompt = render_role_prompt(
+                let original_prompt = render_role_prompt(
                     &role,
                     &objective,
                     producer_content.as_deref(),
                     critic_content.as_deref(),
                     &feedback,
                 );
-                let result = match self.provider.call(ProviderRequest { prompt }) {
-                    Ok(resp) => parse_role_response(&resp.content),
-                    Err(err) => RoleResult::Failed {
-                        reason: format!("provider error ({:?}): {}", err.kind, err.message),
-                    },
-                };
+                let result = self.run_role(original_prompt, telemetry);
                 DeliberationEvent::RoleReturned { role, result }
             }
             DeliberationEffect::ReturnComplete { .. } => {
@@ -69,6 +84,83 @@ impl<P: ProviderClient> ProviderBackedDeliberationHandler<P> {
             }
         }
     }
+
+    fn run_role(&self, original_prompt: String, telemetry: &dyn TelemetrySink) -> RoleResult {
+        let mut attempt = RoleAttempt {
+            request: ProviderRequest {
+                prompt: original_prompt.clone(),
+            },
+            attempt_count: 1,
+        };
+
+        loop {
+            telemetry.record(TelemetryEvent::RolePromptRendered {
+                prompt: attempt.request.prompt.clone(),
+                attempt_count: attempt.attempt_count,
+            });
+            let response = match self.provider.call(attempt.request) {
+                Ok(response) => response,
+                Err(err) => {
+                    return RoleResult::Failed {
+                        reason: format!("provider error ({:?}): {}", err.kind, err.message),
+                    };
+                }
+            };
+            telemetry.record(TelemetryEvent::ProviderResponseReceived {
+                raw_response: response.content.clone(),
+                attempt_count: attempt.attempt_count,
+            });
+
+            match try_parse_role_response(&response.content) {
+                Ok(result) => {
+                    telemetry.record(TelemetryEvent::ParseSucceeded {
+                        attempt_count: attempt.attempt_count,
+                    });
+                    return result;
+                }
+                Err(parse_error) => {
+                    telemetry.record(TelemetryEvent::ParseFailed {
+                        raw_response: response.content.clone(),
+                        parse_error: parse_error.clone(),
+                        attempt_count: attempt.attempt_count,
+                    });
+                    if attempt.attempt_count > MAX_PROTOCOL_RETRIES {
+                        return RoleResult::Failed {
+                            reason: parse_error,
+                        };
+                    }
+                    let next_attempt = attempt.attempt_count + 1;
+                    telemetry.record(TelemetryEvent::ProtocolRetry {
+                        parse_error: parse_error.clone(),
+                        attempt_count: next_attempt,
+                    });
+                    attempt = RoleAttempt {
+                        request: ProviderRequest {
+                            prompt: render_retry_prompt(
+                                &original_prompt,
+                                &parse_error,
+                                &response.content,
+                            ),
+                        },
+                        attempt_count: next_attempt,
+                    };
+                }
+            }
+        }
+    }
+}
+
+fn render_retry_prompt(original_prompt: &str, parse_error: &str, raw_response: &str) -> String {
+    format!(
+        "Your previous response could not be parsed.\n\
+         Problem:\n{parse_error}\n\
+         Previous response:\n{raw_response}\n\
+         Return exactly one JSON object.\n\
+         Accepted example:\n{{\n  \"status\": \"accepted\",\n  \"content\": \"...\"\n}}\n\
+         Rejected example:\n{{\n  \"status\": \"rejected\",\n  \"reason\": \"...\"\n}}\n\
+         Return only JSON.\n\n\
+         Original role prompt:\n{original_prompt}"
+    )
 }
 
 /// Internal serde type for JSON role responses from the provider.
@@ -127,45 +219,45 @@ fn render_role_prompt(
 /// 5. Validate that required string fields are non-empty and not the `"..."` schema
 ///    placeholder that models sometimes echo back literally from the prompt template.
 /// 6. Map any parse or validation failure to `RoleResult::Failed`.
+#[cfg(test)]
 fn parse_role_response(raw_response: &str) -> RoleResult {
+    try_parse_role_response(raw_response).unwrap_or_else(|reason| RoleResult::Failed { reason })
+}
+
+fn try_parse_role_response(raw_response: &str) -> Result<RoleResult, String> {
     let text = strip_code_fence(raw_response.trim());
     let json_str = match extract_json_object(text) {
         Some(s) => s,
         None => {
-            return RoleResult::Failed {
-                reason: format!("no JSON object found in role response: {raw_response:?}"),
-            };
+            return Err(format!(
+                "no JSON object found in role response: {raw_response:?}"
+            ));
         }
     };
-    match serde_json::from_str::<JsonRoleResponse>(json_str) {
+    let result = match serde_json::from_str::<JsonRoleResponse>(json_str) {
         Ok(JsonRoleResponse::Accepted { content }) => {
             if content.trim().is_empty() {
-                RoleResult::Failed {
-                    reason: "accepted response has empty content".to_string(),
-                }
+                return Err("accepted response has empty content".to_string());
             } else if content.trim() == "..." {
-                RoleResult::Failed {
-                    reason: format!(
-                        "role response has placeholder accepted content; raw: {raw_response}"
-                    ),
-                }
+                return Err(format!(
+                    "role response has placeholder accepted content; raw: {raw_response}"
+                ));
             } else {
                 RoleResult::Accepted { content }
             }
         }
         Ok(JsonRoleResponse::Rejected { reason }) => {
             if reason.trim().is_empty() || reason.trim() == "..." {
-                RoleResult::Failed {
-                    reason: format!("role response has placeholder reason; raw: {raw_response}"),
-                }
+                return Err(format!(
+                    "role response has placeholder reason; raw: {raw_response}"
+                ));
             } else {
                 RoleResult::Rejected { reason }
             }
         }
-        Err(err) => RoleResult::Failed {
-            reason: format!("JSON parse error: {err}"),
-        },
-    }
+        Err(err) => return Err(format!("JSON parse error: {err}")),
+    };
+    Ok(result)
 }
 
 /// Strip a leading ` ```json ` or ` ``` ` fence and its matching closing ` ``` `.
@@ -255,18 +347,21 @@ mod tests {
 
     struct ScriptedProvider {
         responses: RefCell<VecDeque<String>>,
+        requests: RefCell<Vec<ProviderRequest>>,
     }
 
     impl ScriptedProvider {
         fn from_strs(responses: &[&str]) -> Self {
             Self {
                 responses: RefCell::new(responses.iter().map(|s| s.to_string()).collect()),
+                requests: RefCell::new(Vec::new()),
             }
         }
     }
 
     impl ProviderClient for ScriptedProvider {
-        fn call(&self, _req: ProviderRequest) -> Result<ProviderResponse, ProviderError> {
+        fn call(&self, req: ProviderRequest) -> Result<ProviderResponse, ProviderError> {
+            self.requests.borrow_mut().push(req);
             let content = self
                 .responses
                 .borrow_mut()
@@ -547,6 +642,158 @@ mod tests {
         assert!(
             prompt.contains("\"status\""),
             "expected prompt to include JSON schema instructions, got: {prompt}"
+        );
+    }
+
+    #[test]
+    fn malformed_json_retries_and_recovers() {
+        let handler = ProviderBackedDeliberationHandler::new(ScriptedProvider::from_strs(&[
+            "invalid text",
+            r#"{"status":"accepted","content":"recovered"}"#,
+        ]));
+
+        let event = handler.handle_effect(run_role(
+            DeliberationRole::Producer,
+            "recover output",
+            None,
+            None,
+            vec![],
+        ));
+
+        assert!(matches!(
+            event,
+            DeliberationEvent::RoleReturned {
+                result: RoleResult::Accepted { ref content },
+                ..
+            } if content == "recovered"
+        ));
+        assert_eq!(handler.provider.requests.borrow().len(), 2);
+    }
+
+    #[test]
+    fn retry_prompt_contains_parse_error() {
+        let handler = ProviderBackedDeliberationHandler::new(ScriptedProvider::from_strs(&[
+            "invalid text",
+            r#"{"status":"accepted","content":"recovered"}"#,
+        ]));
+
+        handler.handle_effect(run_role(
+            DeliberationRole::Producer,
+            "recover output",
+            None,
+            None,
+            vec![],
+        ));
+
+        let requests = handler.provider.requests.borrow();
+        let retry_prompt = &requests[1].prompt;
+        assert!(retry_prompt.contains("no JSON object found"));
+        assert!(retry_prompt.contains("invalid text"));
+        assert!(retry_prompt.contains("Objective: recover output"));
+    }
+
+    #[test]
+    fn retry_limit_returns_failure() {
+        let handler = ProviderBackedDeliberationHandler::new(ScriptedProvider::from_strs(&[
+            "invalid one",
+            "invalid two",
+            "invalid three",
+        ]));
+
+        let event = handler.handle_effect(run_role(
+            DeliberationRole::Producer,
+            "never valid",
+            None,
+            None,
+            vec![],
+        ));
+
+        assert!(matches!(
+            event,
+            DeliberationEvent::RoleReturned {
+                result: RoleResult::Failed { .. },
+                ..
+            }
+        ));
+        assert_eq!(handler.provider.requests.borrow().len(), 3);
+    }
+
+    #[test]
+    fn semantic_rejection_does_not_retry() {
+        let handler = ProviderBackedDeliberationHandler::new(ScriptedProvider::from_strs(&[
+            r#"{"status":"rejected","reason":"needs revision"}"#,
+        ]));
+
+        let event = handler.handle_effect(run_role(
+            DeliberationRole::Referee,
+            "review output",
+            Some("draft"),
+            Some("review"),
+            vec![],
+        ));
+
+        assert!(matches!(
+            event,
+            DeliberationEvent::RoleReturned {
+                result: RoleResult::Rejected { ref reason },
+                ..
+            } if reason == "needs revision"
+        ));
+        assert_eq!(handler.provider.requests.borrow().len(), 1);
+    }
+
+    #[test]
+    fn protocol_retry_records_role_layer_telemetry() {
+        use crate::telemetry::{TelemetryEvent, VecTelemetry};
+
+        let handler = ProviderBackedDeliberationHandler::new(ScriptedProvider::from_strs(&[
+            "invalid text",
+            r#"{"status":"accepted","content":"recovered"}"#,
+        ]));
+        let telemetry = VecTelemetry::new();
+
+        handler.handle_effect_with_telemetry(
+            run_role(
+                DeliberationRole::Producer,
+                "recover output",
+                None,
+                None,
+                vec![],
+            ),
+            &telemetry,
+        );
+
+        let events = telemetry.events();
+        assert!(events.iter().any(|event| matches!(
+            event,
+            TelemetryEvent::RolePromptRendered {
+                attempt_count: 2,
+                prompt,
+            } if prompt.contains("no JSON object found")
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            TelemetryEvent::ProviderResponseReceived {
+                attempt_count: 1,
+                raw_response,
+            } if raw_response == "invalid text"
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            TelemetryEvent::ParseFailed { parse_error, .. }
+                if parse_error.contains("no JSON object found")
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            TelemetryEvent::ProtocolRetry {
+                attempt_count: 2,
+                ..
+            }
+        )));
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, TelemetryEvent::ParseSucceeded { attempt_count: 2 }))
         );
     }
 
