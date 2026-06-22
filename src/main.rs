@@ -1,121 +1,32 @@
-//! Binary entry point — development harness for exercising the machines.
+//! Forge CLI entry point.
 //!
-//! This binary is not the production Forge CLI. It runs the demo machine and
-//! several scheduler scenarios through `run_machine` so that the core state
-//! machine logic can be verified without a real provider or network.
+//! Usage:
+//!   forge run <config.yaml>   — run a forge job described by a YAML config file
 //!
-//! Each `run_demo` call constructs a `RunGraph`, feeds it into `SchedulerMachine`,
-//! and prints the final node statuses. The scenarios cover the main recovery
-//! paths: serial chains, plan expansion, retry, model escalation, and terminal
-//! failure.
+//! For smoke-test scenarios, use the examples:
+//!   cargo run --example scheduler_deliberation_demo
+//!   cargo run --example deliberation_demo
 
-use forge_rs::engine::run_machine;
-use forge_rs::machines::demo::state::DemoState;
-use forge_rs::machines::demo::{DemoMachine, Task};
-use forge_rs::machines::scheduler::state::SchedulerState;
-use forge_rs::machines::scheduler::{
-    ModelTier, Node, NodeId, NodeKind, NodeOrigin, NodeStatus, RunGraph, RunRequest,
-    SchedulerHandler, SchedulerMachine, SchedulerOutput,
-};
-use forge_rs::node_runner::StaticNodeRunner;
-
-fn work(id: &str, objective: &str, deps: &[&str]) -> Node {
-    Node {
-        id: NodeId(id.to_string()),
-        kind: NodeKind::Work,
-        objective: objective.to_string(),
-        dependencies: deps.iter().map(|d| NodeId(d.to_string())).collect(),
-        status: NodeStatus::Pending,
-        attempt: 0,
-        plan_depth: 0,
-        model_tier: ModelTier::Cheap,
-        summary: None,
-        origin: NodeOrigin::Root,
-    }
-}
-
-fn run_demo(label: &str, state: SchedulerState) {
-    println!("\n=== {label} ===\n");
-    match run_machine(SchedulerHandler::new(StaticNodeRunner), state) {
-        SchedulerOutput::Complete {
-            graph: g,
-            recovery_summary: rs,
-        } => {
-            println!(
-                "\nCOMPLETE — {} nodes (recovered={}, retry={}, elevate={}, split={})",
-                g.nodes.len(),
-                rs.recovered,
-                rs.retry_count,
-                rs.elevate_count,
-                rs.split_count,
-            );
-            for n in &g.nodes {
-                println!("  [{:?}] {} {:?}", n.status, n.id.0, n.summary);
-            }
-        }
-        SchedulerOutput::Failed { graph: g, reason } => {
-            println!("\nFAILED: {reason}");
-            for n in &g.nodes {
-                println!("  [{:?}] {} {:?}", n.status, n.id.0, n.summary);
-            }
-        }
-    }
-}
+use forge_rs::config::ForgeConfig;
+use forge_rs::runtime::ForgeRuntime;
 
 fn main() {
-    // Demo machine (unchanged)
-    let result = run_machine(
-        DemoMachine,
-        DemoState::NotStarted {
-            task: Task {
-                name: "demo task".to_string(),
-            },
-        },
-    );
-    println!("DEMO RESULT: {result:#?}");
+    let args: Vec<String> = std::env::args().collect();
 
-    // 1. Simple work chain: A → B → C
-    run_demo(
-        "work chain",
-        SchedulerState::Running {
-            graph: RunGraph {
-                nodes: vec![
-                    work("A", "initialize workspace", &[]),
-                    work("B", "build artifacts", &["A"]),
-                    work("C", "run verification", &["B"]),
-                ],
-                next_id: 0,
-            },
-        },
-    );
-
-    // 2. Plan node that dynamically creates a work child — primary entry via RunRequest
-    run_demo(
-        "plan → work child (via RunRequest)",
-        SchedulerMachine::initial_state(RunRequest {
-            objective: "plan the implementation".to_string(),
-        }),
-    );
-
-    // 3. A work node that succeeds (StaticNodeRunner: no "fail" keyword)
-    run_demo(
-        "single work node",
-        SchedulerState::Running {
-            graph: RunGraph {
-                nodes: vec![work("R", "run this job", &[])],
-                next_id: 0,
-            },
-        },
-    );
-
-    // 4. Terminal failure (StaticNodeRunner: "fail" in objective → Terminal recovery)
-    run_demo(
-        "terminal failure",
-        SchedulerState::Running {
-            graph: RunGraph {
-                nodes: vec![work("X", "fail this step", &[])],
-                next_id: 0,
-            },
-        },
-    );
+    match args.as_slice() {
+        [_, cmd, file] if cmd == "run" => {
+            let config = ForgeConfig::from_file(file).unwrap_or_else(|e| {
+                eprintln!("Error loading config: {e}");
+                std::process::exit(1);
+            });
+            ForgeRuntime::run(config).unwrap_or_else(|e| {
+                eprintln!("Run failed: {e}");
+                std::process::exit(1);
+            });
+        }
+        _ => {
+            eprintln!("Usage: forge run <config.yaml>");
+            std::process::exit(1);
+        }
+    }
 }
