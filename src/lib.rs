@@ -31,6 +31,7 @@ pub mod machines;
 pub mod models;
 pub mod node_runner;
 pub mod providers;
+pub mod roles;
 pub mod runtime;
 pub mod services;
 pub mod telemetry;

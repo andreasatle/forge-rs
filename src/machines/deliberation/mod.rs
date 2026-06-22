@@ -42,7 +42,7 @@ pub mod state;
 
 pub use effect::DeliberationEffect;
 pub use event::{DeliberationEvent, RoleResult};
-pub use handler::ProviderBackedDeliberationHandler;
+pub use handler::{DeliberationHandler, ProviderBackedDeliberationHandler};
 pub use machine::DeliberationMachine;
 pub use state::{
     DeliberationOutput, DeliberationRequest, DeliberationRole, DeliberationState,
