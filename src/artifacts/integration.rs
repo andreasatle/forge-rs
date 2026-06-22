@@ -1,9 +1,10 @@
 use std::process::Command;
 
-use super::{Artifact, Workspace};
+use super::{Artifact, Workspace, artifact::assert_bare_repository};
 
 /// Commits workspace changes and returns the resulting artifact version.
 pub fn integrate(artifact: &Artifact, workspace: &Workspace) -> Artifact {
+    assert_bare_repository(artifact);
     run_git(workspace, &["add", "--all"]);
     run_git(
         workspace,
@@ -21,31 +22,20 @@ pub fn integrate(artifact: &Artifact, workspace: &Workspace) -> Artifact {
 
     let commit_sha = git_stdout(workspace, &["rev-parse", "HEAD"]);
 
-    // Transfer the detached workspace commit back to the artifact repository,
-    // then advance the artifact's existing logical branch to that commit.
-    let fetch = Command::new("git")
-        .args(["fetch", "--quiet"])
-        .arg(&workspace.path)
-        .arg(&commit_sha)
-        .current_dir(&artifact.repo_path)
+    // A push transfers the workspace commit and advances the branch in the bare
+    // artifact repository as one Git operation.
+    let branch_ref = format!("{commit_sha}:refs/heads/{}", artifact.branch);
+    let push = Command::new("git")
+        .args(["push", "--quiet"])
+        .arg(&artifact.repo_path)
+        .arg(&branch_ref)
+        .current_dir(&workspace.path)
         .output()
-        .expect("failed to run git fetch while integrating artifact");
+        .expect("failed to run git push while integrating artifact");
     assert!(
-        fetch.status.success(),
-        "git fetch failed while integrating artifact: {}",
-        String::from_utf8_lossy(&fetch.stderr).trim()
-    );
-
-    let branch_ref = format!("refs/heads/{}", artifact.branch);
-    let update_ref = Command::new("git")
-        .args(["update-ref", &branch_ref, &commit_sha])
-        .current_dir(&artifact.repo_path)
-        .output()
-        .expect("failed to run git update-ref while integrating artifact");
-    assert!(
-        update_ref.status.success(),
-        "git update-ref failed while integrating artifact: {}",
-        String::from_utf8_lossy(&update_ref.stderr).trim()
+        push.status.success(),
+        "git push failed while integrating artifact: {}",
+        String::from_utf8_lossy(&push.stderr).trim()
     );
 
     Artifact {

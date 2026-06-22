@@ -1,8 +1,8 @@
 //! Git-backed artifact data-plane prototype.
 //!
-//! Artifacts identify committed repository state. Workspaces are mutable clones
-//! of that state, updates replace complete file contents, and integration
-//! commits workspace changes as a new immutable version.
+//! Artifacts identify committed state in bare repositories. Workspaces are
+//! mutable non-bare clones of that state, updates replace complete file
+//! contents, and integration commits and pushes a new immutable version.
 
 mod artifact;
 mod integration;
@@ -51,18 +51,20 @@ mod tests {
 
     fn fixture(label: &str) -> (TempDirectory, Artifact) {
         let temp = TempDirectory::new(label);
-        let repo_path = temp.join("repo");
-        fs::create_dir(&repo_path).expect("failed to create test repository directory");
-        git(&repo_path, &["init", "--quiet", "--initial-branch=main"]);
-        git(&repo_path, &["config", "user.name", "Artifact Test"]);
+        let seed_path = temp.join("seed");
+        fs::create_dir(&seed_path).expect("failed to create seed repository directory");
+        git(&seed_path, &["init", "--quiet", "--initial-branch=main"]);
+        git(&seed_path, &["config", "user.name", "Artifact Test"]);
         git(
-            &repo_path,
+            &seed_path,
             &["config", "user.email", "artifact-test@example.invalid"],
         );
-        fs::write(repo_path.join("artifact.txt"), "version one\n")
+        fs::write(seed_path.join("artifact.txt"), "version one\n")
             .expect("failed to write fixture file");
-        git(&repo_path, &["add", "artifact.txt"]);
-        git(&repo_path, &["commit", "--quiet", "-m", "Initial artifact"]);
+        git(&seed_path, &["add", "artifact.txt"]);
+        git(&seed_path, &["commit", "--quiet", "-m", "Initial artifact"]);
+        let repo_path = temp.join("artifact.git");
+        git_clone_bare(&seed_path, &repo_path);
         let commit_sha = git_output(&repo_path, &["rev-parse", "HEAD"]);
 
         (
@@ -73,6 +75,16 @@ mod tests {
                 commit_sha,
             },
         )
+    }
+
+    fn git_clone_bare(source: &Path, destination: &Path) {
+        let status = Command::new("git")
+            .args(["clone", "--quiet", "--bare"])
+            .arg(source)
+            .arg(destination)
+            .status()
+            .expect("failed to create bare test repository");
+        assert!(status.success(), "git clone --bare failed");
     }
 
     fn replacement(path: &str, content: &str) -> ArtifactUpdate {
@@ -113,6 +125,14 @@ mod tests {
         let workspace = create_workspace(&artifact, temp.join("workspace"));
 
         assert_eq!(workspace.base_commit, artifact.commit_sha);
+        assert_eq!(
+            git_output(&artifact.repo_path, &["rev-parse", "--is-bare-repository"]),
+            "true"
+        );
+        assert_eq!(
+            git_output(&workspace.path, &["rev-parse", "--is-bare-repository"]),
+            "false"
+        );
         assert_eq!(
             git_output(&workspace.path, &["rev-parse", "HEAD"]),
             artifact.commit_sha

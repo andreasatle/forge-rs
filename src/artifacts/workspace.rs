@@ -1,9 +1,9 @@
 use std::path::PathBuf;
 use std::process::Command;
 
-use super::Artifact;
+use super::{Artifact, artifact::assert_bare_repository};
 
-/// A temporary mutable checkout derived from an artifact version.
+/// A temporary mutable, non-bare checkout derived from an artifact version.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Workspace {
     /// Root path of the workspace checkout.
@@ -14,6 +14,8 @@ pub struct Workspace {
 
 /// Creates a mutable clone checked out at the artifact's exact commit.
 pub fn create_workspace(artifact: &Artifact, workspace_path: PathBuf) -> Workspace {
+    assert_bare_repository(artifact);
+
     let clone = Command::new("git")
         .args(["clone", "--quiet", "--no-checkout"])
         .arg(&artifact.repo_path)
