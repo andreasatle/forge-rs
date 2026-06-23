@@ -1,5 +1,7 @@
 //! Forge configuration types loaded from a YAML file.
 
+use std::path::Path;
+
 use serde::Deserialize;
 
 /// Top-level configuration for a forge run.
@@ -42,10 +44,33 @@ pub struct TelemetryConfig {
 
 impl ForgeConfig {
     /// Load a `ForgeConfig` from a YAML file at `path`.
+    ///
+    /// Relative paths in `artifact.repo_path` and `telemetry.directory` are
+    /// resolved against the directory containing the config file, not the
+    /// process working directory.
     pub fn from_file(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
-        let content = std::fs::read_to_string(path)?;
-        let config: ForgeConfig = serde_yaml::from_str(&content)?;
+        let config_path = Path::new(path);
+        let content = std::fs::read_to_string(config_path)?;
+        let mut config: ForgeConfig = serde_yaml::from_str(&content)?;
+
+        // Resolve relative paths against the config file's directory so that
+        // `forge run path/to/forge.yaml` works correctly from any cwd.
+        let config_dir = config_path.parent().filter(|p| !p.as_os_str().is_empty());
+        if let Some(dir) = config_dir {
+            config.artifact.repo_path = resolve_relative(&config.artifact.repo_path, dir);
+            config.telemetry.directory = resolve_relative(&config.telemetry.directory, dir);
+        }
+
         Ok(config)
+    }
+}
+
+fn resolve_relative(path_str: &str, base: &Path) -> String {
+    let p = Path::new(path_str);
+    if p.is_absolute() {
+        path_str.to_string()
+    } else {
+        base.join(p).to_string_lossy().into_owned()
     }
 }
 
@@ -114,7 +139,12 @@ telemetry:
     fn parses_artifact_config() {
         let tmp = TempYaml::new(EXAMPLE_YAML);
         let config = ForgeConfig::from_file(tmp.path()).unwrap();
-        assert_eq!(config.artifact.repo_path, ".forge/artifacts/main.git");
+        let config_dir = std::path::Path::new(tmp.path()).parent().unwrap();
+        let expected = config_dir
+            .join(".forge/artifacts/main.git")
+            .to_string_lossy()
+            .into_owned();
+        assert_eq!(config.artifact.repo_path, expected);
         assert_eq!(config.artifact.branch, "main");
     }
 
@@ -130,7 +160,9 @@ telemetry:
     fn parses_telemetry_config() {
         let tmp = TempYaml::new(EXAMPLE_YAML);
         let config = ForgeConfig::from_file(tmp.path()).unwrap();
-        assert_eq!(config.telemetry.directory, "runs");
+        let config_dir = std::path::Path::new(tmp.path()).parent().unwrap();
+        let expected = config_dir.join("runs").to_string_lossy().into_owned();
+        assert_eq!(config.telemetry.directory, expected);
     }
 
     #[test]
@@ -144,5 +176,58 @@ telemetry:
         let tmp = TempYaml::new("not: valid: yaml: [");
         let result = ForgeConfig::from_file(tmp.path());
         assert!(result.is_err(), "invalid YAML must return an error");
+    }
+
+    const ABSOLUTE_YAML: &str = r#"
+objective: "test absolute paths"
+artifact:
+  repo_path: "/absolute/path/main.git"
+  branch: "main"
+provider:
+  base_url: "http://localhost:8080"
+  n_predict: 512
+telemetry:
+  directory: "/absolute/telemetry"
+"#;
+
+    #[test]
+    fn relative_artifact_path_resolves_against_config_dir() {
+        let tmp = TempYaml::new(EXAMPLE_YAML);
+        let config = ForgeConfig::from_file(tmp.path()).unwrap();
+        let config_dir = std::path::Path::new(tmp.path()).parent().unwrap();
+        let expected = config_dir
+            .join(".forge/artifacts/main.git")
+            .to_string_lossy()
+            .into_owned();
+        assert_eq!(
+            config.artifact.repo_path, expected,
+            "relative artifact path must resolve against config file directory"
+        );
+    }
+
+    #[test]
+    fn relative_telemetry_path_resolves_against_config_dir() {
+        let tmp = TempYaml::new(EXAMPLE_YAML);
+        let config = ForgeConfig::from_file(tmp.path()).unwrap();
+        let config_dir = std::path::Path::new(tmp.path()).parent().unwrap();
+        let expected = config_dir.join("runs").to_string_lossy().into_owned();
+        assert_eq!(
+            config.telemetry.directory, expected,
+            "relative telemetry directory must resolve against config file directory"
+        );
+    }
+
+    #[test]
+    fn absolute_paths_remain_absolute() {
+        let tmp = TempYaml::new(ABSOLUTE_YAML);
+        let config = ForgeConfig::from_file(tmp.path()).unwrap();
+        assert_eq!(
+            config.artifact.repo_path, "/absolute/path/main.git",
+            "absolute artifact path must not be altered"
+        );
+        assert_eq!(
+            config.telemetry.directory, "/absolute/telemetry",
+            "absolute telemetry directory must not be altered"
+        );
     }
 }

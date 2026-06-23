@@ -559,7 +559,8 @@ mod tests {
     #[test]
     fn temporary_workspace_removed_after_drop() {
         let (temp, artifact) = fixture("temp-removed-drop");
-        let workspace = create_temporary_workspace(&artifact);
+        let workspace =
+            create_temporary_workspace(&artifact).expect("failed to create temporary workspace");
         let path = workspace.path().to_path_buf();
         assert!(path.exists(), "workspace directory must exist before drop");
         drop(workspace);
@@ -570,9 +571,24 @@ mod tests {
     }
 
     #[test]
+    fn create_workspace_failure_returns_error() {
+        let artifact = Artifact {
+            repo_path: std::path::PathBuf::from("/nonexistent/path/that/does/not/exist.git"),
+            branch: "main".to_string(),
+            commit_sha: "0000000000000000000000000000000000000000".to_string(),
+        };
+        let result = create_temporary_workspace(&artifact);
+        assert!(
+            result.is_err(),
+            "workspace creation from nonexistent repo must return an error"
+        );
+    }
+
+    #[test]
     fn temporary_workspace_removed_after_update_apply_failure() {
         let (temp, artifact) = fixture("temp-removed-apply-fail");
-        let mut workspace = create_temporary_workspace(&artifact);
+        let mut workspace =
+            create_temporary_workspace(&artifact).expect("failed to create temporary workspace");
         let path = workspace.path().to_path_buf();
 
         let result = ArtifactUpdate {

@@ -87,7 +87,10 @@ impl ForgeRuntime {
         let final_artifact = handler.artifact();
         print_summary(&output, &config, final_artifact.as_ref(), &run_info);
 
-        Ok(())
+        match output {
+            SchedulerOutput::Failed { reason, .. } => Err(format!("run failed: {reason}").into()),
+            SchedulerOutput::Complete { .. } => Ok(()),
+        }
     }
 }
 
@@ -205,6 +208,8 @@ fn print_summary(
 mod tests {
     use super::*;
     use crate::config::ArtifactConfig;
+    use crate::machines::scheduler::machine::{RecoverySummary, SchedulerOutput};
+    use crate::machines::scheduler::state::RunGraph;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static NEXT_ID: AtomicU64 = AtomicU64::new(0);
@@ -222,6 +227,48 @@ mod tests {
             repo_path: path.to_str().unwrap().to_string(),
             branch: "main".to_string(),
         }
+    }
+
+    fn empty_graph() -> RunGraph {
+        RunGraph {
+            nodes: vec![],
+            next_id: 0,
+        }
+    }
+
+    #[test]
+    fn failed_runtime_run_returns_error_or_nonzero_status() {
+        let output = SchedulerOutput::Failed {
+            graph: empty_graph(),
+            reason: "something went wrong".to_string(),
+        };
+        let result: Result<(), Box<dyn std::error::Error>> = match output {
+            SchedulerOutput::Failed { reason, .. } => Err(format!("run failed: {reason}").into()),
+            SchedulerOutput::Complete { .. } => Ok(()),
+        };
+        assert!(result.is_err(), "Failed output must produce an error");
+        assert!(
+            result.unwrap_err().to_string().contains("run failed"),
+            "error message must mention run failed"
+        );
+    }
+
+    #[test]
+    fn successful_runtime_run_still_returns_ok() {
+        let output = SchedulerOutput::Complete {
+            graph: empty_graph(),
+            recovery_summary: RecoverySummary {
+                recovered: false,
+                retry_count: 0,
+                elevate_count: 0,
+                split_count: 0,
+            },
+        };
+        let result: Result<(), Box<dyn std::error::Error>> = match output {
+            SchedulerOutput::Failed { reason, .. } => Err(format!("run failed: {reason}").into()),
+            SchedulerOutput::Complete { .. } => Ok(()),
+        };
+        assert!(result.is_ok(), "Complete output must return Ok");
     }
 
     #[test]

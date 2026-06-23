@@ -26,6 +26,12 @@ impl<P> RetryingProvider<P> {
 
 impl<P: ProviderClient> ProviderClient for RetryingProvider<P> {
     fn call(&self, request: ProviderRequest) -> Result<ProviderResponse, ProviderError> {
+        if self.max_attempts == 0 {
+            return Err(ProviderError {
+                kind: ProviderErrorKind::Terminal,
+                message: "RetryingProvider max_attempts must be >= 1".to_string(),
+            });
+        }
         let mut last_error: Option<ProviderError> = None;
         for _ in 0..self.max_attempts {
             match self.inner.call(request.clone()) {
@@ -34,7 +40,7 @@ impl<P: ProviderClient> ProviderClient for RetryingProvider<P> {
                 Err(err) => last_error = Some(err),
             }
         }
-        Err(last_error.expect("max_attempts must be >= 1"))
+        Err(last_error.unwrap()) // safe: loop ran at least once (max_attempts > 0)
     }
 }
 
@@ -135,6 +141,24 @@ mod tests {
         assert_eq!(err.kind, ProviderErrorKind::Retryable);
         assert_eq!(err.message, "rate limited");
         assert_eq!(client.inner.call_count(), 3);
+    }
+
+    #[test]
+    fn retrying_provider_rejects_zero_attempts_without_panic() {
+        let inner = ScriptedProvider::new(vec![]);
+        let client = RetryingProvider::new(inner, 0);
+        let err = client.call(req()).unwrap_err();
+        assert_eq!(err.kind, ProviderErrorKind::Terminal);
+        assert!(
+            err.message.contains("max_attempts"),
+            "error must mention max_attempts, got: {}",
+            err.message
+        );
+        assert_eq!(
+            client.inner.call_count(),
+            0,
+            "inner must not be called when max_attempts is zero"
+        );
     }
 
     #[test]

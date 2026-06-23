@@ -1,9 +1,10 @@
+use std::error::Error;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use tempfile::TempDir;
 
-use super::{Artifact, artifact::assert_bare_repository};
+use super::Artifact;
 
 /// A temporary mutable, non-bare checkout derived from an artifact version.
 ///
@@ -40,7 +41,8 @@ impl Workspace {
 /// The directory at `workspace_path` is NOT deleted on drop. The caller
 /// is responsible for any cleanup.
 pub fn create_workspace(artifact: &Artifact, workspace_path: PathBuf) -> Workspace {
-    git_clone_artifact(artifact, &workspace_path);
+    git_clone_artifact(artifact, &workspace_path)
+        .expect("failed to create workspace via git clone/checkout");
     Workspace::at_path(workspace_path, artifact.commit_sha.clone())
 }
 
@@ -49,40 +51,44 @@ pub fn create_workspace(artifact: &Artifact, workspace_path: PathBuf) -> Workspa
 /// The directory is deleted automatically when the returned [`Workspace`] is
 /// dropped. Even if apply, validation, or integration fails, the directory is
 /// removed as long as the `Workspace` value is dropped.
-pub fn create_temporary_workspace(artifact: &Artifact) -> Workspace {
-    let temp = TempDir::new().expect("failed to create temporary workspace directory");
-    git_clone_artifact(artifact, temp.path());
-    Workspace {
+pub fn create_temporary_workspace(artifact: &Artifact) -> Result<Workspace, Box<dyn Error>> {
+    let temp = TempDir::new()?;
+    git_clone_artifact(artifact, temp.path())?;
+    Ok(Workspace {
         path: temp.path().to_path_buf(),
         _cleanup: Some(temp),
         base_commit: artifact.commit_sha.clone(),
-    }
+    })
 }
 
-fn git_clone_artifact(artifact: &Artifact, workspace_path: &Path) {
-    assert_bare_repository(artifact);
-
+fn git_clone_artifact(artifact: &Artifact, workspace_path: &Path) -> Result<(), Box<dyn Error>> {
     let clone = Command::new("git")
         .args(["clone", "--quiet", "--no-checkout"])
         .arg(&artifact.repo_path)
         .arg(workspace_path)
         .output()
-        .expect("failed to run git clone while creating workspace");
-    assert!(
-        clone.status.success(),
-        "git clone failed while creating workspace: {}",
-        String::from_utf8_lossy(&clone.stderr).trim()
-    );
+        .map_err(|e| format!("failed to run git clone: {e}"))?;
+    if !clone.status.success() {
+        return Err(format!(
+            "git clone failed while creating workspace: {}",
+            String::from_utf8_lossy(&clone.stderr).trim()
+        )
+        .into());
+    }
 
     let checkout = Command::new("git")
         .args(["checkout", "--quiet", "--detach"])
         .arg(&artifact.commit_sha)
         .current_dir(workspace_path)
         .output()
-        .expect("failed to run git checkout while creating workspace");
-    assert!(
-        checkout.status.success(),
-        "git checkout failed while creating workspace: {}",
-        String::from_utf8_lossy(&checkout.stderr).trim()
-    );
+        .map_err(|e| format!("failed to run git checkout: {e}"))?;
+    if !checkout.status.success() {
+        return Err(format!(
+            "git checkout failed while creating workspace: {}",
+            String::from_utf8_lossy(&checkout.stderr).trim()
+        )
+        .into());
+    }
+
+    Ok(())
 }

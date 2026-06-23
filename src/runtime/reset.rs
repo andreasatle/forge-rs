@@ -1,11 +1,55 @@
 use std::error::Error;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::config::ForgeConfig;
+
+fn validate_reset_path(repo_path: &Path) -> Result<(), Box<dyn Error>> {
+    // Canonicalize for comparisons when the path already exists.
+    let canonical = if repo_path.exists() {
+        repo_path.canonicalize()?
+    } else {
+        repo_path.to_path_buf()
+    };
+
+    // Must not be the filesystem root.
+    if canonical == Path::new("/") {
+        return Err("reset refused: repo_path must not be the filesystem root".into());
+    }
+
+    // Must not be the user's home directory.
+    if let Ok(home) = std::env::var("HOME") {
+        let home_path = PathBuf::from(&home);
+        let home_canonical = if home_path.exists() {
+            home_path.canonicalize().unwrap_or(home_path)
+        } else {
+            home_path
+        };
+        if canonical == home_canonical {
+            return Err("reset refused: repo_path must not be the home directory".into());
+        }
+    }
+
+    // Must not be the current working directory.
+    if let Ok(cwd) = std::env::current_dir()
+        && canonical == cwd
+    {
+        return Err("reset refused: repo_path must not be the current working directory".into());
+    }
+
+    // Must end with .git — bare artifact repositories always carry this suffix.
+    let path_str = repo_path.to_str().ok_or("repo_path is not valid UTF-8")?;
+    if !path_str.ends_with(".git") {
+        return Err(format!("reset refused: repo_path must end with .git, got: {path_str}").into());
+    }
+
+    Ok(())
+}
 
 /// Delete the artifact repository and recreate it with only the Initial commit.
 pub fn run_reset(config: ForgeConfig) -> Result<(), Box<dyn Error>> {
     let repo_path = PathBuf::from(&config.artifact.repo_path);
+
+    validate_reset_path(&repo_path)?;
 
     if repo_path.exists() {
         std::fs::remove_dir_all(&repo_path)?;
@@ -66,6 +110,53 @@ mod tests {
                 directory: telemetry_path.to_str().unwrap().to_string(),
             },
         }
+    }
+
+    #[test]
+    fn reset_rejects_root_path() {
+        let root = PathBuf::from("/");
+        let result = validate_reset_path(&root);
+        assert!(result.is_err(), "reset must be refused for root path");
+        assert!(
+            result.unwrap_err().to_string().contains("reset refused"),
+            "error must contain 'reset refused'"
+        );
+    }
+
+    #[test]
+    fn reset_rejects_home_directory() {
+        let Ok(home) = std::env::var("HOME") else {
+            return;
+        };
+        let home_path = PathBuf::from(&home);
+        let result = validate_reset_path(&home_path);
+        assert!(
+            result.is_err(),
+            "reset must be refused for home directory path"
+        );
+    }
+
+    #[test]
+    fn reset_rejects_non_git_path() {
+        let path = PathBuf::from("/tmp/not-a-git-repo");
+        let result = validate_reset_path(&path);
+        assert!(result.is_err(), "reset must be refused for non-.git path");
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains(".git"),
+            "error must mention .git requirement, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn reset_accepts_configured_artifact_git_path() {
+        let base = temp_path("accept-valid");
+        let repo_path = base.join("artifact.git");
+        let result = validate_reset_path(&repo_path);
+        assert!(
+            result.is_ok(),
+            "reset must be accepted for valid .git path in temp dir, got: {result:?}"
+        );
     }
 
     #[test]

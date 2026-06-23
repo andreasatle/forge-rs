@@ -164,7 +164,21 @@ impl<R: NodeRunner> Machine for SchedulerHandler<R> {
                 let artifact_snapshot = self.artifact.borrow().clone();
 
                 if let (Some(update), Some(artifact)) = (pending_update, artifact_snapshot) {
-                    let mut workspace = create_temporary_workspace(&artifact);
+                    let workspace_result = create_temporary_workspace(&artifact);
+                    let mut workspace = match workspace_result {
+                        Ok(w) => w,
+                        Err(err) => {
+                            return SchedulerEvent::IntegrationReturned {
+                                node_id,
+                                outcome: IntegrationOutcome::Failed(IntegrationFailure {
+                                    reason: format!("workspace creation failed: {err}"),
+                                    recovery: RecoveryAction::Terminal {
+                                        message: format!("workspace creation failed: {err}"),
+                                    },
+                                }),
+                            };
+                        }
+                    };
 
                     match update.apply(&mut workspace) {
                         Err(err) => {
