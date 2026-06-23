@@ -49,16 +49,114 @@ mod tests {
     use super::*;
     use crate::artifacts::{ArtifactUpdate, FileChange, create_workspace, integrate};
     use crate::config::ArtifactConfig;
+    use std::path::{Path, PathBuf};
+    use std::process::Command;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static NEXT_ID: AtomicU64 = AtomicU64::new(0);
 
-    fn temp_path(label: &str) -> std::path::PathBuf {
+    fn temp_path(label: &str) -> PathBuf {
         let seq = NEXT_ID.fetch_add(1, Ordering::Relaxed);
         std::env::temp_dir().join(format!(
             "forge-show-test-{label}-{}-{seq}",
             std::process::id()
         ))
+    }
+
+    /// Creates a bare repo with main -> Commit A (a.txt), other -> Commit B (b.txt),
+    /// and HEAD pointing to other. Returns (bare_repo_path, sha_main, sha_other).
+    fn make_two_branch_bare_repo(base: &Path) -> (PathBuf, String, String) {
+        let seed = base.join("seed");
+        std::fs::create_dir_all(&seed).unwrap();
+
+        let git = |args: &[&str]| {
+            assert!(
+                Command::new("git")
+                    .args(args)
+                    .current_dir(&seed)
+                    .status()
+                    .unwrap()
+                    .success(),
+                "git {} failed",
+                args.join(" ")
+            );
+        };
+        let sha = |args: &[&str]| -> String {
+            String::from_utf8(
+                Command::new("git")
+                    .args(args)
+                    .current_dir(&seed)
+                    .output()
+                    .unwrap()
+                    .stdout,
+            )
+            .unwrap()
+            .trim()
+            .to_owned()
+        };
+
+        git(&["init", "--quiet", "--initial-branch=main"]);
+        git(&["config", "user.name", "Forge Test"]);
+        git(&["config", "user.email", "forge-test@example.invalid"]);
+        std::fs::write(seed.join("a.txt"), "content on main\n").unwrap();
+        git(&["add", "a.txt"]);
+        git(&["commit", "--quiet", "-m", "Commit A on main"]);
+        let sha_main = sha(&["rev-parse", "HEAD"]);
+
+        git(&["checkout", "--quiet", "-b", "other"]);
+        std::fs::write(seed.join("b.txt"), "content on other\n").unwrap();
+        git(&["add", "b.txt"]);
+        git(&["commit", "--quiet", "-m", "Commit B on other"]);
+        let sha_other = sha(&["rev-parse", "HEAD"]);
+
+        let bare = base.join("artifact.git");
+        assert!(
+            Command::new("git")
+                .args(["clone", "--quiet", "--bare"])
+                .arg(&seed)
+                .arg(&bare)
+                .status()
+                .unwrap()
+                .success(),
+            "git clone --bare failed"
+        );
+
+        (bare, sha_main, sha_other)
+    }
+
+    #[test]
+    fn show_uses_configured_branch_not_head() {
+        let base = temp_path("branch-not-head");
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+
+        let (repo_path, sha_main, sha_other) = make_two_branch_bare_repo(&base);
+        assert_ne!(sha_main, sha_other);
+
+        // HEAD in the bare repo points to "other" (sha_other).
+        // We configure branch "main" and expect to see a.txt, not b.txt.
+        let artifact = Artifact {
+            repo_path: repo_path.canonicalize().unwrap(),
+            branch: "main".to_string(),
+            commit_sha: sha_main,
+        };
+
+        let output = artifact_contents(&artifact).unwrap();
+
+        assert!(
+            output.contains("a.txt"),
+            "show must list a.txt from main, got: {output}"
+        );
+        assert!(
+            output.contains("content on main"),
+            "show must include content from main commit, got: {output}"
+        );
+        assert!(
+            !output.contains("b.txt"),
+            "show must not include b.txt from other branch, got: {output}"
+        );
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

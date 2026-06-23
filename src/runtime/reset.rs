@@ -81,9 +81,10 @@ mod tests {
         ))
     }
 
-    fn commit_count(repo_path: &PathBuf) -> usize {
+    fn commit_count(repo_path: &PathBuf, branch: &str) -> usize {
+        let branch_ref = format!("refs/heads/{branch}");
         let out = Command::new("git")
-            .args(["rev-list", "--count", "HEAD"])
+            .args(["rev-list", "--count", &branch_ref])
             .current_dir(repo_path)
             .output()
             .expect("git rev-list failed");
@@ -186,7 +187,7 @@ mod tests {
         let artifact = integrate(&artifact, &workspace).unwrap();
 
         assert_eq!(
-            commit_count(&artifact.repo_path),
+            commit_count(&artifact.repo_path, "main"),
             2,
             "should have two commits before reset"
         );
@@ -195,7 +196,7 @@ mod tests {
         run_reset(config).unwrap();
 
         assert_eq!(
-            commit_count(&repo_path),
+            commit_count(&repo_path, "main"),
             1,
             "after reset only Initial commit must remain"
         );
@@ -220,7 +221,11 @@ mod tests {
         let config = make_forge_config(&repo_path, &telemetry);
         run_reset(config).unwrap();
 
-        assert_eq!(commit_count(&repo_path), 1, "only Initial after reset");
+        assert_eq!(
+            commit_count(&repo_path, "main"),
+            1,
+            "only Initial after reset"
+        );
 
         let artifact = crate::runtime::load_or_create_artifact(&artifact_config).unwrap();
         let workspace_path = base.join("workspace-post-reset");
@@ -236,9 +241,47 @@ mod tests {
         let final_artifact = integrate(&artifact, &workspace).unwrap();
 
         assert_eq!(
-            commit_count(&final_artifact.repo_path),
+            commit_count(&final_artifact.repo_path, "main"),
             2,
             "run after reset must produce a new commit"
+        );
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn reset_creates_configured_branch() {
+        let base = temp_path("configured-branch");
+        let repo_path = base.join("artifact.git");
+        let telemetry = base.join("telemetry");
+        let _ = std::fs::remove_dir_all(&base);
+
+        // Use a non-default branch name to prove reset uses the config, not "main".
+        let config = {
+            use crate::config::{ArtifactConfig, ProviderConfig, TelemetryConfig};
+            ForgeConfig {
+                objective: "test".to_string(),
+                artifact: ArtifactConfig {
+                    repo_path: repo_path.to_str().unwrap().to_string(),
+                    branch: "artifact".to_string(),
+                },
+                provider: ProviderConfig {
+                    base_url: "http://localhost:8080".to_string(),
+                    n_predict: 512,
+                },
+                telemetry: TelemetryConfig {
+                    directory: telemetry.to_str().unwrap().to_string(),
+                },
+            }
+        };
+
+        run_reset(config).unwrap();
+
+        // The configured branch must exist and have exactly one commit.
+        assert_eq!(
+            commit_count(&repo_path, "artifact"),
+            1,
+            "reset must create the configured branch with Initial commit"
         );
 
         let _ = std::fs::remove_dir_all(&base);

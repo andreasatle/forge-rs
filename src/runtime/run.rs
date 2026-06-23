@@ -103,7 +103,7 @@ pub fn load_or_create_artifact(config: &ArtifactConfig) -> Result<Artifact, Box<
     }
 
     let repo_path = repo_path.canonicalize()?;
-    let commit_sha = git_head(&repo_path)?;
+    let commit_sha = git_rev_parse_branch(&repo_path, &config.branch)?;
 
     Ok(Artifact {
         repo_path,
@@ -155,13 +155,18 @@ fn run_git(path: &Path, args: &[&str]) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn git_head(repo_path: &Path) -> Result<String, Box<dyn Error>> {
+fn git_rev_parse_branch(repo_path: &Path, branch: &str) -> Result<String, Box<dyn Error>> {
+    let refspec = format!("refs/heads/{branch}");
     let output = Command::new("git")
-        .args(["rev-parse", "HEAD"])
+        .args(["rev-parse", &refspec])
         .current_dir(repo_path)
         .output()?;
     if !output.status.success() {
-        return Err("git rev-parse HEAD failed".into());
+        return Err(format!(
+            "branch '{branch}' not found in artifact repository at {}",
+            repo_path.display()
+        )
+        .into());
     }
     Ok(String::from_utf8(output.stdout)?.trim().to_string())
 }
@@ -369,6 +374,126 @@ mod tests {
         assert!(dir.exists(), "telemetry directory must be created");
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Creates a bare repo with two branches and HEAD pointing to the non-default one:
+    ///   main  -> Commit A  (contains a.txt)
+    ///   other -> Commit B  (contains b.txt)
+    ///   HEAD  -> other
+    ///
+    /// Returns (bare_repo_path, sha_on_main, sha_on_other).
+    fn make_two_branch_bare_repo(base: &Path) -> (PathBuf, String, String) {
+        let seed = base.join("seed");
+        std::fs::create_dir_all(&seed).unwrap();
+
+        let git = |args: &[&str]| {
+            assert!(
+                Command::new("git")
+                    .args(args)
+                    .current_dir(&seed)
+                    .status()
+                    .unwrap()
+                    .success(),
+                "git {} failed",
+                args.join(" ")
+            );
+        };
+        let sha = |args: &[&str]| -> String {
+            String::from_utf8(
+                Command::new("git")
+                    .args(args)
+                    .current_dir(&seed)
+                    .output()
+                    .unwrap()
+                    .stdout,
+            )
+            .unwrap()
+            .trim()
+            .to_owned()
+        };
+
+        git(&["init", "--quiet", "--initial-branch=main"]);
+        git(&["config", "user.name", "Forge Test"]);
+        git(&["config", "user.email", "forge-test@example.invalid"]);
+        std::fs::write(seed.join("a.txt"), "on main\n").unwrap();
+        git(&["add", "a.txt"]);
+        git(&["commit", "--quiet", "-m", "Commit A"]);
+        let sha_main = sha(&["rev-parse", "HEAD"]);
+
+        git(&["checkout", "--quiet", "-b", "other"]);
+        std::fs::write(seed.join("b.txt"), "on other\n").unwrap();
+        git(&["add", "b.txt"]);
+        git(&["commit", "--quiet", "-m", "Commit B"]);
+        let sha_other = sha(&["rev-parse", "HEAD"]);
+
+        // Clone bare with HEAD -> other (whatever the seed is currently on).
+        let bare = base.join("artifact.git");
+        assert!(
+            Command::new("git")
+                .args(["clone", "--quiet", "--bare"])
+                .arg(&seed)
+                .arg(&bare)
+                .status()
+                .unwrap()
+                .success(),
+            "git clone --bare failed"
+        );
+
+        (bare, sha_main, sha_other)
+    }
+
+    #[test]
+    fn load_existing_artifact_uses_configured_branch_not_head() {
+        let base = temp_path("branch-not-head");
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+
+        let (repo_path, sha_main, sha_other) = make_two_branch_bare_repo(&base);
+        assert_ne!(sha_main, sha_other, "test requires two distinct commits");
+
+        let config = ArtifactConfig {
+            repo_path: repo_path.to_str().unwrap().to_string(),
+            branch: "main".to_string(),
+        };
+
+        let artifact = load_or_create_artifact(&config).unwrap();
+        assert_eq!(
+            artifact.commit_sha, sha_main,
+            "must resolve configured branch (main), not bare repo HEAD (other)"
+        );
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn missing_configured_branch_returns_error() {
+        let base = temp_path("missing-branch");
+        let _ = std::fs::remove_dir_all(&base);
+
+        // Create a repo whose only branch is "other".
+        let config_other = ArtifactConfig {
+            repo_path: base.join("artifact.git").to_str().unwrap().to_string(),
+            branch: "other".to_string(),
+        };
+        load_or_create_artifact(&config_other).unwrap();
+
+        // Now try to load with branch "main", which does not exist.
+        let config_main = ArtifactConfig {
+            repo_path: base.join("artifact.git").to_str().unwrap().to_string(),
+            branch: "main".to_string(),
+        };
+        let result = load_or_create_artifact(&config_main);
+        assert!(
+            result.is_err(),
+            "must fail when configured branch is absent"
+        );
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("main"),
+            "error must mention the missing branch name, got: {msg}"
+        );
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]
