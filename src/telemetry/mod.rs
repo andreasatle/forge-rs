@@ -19,7 +19,7 @@
 //! use forge_rs::engine::run_machine_with_telemetry;
 //! use std::path::PathBuf;
 //!
-//! let sink = FileTelemetry::new(PathBuf::from("/tmp/my-run")).unwrap();
+//! let sink = FileTelemetry::new(PathBuf::from("/tmp/my-run"));
 //! let output = run_machine_with_telemetry(my_machine, initial_state, &sink);
 //! ```
 

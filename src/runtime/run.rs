@@ -73,7 +73,7 @@ impl ForgeRuntime {
             &config.provider.base_url,
         )?;
         let sink: Rc<dyn TelemetrySink> =
-            Rc::new(FileTelemetry::new(run_info.telemetry_dir.clone())?);
+            Rc::new(FileTelemetry::new(run_info.telemetry_dir.clone()));
 
         let llama = LlamaCppProvider::new(&config.provider.base_url);
         let retrying = RetryingProvider::new(llama, 3);
@@ -437,7 +437,7 @@ mod tests {
         let dir = temp_path("telemetry-dir");
         let _ = std::fs::remove_dir_all(&dir);
 
-        let _sink = FileTelemetry::new(dir.clone()).unwrap();
+        let _sink = FileTelemetry::new(dir.clone());
 
         assert!(dir.exists(), "telemetry directory must be created");
 

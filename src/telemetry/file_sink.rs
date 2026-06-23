@@ -28,27 +28,48 @@ use super::sink::TelemetrySink;
 ///
 /// All values come from the `TelemetryEvent` payload; no external serialiser
 /// is required.
+///
+/// # Failure policy
+///
+/// Telemetry is observability, not artifact truth. All I/O failures are
+/// handled gracefully:
+///
+/// - Directory creation failure → sink is disabled; all subsequent `record`
+///   calls are silently dropped.
+/// - File write failure → event is skipped; run continues unaffected.
 pub struct FileTelemetry {
-    root: PathBuf,
+    /// `None` when the root directory could not be created (sink disabled).
+    root: Option<PathBuf>,
     counter: RefCell<u64>,
+    /// Count of events that could not be written due to I/O errors.
+    telemetry_failures: RefCell<usize>,
 }
 
 impl FileTelemetry {
     /// Creates a new `FileTelemetry` that writes into `root`.
     ///
-    /// The directory (and any missing ancestors) is created immediately.
-    /// Returns an error if the directory cannot be created.
-    pub fn new(root: PathBuf) -> Result<Self, std::io::Error> {
-        std::fs::create_dir_all(&root)?;
-        Ok(Self {
-            root,
+    /// The directory (and any missing ancestors) is created immediately. If
+    /// that fails the sink is silently disabled: `record` becomes a no-op so
+    /// telemetry failure never aborts a run.
+    pub fn new(root: PathBuf) -> Self {
+        let enabled_root = match std::fs::create_dir_all(&root) {
+            Ok(()) => Some(root),
+            Err(_) => None,
+        };
+        Self {
+            root: enabled_root,
             counter: RefCell::new(0),
-        })
+            telemetry_failures: RefCell::new(0),
+        }
     }
 }
 
 impl TelemetrySink for FileTelemetry {
     fn record(&self, record: TelemetryRecord) {
+        let Some(root) = &self.root else {
+            return;
+        };
+
         let mut n = self.counter.borrow_mut();
         *n += 1;
         let filename = match &record.subsource {
@@ -66,8 +87,11 @@ impl TelemetrySink for FileTelemetry {
                 record.event.kind_slug()
             ),
         };
-        let path = self.root.join(filename);
-        std::fs::write(path, record.file_content()).expect("telemetry write failed");
+        let path = root.join(filename);
+        if let Err(err) = std::fs::write(path, record.file_content()) {
+            *self.telemetry_failures.borrow_mut() += 1;
+            eprintln!("telemetry write failed: {err}");
+        }
     }
 }
 
@@ -102,14 +126,14 @@ mod tests {
     #[test]
     fn file_telemetry_creates_directory() {
         let dir = fresh_dir("creates");
-        let _sink = FileTelemetry::new(dir.clone()).unwrap();
+        let _sink = FileTelemetry::new(dir.clone());
         assert!(dir.exists(), "telemetry root directory must be created");
     }
 
     #[test]
     fn file_telemetry_writes_incrementing_files() {
         let dir = fresh_dir("increments");
-        let sink = FileTelemetry::new(dir.clone()).unwrap();
+        let sink = FileTelemetry::new(dir.clone());
         sink.record(TelemetryRecord::new(
             "A",
             TelemetryEvent::MachineStarted {
@@ -122,7 +146,7 @@ mod tests {
     #[test]
     fn file_telemetry_file_content_contains_kind_and_fields() {
         let dir = fresh_dir("content");
-        let sink = FileTelemetry::new(dir.clone()).unwrap();
+        let sink = FileTelemetry::new(dir.clone());
         sink.record(TelemetryRecord::new(
             "MyMachine",
             TelemetryEvent::StateEntered {
@@ -141,7 +165,7 @@ mod tests {
     #[test]
     fn file_name_contains_source_and_kind() {
         let dir = fresh_dir("source-and-kind");
-        let sink = FileTelemetry::new(dir.clone()).unwrap();
+        let sink = FileTelemetry::new(dir.clone());
         sink.record(TelemetryRecord::new(
             "SchedulerMachine",
             TelemetryEvent::StateEntered {
@@ -158,7 +182,7 @@ mod tests {
     #[test]
     fn file_contents_include_same_source() {
         let dir = fresh_dir("matching-source");
-        let sink = FileTelemetry::new(dir.clone()).unwrap();
+        let sink = FileTelemetry::new(dir.clone());
         sink.record(TelemetryRecord::new(
             "RoleMachine",
             TelemetryEvent::ParseFailed {
@@ -175,7 +199,7 @@ mod tests {
     #[test]
     fn file_name_uses_double_separator() {
         let dir = fresh_dir("double-sep");
-        let sink = FileTelemetry::new(dir.clone()).unwrap();
+        let sink = FileTelemetry::new(dir.clone());
         sink.record(TelemetryRecord::new(
             "SchedulerMachine",
             TelemetryEvent::StateEntered {
@@ -192,7 +216,7 @@ mod tests {
     #[test]
     fn role_event_file_name_contains_role() {
         let dir = fresh_dir("role-subsource");
-        let sink = FileTelemetry::new(dir.clone()).unwrap();
+        let sink = FileTelemetry::new(dir.clone());
 
         sink.record(TelemetryRecord::new_with_subsource(
             "RoleMachine",
@@ -234,7 +258,7 @@ mod tests {
     #[test]
     fn file_body_contains_matching_subsource() {
         let dir = fresh_dir("body-subsource");
-        let sink = FileTelemetry::new(dir.clone()).unwrap();
+        let sink = FileTelemetry::new(dir.clone());
         sink.record(TelemetryRecord::new_with_subsource(
             "RoleMachine",
             "Producer",
@@ -249,5 +273,38 @@ mod tests {
         .unwrap();
         assert!(content.contains("source: RoleMachine"));
         assert!(content.contains("subsource: Producer"));
+    }
+
+    #[test]
+    fn telemetry_write_failure_does_not_panic() {
+        let dir = fresh_dir("write-fail");
+        let sink = FileTelemetry::new(dir.clone());
+        // Place a directory at the exact path where the first file would land.
+        // fs::write on a directory path fails on all platforms.
+        std::fs::create_dir(dir.join("000001--test--machine-started.txt")).unwrap();
+        // Must not panic.
+        sink.record(TelemetryRecord::new(
+            "Test",
+            TelemetryEvent::MachineStarted {
+                machine: "Test".into(),
+            },
+        ));
+    }
+
+    #[test]
+    fn telemetry_directory_creation_failure_disables_sink() {
+        // Build a path whose parent is a regular file, so create_dir_all must fail.
+        let base = fresh_dir("dir-fail-base");
+        std::fs::create_dir_all(&base).unwrap();
+        let file_path = base.join("not-a-dir.txt");
+        std::fs::write(&file_path, "content").unwrap();
+        let sink = FileTelemetry::new(file_path.join("telemetry"));
+        // Sink is disabled; record must not panic.
+        sink.record(TelemetryRecord::new(
+            "Test",
+            TelemetryEvent::MachineStarted {
+                machine: "Test".into(),
+            },
+        ));
     }
 }

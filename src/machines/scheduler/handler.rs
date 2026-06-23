@@ -1510,7 +1510,7 @@ mod tests {
             std::process::id()
         ));
         let _ = fs::remove_dir_all(&dir);
-        let sink = FileTelemetry::new(dir.clone()).unwrap();
+        let sink = FileTelemetry::new(dir.clone());
 
         let state = SchedulerState::Running {
             graph: RunGraph {
@@ -1543,6 +1543,94 @@ mod tests {
         assert!(
             !all_content.contains("reason: \"...\""),
             "telemetry must not elide the failure reason to '...'; got:\n{all_content}"
+        );
+    }
+
+    #[test]
+    fn telemetry_failure_does_not_change_scheduler_behavior() {
+        use crate::engine::run_machine_with_telemetry;
+        use crate::telemetry::FileTelemetry;
+
+        let seq = NEXT_TEST_ID.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!(
+            "forge-handler-tel-fail-sched-{}-{seq}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        // Create the sink, then delete the directory so all writes fail.
+        let sink = FileTelemetry::new(dir.clone());
+        let _ = fs::remove_dir_all(&dir);
+        let shared: Rc<dyn TelemetrySink> = Rc::new(sink);
+
+        let state = SchedulerState::Running {
+            graph: RunGraph {
+                nodes: vec![work_node("W", "do some work")],
+                next_id: 0,
+            },
+        };
+        let output = run_machine_with_telemetry(
+            SchedulerHandler::new(StaticNodeRunner).with_telemetry(Rc::clone(&shared)),
+            state,
+            shared.as_ref(),
+        );
+        assert!(
+            matches!(output.0, SchedulerOutput::Complete { .. }),
+            "scheduler output must be Complete regardless of telemetry failures; got: {:#?}",
+            output.0
+        );
+    }
+
+    #[test]
+    fn artifact_commit_still_succeeds_when_telemetry_fails() {
+        use crate::engine::run_machine_with_telemetry;
+        use crate::telemetry::FileTelemetry;
+
+        let (_temp, artifact) = fixture("tel-fail-commit");
+        let original_sha = artifact.commit_sha.clone();
+        let repo_path = artifact.repo_path.clone();
+
+        let seq = NEXT_TEST_ID.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!(
+            "forge-handler-tel-fail-commit-{}-{seq}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        // Create the sink, then delete the directory so all writes fail.
+        let sink = FileTelemetry::new(dir.clone());
+        let _ = fs::remove_dir_all(&dir);
+        let shared: Rc<dyn TelemetrySink> = Rc::new(sink);
+
+        let runner = FileWritingRunner {
+            path: "result.txt".to_string(),
+            content: "committed despite telemetry failure\n".to_string(),
+        };
+        let state = SchedulerState::Running {
+            graph: RunGraph {
+                nodes: vec![work_node("W", "write a file")],
+                next_id: 0,
+            },
+        };
+        let (output, handler) = run_machine_with_telemetry(
+            SchedulerHandler::with_artifact(runner, artifact).with_telemetry(Rc::clone(&shared)),
+            state,
+            shared.as_ref(),
+        );
+
+        assert!(
+            matches!(output, SchedulerOutput::Complete { .. }),
+            "run must complete even when telemetry writes all fail; got: {output:#?}"
+        );
+
+        let new_sha = git_output(&repo_path, &["rev-parse", "HEAD"]);
+        assert_ne!(
+            new_sha, original_sha,
+            "artifact commit must advance even when telemetry fails"
+        );
+
+        let final_artifact = handler.artifact().expect("artifact must be present");
+        assert_eq!(
+            final_artifact.commit_sha, new_sha,
+            "handler artifact must reflect the committed SHA"
         );
     }
 
@@ -1714,7 +1802,7 @@ mod tests {
             std::env::temp_dir().join(format!("forge-single-sink-{}-{seq}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
 
-        let file_sink = FileTelemetry::new(dir.clone()).unwrap();
+        let file_sink = FileTelemetry::new(dir.clone());
         let shared: Rc<dyn TelemetrySink> = Rc::new(file_sink);
 
         // Plan node + work node, each requiring 3 provider calls (producer, critic, referee).

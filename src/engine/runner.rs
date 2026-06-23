@@ -311,7 +311,7 @@ mod tests {
     fn run_machine_with_file_telemetry_writes_trace_files() {
         let dir: PathBuf = std::env::temp_dir().join("forge-runner-trace-test");
         let _ = std::fs::remove_dir_all(&dir);
-        let sink = FileTelemetry::new(dir.clone()).unwrap();
+        let sink = FileTelemetry::new(dir.clone());
         run_machine_with_telemetry(SimpleCountMachine, ScState::Start, &sink);
         assert!(
             dir.join("000001--simple-count-machine--machine-started.txt")

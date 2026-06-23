@@ -108,7 +108,7 @@ fn main() {
 
     let telemetry_dir = PathBuf::from("runs/latest");
     let _ = std::fs::remove_dir_all(&telemetry_dir);
-    let sink = FileTelemetry::new(telemetry_dir.clone()).expect("failed to create telemetry dir");
+    let sink = FileTelemetry::new(telemetry_dir.clone());
 
     match run_machine_with_telemetry(machine, initial, &sink).0 {
         DeliberationTerminalOutput::Complete(out) => {

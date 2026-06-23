@@ -888,7 +888,7 @@ mod tests {
 
         let dir = std::env::temp_dir().join("forge-role-machine-source-test");
         let _ = std::fs::remove_dir_all(&dir);
-        let telemetry = FileTelemetry::new(dir.clone()).unwrap();
+        let telemetry = FileTelemetry::new(dir.clone());
         let provider = ScriptedProvider::from_strs(&[
             "invalid text",
             r#"{"status":"accepted","content":"recovered"}"#,
