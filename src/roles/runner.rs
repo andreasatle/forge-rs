@@ -11,7 +11,7 @@ use crate::machines::deliberation::event::RoleResult;
 use crate::machines::deliberation::state::{DeliberationRole, RevisionFeedback};
 use crate::providers::{ProviderClient, ProviderRequest, StructuredOutput};
 use crate::telemetry::{TelemetryEvent, TelemetryRecord, TelemetrySink};
-use crate::tools::{FileToolExecutor, FileToolResponse, parse_tool_request};
+use crate::tools::{FileToolExecutor, FileToolPolicy, FileToolResponse, parse_tool_request};
 
 /// A read-only view of the artifact made available to role tool loops.
 #[derive(Debug)]
@@ -103,9 +103,10 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
             }
         };
 
+        let policy = file_tool_policy_for_role(&request.role);
         let mut executor: Option<FileToolExecutor> = request
             .tool_context
-            .map(|ctx| FileToolExecutor::new(ctx.artifact_view));
+            .map(|ctx| FileToolExecutor::with_policy(ctx.artifact_view, policy));
 
         let mut current_prompt = base_prompt.clone();
         let mut protocol_attempt: usize = 1;
@@ -176,7 +177,11 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                 }
 
                 let observation = match &mut executor {
-                    Some(exec) => format_tool_observation(&exec.execute(tool_req)),
+                    Some(exec) => {
+                        let max_obs = exec.policy().max_observation_bytes;
+                        let response = exec.execute(tool_req);
+                        format_tool_observation(&response, max_obs)
+                    }
                     None => r#"{"ok":false,"error":"no file tools available"}"#.to_string(),
                 };
 
@@ -269,18 +274,30 @@ fn tool_name_of(req: &crate::tools::FileToolRequest) -> String {
     .to_string()
 }
 
-/// Serialises a [`FileToolResponse`] as a compact JSON observation string.
-fn format_tool_observation(response: &FileToolResponse) -> String {
-    match response {
+/// Returns a [`FileToolPolicy`] appropriate for `role`.
+///
+/// Producer may read and write. Critic and Referee are read-only.
+fn file_tool_policy_for_role(role: &DeliberationRole) -> FileToolPolicy {
+    match role {
+        DeliberationRole::Producer => FileToolPolicy::default(),
+        DeliberationRole::Critic | DeliberationRole::Referee => FileToolPolicy {
+            allow_writes: false,
+            ..FileToolPolicy::default()
+        },
+    }
+}
+
+/// Serialises a [`FileToolResponse`] as a compact JSON observation string,
+/// capped to `max_observation_bytes`.
+fn format_tool_observation(response: &FileToolResponse, max_observation_bytes: usize) -> String {
+    let json = match response {
         FileToolResponse::FileList { paths } => {
             let files: Vec<String> = paths.iter().map(|p| p.display().to_string()).collect();
             serde_json::to_string(&serde_json::json!({"ok": true, "files": files}))
                 .unwrap_or_else(|_| r#"{"ok":true}"#.to_string())
         }
         FileToolResponse::FileContents { content, .. } => {
-            const MAX_CONTENT: usize = 4000;
-            let truncated = &content[..content.len().min(MAX_CONTENT)];
-            serde_json::to_string(&serde_json::json!({"ok": true, "content": truncated}))
+            serde_json::to_string(&serde_json::json!({"ok": true, "content": content}))
                 .unwrap_or_else(|_| r#"{"ok":true}"#.to_string())
         }
         FileToolResponse::UpdateRecorded { description } => {
@@ -291,7 +308,23 @@ fn format_tool_observation(response: &FileToolResponse) -> String {
             serde_json::to_string(&serde_json::json!({"ok": false, "error": reason}))
                 .unwrap_or_else(|_| r#"{"ok":false}"#.to_string())
         }
+    };
+    cap_observation(json, max_observation_bytes)
+}
+
+/// Truncates `s` to at most `max_bytes` bytes, appending a marker so the
+/// model knows the observation was cut.
+fn cap_observation(s: String, max_bytes: usize) -> String {
+    const MARKER: &str = "\n[observation truncated]";
+    if s.len() <= max_bytes {
+        return s;
     }
+    let keep = max_bytes.saturating_sub(MARKER.len());
+    let mut boundary = keep.min(s.len());
+    while boundary > 0 && !s.is_char_boundary(boundary) {
+        boundary -= 1;
+    }
+    format!("{}{MARKER}", &s[..boundary])
 }
 
 /// Returns the tool-availability section appended to a prompt when tools are enabled.
@@ -1171,6 +1204,139 @@ mod tests {
             matches!(output.result, RoleResult::Accepted { ref content } if content == "the result"),
             "role runner must use response.content; got {:?}",
             output.result
+        );
+    }
+
+    // ── policy: critic write request produces error observation ──────────────
+
+    #[test]
+    fn critic_write_request_produces_error_observation() {
+        let provider = ScriptedProvider::from_strs(&[
+            r#"{"tool":"write_file","path":"output.txt","content":"critic draft"}"#,
+            r#"{"status":"rejected","reason":"cannot write"}"#,
+        ]);
+        let runner = ProviderRoleRunner::new(&provider);
+
+        let output = runner.run_role(
+            RoleRequest {
+                role: DeliberationRole::Critic,
+                objective: "review the work".to_string(),
+                producer_content: Some("draft".to_string()),
+                critic_content: None,
+                feedback: vec![],
+                tool_context: Some(RoleToolContext {
+                    artifact_view: dummy_view(),
+                }),
+            },
+            &crate::telemetry::NoopTelemetry,
+        );
+
+        // The role must continue (not crash) and the second prompt must include
+        // the permission error observation.
+        let requests = provider.requests.borrow();
+        assert_eq!(requests.len(), 2, "provider must be called twice");
+        let second_prompt = &requests[1].prompt;
+        assert!(
+            second_prompt.contains("not permitted"),
+            "second prompt must include write-permission error; got:\n{second_prompt}"
+        );
+        // No artifact update must be recorded.
+        assert!(
+            output.artifact_update.is_none(),
+            "critic write must not produce an artifact update"
+        );
+    }
+
+    // ── observation bounding ─────────────────────────────────────────────────
+
+    #[test]
+    fn format_tool_observation_is_bounded() {
+        let large_content = "x".repeat(500);
+        let response = FileToolResponse::FileContents {
+            path: "big.txt".to_owned(),
+            content: large_content,
+        };
+        let max_obs = 100;
+        let observation = format_tool_observation(&response, max_obs);
+        assert!(
+            observation.len() <= max_obs + "\n[observation truncated]".len(),
+            "observation must be bounded; len={}, max={}",
+            observation.len(),
+            max_obs
+        );
+        assert!(
+            observation.contains("[observation truncated]"),
+            "truncation marker must be present; got: {observation:?}"
+        );
+    }
+
+    #[test]
+    fn tool_observation_is_bounded_in_role_prompt() {
+        // Create an artifact with a file larger than max_observation_bytes (16 KiB).
+        let (_temp, view) = {
+            let temp = TempDir::new("large-obs");
+            let seed = temp.0.join("seed");
+            std::fs::create_dir_all(&seed).unwrap();
+            git(&seed, &["init", "--quiet", "--initial-branch=main"]);
+            git(&seed, &["config", "user.name", "Test"]);
+            git(&seed, &["config", "user.email", "test@example.invalid"]);
+            // 20 KiB of content — exceeds the 16 KiB max_observation_bytes default.
+            let large = "y".repeat(20 * 1024);
+            std::fs::write(seed.join("large.txt"), &large).unwrap();
+            git(&seed, &["add", "large.txt"]);
+            git(&seed, &["commit", "--quiet", "-m", "add large file"]);
+            let bare = temp.0.join("bare.git");
+            Command::new("git")
+                .args(["clone", "--quiet", "--bare"])
+                .arg(&seed)
+                .arg(&bare)
+                .status()
+                .expect("git clone failed");
+            let sha = git_rev(&bare);
+            (
+                temp,
+                ArtifactView {
+                    repo_path: bare,
+                    commit_sha: sha,
+                },
+            )
+        };
+
+        let provider = ScriptedProvider::from_strs(&[
+            r#"{"tool":"read_file","path":"large.txt"}"#,
+            r#"{"status":"accepted","content":"done"}"#,
+        ]);
+        let runner = ProviderRoleRunner::new(&provider);
+
+        runner.run_role(
+            RoleRequest {
+                role: DeliberationRole::Producer,
+                objective: "read the large file".to_string(),
+                producer_content: None,
+                critic_content: None,
+                feedback: vec![],
+                tool_context: Some(RoleToolContext {
+                    artifact_view: view,
+                }),
+            },
+            &crate::telemetry::NoopTelemetry,
+        );
+
+        let requests = provider.requests.borrow();
+        assert_eq!(requests.len(), 2, "provider must be called twice");
+        let second_prompt = &requests[1].prompt;
+        assert!(
+            second_prompt.contains("[observation truncated]"),
+            "large observation must be truncated in the prompt"
+        );
+        // The tool result section must not contain the full 20 KiB of content.
+        let obs_start = second_prompt
+            .find("Tool result:")
+            .expect("prompt must contain Tool result:");
+        let obs_len = second_prompt[obs_start..].len();
+        assert!(
+            obs_len < 20 * 1024,
+            "observation section must be much smaller than 20 KiB; got {obs_len} bytes"
         );
     }
 

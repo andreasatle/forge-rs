@@ -5,6 +5,31 @@ use serde::Deserialize;
 use crate::artifacts::file_ops::validate_relative_path;
 use crate::artifacts::{ArtifactUpdate, ArtifactView, FileChange};
 
+/// Policy controlling what a [`FileToolExecutor`] may do.
+#[derive(Clone, Debug)]
+pub struct FileToolPolicy {
+    /// Whether write operations (`WriteFile`, `ReplaceText`, `DeleteFile`) are allowed.
+    pub allow_writes: bool,
+    /// Maximum bytes returned by a single `ReadFile` call before content is truncated.
+    pub max_read_bytes: usize,
+    /// Maximum bytes accepted by a single `WriteFile` or `ReplaceText` call.
+    /// Requests over this limit are rejected without recording.
+    pub max_write_bytes: usize,
+    /// Maximum bytes in the serialised observation string returned to the model.
+    pub max_observation_bytes: usize,
+}
+
+impl Default for FileToolPolicy {
+    fn default() -> Self {
+        Self {
+            allow_writes: true,
+            max_read_bytes: 64 * 1024,
+            max_write_bytes: 256 * 1024,
+            max_observation_bytes: 16 * 1024,
+        }
+    }
+}
+
 /// A tool operation the LLM can request against the artifact.
 #[derive(Debug, Deserialize, Eq, PartialEq)]
 #[serde(tag = "tool", rename_all = "snake_case")]
@@ -51,7 +76,7 @@ pub enum FileToolResponse {
     FileContents {
         /// The requested path.
         path: String,
-        /// UTF-8 file contents.
+        /// UTF-8 file contents, possibly truncated at `max_read_bytes`.
         content: String,
     },
     /// Confirmation that a write, replace, or delete was recorded.
@@ -71,15 +96,28 @@ pub enum FileToolResponse {
 pub struct FileToolExecutor {
     view: ArtifactView,
     update: ArtifactUpdate,
+    policy: FileToolPolicy,
 }
 
 impl FileToolExecutor {
-    /// Creates a new executor backed by `view`.
+    /// Creates a new executor backed by `view` with the default policy
+    /// (writes allowed, conservative size limits).
     pub fn new(view: ArtifactView) -> Self {
+        Self::with_policy(view, FileToolPolicy::default())
+    }
+
+    /// Creates a new executor backed by `view` with an explicit `policy`.
+    pub fn with_policy(view: ArtifactView, policy: FileToolPolicy) -> Self {
         Self {
             view,
             update: ArtifactUpdate::default(),
+            policy,
         }
+    }
+
+    /// Returns the policy governing this executor.
+    pub fn policy(&self) -> &FileToolPolicy {
+        &self.policy
     }
 
     /// Executes a tool request and returns the result.
@@ -99,13 +137,47 @@ impl FileToolExecutor {
             },
 
             FileToolRequest::ReadFile { path } => match self.view.read_file(&path) {
-                Ok(content) => FileToolResponse::FileContents { path, content },
-                Err(e) => FileToolResponse::Failed {
-                    reason: e.to_string(),
-                },
+                Ok(content) => {
+                    if content.len() > self.policy.max_read_bytes {
+                        let truncated =
+                            truncate_to_char_boundary(&content, self.policy.max_read_bytes);
+                        FileToolResponse::FileContents {
+                            path,
+                            content: format!(
+                                "{}\n[truncated after {} bytes]",
+                                truncated, self.policy.max_read_bytes,
+                            ),
+                        }
+                    } else {
+                        FileToolResponse::FileContents { path, content }
+                    }
+                }
+                Err(e) => {
+                    let msg = e.to_string();
+                    let reason = if msg.contains("utf-8") || msg.contains("utf8") {
+                        "binary or non-UTF-8 file cannot be read as text".to_string()
+                    } else {
+                        msg
+                    };
+                    FileToolResponse::Failed { reason }
+                }
             },
 
             FileToolRequest::WriteFile { path, content } => {
+                if !self.policy.allow_writes {
+                    return FileToolResponse::Failed {
+                        reason: "write operations are not permitted for this role".to_string(),
+                    };
+                }
+                if content.len() > self.policy.max_write_bytes {
+                    return FileToolResponse::Failed {
+                        reason: format!(
+                            "content too large: {} bytes exceeds the {} byte limit",
+                            content.len(),
+                            self.policy.max_write_bytes,
+                        ),
+                    };
+                }
                 if let Err(e) = validate_relative_path(&path) {
                     return FileToolResponse::Failed {
                         reason: e.to_string(),
@@ -119,6 +191,20 @@ impl FileToolExecutor {
             }
 
             FileToolRequest::ReplaceText { path, old, new } => {
+                if !self.policy.allow_writes {
+                    return FileToolResponse::Failed {
+                        reason: "write operations are not permitted for this role".to_string(),
+                    };
+                }
+                if new.len() > self.policy.max_write_bytes {
+                    return FileToolResponse::Failed {
+                        reason: format!(
+                            "replacement text too large: {} bytes exceeds the {} byte limit",
+                            new.len(),
+                            self.policy.max_write_bytes,
+                        ),
+                    };
+                }
                 if let Err(e) = validate_relative_path(&path) {
                     return FileToolResponse::Failed {
                         reason: e.to_string(),
@@ -132,6 +218,11 @@ impl FileToolExecutor {
             }
 
             FileToolRequest::DeleteFile { path } => {
+                if !self.policy.allow_writes {
+                    return FileToolResponse::Failed {
+                        reason: "write operations are not permitted for this role".to_string(),
+                    };
+                }
                 if let Err(e) = validate_relative_path(&path) {
                     return FileToolResponse::Failed {
                         reason: e.to_string(),
@@ -148,6 +239,19 @@ impl FileToolExecutor {
     pub fn into_update(self) -> ArtifactUpdate {
         self.update
     }
+}
+
+/// Truncates `s` to at most `max_bytes` bytes, staying at a UTF-8 character
+/// boundary so the result is always a valid `&str`.
+fn truncate_to_char_boundary(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        return s;
+    }
+    let mut boundary = max_bytes;
+    while boundary > 0 && !s.is_char_boundary(boundary) {
+        boundary -= 1;
+    }
+    &s[..boundary]
 }
 
 /// Parses a JSON-encoded [`FileToolRequest`].
@@ -244,12 +348,252 @@ mod tests {
         (temp, view)
     }
 
+    /// Builds a bare repository with a binary (non-UTF-8) file committed.
+    fn make_view_with_binary(label: &str) -> (TempDir, ArtifactView) {
+        let temp = TempDir::new(label);
+
+        let seed = temp.0.join("seed");
+        fs::create_dir_all(&seed).unwrap();
+        git(&seed, &["init", "--quiet", "--initial-branch=main"]);
+        git(&seed, &["config", "user.name", "Tool Test"]);
+        git(
+            &seed,
+            &["config", "user.email", "tool-test@example.invalid"],
+        );
+        // Write bytes that are not valid UTF-8.
+        fs::write(seed.join("binary.bin"), b"\x00\x01\x02\xFF\xFE").unwrap();
+        git(&seed, &["add", "binary.bin"]);
+        git(&seed, &["commit", "--quiet", "-m", "add binary"]);
+
+        let bare = temp.0.join("bare.git");
+        Command::new("git")
+            .args(["clone", "--quiet", "--bare"])
+            .arg(&seed)
+            .arg(&bare)
+            .status()
+            .expect("failed to clone bare repo");
+
+        let sha = git_output(&bare, &["rev-parse", "HEAD"]);
+        let view = ArtifactView {
+            repo_path: bare,
+            commit_sha: sha,
+        };
+        (temp, view)
+    }
+
     /// Returns an `ArtifactView` with a nonexistent path — safe to use only
     /// when tests never exercise the read path.
     fn dummy_view() -> ArtifactView {
         ArtifactView {
             repo_path: PathBuf::from("/nonexistent"),
             commit_sha: "deadbeef".to_owned(),
+        }
+    }
+
+    // ── policy: producer can write ───────────────────────────────────────────
+
+    #[test]
+    fn producer_can_record_write_update() {
+        let policy = FileToolPolicy {
+            allow_writes: true,
+            ..FileToolPolicy::default()
+        };
+        let mut executor = FileToolExecutor::with_policy(dummy_view(), policy);
+
+        let response = executor.execute(FileToolRequest::WriteFile {
+            path: "output.txt".to_owned(),
+            content: "hello\n".to_owned(),
+        });
+
+        assert!(
+            matches!(response, FileToolResponse::UpdateRecorded { .. }),
+            "producer policy must allow write_file; got {response:?}"
+        );
+        let update = executor.into_update();
+        assert_eq!(update.changes.len(), 1, "one change must be recorded");
+        assert!(
+            matches!(&update.changes[0], FileChange::Write { path, .. } if path == "output.txt"),
+            "recorded change must be a Write to output.txt"
+        );
+    }
+
+    // ── policy: critic write is rejected ────────────────────────────────────
+
+    #[test]
+    fn critic_write_request_is_rejected() {
+        let policy = FileToolPolicy {
+            allow_writes: false,
+            ..FileToolPolicy::default()
+        };
+        let mut executor = FileToolExecutor::with_policy(dummy_view(), policy);
+
+        let response = executor.execute(FileToolRequest::WriteFile {
+            path: "output.txt".to_owned(),
+            content: "critic should not write".to_owned(),
+        });
+
+        assert!(
+            matches!(response, FileToolResponse::Failed { .. }),
+            "read-only policy must reject write_file; got {response:?}"
+        );
+        assert_eq!(
+            executor.into_update(),
+            ArtifactUpdate::default(),
+            "no update must be recorded on policy rejection"
+        );
+    }
+
+    // ── policy: referee delete is rejected ──────────────────────────────────
+
+    #[test]
+    fn referee_delete_request_is_rejected() {
+        let policy = FileToolPolicy {
+            allow_writes: false,
+            ..FileToolPolicy::default()
+        };
+        let mut executor = FileToolExecutor::with_policy(dummy_view(), policy);
+
+        let response = executor.execute(FileToolRequest::DeleteFile {
+            path: "old.txt".to_owned(),
+        });
+
+        assert!(
+            matches!(response, FileToolResponse::Failed { .. }),
+            "read-only policy must reject delete_file; got {response:?}"
+        );
+        assert_eq!(
+            executor.into_update(),
+            ArtifactUpdate::default(),
+            "no update must be recorded on policy rejection"
+        );
+    }
+
+    // ── policy: read-only allows reads ──────────────────────────────────────
+
+    #[test]
+    fn read_only_policy_allows_read_file() {
+        let (_temp, view) = make_view("read-only-allows-read");
+        let policy = FileToolPolicy {
+            allow_writes: false,
+            ..FileToolPolicy::default()
+        };
+        let mut executor = FileToolExecutor::with_policy(view, policy);
+
+        let response = executor.execute(FileToolRequest::ReadFile {
+            path: "hello.txt".to_owned(),
+        });
+
+        assert!(
+            matches!(response, FileToolResponse::FileContents { .. }),
+            "read-only policy must still allow read_file; got {response:?}"
+        );
+    }
+
+    // ── read limit: large content is truncated ───────────────────────────────
+
+    #[test]
+    fn read_file_large_content_is_truncated() {
+        let (_temp, view) = make_view("large-read");
+        // hello.txt contains "hello world\n" (12 bytes); set a 5-byte read limit.
+        let policy = FileToolPolicy {
+            max_read_bytes: 5,
+            ..FileToolPolicy::default()
+        };
+        let mut executor = FileToolExecutor::with_policy(view, policy);
+
+        let response = executor.execute(FileToolRequest::ReadFile {
+            path: "hello.txt".to_owned(),
+        });
+
+        match response {
+            FileToolResponse::FileContents { content, .. } => {
+                assert!(
+                    content.starts_with("hello"),
+                    "truncated content must start with the first 5 bytes; got: {content:?}"
+                );
+                assert!(
+                    content.contains("[truncated after 5 bytes]"),
+                    "truncation marker must be present; got: {content:?}"
+                );
+            }
+            other => panic!("expected FileContents, got {other:?}"),
+        }
+    }
+
+    // ── write limit: oversized write is rejected ─────────────────────────────
+
+    #[test]
+    fn write_file_too_large_is_rejected() {
+        let policy = FileToolPolicy {
+            allow_writes: true,
+            max_write_bytes: 10,
+            ..FileToolPolicy::default()
+        };
+        let mut executor = FileToolExecutor::with_policy(dummy_view(), policy);
+
+        let response = executor.execute(FileToolRequest::WriteFile {
+            path: "out.txt".to_owned(),
+            content: "this content is longer than ten bytes".to_owned(),
+        });
+
+        assert!(
+            matches!(response, FileToolResponse::Failed { .. }),
+            "oversized write must be rejected; got {response:?}"
+        );
+        assert_eq!(
+            executor.into_update(),
+            ArtifactUpdate::default(),
+            "no update must be recorded on size rejection"
+        );
+    }
+
+    // ── write limit: oversized replace is rejected ───────────────────────────
+
+    #[test]
+    fn replace_text_too_large_is_rejected() {
+        let policy = FileToolPolicy {
+            allow_writes: true,
+            max_write_bytes: 10,
+            ..FileToolPolicy::default()
+        };
+        let mut executor = FileToolExecutor::with_policy(dummy_view(), policy);
+
+        let response = executor.execute(FileToolRequest::ReplaceText {
+            path: "out.txt".to_owned(),
+            old: "old".to_owned(),
+            new: "this replacement text is longer than ten bytes".to_owned(),
+        });
+
+        assert!(
+            matches!(response, FileToolResponse::Failed { .. }),
+            "oversized replace must be rejected; got {response:?}"
+        );
+        assert_eq!(
+            executor.into_update(),
+            ArtifactUpdate::default(),
+            "no update must be recorded on size rejection"
+        );
+    }
+
+    // ── binary read returns failure ──────────────────────────────────────────
+
+    #[test]
+    fn binary_read_returns_failure() {
+        let (_temp, view) = make_view_with_binary("binary-read");
+        let mut executor = FileToolExecutor::new(view);
+
+        let response = executor.execute(FileToolRequest::ReadFile {
+            path: "binary.bin".to_owned(),
+        });
+
+        match response {
+            FileToolResponse::Failed { reason } => {
+                assert!(
+                    reason.contains("binary") || reason.contains("non-UTF-8"),
+                    "failure reason must describe the binary/encoding issue; got: {reason:?}"
+                );
+            }
+            other => panic!("expected Failed for binary file, got {other:?}"),
         }
     }
 
