@@ -6,10 +6,19 @@
 
 use serde::Deserialize;
 
+use crate::artifacts::{ArtifactUpdate, ArtifactView};
 use crate::machines::deliberation::event::RoleResult;
 use crate::machines::deliberation::state::{DeliberationRole, RevisionFeedback};
 use crate::providers::{ProviderClient, ProviderRequest};
 use crate::telemetry::{TelemetryEvent, TelemetryRecord, TelemetrySink};
+use crate::tools::{FileToolExecutor, FileToolResponse, parse_tool_request};
+
+/// A read-only view of the artifact made available to role tool loops.
+#[derive(Debug)]
+pub struct RoleToolContext {
+    /// The artifact snapshot the role may read from and accumulate changes against.
+    pub artifact_view: ArtifactView,
+}
 
 /// All inputs needed to execute one role invocation.
 #[derive(Debug)]
@@ -24,12 +33,28 @@ pub struct RoleRequest {
     pub critic_content: Option<String>,
     /// Accumulated Referee rejection feedback. Empty on the first pass.
     pub feedback: Vec<RevisionFeedback>,
+    /// File tool context. When `Some`, the role may issue tool requests before
+    /// returning a final result. When `None`, tool request JSON is still detected
+    /// but produces an error observation rather than a real tool execution.
+    pub tool_context: Option<RoleToolContext>,
+}
+
+/// The output of a completed role invocation.
+pub struct RoleRunOutput {
+    /// The semantic result returned by the role.
+    pub result: RoleResult,
+    /// Pending file changes accumulated by tool calls during the role loop.
+    ///
+    /// `None` when no tool calls were made or when no artifact view was
+    /// provided. Non-empty changes are returned even on protocol failure so
+    /// that callers can decide what to do with partial work.
+    pub artifact_update: Option<ArtifactUpdate>,
 }
 
 /// Execute one role invocation end-to-end and return its result.
 pub trait RoleRunner {
     /// Run the role described by `request` and record protocol telemetry.
-    fn run_role(&self, request: RoleRequest, telemetry: &dyn TelemetrySink) -> RoleResult;
+    fn run_role(&self, request: RoleRequest, telemetry: &dyn TelemetrySink) -> RoleRunOutput;
 }
 
 /// Provider-backed implementation of [`RoleRunner`].
@@ -51,65 +76,133 @@ impl<P> ProviderRoleRunner<P> {
 /// failed protocol parsing or validation.
 const MAX_PROTOCOL_RETRIES: usize = 2;
 
-/// State for one role-layer protocol attempt.
-struct RoleAttempt {
-    request: ProviderRequest,
-    attempt_count: usize,
-}
+/// Maximum number of tool calls within a single role invocation before the
+/// loop is declared a protocol failure.
+const MAX_TOOL_STEPS: usize = 5;
 
 impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
-    fn run_role(&self, request: RoleRequest, telemetry: &dyn TelemetrySink) -> RoleResult {
+    fn run_role(&self, request: RoleRequest, telemetry: &dyn TelemetrySink) -> RoleRunOutput {
         let subsource = role_subsource(&request.role);
-        let original_prompt = render_role_prompt(
-            &request.role,
-            &request.objective,
-            request.producer_content.as_deref(),
-            request.critic_content.as_deref(),
-            &request.feedback,
-        );
-        let mut attempt = RoleAttempt {
-            request: ProviderRequest {
-                prompt: original_prompt.clone(),
-            },
-            attempt_count: 1,
+        let has_tools = request.tool_context.is_some();
+
+        let base_prompt = {
+            let core = render_role_prompt(
+                &request.role,
+                &request.objective,
+                request.producer_content.as_deref(),
+                request.critic_content.as_deref(),
+                &request.feedback,
+            );
+            if has_tools {
+                format!("{core}\n\n{}", render_tool_section())
+            } else {
+                core
+            }
         };
+
+        let mut executor: Option<FileToolExecutor> = request
+            .tool_context
+            .map(|ctx| FileToolExecutor::new(ctx.artifact_view));
+
+        let mut current_prompt = base_prompt.clone();
+        let mut protocol_attempt: usize = 1;
+        let mut tool_steps: usize = 0;
 
         loop {
             telemetry.record(TelemetryRecord::new_with_subsource(
                 "RoleMachine",
                 subsource,
                 TelemetryEvent::RolePromptRendered {
-                    prompt: attempt.request.prompt.clone(),
-                    attempt_count: attempt.attempt_count,
+                    prompt: current_prompt.clone(),
+                    attempt_count: protocol_attempt,
                 },
             ));
-            let response = match self.provider.call(attempt.request) {
-                Ok(response) => response,
+
+            let response = match self.provider.call(ProviderRequest {
+                prompt: current_prompt.clone(),
+            }) {
+                Ok(r) => r,
                 Err(err) => {
-                    return RoleResult::Failed {
-                        reason: format!("provider error ({:?}): {}", err.kind, err.message),
+                    return RoleRunOutput {
+                        result: RoleResult::Failed {
+                            reason: format!("provider error ({:?}): {}", err.kind, err.message),
+                        },
+                        artifact_update: extract_update(&mut executor),
                     };
                 }
             };
+
             telemetry.record(TelemetryRecord::new_with_subsource(
                 "RoleMachine",
                 subsource,
                 TelemetryEvent::ProviderResponseReceived {
                     raw_response: response.content.clone(),
-                    attempt_count: attempt.attempt_count,
+                    attempt_count: protocol_attempt,
                 },
             ));
 
+            // Check for a tool request before trying to parse as a role result.
+            let trimmed = strip_code_fence(response.content.trim());
+            if let Some(json_str) = extract_json_object(trimmed)
+                && let Ok(tool_req) = parse_tool_request(json_str)
+            {
+                tool_steps += 1;
+                let tool_name = tool_name_of(&tool_req);
+                telemetry.record(TelemetryRecord::new_with_subsource(
+                    "RoleMachine",
+                    subsource,
+                    TelemetryEvent::ToolRequested {
+                        tool: tool_name.clone(),
+                    },
+                ));
+
+                if tool_steps > MAX_TOOL_STEPS {
+                    telemetry.record(TelemetryRecord::new_with_subsource(
+                        "RoleMachine",
+                        subsource,
+                        TelemetryEvent::ToolLoopLimitReached,
+                    ));
+                    return RoleRunOutput {
+                        result: RoleResult::Failed {
+                            reason: "tool loop limit reached".to_string(),
+                        },
+                        artifact_update: extract_update(&mut executor),
+                    };
+                }
+
+                let observation = match &mut executor {
+                    Some(exec) => format_tool_observation(&exec.execute(tool_req)),
+                    None => r#"{"ok":false,"error":"no file tools available"}"#.to_string(),
+                };
+
+                telemetry.record(TelemetryRecord::new_with_subsource(
+                    "RoleMachine",
+                    subsource,
+                    TelemetryEvent::ToolReturned {
+                        tool: tool_name,
+                        result: observation.clone(),
+                    },
+                ));
+
+                current_prompt = format!("{current_prompt}\n\nTool result:\n{observation}");
+                protocol_attempt = 1;
+                continue;
+            }
+
+            // Not a tool request — try to parse as a role result.
             match try_parse_role_response(&response.content) {
                 Ok(result) => {
                     telemetry.record(TelemetryRecord::new_with_subsource(
                         "RoleMachine",
                         subsource,
                         TelemetryEvent::ParseSucceeded {
-                            attempt_count: attempt.attempt_count,
+                            attempt_count: protocol_attempt,
                         },
                     ));
-                    return result;
+                    return RoleRunOutput {
+                        result,
+                        artifact_update: extract_update(&mut executor),
+                    };
                 }
                 Err(parse_error) => {
                     telemetry.record(TelemetryRecord::new_with_subsource(
@@ -118,15 +211,18 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                         TelemetryEvent::ParseFailed {
                             raw_response: response.content.clone(),
                             parse_error: parse_error.clone(),
-                            attempt_count: attempt.attempt_count,
+                            attempt_count: protocol_attempt,
                         },
                     ));
-                    if attempt.attempt_count > MAX_PROTOCOL_RETRIES {
-                        return RoleResult::Failed {
-                            reason: parse_error,
+                    if protocol_attempt > MAX_PROTOCOL_RETRIES {
+                        return RoleRunOutput {
+                            result: RoleResult::Failed {
+                                reason: parse_error,
+                            },
+                            artifact_update: extract_update(&mut executor),
                         };
                     }
-                    let next_attempt = attempt.attempt_count + 1;
+                    let next_attempt = protocol_attempt + 1;
                     telemetry.record(TelemetryRecord::new_with_subsource(
                         "RoleMachine",
                         subsource,
@@ -135,16 +231,76 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                             attempt_count: next_attempt,
                         },
                     ));
-                    attempt = RoleAttempt {
-                        request: ProviderRequest {
-                            prompt: render_retry_prompt(&original_prompt, &parse_error),
-                        },
-                        attempt_count: next_attempt,
-                    };
+                    current_prompt = render_retry_prompt(&base_prompt, &parse_error);
+                    protocol_attempt = next_attempt;
                 }
             }
         }
     }
+}
+
+/// Consumes the executor and returns its pending update, or `None` when empty.
+fn extract_update(executor: &mut Option<FileToolExecutor>) -> Option<ArtifactUpdate> {
+    executor.take().and_then(|e| {
+        let update = e.into_update();
+        if update.changes.is_empty() {
+            None
+        } else {
+            Some(update)
+        }
+    })
+}
+
+/// Returns a short name for a tool request (used in telemetry).
+fn tool_name_of(req: &crate::tools::FileToolRequest) -> String {
+    use crate::tools::FileToolRequest;
+    match req {
+        FileToolRequest::ListFiles => "list_files",
+        FileToolRequest::ReadFile { .. } => "read_file",
+        FileToolRequest::WriteFile { .. } => "write_file",
+        FileToolRequest::ReplaceText { .. } => "replace_text",
+        FileToolRequest::DeleteFile { .. } => "delete_file",
+    }
+    .to_string()
+}
+
+/// Serialises a [`FileToolResponse`] as a compact JSON observation string.
+fn format_tool_observation(response: &FileToolResponse) -> String {
+    match response {
+        FileToolResponse::FileList { paths } => {
+            let files: Vec<String> = paths.iter().map(|p| p.display().to_string()).collect();
+            serde_json::to_string(&serde_json::json!({"ok": true, "files": files}))
+                .unwrap_or_else(|_| r#"{"ok":true}"#.to_string())
+        }
+        FileToolResponse::FileContents { content, .. } => {
+            const MAX_CONTENT: usize = 4000;
+            let truncated = &content[..content.len().min(MAX_CONTENT)];
+            serde_json::to_string(&serde_json::json!({"ok": true, "content": truncated}))
+                .unwrap_or_else(|_| r#"{"ok":true}"#.to_string())
+        }
+        FileToolResponse::UpdateRecorded { description } => {
+            serde_json::to_string(&serde_json::json!({"ok": true, "description": description}))
+                .unwrap_or_else(|_| r#"{"ok":true}"#.to_string())
+        }
+        FileToolResponse::Failed { reason } => {
+            serde_json::to_string(&serde_json::json!({"ok": false, "error": reason}))
+                .unwrap_or_else(|_| r#"{"ok":false}"#.to_string())
+        }
+    }
+}
+
+/// Returns the tool-availability section appended to a prompt when tools are enabled.
+fn render_tool_section() -> &'static str {
+    "Available file tools:\n\
+     {\"tool\":\"list_files\"}\n\
+     {\"tool\":\"read_file\",\"path\":\"README.md\"}\n\
+     {\"tool\":\"write_file\",\"path\":\"output.txt\",\"content\":\"...\"}\n\
+     {\"tool\":\"replace_text\",\"path\":\"output.txt\",\"old\":\"...\",\"new\":\"...\"}\n\
+     {\"tool\":\"delete_file\",\"path\":\"old.txt\"}\n\
+     You may return either:\n\
+     1. a tool request JSON, or\n\
+     2. a final role result JSON.\n\
+     Return exactly one JSON object."
 }
 
 fn role_subsource(role: &DeliberationRole) -> &'static str {
@@ -297,8 +453,12 @@ fn parse_role_response(raw_response: &str) -> RoleResult {
 mod tests {
     use std::cell::RefCell;
     use std::collections::VecDeque;
+    use std::path::PathBuf;
+    use std::process::Command;
+    use std::sync::atomic::{AtomicU64, Ordering};
 
     use super::*;
+    use crate::artifacts::{ArtifactView, FileChange};
     use crate::providers::types::{ProviderError, ProviderErrorKind, ProviderResponse};
 
     // --- fake providers ---
@@ -482,16 +642,19 @@ mod tests {
             kind: ProviderErrorKind::Retryable,
             message: "rate limited".to_string(),
         });
-        let result = runner.run_role(
-            RoleRequest {
-                role: DeliberationRole::Producer,
-                objective: "write a poem".to_string(),
-                producer_content: None,
-                critic_content: None,
-                feedback: vec![],
-            },
-            &crate::telemetry::NoopTelemetry,
-        );
+        let result = runner
+            .run_role(
+                RoleRequest {
+                    role: DeliberationRole::Producer,
+                    objective: "write a poem".to_string(),
+                    producer_content: None,
+                    critic_content: None,
+                    feedback: vec![],
+                    tool_context: None,
+                },
+                &crate::telemetry::NoopTelemetry,
+            )
+            .result;
         assert!(
             matches!(result, RoleResult::Failed { .. }),
             "provider error must map to Failed, not Rejected, got {result:?}"
@@ -504,16 +667,19 @@ mod tests {
             kind: ProviderErrorKind::Terminal,
             message: "auth error".to_string(),
         });
-        let result = runner.run_role(
-            RoleRequest {
-                role: DeliberationRole::Producer,
-                objective: "write a poem".to_string(),
-                producer_content: None,
-                critic_content: None,
-                feedback: vec![],
-            },
-            &crate::telemetry::NoopTelemetry,
-        );
+        let result = runner
+            .run_role(
+                RoleRequest {
+                    role: DeliberationRole::Producer,
+                    objective: "write a poem".to_string(),
+                    producer_content: None,
+                    critic_content: None,
+                    feedback: vec![],
+                    tool_context: None,
+                },
+                &crate::telemetry::NoopTelemetry,
+            )
+            .result;
         assert!(
             matches!(result, RoleResult::Failed { .. }),
             "terminal provider error must map to Failed, not {result:?}"
@@ -554,16 +720,19 @@ mod tests {
         ]);
         let runner = ProviderRoleRunner::new(&provider);
 
-        let result = runner.run_role(
-            RoleRequest {
-                role: DeliberationRole::Producer,
-                objective: "recover output".to_string(),
-                producer_content: None,
-                critic_content: None,
-                feedback: vec![],
-            },
-            &crate::telemetry::NoopTelemetry,
-        );
+        let result = runner
+            .run_role(
+                RoleRequest {
+                    role: DeliberationRole::Producer,
+                    objective: "recover output".to_string(),
+                    producer_content: None,
+                    critic_content: None,
+                    feedback: vec![],
+                    tool_context: None,
+                },
+                &crate::telemetry::NoopTelemetry,
+            )
+            .result;
 
         assert!(matches!(result, RoleResult::Accepted { ref content } if content == "recovered"));
         assert_eq!(provider.requests.borrow().len(), 2);
@@ -584,6 +753,7 @@ mod tests {
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
+                tool_context: None,
             },
             &crate::telemetry::NoopTelemetry,
         );
@@ -602,16 +772,19 @@ mod tests {
             ScriptedProvider::from_strs(&["invalid one", "invalid two", "invalid three"]);
         let runner = ProviderRoleRunner::new(&provider);
 
-        let result = runner.run_role(
-            RoleRequest {
-                role: DeliberationRole::Producer,
-                objective: "never valid".to_string(),
-                producer_content: None,
-                critic_content: None,
-                feedback: vec![],
-            },
-            &crate::telemetry::NoopTelemetry,
-        );
+        let result = runner
+            .run_role(
+                RoleRequest {
+                    role: DeliberationRole::Producer,
+                    objective: "never valid".to_string(),
+                    producer_content: None,
+                    critic_content: None,
+                    feedback: vec![],
+                    tool_context: None,
+                },
+                &crate::telemetry::NoopTelemetry,
+            )
+            .result;
 
         assert!(matches!(result, RoleResult::Failed { .. }));
         assert_eq!(provider.requests.borrow().len(), 3);
@@ -623,16 +796,19 @@ mod tests {
             ScriptedProvider::from_strs(&[r#"{"status":"rejected","reason":"needs revision"}"#]);
         let runner = ProviderRoleRunner::new(&provider);
 
-        let result = runner.run_role(
-            RoleRequest {
-                role: DeliberationRole::Referee,
-                objective: "review output".to_string(),
-                producer_content: Some("draft".to_string()),
-                critic_content: Some("review".to_string()),
-                feedback: vec![],
-            },
-            &crate::telemetry::NoopTelemetry,
-        );
+        let result = runner
+            .run_role(
+                RoleRequest {
+                    role: DeliberationRole::Referee,
+                    objective: "review output".to_string(),
+                    producer_content: Some("draft".to_string()),
+                    critic_content: Some("review".to_string()),
+                    feedback: vec![],
+                    tool_context: None,
+                },
+                &crate::telemetry::NoopTelemetry,
+            )
+            .result;
 
         assert!(
             matches!(result, RoleResult::Rejected { ref reason } if reason == "needs revision"),
@@ -659,6 +835,7 @@ mod tests {
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
+                tool_context: None,
             },
             &telemetry,
         );
@@ -717,6 +894,7 @@ mod tests {
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
+                tool_context: None,
             },
             &telemetry,
         );
@@ -732,6 +910,234 @@ mod tests {
         assert!(
             dir.join("000004--role-machine--producer--protocol-retry.txt")
                 .exists()
+        );
+    }
+
+    // --- git helpers for tool tests that need a real ArtifactView ---
+
+    static NEXT_VIEW_ID: AtomicU64 = AtomicU64::new(0);
+
+    struct TempDir(PathBuf);
+
+    impl TempDir {
+        fn new(label: &str) -> Self {
+            let id = NEXT_VIEW_ID.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::temp_dir().join(format!(
+                "forge-runner-tools-{label}-{}-{id}",
+                std::process::id()
+            ));
+            std::fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn git(dir: &PathBuf, args: &[&str]) {
+        Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .status()
+            .expect("git failed");
+    }
+
+    fn git_rev(dir: &PathBuf) -> String {
+        let out = Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(dir)
+            .output()
+            .expect("git rev-parse failed");
+        String::from_utf8(out.stdout).unwrap().trim().to_owned()
+    }
+
+    fn make_view(label: &str) -> (TempDir, ArtifactView) {
+        let temp = TempDir::new(label);
+        let seed = temp.0.join("seed");
+        std::fs::create_dir_all(&seed).unwrap();
+        git(&seed, &["init", "--quiet", "--initial-branch=main"]);
+        git(&seed, &["config", "user.name", "Test"]);
+        git(&seed, &["config", "user.email", "test@example.invalid"]);
+        std::fs::write(seed.join("hello.txt"), "hello world\n").unwrap();
+        git(&seed, &["add", "hello.txt"]);
+        git(&seed, &["commit", "--quiet", "-m", "init"]);
+        let bare = temp.0.join("bare.git");
+        Command::new("git")
+            .args(["clone", "--quiet", "--bare"])
+            .arg(&seed)
+            .arg(&bare)
+            .status()
+            .expect("git clone --bare failed");
+        let sha = git_rev(&bare);
+        (
+            temp,
+            ArtifactView {
+                repo_path: bare,
+                commit_sha: sha,
+            },
+        )
+    }
+
+    fn dummy_view() -> ArtifactView {
+        ArtifactView {
+            repo_path: PathBuf::from("/nonexistent"),
+            commit_sha: "deadbeef".to_string(),
+        }
+    }
+
+    // --- tool loop tests ---
+
+    #[test]
+    fn role_runner_executes_read_file_tool_then_accepts() {
+        let (_temp, view) = make_view("read-file-tool");
+        let provider = ScriptedProvider::from_strs(&[
+            r#"{"tool":"read_file","path":"hello.txt"}"#,
+            r#"{"status":"accepted","content":"read the file"}"#,
+        ]);
+        let runner = ProviderRoleRunner::new(&provider);
+
+        let output = runner.run_role(
+            RoleRequest {
+                role: DeliberationRole::Producer,
+                objective: "read hello.txt".to_string(),
+                producer_content: None,
+                critic_content: None,
+                feedback: vec![],
+                tool_context: Some(RoleToolContext {
+                    artifact_view: view,
+                }),
+            },
+            &crate::telemetry::NoopTelemetry,
+        );
+
+        assert!(
+            matches!(output.result, RoleResult::Accepted { ref content } if content == "read the file"),
+            "expected Accepted after read_file tool loop, got {:?}",
+            output.result
+        );
+        assert_eq!(
+            provider.requests.borrow().len(),
+            2,
+            "must call provider twice"
+        );
+        let second_prompt = &provider.requests.borrow()[1].prompt;
+        assert!(
+            second_prompt.contains("Tool result:"),
+            "second prompt must include tool observation"
+        );
+        assert!(
+            second_prompt.contains("hello world"),
+            "observation must include file content"
+        );
+    }
+
+    #[test]
+    fn role_runner_records_write_file_tool_update() {
+        let provider = ScriptedProvider::from_strs(&[
+            r#"{"tool":"write_file","path":"output.txt","content":"hello"}"#,
+            r#"{"status":"accepted","content":"wrote the file"}"#,
+        ]);
+        let runner = ProviderRoleRunner::new(&provider);
+
+        let output = runner.run_role(
+            RoleRequest {
+                role: DeliberationRole::Producer,
+                objective: "write a file".to_string(),
+                producer_content: None,
+                critic_content: None,
+                feedback: vec![],
+                tool_context: Some(RoleToolContext {
+                    artifact_view: dummy_view(),
+                }),
+            },
+            &crate::telemetry::NoopTelemetry,
+        );
+
+        assert!(
+            matches!(output.result, RoleResult::Accepted { .. }),
+            "expected Accepted, got {:?}",
+            output.result
+        );
+        let update = output
+            .artifact_update
+            .expect("write_file must produce an artifact_update");
+        assert_eq!(update.changes.len(), 1);
+        match &update.changes[0] {
+            FileChange::Write { path, content } => {
+                assert_eq!(path, "output.txt");
+                assert_eq!(content, "hello");
+            }
+            other => panic!("expected Write change, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn role_runner_rejects_tool_when_no_artifact_view() {
+        let provider = ScriptedProvider::from_strs(&[
+            r#"{"tool":"list_files"}"#,
+            r#"{"status":"accepted","content":"used no tools"}"#,
+        ]);
+        let runner = ProviderRoleRunner::new(&provider);
+
+        let output = runner.run_role(
+            RoleRequest {
+                role: DeliberationRole::Producer,
+                objective: "do the thing".to_string(),
+                producer_content: None,
+                critic_content: None,
+                feedback: vec![],
+                tool_context: None,
+            },
+            &crate::telemetry::NoopTelemetry,
+        );
+
+        assert!(
+            matches!(output.result, RoleResult::Accepted { ref content } if content == "used no tools"),
+            "tool request without view must produce error observation and allow final result; got {:?}",
+            output.result
+        );
+        assert_eq!(provider.requests.borrow().len(), 2);
+        let second_prompt = &provider.requests.borrow()[1].prompt;
+        assert!(
+            second_prompt.contains("no file tools available"),
+            "second prompt must include error observation"
+        );
+    }
+
+    #[test]
+    fn role_runner_stops_at_tool_loop_limit() {
+        // Each call returns a write_file request; the 6th triggers the limit.
+        let responses: Vec<&str> =
+            vec![r#"{"tool":"write_file","path":"f.txt","content":"x"}"#; MAX_TOOL_STEPS + 1];
+        let provider = ScriptedProvider::from_strs(&responses);
+        let runner = ProviderRoleRunner::new(&provider);
+
+        let output = runner.run_role(
+            RoleRequest {
+                role: DeliberationRole::Producer,
+                objective: "loop forever".to_string(),
+                producer_content: None,
+                critic_content: None,
+                feedback: vec![],
+                tool_context: Some(RoleToolContext {
+                    artifact_view: dummy_view(),
+                }),
+            },
+            &crate::telemetry::NoopTelemetry,
+        );
+
+        assert!(
+            matches!(output.result, RoleResult::Failed { ref reason } if reason.contains("tool loop limit")),
+            "must fail after tool loop limit; got {:?}",
+            output.result
+        );
+        assert_eq!(
+            provider.requests.borrow().len(),
+            MAX_TOOL_STEPS + 1,
+            "provider must be called exactly MAX_TOOL_STEPS + 1 times"
         );
     }
 }

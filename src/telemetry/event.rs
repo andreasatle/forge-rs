@@ -151,6 +151,20 @@ pub enum TelemetryEvent {
         /// Human-readable validation summary.
         summary: String,
     },
+    /// A file tool was requested by a role during execution.
+    ToolRequested {
+        /// The tool name (e.g. `read_file`, `write_file`).
+        tool: String,
+    },
+    /// A file tool was executed and its response was recorded.
+    ToolReturned {
+        /// The tool name.
+        tool: String,
+        /// Rendered observation returned to the model.
+        result: String,
+    },
+    /// The tool loop reached its hard step limit without a final role result.
+    ToolLoopLimitReached,
 }
 
 impl TelemetryEvent {
@@ -175,6 +189,9 @@ impl TelemetryEvent {
             TelemetryEvent::ValidationStarted => "validation-started",
             TelemetryEvent::ValidationPassed { .. } => "validation-passed",
             TelemetryEvent::ValidationFailed { .. } => "validation-failed",
+            TelemetryEvent::ToolRequested { .. } => "tool-requested",
+            TelemetryEvent::ToolReturned { .. } => "tool-returned",
+            TelemetryEvent::ToolLoopLimitReached => "tool-loop-limit-reached",
         }
     }
 
@@ -244,6 +261,13 @@ impl TelemetryEvent {
             TelemetryEvent::ValidationFailed { summary } => {
                 format!("kind: ValidationFailed\nsummary: {summary}\n")
             }
+            TelemetryEvent::ToolRequested { tool } => {
+                format!("kind: ToolRequested\ntool: {tool}\n")
+            }
+            TelemetryEvent::ToolReturned { tool, result } => {
+                format!("kind: ToolReturned\ntool: {tool}\nresult: {result}\n")
+            }
+            TelemetryEvent::ToolLoopLimitReached => "kind: ToolLoopLimitReached\n".to_string(),
         }
     }
 }

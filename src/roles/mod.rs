@@ -10,4 +10,4 @@
 
 pub mod runner;
 
-pub use runner::{ProviderRoleRunner, RoleRequest, RoleRunner};
+pub use runner::{ProviderRoleRunner, RoleRequest, RoleRunOutput, RoleRunner, RoleToolContext};

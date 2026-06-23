@@ -42,6 +42,14 @@ struct DeliberatingMachine<'a, P: ProviderClient> {
     telemetry: &'a dyn TelemetrySink,
 }
 
+impl<'a, P: ProviderClient> DeliberatingMachine<'a, P> {
+    /// Returns the artifact update accumulated by file tool loops during the
+    /// machine run, clearing the internal buffer.
+    fn take_artifact_update(&self) -> Option<ArtifactUpdate> {
+        self.handler.take_artifact_update()
+    }
+}
+
 impl<'a, P: ProviderClient> Machine for DeliberatingMachine<'a, P> {
     type State = DeliberationState;
     type Event = DeliberationEvent;
@@ -85,13 +93,15 @@ impl<P: ProviderClient> NodeRunner for DeliberatingNodeRunner<P> {
             request: delib_request,
         };
         let machine = DeliberatingMachine {
-            handler: ProviderBackedDeliberationHandler::new(&self.provider),
+            handler: ProviderBackedDeliberationHandler::new_with_view(
+                &self.provider,
+                request.artifact_view.clone(),
+            ),
             telemetry,
         };
-        map_output(
-            run_machine_with_telemetry(machine, initial_state, telemetry).0,
-            request.kind,
-        )
+        let (output, machine) = run_machine_with_telemetry(machine, initial_state, telemetry);
+        let tool_artifact_update = machine.take_artifact_update();
+        map_output(output, request.kind, tool_artifact_update)
     }
 }
 
@@ -125,7 +135,11 @@ fn build_artifact_context(view: &ArtifactView) -> String {
     parts.join("\n\n")
 }
 
-fn map_output(output: DeliberationTerminalOutput, kind: NodeKind) -> NodeRunResult {
+fn map_output(
+    output: DeliberationTerminalOutput,
+    kind: NodeKind,
+    tool_artifact_update: Option<ArtifactUpdate>,
+) -> NodeRunResult {
     match output {
         DeliberationTerminalOutput::Complete(out) => match kind {
             NodeKind::Plan => NodeRunResult::PlanAccepted(PlanOutput {
@@ -140,12 +154,19 @@ fn map_output(output: DeliberationTerminalOutput, kind: NodeKind) -> NodeRunResu
                 work: WorkOutput {
                     summary: out.content.clone(),
                 },
-                artifact_update: Some(ArtifactUpdate {
-                    changes: vec![FileChange::Write {
-                        path: "output.txt".to_owned(),
-                        content: out.content,
-                    }],
-                }),
+                // When tool calls produced file changes, use those changes as
+                // the artifact update. Otherwise fall back to writing the
+                // producer content to output.txt.
+                artifact_update: if let Some(update) = tool_artifact_update {
+                    Some(update)
+                } else {
+                    Some(ArtifactUpdate {
+                        changes: vec![FileChange::Write {
+                            path: "output.txt".to_owned(),
+                            content: out.content,
+                        }],
+                    })
+                },
             }),
         },
         DeliberationTerminalOutput::Failed { reason } => NodeRunResult::Failed(NodeFailure {
@@ -462,5 +483,52 @@ mod tests {
             first.contains("do the thing"),
             "first prompt must include the original objective; got:\n{first}"
         );
+    }
+
+    #[test]
+    fn deliberating_work_result_includes_tool_artifact_update() {
+        let temp = TempDir::new("tool-artifact-update");
+        let view = make_artifact_view(&temp, "hello.txt", "world\n");
+
+        // Producer: first call returns write_file, second returns accepted.
+        // Critic and Referee return simple accepted.
+        let provider = ScriptedProvider::from_strs(&[
+            r#"{"tool":"write_file","path":"result.txt","content":"done"}"#,
+            r#"{"status":"accepted","content":"I wrote result.txt"}"#,
+            r#"{"status":"accepted","content":"looks good"}"#,
+            r#"{"status":"accepted","content":"approved"}"#,
+        ]);
+        let runner = DeliberatingNodeRunner::new(provider);
+        let request = NodeRunRequest {
+            kind: NodeKind::Work,
+            objective: "write a result file".to_string(),
+            model_tier: ModelTier::Cheap,
+            attempt: 0,
+            artifact_view: Some(view),
+        };
+        let result = runner.run_node(request, &NoopTelemetry);
+
+        let NodeRunResult::WorkAccepted(work_result) = result else {
+            panic!("expected WorkAccepted");
+        };
+        assert_eq!(
+            work_result.work.summary, "I wrote result.txt",
+            "summary must be the accepted content, not the tool request"
+        );
+        let update = work_result
+            .artifact_update
+            .expect("tool write_file must produce an artifact_update");
+        assert_eq!(
+            update.changes.len(),
+            1,
+            "must have exactly one pending change"
+        );
+        match &update.changes[0] {
+            FileChange::Write { path, content } => {
+                assert_eq!(path, "result.txt");
+                assert_eq!(content, "done");
+            }
+            other => panic!("expected Write change from tool, got {other:?}"),
+        }
     }
 }

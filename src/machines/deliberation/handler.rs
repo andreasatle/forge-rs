@@ -3,9 +3,12 @@
 //! `DeliberationHandler` is a thin adapter: it unpacks a `RunRole` effect,
 //! delegates to a [`RoleRunner`], and wraps the result back into a
 //! `RoleReturned` event. All prompt rendering, provider calls, JSON parsing,
-//! and protocol retries live in the runner layer.
+//! protocol retries, and file tool loops live in the runner layer.
 
-use crate::roles::runner::{ProviderRoleRunner, RoleRequest, RoleRunner};
+use std::cell::RefCell;
+
+use crate::artifacts::{ArtifactUpdate, ArtifactView, FileChange};
+use crate::roles::runner::{ProviderRoleRunner, RoleRequest, RoleRunner, RoleToolContext};
 use crate::telemetry::{NoopTelemetry, TelemetrySink};
 
 use super::effect::DeliberationEffect;
@@ -13,8 +16,17 @@ use super::event::DeliberationEvent;
 
 /// Executes `DeliberationEffect` values by delegating role execution to a
 /// [`RoleRunner`].
+///
+/// Accumulates any [`ArtifactUpdate`] values produced by tool loops across
+/// all role invocations. Retrieve the combined update with
+/// [`take_artifact_update`](DeliberationHandler::take_artifact_update) after
+/// the machine finishes.
 pub struct DeliberationHandler<R> {
     runner: R,
+    /// Artifact view made available to roles as file tool context.
+    artifact_view: Option<ArtifactView>,
+    /// File changes accumulated across all tool loops run so far.
+    accumulated_update: RefCell<Vec<FileChange>>,
 }
 
 /// Compatibility alias: a [`DeliberationHandler`] backed by a
@@ -22,10 +34,22 @@ pub struct DeliberationHandler<R> {
 pub type ProviderBackedDeliberationHandler<P> = DeliberationHandler<ProviderRoleRunner<P>>;
 
 impl<P> DeliberationHandler<ProviderRoleRunner<P>> {
-    /// Wrap a provider in a handler via a [`ProviderRoleRunner`].
+    /// Wrap a provider in a handler with no file tool context.
     pub fn new(provider: P) -> Self {
         Self {
             runner: ProviderRoleRunner::new(provider),
+            artifact_view: None,
+            accumulated_update: RefCell::new(Vec::new()),
+        }
+    }
+
+    /// Wrap a provider in a handler with an optional artifact view for file
+    /// tool support.
+    pub fn new_with_view(provider: P, artifact_view: Option<ArtifactView>) -> Self {
+        Self {
+            runner: ProviderRoleRunner::new(provider),
+            artifact_view,
+            accumulated_update: RefCell::new(Vec::new()),
         }
     }
 }
@@ -54,15 +78,26 @@ impl<R: RoleRunner> DeliberationHandler<R> {
                 critic_content,
                 feedback,
             } => {
+                let tool_context = self
+                    .artifact_view
+                    .clone()
+                    .map(|v| RoleToolContext { artifact_view: v });
                 let request = RoleRequest {
                     role: role.clone(),
                     objective,
                     producer_content,
                     critic_content,
                     feedback,
+                    tool_context,
                 };
-                let result = self.runner.run_role(request, telemetry);
-                DeliberationEvent::RoleReturned { role, result }
+                let output = self.runner.run_role(request, telemetry);
+                if let Some(update) = output.artifact_update {
+                    self.accumulated_update.borrow_mut().extend(update.changes);
+                }
+                DeliberationEvent::RoleReturned {
+                    role,
+                    result: output.result,
+                }
             }
             DeliberationEffect::ReturnComplete { .. } => {
                 unreachable!(
@@ -76,6 +111,18 @@ impl<R: RoleRunner> DeliberationHandler<R> {
                      run_machine returns before dispatching it"
                 )
             }
+        }
+    }
+
+    /// Returns and clears the artifact update accumulated by tool loops across
+    /// all role invocations in this handler. Returns `None` when no tool calls
+    /// produced file changes.
+    pub fn take_artifact_update(&self) -> Option<ArtifactUpdate> {
+        let changes: Vec<FileChange> = self.accumulated_update.borrow_mut().drain(..).collect();
+        if changes.is_empty() {
+            None
+        } else {
+            Some(ArtifactUpdate { changes })
         }
     }
 }
@@ -96,7 +143,7 @@ mod tests {
     };
     use crate::providers::types::{ProviderError, ProviderResponse};
     use crate::providers::{ProviderClient, ProviderRequest};
-    use crate::roles::runner::{RoleRequest, RoleRunner};
+    use crate::roles::runner::{RoleRequest, RoleRunOutput, RoleRunner};
     use crate::telemetry::TelemetrySink;
 
     // --- fake RoleRunner for delegation tests ---
@@ -116,12 +163,17 @@ mod tests {
     }
 
     impl RoleRunner for ScriptedRoleRunner {
-        fn run_role(&self, request: RoleRequest, _telemetry: &dyn TelemetrySink) -> RoleResult {
+        fn run_role(&self, request: RoleRequest, _telemetry: &dyn TelemetrySink) -> RoleRunOutput {
             self.requests.borrow_mut().push(request);
-            self.results
+            let result = self
+                .results
                 .borrow_mut()
                 .pop_front()
-                .expect("ScriptedRoleRunner: results exhausted")
+                .expect("ScriptedRoleRunner: results exhausted");
+            RoleRunOutput {
+                result,
+                artifact_update: None,
+            }
         }
     }
 
@@ -217,7 +269,11 @@ mod tests {
         let runner = ScriptedRoleRunner::new(vec![RoleResult::Accepted {
             content: "generated".to_string(),
         }]);
-        let handler = DeliberationHandler { runner };
+        let handler = DeliberationHandler {
+            runner,
+            artifact_view: None,
+            accumulated_update: RefCell::new(Vec::new()),
+        };
 
         let effect = run_role_effect(
             DeliberationRole::Producer,
