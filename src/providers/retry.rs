@@ -102,6 +102,7 @@ mod tests {
         ProviderRequest {
             prompt: "test".to_string(),
             max_tokens: 512,
+            output_schema: None,
         }
     }
 
@@ -187,6 +188,7 @@ mod tests {
         let request = ProviderRequest {
             prompt: "preserve me".to_string(),
             max_tokens: 512,
+            output_schema: None,
         };
         let _ = client.call(request);
         let requests = client.inner.requests.borrow();
@@ -197,5 +199,35 @@ mod tests {
         );
         assert_eq!(requests[0].prompt, "preserve me");
         assert_eq!(requests[0].max_tokens, 512);
+    }
+
+    #[test]
+    fn structured_output_request_is_preserved_across_retries() {
+        use crate::providers::types::StructuredOutput;
+
+        let inner = ScriptedProvider::new(vec![retryable("timeout"), ok("done")]);
+        let client = RetryingProvider::new(inner, 3);
+        let request = ProviderRequest {
+            prompt: "schema test".to_string(),
+            max_tokens: 512,
+            output_schema: Some(StructuredOutput::Json),
+        };
+        let _ = client.call(request);
+        let requests = client.inner.requests.borrow();
+        assert_eq!(requests.len(), 2, "must retry once");
+        assert_eq!(
+            requests[0].output_schema,
+            Some(StructuredOutput::Json),
+            "initial request must carry Json schema"
+        );
+        assert_eq!(
+            requests[1].output_schema,
+            Some(StructuredOutput::Json),
+            "retry must resend the identical output_schema"
+        );
+        assert_eq!(
+            requests[0], requests[1],
+            "retry must resend the identical request"
+        );
     }
 }

@@ -1,5 +1,12 @@
 //! Typed request/response/error structures for the provider boundary.
 
+/// The kind of structured output the provider should produce.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StructuredOutput {
+    /// Request JSON-formatted output.
+    Json,
+}
+
 /// A request sent to a provider.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProviderRequest {
@@ -7,6 +14,12 @@ pub struct ProviderRequest {
     pub prompt: String,
     /// Maximum number of tokens to generate.
     pub max_tokens: u32,
+    /// Optional structured-output hint for the provider.
+    ///
+    /// Providers may use this to activate native JSON mode or a grammar
+    /// constraint. Providers that do not support structured output must
+    /// carry the field unchanged and ignore it.
+    pub output_schema: Option<StructuredOutput>,
 }
 
 /// A successful response from a provider.
@@ -45,9 +58,24 @@ mod tests {
         let req = ProviderRequest {
             prompt: "hello".to_string(),
             max_tokens: 512,
+            output_schema: None,
         };
         assert_eq!(req.prompt, "hello");
         assert_eq!(req.max_tokens, 512);
+        assert_eq!(req.output_schema, None);
+    }
+
+    #[test]
+    fn provider_request_clone_preserves_output_schema() {
+        let req = ProviderRequest {
+            prompt: "test".to_string(),
+            max_tokens: 256,
+            output_schema: Some(StructuredOutput::Json),
+        };
+        let cloned = req.clone();
+        assert_eq!(cloned.output_schema, Some(StructuredOutput::Json));
+        assert_eq!(cloned.prompt, req.prompt);
+        assert_eq!(cloned.max_tokens, req.max_tokens);
     }
 
     #[test]

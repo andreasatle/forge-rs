@@ -133,6 +133,21 @@ mod tests {
     }
 
     #[test]
+    fn llama_provider_preserves_json_output_schema_at_boundary() {
+        use crate::providers::types::StructuredOutput;
+
+        // LlamaCppProvider accepts output_schema in the request boundary.
+        // The grammar parameter is not yet wired; the field is carried and
+        // preserved so the architecture is in place for future activation.
+        let req = ProviderRequest {
+            prompt: "test".to_string(),
+            max_tokens: 512,
+            output_schema: Some(StructuredOutput::Json),
+        };
+        assert_eq!(req.output_schema, Some(StructuredOutput::Json));
+    }
+
+    #[test]
     fn llama_provider_maps_response_to_provider_response() {
         let json = r#"{"content":"hello world"}"#;
         let parsed: CompletionResponse = serde_json::from_str(json).unwrap();

@@ -59,6 +59,7 @@ mod tests {
             .call(ProviderRequest {
                 prompt: "hi".to_string(),
                 max_tokens: 256,
+                output_schema: None,
             })
             .unwrap();
         assert_eq!(resp.content, "echo: hi");
@@ -71,6 +72,7 @@ mod tests {
             .call(ProviderRequest {
                 prompt: "hi".to_string(),
                 max_tokens: 256,
+                output_schema: None,
             })
             .unwrap_err();
         assert_eq!(err.kind, ProviderErrorKind::Retryable);
@@ -83,6 +85,7 @@ mod tests {
             .call(ProviderRequest {
                 prompt: "hi".to_string(),
                 max_tokens: 256,
+                output_schema: None,
             })
             .unwrap_err();
         assert_eq!(err.kind, ProviderErrorKind::Terminal);

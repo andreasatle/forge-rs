@@ -9,7 +9,7 @@ use serde::Deserialize;
 use crate::artifacts::{ArtifactUpdate, ArtifactView};
 use crate::machines::deliberation::event::RoleResult;
 use crate::machines::deliberation::state::{DeliberationRole, RevisionFeedback};
-use crate::providers::{ProviderClient, ProviderRequest};
+use crate::providers::{ProviderClient, ProviderRequest, StructuredOutput};
 use crate::telemetry::{TelemetryEvent, TelemetryRecord, TelemetrySink};
 use crate::tools::{FileToolExecutor, FileToolResponse, parse_tool_request};
 
@@ -124,6 +124,7 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
             let response = match self.provider.call(ProviderRequest {
                 prompt: current_prompt.clone(),
                 max_tokens: MAX_RESPONSE_TOKENS,
+                output_schema: Some(StructuredOutput::Json),
             }) {
                 Ok(r) => r,
                 Err(err) => {
@@ -1199,6 +1200,33 @@ mod tests {
         assert_eq!(
             requests[0].max_tokens, MAX_RESPONSE_TOKENS,
             "request must carry the runner's max_tokens constant"
+        );
+    }
+
+    #[test]
+    fn role_runner_requests_json_output() {
+        use crate::providers::StructuredOutput;
+
+        let provider = ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"done"}"#]);
+        let runner = ProviderRoleRunner::new(&provider);
+
+        runner.run_role(
+            RoleRequest {
+                role: DeliberationRole::Producer,
+                objective: "write something".to_string(),
+                producer_content: None,
+                critic_content: None,
+                feedback: vec![],
+                tool_context: None,
+            },
+            &crate::telemetry::NoopTelemetry,
+        );
+
+        let requests = provider.requests.borrow();
+        assert_eq!(
+            requests[0].output_schema,
+            Some(StructuredOutput::Json),
+            "RoleRunner must request Json structured output"
         );
     }
 }

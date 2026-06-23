@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::providers::client::ProviderClient;
 use crate::providers::types::{
-    ProviderError, ProviderErrorKind, ProviderRequest, ProviderResponse,
+    ProviderError, ProviderErrorKind, ProviderRequest, ProviderResponse, StructuredOutput,
 };
 
 /// Calls the Ollama generate API at the given base URL.
@@ -34,6 +34,8 @@ struct GenerateRequest {
     prompt: String,
     stream: bool,
     options: GenerateOptions,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    format: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -72,6 +74,9 @@ impl ProviderClient for OllamaProvider {
             options: GenerateOptions {
                 num_predict: request.max_tokens,
             },
+            format: request
+                .output_schema
+                .map(|StructuredOutput::Json| "json".to_string()),
         };
 
         let http_response = ureq::post(&url).send_json(&body).map_err(|err| match err {
@@ -154,5 +159,37 @@ mod tests {
         let p = OllamaProvider::new("http://localhost:11434", "llama3");
         assert_eq!(p.base_url, "http://localhost:11434");
         assert_eq!(p.model, "llama3");
+    }
+
+    #[test]
+    fn ollama_provider_uses_json_format_for_json_output() {
+        let req = GenerateRequest {
+            model: "test".to_string(),
+            prompt: "hello".to_string(),
+            stream: false,
+            options: GenerateOptions { num_predict: 512 },
+            format: Some("json".to_string()),
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(
+            json.contains("\"format\":\"json\""),
+            "serialized body must include format=json; got: {json}"
+        );
+    }
+
+    #[test]
+    fn ollama_provider_omits_format_when_no_output_schema() {
+        let req = GenerateRequest {
+            model: "test".to_string(),
+            prompt: "hello".to_string(),
+            stream: false,
+            options: GenerateOptions { num_predict: 512 },
+            format: None,
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(
+            !json.contains("format"),
+            "serialized body must omit format when None; got: {json}"
+        );
     }
 }

@@ -48,6 +48,7 @@ impl<P: ProviderClient> ProviderClient for InstructedProvider<P> {
         self.inner.call(ProviderRequest {
             prompt: wrapped,
             max_tokens: req.max_tokens,
+            output_schema: req.output_schema,
         })
     }
 }
@@ -147,6 +148,7 @@ mod tests {
             .call(ProviderRequest {
                 prompt: "base prompt".to_string(),
                 max_tokens: 512,
+                output_schema: None,
             })
             .unwrap();
         assert!(
@@ -176,6 +178,7 @@ mod tests {
             .call(ProviderRequest {
                 prompt: "my prompt".to_string(),
                 max_tokens: 512,
+                output_schema: None,
             })
             .unwrap();
         let pos_prompt = resp.content.find("my prompt").unwrap();

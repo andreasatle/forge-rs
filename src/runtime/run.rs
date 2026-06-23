@@ -45,6 +45,7 @@ impl<P: ProviderClient> ProviderClient for InstructedProvider<P> {
         self.inner.call(ProviderRequest {
             prompt: wrapped,
             max_tokens: req.max_tokens,
+            output_schema: req.output_schema,
         })
     }
 }
@@ -255,6 +256,57 @@ mod tests {
             nodes: vec![],
             next_id: 0,
         }
+    }
+
+    struct EchoProvider;
+
+    impl ProviderClient for EchoProvider {
+        fn call(&self, req: ProviderRequest) -> Result<ProviderResponse, ProviderError> {
+            Ok(ProviderResponse {
+                content: req.prompt.clone(),
+                finish_reason: None,
+            })
+        }
+    }
+
+    #[test]
+    fn instructed_provider_preserves_output_schema() {
+        use crate::providers::types::{ProviderRequest, StructuredOutput};
+        use std::cell::RefCell;
+
+        struct CapturingProvider {
+            requests: RefCell<Vec<ProviderRequest>>,
+        }
+        impl ProviderClient for CapturingProvider {
+            fn call(&self, req: ProviderRequest) -> Result<ProviderResponse, ProviderError> {
+                self.requests.borrow_mut().push(req);
+                Ok(ProviderResponse {
+                    content: "ok".to_string(),
+                    finish_reason: None,
+                })
+            }
+        }
+
+        let capturing = CapturingProvider {
+            requests: RefCell::new(Vec::new()),
+        };
+        let provider = InstructedProvider { inner: &capturing };
+
+        provider
+            .call(ProviderRequest {
+                prompt: "test".to_string(),
+                max_tokens: 256,
+                output_schema: Some(StructuredOutput::Json),
+            })
+            .unwrap();
+
+        let reqs = capturing.requests.borrow();
+        assert_eq!(reqs.len(), 1);
+        assert_eq!(
+            reqs[0].output_schema,
+            Some(StructuredOutput::Json),
+            "InstructedProvider must forward output_schema unchanged"
+        );
     }
 
     #[test]

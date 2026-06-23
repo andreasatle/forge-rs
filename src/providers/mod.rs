@@ -13,4 +13,6 @@ pub use client::ProviderClient;
 pub use llama_cpp::LlamaCppProvider;
 pub use ollama::OllamaProvider;
 pub use retry::RetryingProvider;
-pub use types::{ProviderError, ProviderErrorKind, ProviderRequest, ProviderResponse};
+pub use types::{
+    ProviderError, ProviderErrorKind, ProviderRequest, ProviderResponse, StructuredOutput,
+};
