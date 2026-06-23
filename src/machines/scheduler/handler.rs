@@ -948,6 +948,93 @@ mod tests {
         );
     }
 
+    /// Advance the branch in a bare repo to a new commit without a separate clone.
+    fn advance_branch_in_bare(bare_repo: &Path, branch: &str) -> String {
+        let new_sha_out = Command::new("git")
+            .args([
+                "-c",
+                "user.name=External Advancer",
+                "-c",
+                "user.email=advance@example.invalid",
+                "commit-tree",
+                "HEAD^{tree}",
+                "-p",
+                "HEAD",
+                "-m",
+                "External advance",
+            ])
+            .current_dir(bare_repo)
+            .output()
+            .expect("git commit-tree failed");
+        assert!(new_sha_out.status.success(), "git commit-tree must succeed");
+        let new_sha = String::from_utf8(new_sha_out.stdout)
+            .expect("commit-tree output must be UTF-8")
+            .trim()
+            .to_owned();
+
+        let refname = format!("refs/heads/{branch}");
+        let status = Command::new("git")
+            .args(["update-ref", &refname, &new_sha])
+            .current_dir(bare_repo)
+            .status()
+            .expect("git update-ref failed");
+        assert!(status.success(), "git update-ref must succeed");
+        new_sha
+    }
+
+    #[test]
+    fn scheduler_handler_maps_integration_conflict_to_failed_outcome() {
+        let (_temp, artifact) = fixture("handler-cas-conflict");
+        let original_sha = artifact.commit_sha.clone();
+        let repo_path = artifact.repo_path.clone();
+
+        let runner = FileWritingRunner {
+            path: "cas-output.txt".to_string(),
+            content: "hello\n".to_string(),
+        };
+        let h = SchedulerHandler::with_artifact(runner, artifact);
+
+        // Run the node to stash a pending update.
+        h.handle_effect(SchedulerEffect::RunNode {
+            node_id: NodeId("W".to_string()),
+            kind: NodeKind::Work,
+            objective: "write a file".to_string(),
+            model_tier: ModelTier::Cheap,
+            attempt: 0,
+        });
+
+        // Advance the branch externally between RunNode and IntegrateWork.
+        let advanced_sha = advance_branch_in_bare(&repo_path, "main");
+
+        // Attempt to integrate the stale workspace.
+        let event = h.handle_effect(SchedulerEffect::IntegrateWork {
+            node_id: NodeId("W".to_string()),
+            work: WorkOutput {
+                summary: "wrote cas-output.txt".to_string(),
+            },
+        });
+
+        let IntegrationOutcome::Failed(failure) = (match &event {
+            SchedulerEvent::IntegrationReturned { outcome, .. } => outcome,
+            other => panic!("expected IntegrationReturned, got: {other:#?}"),
+        }) else {
+            panic!("expected IntegrationOutcome::Failed, got: {event:#?}");
+        };
+
+        assert!(
+            failure.reason.contains(&original_sha) || failure.reason.contains(&advanced_sha),
+            "failure reason must mention expected or actual commit SHA; got: {}",
+            failure.reason
+        );
+
+        // Branch must remain at the externally advanced commit.
+        let tip = git_output(&repo_path, &["rev-parse", "HEAD"]);
+        assert_eq!(
+            tip, advanced_sha,
+            "branch must remain at the externally advanced commit"
+        );
+    }
+
     #[test]
     fn work_node_without_update_integrates_without_commit() {
         let (_temp, artifact) = fixture("no-update-no-commit");

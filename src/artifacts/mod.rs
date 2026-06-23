@@ -639,4 +639,118 @@ mod tests {
             "integrate must return Err for a nonexistent repo_path; got Ok"
         );
     }
+
+    /// Advance the branch in a bare repo to a new commit without touching any
+    /// external clone. Uses `git commit-tree` + `git update-ref` so the test
+    /// does not need a second checkout.
+    fn advance_branch_in_bare(bare_repo: &std::path::Path, branch: &str) -> String {
+        let new_sha_out = Command::new("git")
+            .args([
+                "-c",
+                "user.name=External Advancer",
+                "-c",
+                "user.email=advance@example.invalid",
+                "commit-tree",
+                "HEAD^{tree}",
+                "-p",
+                "HEAD",
+                "-m",
+                "External advance",
+            ])
+            .current_dir(bare_repo)
+            .output()
+            .expect("git commit-tree failed");
+        assert!(
+            new_sha_out.status.success(),
+            "git commit-tree must succeed in test"
+        );
+        let new_sha = String::from_utf8(new_sha_out.stdout)
+            .expect("commit-tree output must be UTF-8")
+            .trim()
+            .to_owned();
+
+        let refname = format!("refs/heads/{branch}");
+        let status = Command::new("git")
+            .args(["update-ref", &refname, &new_sha])
+            .current_dir(bare_repo)
+            .status()
+            .expect("git update-ref failed");
+        assert!(status.success(), "git update-ref must succeed in test");
+
+        new_sha
+    }
+
+    #[test]
+    fn integrate_conflict_if_branch_advanced_since_workspace_base() {
+        let (temp, artifact) = fixture("cas-conflict");
+        let workspace = create_workspace(&artifact, temp.join("workspace"));
+
+        // Advance the branch externally after the workspace was created.
+        let advanced_sha = advance_branch_in_bare(&artifact.repo_path, &artifact.branch);
+
+        // Attempt to integrate the stale workspace.
+        let result = integrate(&artifact, &workspace);
+
+        match result {
+            Err(IntegrationError::Conflict {
+                branch,
+                expected,
+                actual,
+            }) => {
+                assert_eq!(branch, artifact.branch);
+                assert_eq!(expected, artifact.commit_sha);
+                assert_eq!(actual, advanced_sha);
+            }
+            other => panic!("expected IntegrationError::Conflict, got: {other:#?}"),
+        }
+
+        // Branch must remain at the externally advanced commit.
+        let tip = git_output(&artifact.repo_path, &["rev-parse", "HEAD"]);
+        assert_eq!(
+            tip, advanced_sha,
+            "branch must remain at the advanced commit after conflict"
+        );
+    }
+
+    #[test]
+    fn integrate_succeeds_when_branch_still_at_workspace_base() {
+        let (temp, artifact) = fixture("cas-succeed");
+        let mut workspace = create_workspace(&artifact, temp.join("workspace"));
+        write_update("artifact.txt", "cas version\n")
+            .apply(&mut workspace)
+            .unwrap();
+
+        let result = integrate(&artifact, &workspace);
+
+        assert!(
+            result.is_ok(),
+            "integrate must succeed when branch tip matches workspace base; got: {result:#?}"
+        );
+        let new_sha = result.unwrap().commit_sha;
+        assert_ne!(new_sha, artifact.commit_sha, "commit must advance");
+        let tip = git_output(&artifact.repo_path, &["rev-parse", "HEAD"]);
+        assert_eq!(tip, new_sha, "branch must point at the new commit");
+    }
+
+    #[test]
+    fn integrate_conflict_display_message() {
+        let err = IntegrationError::Conflict {
+            branch: "main".to_owned(),
+            expected: "aaa".to_owned(),
+            actual: "bbb".to_owned(),
+        };
+        let msg = err.to_string();
+        assert!(
+            msg.contains("main"),
+            "display must mention branch; got: {msg}"
+        );
+        assert!(
+            msg.contains("aaa"),
+            "display must mention expected commit; got: {msg}"
+        );
+        assert!(
+            msg.contains("bbb"),
+            "display must mention actual commit; got: {msg}"
+        );
+    }
 }

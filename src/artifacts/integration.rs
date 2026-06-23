@@ -20,6 +20,18 @@ pub enum IntegrationError {
         /// Reason the output was rejected.
         reason: String,
     },
+    /// The artifact branch advanced since the workspace was created.
+    ///
+    /// The workspace was based on `expected` but the branch tip is now `actual`.
+    /// Integration was refused to prevent overwriting the intervening commits.
+    Conflict {
+        /// Branch whose tip no longer matches the workspace base.
+        branch: String,
+        /// Commit the workspace was based on.
+        expected: String,
+        /// Commit the branch tip has advanced to.
+        actual: String,
+    },
 }
 
 impl fmt::Display for IntegrationError {
@@ -31,6 +43,16 @@ impl fmt::Display for IntegrationError {
             IntegrationError::InvalidGitOutput { operation, reason } => {
                 write!(f, "git {operation} produced invalid output: {reason}")
             }
+            IntegrationError::Conflict {
+                branch,
+                expected,
+                actual,
+            } => {
+                write!(
+                    f,
+                    "integration conflict on branch {branch}: expected {expected}, actual {actual}"
+                )
+            }
         }
     }
 }
@@ -41,6 +63,19 @@ impl std::error::Error for IntegrationError {}
 /// the resulting artifact version.
 pub fn integrate(artifact: &Artifact, workspace: &Workspace) -> Result<Artifact, IntegrationError> {
     check_bare_repository(artifact)?;
+
+    // CAS pre-check: refuse integration immediately if the branch tip has
+    // advanced since the workspace was created. Checking before staging avoids
+    // wasted work and produces a clear error before any local commits are made.
+    let actual_tip = read_branch_tip(artifact)?;
+    if actual_tip != workspace.base_commit {
+        return Err(IntegrationError::Conflict {
+            branch: artifact.branch.clone(),
+            expected: workspace.base_commit.clone(),
+            actual: actual_tip,
+        });
+    }
+
     run_git(workspace, &["add", "--all"])?;
     run_git(
         workspace,
@@ -58,11 +93,16 @@ pub fn integrate(artifact: &Artifact, workspace: &Workspace) -> Result<Artifact,
 
     let commit_sha = git_stdout(workspace, &["rev-parse", "HEAD"])?;
 
-    // A push transfers the workspace commit and advances the branch in the bare
-    // artifact repository as one Git operation.
+    // Push with --force-with-lease to guard against a race between the pre-check
+    // above and the push itself. The lease requires the remote branch tip to still
+    // be at the base commit; if it has since advanced, git will reject the push.
     let branch_ref = format!("{commit_sha}:refs/heads/{}", artifact.branch);
+    let lease_arg = format!(
+        "--force-with-lease=refs/heads/{}:{}",
+        artifact.branch, workspace.base_commit
+    );
     let push = Command::new("git")
-        .args(["push", "--quiet"])
+        .args(["push", "--quiet", &lease_arg])
         .arg(&artifact.repo_path)
         .arg(&branch_ref)
         .current_dir(workspace.path())
@@ -83,6 +123,31 @@ pub fn integrate(artifact: &Artifact, workspace: &Workspace) -> Result<Artifact,
         branch: artifact.branch.clone(),
         commit_sha,
     })
+}
+
+fn read_branch_tip(artifact: &Artifact) -> Result<String, IntegrationError> {
+    let refname = format!("refs/heads/{}", artifact.branch);
+    let op = format!("rev-parse {refname}");
+    let output = Command::new("git")
+        .args(["rev-parse", &refname])
+        .current_dir(&artifact.repo_path)
+        .output()
+        .map_err(|e| IntegrationError::GitCommandFailed {
+            operation: op.clone(),
+            stderr: e.to_string(),
+        })?;
+    if !output.status.success() {
+        return Err(IntegrationError::GitCommandFailed {
+            operation: op,
+            stderr: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+        });
+    }
+    String::from_utf8(output.stdout)
+        .map_err(|e| IntegrationError::InvalidGitOutput {
+            operation: op,
+            reason: e.to_string(),
+        })
+        .map(|s| s.trim().to_owned())
 }
 
 fn check_bare_repository(artifact: &Artifact) -> Result<(), IntegrationError> {
