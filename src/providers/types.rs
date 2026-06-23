@@ -5,6 +5,8 @@
 pub struct ProviderRequest {
     /// The prompt text to send.
     pub prompt: String,
+    /// Maximum number of tokens to generate.
+    pub max_tokens: u32,
 }
 
 /// A successful response from a provider.
@@ -12,6 +14,8 @@ pub struct ProviderRequest {
 pub struct ProviderResponse {
     /// The generated content.
     pub content: String,
+    /// Why generation stopped, if the provider exposes it.
+    pub finish_reason: Option<String>,
 }
 
 /// Whether a provider error can be retried.
@@ -40,16 +44,29 @@ mod tests {
     fn request_roundtrip() {
         let req = ProviderRequest {
             prompt: "hello".to_string(),
+            max_tokens: 512,
         };
         assert_eq!(req.prompt, "hello");
+        assert_eq!(req.max_tokens, 512);
     }
 
     #[test]
     fn response_roundtrip() {
         let resp = ProviderResponse {
             content: "world".to_string(),
+            finish_reason: Some("stop".to_string()),
         };
         assert_eq!(resp.content, "world");
+        assert_eq!(resp.finish_reason.as_deref(), Some("stop"));
+    }
+
+    #[test]
+    fn response_finish_reason_optional() {
+        let resp = ProviderResponse {
+            content: "world".to_string(),
+            finish_reason: None,
+        };
+        assert!(resp.finish_reason.is_none());
     }
 
     #[test]

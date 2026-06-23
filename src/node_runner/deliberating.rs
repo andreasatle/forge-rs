@@ -220,7 +220,10 @@ mod tests {
                 .borrow_mut()
                 .pop_front()
                 .expect("ScriptedProvider: responses exhausted")
-                .map(|content| ProviderResponse { content })
+                .map(|content| ProviderResponse {
+                    content,
+                    finish_reason: None,
+                })
         }
     }
 
@@ -251,7 +254,10 @@ mod tests {
                 .borrow_mut()
                 .pop_front()
                 .expect("RecordingProvider: responses exhausted");
-            Ok(ProviderResponse { content })
+            Ok(ProviderResponse {
+                content,
+                finish_reason: None,
+            })
         }
     }
 

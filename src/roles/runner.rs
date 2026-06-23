@@ -72,6 +72,9 @@ impl<P> ProviderRoleRunner<P> {
     }
 }
 
+/// Maximum number of tokens to request per provider call.
+const MAX_RESPONSE_TOKENS: u32 = 1024;
+
 /// Maximum number of additional provider calls after the initial response has
 /// failed protocol parsing or validation.
 const MAX_PROTOCOL_RETRIES: usize = 2;
@@ -120,6 +123,7 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
 
             let response = match self.provider.call(ProviderRequest {
                 prompt: current_prompt.clone(),
+                max_tokens: MAX_RESPONSE_TOKENS,
             }) {
                 Ok(r) => r,
                 Err(err) => {
@@ -499,7 +503,10 @@ mod tests {
                 .borrow_mut()
                 .pop_front()
                 .expect("ScriptedProvider: responses exhausted");
-            Ok(ProviderResponse { content })
+            Ok(ProviderResponse {
+                content,
+                finish_reason: None,
+            })
         }
     }
 
@@ -1138,6 +1145,60 @@ mod tests {
             provider.requests.borrow().len(),
             MAX_TOOL_STEPS + 1,
             "provider must be called exactly MAX_TOOL_STEPS + 1 times"
+        );
+    }
+
+    #[test]
+    fn role_runner_uses_provider_response_content() {
+        let provider =
+            ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"the result"}"#]);
+        let runner = ProviderRoleRunner::new(&provider);
+
+        let output = runner.run_role(
+            RoleRequest {
+                role: DeliberationRole::Producer,
+                objective: "produce something".to_string(),
+                producer_content: None,
+                critic_content: None,
+                feedback: vec![],
+                tool_context: None,
+            },
+            &crate::telemetry::NoopTelemetry,
+        );
+
+        assert!(
+            matches!(output.result, RoleResult::Accepted { ref content } if content == "the result"),
+            "role runner must use response.content; got {:?}",
+            output.result
+        );
+    }
+
+    #[test]
+    fn scripted_provider_supports_request_response_objects() {
+        let provider = ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"done"}"#]);
+        let runner = ProviderRoleRunner::new(&provider);
+
+        runner.run_role(
+            RoleRequest {
+                role: DeliberationRole::Producer,
+                objective: "anything".to_string(),
+                producer_content: None,
+                critic_content: None,
+                feedback: vec![],
+                tool_context: None,
+            },
+            &crate::telemetry::NoopTelemetry,
+        );
+
+        let requests = provider.requests.borrow();
+        assert_eq!(requests.len(), 1);
+        assert!(
+            !requests[0].prompt.is_empty(),
+            "request must carry a prompt"
+        );
+        assert_eq!(
+            requests[0].max_tokens, MAX_RESPONSE_TOKENS,
+            "request must carry the runner's max_tokens constant"
         );
     }
 }

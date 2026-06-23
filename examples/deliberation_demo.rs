@@ -45,7 +45,10 @@ impl<P: ProviderClient> ProviderClient for InstructedProvider<P> {
             "{}\n\n{}\n\n{}",
             PROTOCOL_PREFIX, req.prompt, PROTOCOL_SUFFIX
         );
-        self.inner.call(ProviderRequest { prompt: wrapped })
+        self.inner.call(ProviderRequest {
+            prompt: wrapped,
+            max_tokens: req.max_tokens,
+        })
     }
 }
 
@@ -89,7 +92,7 @@ fn main() {
     println!("Max revisions: {max_revisions}");
     println!();
 
-    let llama = LlamaCppProvider::new("http://localhost:8080").with_n_predict(512);
+    let llama = LlamaCppProvider::new("http://localhost:8080");
     let retrying = RetryingProvider::new(llama, 3);
     let instructed = InstructedProvider { inner: retrying };
     let handler = ProviderBackedDeliberationHandler::new(instructed);
@@ -130,6 +133,7 @@ mod tests {
         fn call(&self, req: ProviderRequest) -> Result<ProviderResponse, ProviderError> {
             Ok(ProviderResponse {
                 content: req.prompt,
+                finish_reason: None,
             })
         }
     }
@@ -142,6 +146,7 @@ mod tests {
         let resp = provider
             .call(ProviderRequest {
                 prompt: "base prompt".to_string(),
+                max_tokens: 512,
             })
             .unwrap();
         assert!(
@@ -170,6 +175,7 @@ mod tests {
         let resp = provider
             .call(ProviderRequest {
                 prompt: "my prompt".to_string(),
+                max_tokens: 512,
             })
             .unwrap();
         let pos_prompt = resp.content.find("my prompt").unwrap();

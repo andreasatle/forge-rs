@@ -10,7 +10,6 @@ use crate::providers::types::{
 /// Calls the llama.cpp server completion API at the given base URL.
 pub struct LlamaCppProvider {
     base_url: String,
-    n_predict: u32,
 }
 
 impl LlamaCppProvider {
@@ -18,14 +17,7 @@ impl LlamaCppProvider {
     pub fn new(base_url: impl Into<String>) -> Self {
         Self {
             base_url: base_url.into(),
-            n_predict: 256,
         }
-    }
-
-    /// Override the default token prediction limit.
-    pub fn with_n_predict(mut self, n_predict: u32) -> Self {
-        self.n_predict = n_predict;
-        self
     }
 }
 
@@ -49,7 +41,10 @@ fn classify_status(status: u16) -> ProviderErrorKind {
 
 fn map_completion_response(r: CompletionResponse) -> Result<ProviderResponse, ProviderError> {
     match r.content {
-        Some(content) => Ok(ProviderResponse { content }),
+        Some(content) => Ok(ProviderResponse {
+            content,
+            finish_reason: None,
+        }),
         None => Err(ProviderError {
             kind: ProviderErrorKind::Terminal,
             message: "content field missing from llama-server reply".to_string(),
@@ -62,7 +57,7 @@ impl ProviderClient for LlamaCppProvider {
         let url = format!("{}/completion", self.base_url);
         let body = CompletionRequest {
             prompt: request.prompt,
-            n_predict: self.n_predict,
+            n_predict: request.max_tokens,
         };
 
         let http_response = ureq::post(&url).send_json(&body).map_err(|err| match err {
@@ -132,15 +127,17 @@ mod tests {
     }
 
     #[test]
-    fn llama_cpp_provider_new_stores_defaults() {
+    fn llama_cpp_provider_new_stores_base_url() {
         let p = LlamaCppProvider::new("http://localhost:8080");
         assert_eq!(p.base_url, "http://localhost:8080");
-        assert_eq!(p.n_predict, 256);
     }
 
     #[test]
-    fn llama_cpp_provider_with_n_predict_overrides_default() {
-        let p = LlamaCppProvider::new("http://localhost:8080").with_n_predict(512);
-        assert_eq!(p.n_predict, 512);
+    fn llama_provider_maps_response_to_provider_response() {
+        let json = r#"{"content":"hello world"}"#;
+        let parsed: CompletionResponse = serde_json::from_str(json).unwrap();
+        let result = map_completion_response(parsed).unwrap();
+        assert_eq!(result.content, "hello world");
+        assert_eq!(result.finish_reason, None);
     }
 }

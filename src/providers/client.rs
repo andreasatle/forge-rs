@@ -25,6 +25,7 @@ mod tests {
         fn call(&self, request: ProviderRequest) -> Result<ProviderResponse, ProviderError> {
             Ok(ProviderResponse {
                 content: format!("echo: {}", request.prompt),
+                finish_reason: None,
             })
         }
     }
@@ -57,6 +58,7 @@ mod tests {
         let resp = client
             .call(ProviderRequest {
                 prompt: "hi".to_string(),
+                max_tokens: 256,
             })
             .unwrap();
         assert_eq!(resp.content, "echo: hi");
@@ -68,6 +70,7 @@ mod tests {
         let err = client
             .call(ProviderRequest {
                 prompt: "hi".to_string(),
+                max_tokens: 256,
             })
             .unwrap_err();
         assert_eq!(err.kind, ProviderErrorKind::Retryable);
@@ -79,6 +82,7 @@ mod tests {
         let err = client
             .call(ProviderRequest {
                 prompt: "hi".to_string(),
+                max_tokens: 256,
             })
             .unwrap_err();
         assert_eq!(err.kind, ProviderErrorKind::Terminal);

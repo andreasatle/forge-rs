@@ -24,15 +24,22 @@ impl OllamaProvider {
 }
 
 #[derive(Serialize)]
+struct GenerateOptions {
+    num_predict: u32,
+}
+
+#[derive(Serialize)]
 struct GenerateRequest {
     model: String,
     prompt: String,
     stream: bool,
+    options: GenerateOptions,
 }
 
 #[derive(Deserialize)]
 struct GenerateResponse {
     response: Option<String>,
+    done_reason: Option<String>,
 }
 
 fn classify_status(status: u16) -> ProviderErrorKind {
@@ -44,7 +51,10 @@ fn classify_status(status: u16) -> ProviderErrorKind {
 
 fn map_generate_response(r: GenerateResponse) -> Result<ProviderResponse, ProviderError> {
     match r.response {
-        Some(content) => Ok(ProviderResponse { content }),
+        Some(content) => Ok(ProviderResponse {
+            content,
+            finish_reason: r.done_reason,
+        }),
         None => Err(ProviderError {
             kind: ProviderErrorKind::Terminal,
             message: "response field missing from Ollama reply".to_string(),
@@ -59,6 +69,9 @@ impl ProviderClient for OllamaProvider {
             model: self.model.clone(),
             prompt: request.prompt,
             stream: false,
+            options: GenerateOptions {
+                num_predict: request.max_tokens,
+            },
         };
 
         let http_response = ureq::post(&url).send_json(&body).map_err(|err| match err {
@@ -91,6 +104,16 @@ mod tests {
         let parsed: GenerateResponse = serde_json::from_str(json).unwrap();
         let result = map_generate_response(parsed).unwrap();
         assert_eq!(result.content, "hello");
+        assert_eq!(result.finish_reason, None);
+    }
+
+    #[test]
+    fn ollama_response_maps_done_reason_to_finish_reason() {
+        let json = r#"{"response":"hello","done_reason":"stop"}"#;
+        let parsed: GenerateResponse = serde_json::from_str(json).unwrap();
+        let result = map_generate_response(parsed).unwrap();
+        assert_eq!(result.content, "hello");
+        assert_eq!(result.finish_reason.as_deref(), Some("stop"));
     }
 
     #[test]

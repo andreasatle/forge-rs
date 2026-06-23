@@ -52,6 +52,7 @@ mod tests {
     struct ScriptedProvider {
         script: RefCell<Vec<Result<ProviderResponse, ProviderError>>>,
         call_count: Cell<usize>,
+        requests: RefCell<Vec<ProviderRequest>>,
     }
 
     impl ScriptedProvider {
@@ -59,6 +60,7 @@ mod tests {
             Self {
                 script: RefCell::new(script),
                 call_count: Cell::new(0),
+                requests: RefCell::new(Vec::new()),
             }
         }
 
@@ -68,8 +70,9 @@ mod tests {
     }
 
     impl ProviderClient for ScriptedProvider {
-        fn call(&self, _request: ProviderRequest) -> Result<ProviderResponse, ProviderError> {
+        fn call(&self, request: ProviderRequest) -> Result<ProviderResponse, ProviderError> {
             self.call_count.set(self.call_count.get() + 1);
+            self.requests.borrow_mut().push(request);
             self.script.borrow_mut().remove(0)
         }
     }
@@ -77,6 +80,7 @@ mod tests {
     fn ok(content: &str) -> Result<ProviderResponse, ProviderError> {
         Ok(ProviderResponse {
             content: content.to_string(),
+            finish_reason: None,
         })
     }
 
@@ -97,6 +101,7 @@ mod tests {
     fn req() -> ProviderRequest {
         ProviderRequest {
             prompt: "test".to_string(),
+            max_tokens: 512,
         }
     }
 
@@ -173,5 +178,24 @@ mod tests {
         assert_eq!(err.kind, ProviderErrorKind::Terminal);
         assert_eq!(err.message, "unauthorized");
         assert_eq!(client.inner.call_count(), 3);
+    }
+
+    #[test]
+    fn retry_provider_preserves_request() {
+        let inner = ScriptedProvider::new(vec![retryable("timeout"), ok("done")]);
+        let client = RetryingProvider::new(inner, 3);
+        let request = ProviderRequest {
+            prompt: "preserve me".to_string(),
+            max_tokens: 512,
+        };
+        let _ = client.call(request);
+        let requests = client.inner.requests.borrow();
+        assert_eq!(requests.len(), 2, "must call inner provider twice");
+        assert_eq!(
+            requests[0], requests[1],
+            "retry must resend the identical request"
+        );
+        assert_eq!(requests[0].prompt, "preserve me");
+        assert_eq!(requests[0].max_tokens, 512);
     }
 }

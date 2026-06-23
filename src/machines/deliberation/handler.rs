@@ -198,7 +198,10 @@ mod tests {
                 .borrow_mut()
                 .pop_front()
                 .expect("ScriptedProvider: responses exhausted");
-            Ok(ProviderResponse { content })
+            Ok(ProviderResponse {
+                content,
+                finish_reason: None,
+            })
         }
     }
 

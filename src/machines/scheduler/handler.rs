@@ -1520,7 +1520,10 @@ mod tests {
                 .borrow_mut()
                 .pop_front()
                 .expect("ScriptedProvider: responses exhausted");
-            Ok(crate::providers::ProviderResponse { content })
+            Ok(crate::providers::ProviderResponse {
+                content,
+                finish_reason: None,
+            })
         }
     }
 
