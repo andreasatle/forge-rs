@@ -5,11 +5,12 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 static SEED_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 use crate::artifacts::{Artifact, ArtifactView};
-use crate::config::{ArtifactConfig, ForgeConfig};
+use crate::config::{ArtifactConfig, ForgeConfig, ValidationConfig};
 use crate::engine::run_machine_with_telemetry;
 use crate::machines::scheduler::{RunRequest, SchedulerHandler, SchedulerMachine, SchedulerOutput};
 use crate::node_runner::DeliberatingNodeRunner;
@@ -19,6 +20,7 @@ use crate::providers::{
 };
 use crate::runtime::create_run;
 use crate::telemetry::{FileTelemetry, TelemetrySink};
+use crate::validation::{AlwaysPassValidator, CommandValidator, Validator};
 
 const PROTOCOL_PREFIX: &str = "\
 Return exactly one JSON object. No markdown. No code fence. No explanation.\n\
@@ -40,7 +42,10 @@ impl<P: ProviderClient> ProviderClient for InstructedProvider<P> {
             "{}\n\n{}\n\n{}",
             PROTOCOL_PREFIX, req.prompt, PROTOCOL_SUFFIX
         );
-        self.inner.call(ProviderRequest { prompt: wrapped })
+        self.inner.call(ProviderRequest {
+            prompt: wrapped,
+            max_tokens: req.max_tokens,
+        })
     }
 }
 
@@ -69,14 +74,15 @@ impl ForgeRuntime {
         let sink: Rc<dyn TelemetrySink> =
             Rc::new(FileTelemetry::new(run_info.telemetry_dir.clone())?);
 
-        let llama = LlamaCppProvider::new(&config.provider.base_url)
-            .with_n_predict(config.provider.n_predict as u32);
+        let llama = LlamaCppProvider::new(&config.provider.base_url);
         let retrying = RetryingProvider::new(llama, 3);
         let instructed = InstructedProvider { inner: retrying };
 
         let runner = DeliberatingNodeRunner::new(instructed);
-        let handler =
-            SchedulerHandler::with_artifact(runner, artifact).with_telemetry(Rc::clone(&sink));
+        let validator = make_validator(config.validation.as_ref());
+        let handler = SchedulerHandler::with_artifact(runner, artifact)
+            .with_telemetry(Rc::clone(&sink))
+            .with_validator(validator);
 
         let initial_state = SchedulerMachine::initial_state(RunRequest {
             objective: config.objective.clone(),
@@ -91,6 +97,16 @@ impl ForgeRuntime {
             SchedulerOutput::Failed { reason, .. } => Err(format!("run failed: {reason}").into()),
             SchedulerOutput::Complete { .. } => Ok(()),
         }
+    }
+}
+
+fn make_validator(config: Option<&ValidationConfig>) -> Rc<dyn Validator> {
+    match config {
+        Some(v) if !v.commands.is_empty() => {
+            let timeout = Duration::from_secs(v.timeout_seconds.unwrap_or(120));
+            Rc::new(CommandValidator::new(v.commands.clone(), timeout))
+        }
+        _ => Rc::new(AlwaysPassValidator),
     }
 }
 
@@ -463,6 +479,38 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn runtime_uses_always_pass_when_validation_absent() {
+        use crate::artifacts::Workspace;
+
+        let ws = Workspace::at_path(std::env::temp_dir(), "abc".to_string());
+        let validator = make_validator(None);
+        let result = validator.validate(&ws);
+        assert!(
+            result.passed,
+            "absent validation config must yield a passing validator"
+        );
+    }
+
+    #[test]
+    fn runtime_uses_command_validator_when_configured() {
+        use crate::artifacts::Workspace;
+        use crate::config::ValidationConfig;
+
+        let ws = Workspace::at_path(std::env::temp_dir(), "abc".to_string());
+        // A failing command proves the CommandValidator is active, not AlwaysPassValidator.
+        let config = ValidationConfig {
+            commands: vec!["false".to_string()],
+            timeout_seconds: None,
+        };
+        let validator = make_validator(Some(&config));
+        let result = validator.validate(&ws);
+        assert!(
+            !result.passed,
+            "configured command validator must run commands and fail on non-zero exit"
+        );
     }
 
     #[test]

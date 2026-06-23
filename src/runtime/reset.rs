@@ -110,6 +110,7 @@ mod tests {
             telemetry: TelemetryConfig {
                 directory: telemetry_path.to_str().unwrap().to_string(),
             },
+            validation: None,
         }
     }
 
@@ -272,6 +273,7 @@ mod tests {
                 telemetry: TelemetryConfig {
                     directory: telemetry.to_str().unwrap().to_string(),
                 },
+                validation: None,
             }
         };
 

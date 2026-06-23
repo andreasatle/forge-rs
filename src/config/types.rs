@@ -15,6 +15,9 @@ pub struct ForgeConfig {
     pub provider: ProviderConfig,
     /// Telemetry settings.
     pub telemetry: TelemetryConfig,
+    /// Optional validation commands run after workspace update, before integration.
+    #[serde(default)]
+    pub validation: Option<ValidationConfig>,
 }
 
 /// Artifact repository configuration.
@@ -40,6 +43,15 @@ pub struct ProviderConfig {
 pub struct TelemetryConfig {
     /// Directory path where telemetry files will be written.
     pub directory: String,
+}
+
+/// Validation configuration for post-workspace-update checks.
+#[derive(Debug, Deserialize)]
+pub struct ValidationConfig {
+    /// Shell commands run in order inside the workspace; stop on first failure.
+    pub commands: Vec<String>,
+    /// Maximum seconds to wait for each command. Stored but not yet enforced.
+    pub timeout_seconds: Option<u64>,
 }
 
 impl ForgeConfig {
@@ -169,6 +181,42 @@ telemetry:
     fn missing_file_returns_error() {
         let result = ForgeConfig::from_file("/tmp/forge-nonexistent-config-test.yaml");
         assert!(result.is_err(), "missing file must return an error");
+    }
+
+    const VALIDATION_YAML: &str = r#"
+objective: "test validation"
+artifact:
+  repo_path: ".forge/artifacts/main.git"
+  branch: "main"
+provider:
+  base_url: "http://localhost:8080"
+  n_predict: 512
+telemetry:
+  directory: "runs"
+validation:
+  commands:
+    - cargo fmt --check
+    - cargo test
+  timeout_seconds: 120
+"#;
+
+    #[test]
+    fn parses_validation_config() {
+        let tmp = TempYaml::new(VALIDATION_YAML);
+        let config = ForgeConfig::from_file(tmp.path()).unwrap();
+        let v = config.validation.expect("validation must be present");
+        assert_eq!(v.commands, vec!["cargo fmt --check", "cargo test"]);
+        assert_eq!(v.timeout_seconds, Some(120));
+    }
+
+    #[test]
+    fn validation_absent_defaults_to_none() {
+        let tmp = TempYaml::new(EXAMPLE_YAML);
+        let config = ForgeConfig::from_file(tmp.path()).unwrap();
+        assert!(
+            config.validation.is_none(),
+            "missing validation section must deserialize as None"
+        );
     }
 
     #[test]
