@@ -1,7 +1,8 @@
 //! Workspace validation before artifact integration.
 
-use std::process::Command;
-use std::time::Duration;
+use std::io::{Read, Seek, SeekFrom};
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 use crate::artifacts::Workspace;
 
@@ -37,10 +38,9 @@ impl Validator for AlwaysPassValidator {
 ///
 /// Commands run in order via `sh -c`; validation stops on the first failure.
 /// Both stdout and stderr are captured and included in the failure summary.
+/// Each command gets its own independent timeout budget.
 pub struct CommandValidator {
     commands: Vec<String>,
-    // TODO: enforce per-command timeout — stored but not yet applied
-    #[allow(dead_code)]
     timeout: Duration,
 }
 
@@ -54,40 +54,129 @@ impl CommandValidator {
 impl Validator for CommandValidator {
     fn validate(&self, workspace: &Workspace) -> ValidationResult {
         for command in &self.commands {
-            let output = Command::new("sh")
-                .args(["-c", command])
-                .current_dir(workspace.path())
-                .output();
-
-            match output {
-                Err(e) => {
-                    return ValidationResult {
-                        passed: false,
-                        summary: format!("command `{command}` failed to start: {e}"),
-                    };
-                }
-                Ok(out) if !out.status.success() => {
-                    let code = out
-                        .status
-                        .code()
-                        .map(|c| c.to_string())
-                        .unwrap_or_else(|| "signal".to_string());
-                    let stdout = String::from_utf8_lossy(&out.stdout);
-                    let stderr = String::from_utf8_lossy(&out.stderr);
-                    return ValidationResult {
-                        passed: false,
-                        summary: format!(
-                            "command `{command}` failed (exit {code})\nstdout: {stdout}\nstderr: {stderr}"
-                        ),
-                    };
-                }
-                Ok(_) => {}
+            let result = run_with_timeout(command, workspace.path(), self.timeout);
+            if !result.passed {
+                return result;
             }
         }
 
         ValidationResult {
             passed: true,
             summary: format!("all {} command(s) passed", self.commands.len()),
+        }
+    }
+}
+
+/// Run `command` via `sh -c` in `dir` with a hard deadline.
+///
+/// Stdout and stderr are redirected to anonymous temp files so large output
+/// cannot fill the pipe buffer and deadlock the child. The parent polls
+/// `try_wait` every 50 ms and kills the child if it outlives `timeout`.
+fn run_with_timeout(command: &str, dir: &std::path::Path, timeout: Duration) -> ValidationResult {
+    let mut stdout_file = match tempfile::tempfile() {
+        Ok(f) => f,
+        Err(e) => {
+            return ValidationResult {
+                passed: false,
+                summary: format!("command `{command}` failed to start: {e}"),
+            };
+        }
+    };
+    let mut stderr_file = match tempfile::tempfile() {
+        Ok(f) => f,
+        Err(e) => {
+            return ValidationResult {
+                passed: false,
+                summary: format!("command `{command}` failed to start: {e}"),
+            };
+        }
+    };
+
+    let stdout_fd = match stdout_file.try_clone() {
+        Ok(f) => f,
+        Err(e) => {
+            return ValidationResult {
+                passed: false,
+                summary: format!("command `{command}` failed to start: {e}"),
+            };
+        }
+    };
+    let stderr_fd = match stderr_file.try_clone() {
+        Ok(f) => f,
+        Err(e) => {
+            return ValidationResult {
+                passed: false,
+                summary: format!("command `{command}` failed to start: {e}"),
+            };
+        }
+    };
+
+    let mut child = match Command::new("sh")
+        .args(["-c", command])
+        .current_dir(dir)
+        .stdout(Stdio::from(stdout_fd))
+        .stderr(Stdio::from(stderr_fd))
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            return ValidationResult {
+                passed: false,
+                summary: format!("command `{command}` failed to start: {e}"),
+            };
+        }
+    };
+
+    let poll = Duration::from_millis(50);
+    let start = Instant::now();
+
+    loop {
+        match child.try_wait() {
+            Err(e) => {
+                return ValidationResult {
+                    passed: false,
+                    summary: format!("command `{command}` failed to start: {e}"),
+                };
+            }
+            Ok(Some(status)) => {
+                stdout_file.seek(SeekFrom::Start(0)).ok();
+                stderr_file.seek(SeekFrom::Start(0)).ok();
+                let mut stdout = String::new();
+                let mut stderr = String::new();
+                stdout_file.read_to_string(&mut stdout).ok();
+                stderr_file.read_to_string(&mut stderr).ok();
+
+                if status.success() {
+                    return ValidationResult {
+                        passed: true,
+                        summary: String::new(),
+                    };
+                }
+                let code = status
+                    .code()
+                    .map(|c| c.to_string())
+                    .unwrap_or_else(|| "signal".to_string());
+                return ValidationResult {
+                    passed: false,
+                    summary: format!(
+                        "command `{command}` failed (exit {code})\nstdout: {stdout}\nstderr: {stderr}"
+                    ),
+                };
+            }
+            Ok(None) => {
+                if start.elapsed() >= timeout {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    let secs = timeout.as_secs();
+                    return ValidationResult {
+                        passed: false,
+                        summary: format!(
+                            "validation command timed out after {secs} seconds\ncommand:\n{command}"
+                        ),
+                    };
+                }
+                std::thread::sleep(poll);
+            }
         }
     }
 }
@@ -197,5 +286,50 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&path);
+    }
+
+    #[test]
+    fn command_validator_fails_when_command_times_out() {
+        let (_path, ws) = temp_workspace();
+
+        let v = CommandValidator::new(vec!["sleep 5".to_string()], Duration::from_secs(1));
+        let result = v.validate(&ws);
+
+        assert!(!result.passed, "timed-out command must fail validation");
+        assert!(
+            result.summary.contains("timed out"),
+            "summary must mention timeout; got: {}",
+            result.summary
+        );
+        assert!(
+            result.summary.contains("1 second"),
+            "summary must include the timeout duration; got: {}",
+            result.summary
+        );
+        assert!(
+            result.summary.contains("sleep 5"),
+            "summary must include the command string; got: {}",
+            result.summary
+        );
+    }
+
+    #[test]
+    fn timeout_does_not_prevent_later_validations() {
+        let (_path1, ws1) = temp_workspace();
+        let (_path2, ws2) = temp_workspace();
+
+        // First validator times out.
+        let v1 = CommandValidator::new(vec!["sleep 5".to_string()], Duration::from_secs(1));
+        let r1 = v1.validate(&ws1);
+        assert!(!r1.passed, "first validator must time out and fail");
+
+        // Second validator must still work normally.
+        let v2 = CommandValidator::new(vec!["echo ok".to_string()], default_timeout());
+        let r2 = v2.validate(&ws2);
+        assert!(
+            r2.passed,
+            "second validator must pass after the first timed out; got: {}",
+            r2.summary
+        );
     }
 }

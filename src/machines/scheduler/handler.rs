@@ -1323,6 +1323,57 @@ mod tests {
         );
     }
 
+    #[test]
+    fn timeout_blocks_commit() {
+        use crate::validation::CommandValidator;
+        use std::time::Duration;
+
+        let (_temp, artifact) = fixture("timeout-blocks-commit");
+        let original_sha = artifact.commit_sha.clone();
+        let repo_path = artifact.repo_path.clone();
+
+        let runner = FileWritingRunner {
+            path: "output.txt".to_string(),
+            content: "hello\n".to_string(),
+        };
+        // Validator times out immediately — sleep 5 with a 1-second budget.
+        let validator = CommandValidator::new(vec!["sleep 5".to_string()], Duration::from_secs(1));
+        let h =
+            SchedulerHandler::with_artifact(runner, artifact).with_validator(Rc::new(validator));
+
+        h.handle_effect(SchedulerEffect::RunNode {
+            node_id: NodeId("W".to_string()),
+            kind: NodeKind::Work,
+            objective: "write a file".to_string(),
+            model_tier: ModelTier::Cheap,
+            attempt: 0,
+        });
+
+        let event = h.handle_effect(SchedulerEffect::IntegrateWork {
+            node_id: NodeId("W".to_string()),
+            work: WorkOutput {
+                summary: "wrote output.txt".to_string(),
+            },
+        });
+
+        assert!(
+            matches!(
+                event,
+                SchedulerEvent::IntegrationReturned {
+                    outcome: IntegrationOutcome::Failed(_),
+                    ..
+                }
+            ),
+            "timed-out validator must block integration; got: {event:#?}"
+        );
+
+        let sha_after = git_output(&repo_path, &["rev-parse", "HEAD"]);
+        assert_eq!(
+            sha_after, original_sha,
+            "artifact commit must not change when validation times out"
+        );
+    }
+
     // ── workspace cleanup tests ───────────────────────────────────────────────
 
     /// Captures the workspace path and controls whether validation passes or fails.
