@@ -348,7 +348,7 @@ mod tests {
         .apply(&mut workspace)
         .unwrap();
 
-        let integrated = integrate(&artifact, &workspace);
+        let integrated = integrate(&artifact, &workspace).unwrap();
 
         assert_ne!(
             integrated.commit_sha, artifact.commit_sha,

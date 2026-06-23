@@ -84,7 +84,7 @@ mod tests {
         }
         .apply(&mut workspace)
         .unwrap();
-        let integrated = integrate(&artifact, &workspace);
+        let integrated = integrate(&artifact, &workspace).unwrap();
 
         let output = artifact_contents(&integrated).unwrap();
 

@@ -183,7 +183,7 @@ mod tests {
         }
         .apply(&mut workspace)
         .unwrap();
-        let artifact = integrate(&artifact, &workspace);
+        let artifact = integrate(&artifact, &workspace).unwrap();
 
         assert_eq!(
             commit_count(&artifact.repo_path),
@@ -233,7 +233,7 @@ mod tests {
         }
         .apply(&mut workspace)
         .unwrap();
-        let final_artifact = integrate(&artifact, &workspace);
+        let final_artifact = integrate(&artifact, &workspace).unwrap();
 
         assert_eq!(
             commit_count(&final_artifact.repo_path),

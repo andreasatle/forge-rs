@@ -82,21 +82,3 @@ impl ArtifactView {
         String::from_utf8(output.stdout).map_err(|e| ArtifactError::IoError(e.to_string()))
     }
 }
-
-pub(crate) fn assert_bare_repository(artifact: &Artifact) {
-    let output = Command::new("git")
-        .args(["rev-parse", "--is-bare-repository"])
-        .current_dir(&artifact.repo_path)
-        .output()
-        .expect("failed to inspect artifact repository");
-    assert!(
-        output.status.success(),
-        "artifact repository is not a Git repository: {}",
-        String::from_utf8_lossy(&output.stderr).trim()
-    );
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout).trim(),
-        "true",
-        "artifact repository must be bare"
-    );
-}

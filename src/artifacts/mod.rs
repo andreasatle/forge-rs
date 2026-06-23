@@ -12,7 +12,7 @@ mod workspace;
 
 pub use artifact::{Artifact, ArtifactView};
 pub use file_ops::{ArtifactError, WorkspaceFileOps};
-pub use integration::integrate;
+pub use integration::{IntegrationError, integrate};
 pub use update::{ArtifactUpdate, FileChange};
 pub use workspace::{Workspace, create_temporary_workspace, create_workspace};
 
@@ -267,7 +267,7 @@ mod tests {
             .apply(&mut workspace)
             .unwrap();
 
-        let integrated = integrate(&artifact, &workspace);
+        let integrated = integrate(&artifact, &workspace).unwrap();
 
         assert_ne!(integrated.commit_sha, artifact.commit_sha);
         assert_eq!(
@@ -284,7 +284,7 @@ mod tests {
             .apply(&mut workspace)
             .unwrap();
 
-        let integrated = integrate(&artifact, &workspace);
+        let integrated = integrate(&artifact, &workspace).unwrap();
 
         assert_eq!(integrated.branch, artifact.branch);
     }
@@ -296,13 +296,13 @@ mod tests {
         write_update("artifact.txt", "version two\n")
             .apply(&mut first_workspace)
             .unwrap();
-        let second = integrate(&first, &first_workspace);
+        let second = integrate(&first, &first_workspace).unwrap();
 
         let mut second_workspace = create_workspace(&second, temp.join("workspace-two"));
         write_update("artifact.txt", "version three\n")
             .apply(&mut second_workspace)
             .unwrap();
-        let third = integrate(&second, &second_workspace);
+        let third = integrate(&second, &second_workspace).unwrap();
 
         assert_ne!(first.commit_sha, second.commit_sha);
         assert_ne!(second.commit_sha, third.commit_sha);
@@ -326,7 +326,7 @@ mod tests {
             .write_file("artifact.txt", "written directly\n")
             .unwrap();
 
-        let integrated = integrate(&artifact, &workspace);
+        let integrated = integrate(&artifact, &workspace).unwrap();
 
         assert_ne!(integrated.commit_sha, artifact.commit_sha);
         assert_eq!(
@@ -483,7 +483,7 @@ mod tests {
         write_update("artifact.txt", "version two\n")
             .apply(&mut workspace)
             .unwrap();
-        let integrated = integrate(&artifact, &workspace);
+        let integrated = integrate(&artifact, &workspace).unwrap();
         let view = ArtifactView {
             repo_path: integrated.repo_path.clone(),
             commit_sha: integrated.commit_sha.clone(),
@@ -497,7 +497,7 @@ mod tests {
         let (temp, artifact) = fixture("view-list-files");
         let mut workspace = create_workspace(&artifact, temp.join("workspace"));
         workspace.write_file("nested/file.txt", "nested\n").unwrap();
-        let integrated = integrate(&artifact, &workspace);
+        let integrated = integrate(&artifact, &workspace).unwrap();
         let view = ArtifactView {
             repo_path: integrated.repo_path.clone(),
             commit_sha: integrated.commit_sha.clone(),
@@ -618,6 +618,25 @@ mod tests {
         assert!(
             workspace_path.exists(),
             "explicit-path workspace must not be deleted on drop"
+        );
+    }
+
+    #[test]
+    fn integrate_returns_error_for_invalid_artifact_repo() {
+        let (temp, good_artifact) = fixture("integrate-error-bad-repo");
+        let workspace = create_workspace(&good_artifact, temp.join("workspace"));
+
+        let bad_artifact = Artifact {
+            repo_path: std::path::PathBuf::from("/nonexistent/path/that/does/not/exist.git"),
+            branch: "main".to_owned(),
+            commit_sha: good_artifact.commit_sha.clone(),
+        };
+
+        let result = integrate(&bad_artifact, &workspace);
+
+        assert!(
+            result.is_err(),
+            "integrate must return Err for a nonexistent repo_path; got Ok"
         );
     }
 }
