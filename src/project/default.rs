@@ -23,8 +23,8 @@ mod tests {
     fn default_project_adapter_returns_default_role_policy() {
         let adapter = DefaultProjectAdapter;
         let policy = adapter.role_policy();
+        // Worker, Critic, Referee use the status/content wrapper schema.
         for system in [
-            &policy.planner_system,
             &policy.worker_system,
             &policy.critic_system,
             &policy.referee_system,
@@ -42,6 +42,22 @@ mod tests {
                 "default policy must not contain dot-placeholder JSON values; got:\n{system}"
             );
         }
+        // Planner uses direct PlannerOutput schema.
+        assert!(
+            policy.planner_system.contains("\"tasks\""),
+            "default planner_system must show direct tasks schema; got:\n{}",
+            policy.planner_system
+        );
+        assert!(
+            !policy.planner_system.contains("\"status\""),
+            "default planner_system must not contain status/content wrapper; got:\n{}",
+            policy.planner_system
+        );
+        assert!(
+            policy.planner_system.contains("Do not copy example values"),
+            "default planner_system must include copy-guard instruction; got:\n{}",
+            policy.planner_system
+        );
     }
 
     #[test]

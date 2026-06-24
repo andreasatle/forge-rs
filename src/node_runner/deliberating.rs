@@ -543,10 +543,8 @@ mod tests {
     fn deliberating_runner_plan_returns_plan_output() {
         let tasks_json =
             r#"{"tasks":[{"id":"task-1","objective":"the actual work","depends_on":[]}]}"#;
-        let plan_response =
-            serde_json::json!({"status": "accepted", "content": tasks_json}).to_string();
         let provider = ScriptedProvider::from_strs(&[
-            &plan_response,
+            tasks_json,
             r#"{"status":"accepted","content":"looks good"}"#,
             r#"{"status":"accepted","content":"approved"}"#,
         ]);
@@ -966,9 +964,8 @@ mod tests {
     #[test]
     fn structured_planner_output_creates_multiple_work_nodes() {
         let tasks_json = r#"{"tasks":[{"id":"alpha","objective":"do alpha","depends_on":[]},{"id":"beta","objective":"do beta","depends_on":["alpha"]}]}"#;
-        let response = serde_json::json!({"status": "accepted", "content": tasks_json}).to_string();
         let provider = ScriptedProvider::from_strs(&[
-            &response,
+            tasks_json,
             r#"{"status":"accepted","content":"looks good"}"#,
             r#"{"status":"accepted","content":"approved"}"#,
         ]);
@@ -1015,14 +1012,12 @@ mod tests {
     #[test]
     fn invalid_structured_plan_returns_failed() {
         // Parses as PlannerOutput but has a self-dependency — validation must fail loudly.
-        // Step 2: validation now happens in the runner, not map_plan_output.
         // All three producer attempts return the same invalid plan, exhausting retries.
         let tasks_json = r#"{"tasks":[{"id":"x","objective":"do x","depends_on":["x"]}]}"#;
-        let response = serde_json::json!({"status": "accepted", "content": tasks_json}).to_string();
         let provider = ScriptedProvider::from_strs(&[
-            &response, // Producer attempt 1
-            &response, // Producer attempt 2 (retry)
-            &response, // Producer attempt 3 (retry)
+            tasks_json, // Producer attempt 1
+            tasks_json, // Producer attempt 2 (retry)
+            tasks_json, // Producer attempt 3 (retry)
         ]);
         let runner = DeliberatingNodeRunner::new(&provider, &provider);
         let telemetry = crate::telemetry::VecTelemetry::new();

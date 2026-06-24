@@ -6,12 +6,12 @@
 
 use std::collections::HashSet;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::machines::scheduler::{NodeId, NodeKind, NodeRequest, PlanOutput};
 
 /// A single task in a structured planner response.
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Serialize, Debug)]
 pub struct PlannerTask {
     /// Planner-assigned identifier, unique within the output.
     pub id: String,
@@ -25,7 +25,7 @@ pub struct PlannerTask {
 ///
 /// Each task becomes a scheduler [`NodeRequest`]. The `depends_on` entries
 /// reference other tasks by id within the same output batch.
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Serialize, Debug)]
 pub struct PlannerOutput {
     /// The ordered list of tasks the planner wants the scheduler to execute.
     pub tasks: Vec<PlannerTask>,
@@ -75,6 +75,22 @@ impl std::fmt::Display for PlannerValidationError {
 /// expected fallback case that triggers single-work-node behaviour.
 pub fn parse_planner_content(content: &str) -> Option<PlannerOutput> {
     serde_json::from_str::<PlannerOutput>(content).ok()
+}
+
+/// Parse a raw provider response as a [`PlannerOutput`] directly.
+///
+/// Unlike [`parse_planner_content`] this returns a `Result` suitable for the
+/// role runner's retry path. A preamble before the opening `{` is rejected
+/// immediately without attempting JSON parsing.
+pub fn try_parse_planner_response(raw: &str) -> Result<PlannerOutput, String> {
+    let text = raw.trim();
+    if !text.starts_with('{') {
+        return Err(
+            "planner response must start with '{'; preamble text is not permitted".to_string(),
+        );
+    }
+    serde_json::from_str::<PlannerOutput>(text)
+        .map_err(|e| format!("planner JSON parse error: {e}"))
 }
 
 /// Validate the structural constraints of a parsed [`PlannerOutput`].
@@ -139,6 +155,71 @@ pub fn planner_output_to_plan_output(output: PlannerOutput) -> PlanOutput {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── Direct planner response parsing ─────────────────────────────────────────
+
+    #[test]
+    fn direct_planner_output_parses_successfully() {
+        let json = r#"{"tasks":[{"id":"a","objective":"do alpha","depends_on":[]}]}"#;
+        let result = try_parse_planner_response(json);
+        assert!(
+            result.is_ok(),
+            "direct PlannerOutput JSON must parse; got {:?}",
+            result
+        );
+        let output = result.unwrap();
+        assert_eq!(output.tasks[0].id, "a");
+    }
+
+    #[test]
+    fn planner_output_does_not_require_nested_json_string() {
+        // The planner schema is {"tasks":[...]} directly, not wrapped in
+        // {"status":"accepted","content":"<escaped-json>"}.
+        let direct = r#"{"tasks":[{"id":"t1","objective":"do the work","depends_on":[]}]}"#;
+        assert!(
+            try_parse_planner_response(direct).is_ok(),
+            "direct PlannerOutput must parse without a status/content wrapper"
+        );
+    }
+
+    #[test]
+    fn planner_does_not_require_content_string_starting_with_brace() {
+        // Regression: live failure produced {"status":"accepted","content":"{"}
+        // which must fail cleanly, not panic or produce PlanAccepted.
+        let payload = r#"{"status":"accepted","content":"{"}"#;
+        let result = try_parse_planner_response(payload);
+        assert!(
+            result.is_err(),
+            "status/content wrapper must not parse as PlannerOutput; got {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn preamble_before_planner_json_is_rejected() {
+        let result = try_parse_planner_response("Here is the plan:\n{\"tasks\":[]}");
+        assert!(
+            result.is_err(),
+            "preamble before JSON must fail; got {:?}",
+            result
+        );
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("preamble text is not permitted"),
+            "error must mention preamble; got: {err}"
+        );
+    }
+
+    #[test]
+    fn status_content_wrapper_fails_planner_parse() {
+        let wrapped = r#"{"status":"accepted","content":"{\"tasks\":[]}"}"#;
+        let result = try_parse_planner_response(wrapped);
+        assert!(
+            result.is_err(),
+            "status/content wrapper must not parse as PlannerOutput; got {:?}",
+            result
+        );
+    }
 
     // ── Parsing ─────────────────────────────────────────────────────────────────
 

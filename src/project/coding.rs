@@ -11,13 +11,8 @@ Do not include implementation details in plan nodes — describe what to achieve
 Output a structured task list that the execution framework can schedule.\n\
 Return exactly one JSON object. No markdown. No code fence. \
 No explanation. No text before or after the JSON.\n\
-Accepted: {\"status\":\"accepted\",\"content\":\"<YOUR_RESPONSE_HERE>\"}\n\
-Rejected: {\"status\":\"rejected\",\"reason\":\"<REASON_FOR_REJECTION>\"}\n\
-Do not copy example values. Replace them with task-specific content.\n\
-Producer returns accepted content. \
-Critic accepts with a review or rejects with a reason. \
-Referee accepts approval or rejects with revision feedback. \
-Execution failures are handled by the framework, not the model.";
+{\"tasks\":[{\"id\":\"task-id\",\"objective\":\"Task objective.\",\"depends_on\":[]}]}\n\
+Do not copy example values. Replace them with actual task IDs and objectives.";
 
 const CODING_WORKER_SYSTEM: &str = "You are a software implementation agent. \
 Implement the requested change precisely. \
@@ -103,8 +98,8 @@ mod tests {
     #[test]
     fn coding_adapter_preserves_json_protocol_invariants() {
         let policy = CodingProjectAdapter.role_policy();
+        // Worker, Critic, Referee use the status/content wrapper schema.
         for (label, system) in [
-            ("planner", policy.planner_system.as_str()),
             ("worker", policy.worker_system.as_str()),
             ("critic", policy.critic_system.as_str()),
             ("referee", policy.referee_system.as_str()),
@@ -130,6 +125,27 @@ mod tests {
                 "{label} system must include rejected schema placeholder; got:\n{system}"
             );
         }
+        // Planner uses direct PlannerOutput schema — no status/content wrapper.
+        assert!(
+            policy.planner_system.contains("\"tasks\""),
+            "planner system must show direct tasks schema; got:\n{}",
+            policy.planner_system
+        );
+        assert!(
+            !policy.planner_system.contains("\"status\""),
+            "planner system must not contain status/content wrapper; got:\n{}",
+            policy.planner_system
+        );
+        assert!(
+            policy.planner_system.contains("Do not copy example values"),
+            "planner system must include copy-guard instruction; got:\n{}",
+            policy.planner_system
+        );
+        assert!(
+            !policy.planner_system.contains("\"...\""),
+            "planner system must not contain dot-placeholder JSON values; got:\n{}",
+            policy.planner_system
+        );
     }
 
     #[test]
