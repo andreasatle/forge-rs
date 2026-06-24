@@ -334,10 +334,29 @@ fn truncate_to_char_boundary(s: &str, max_bytes: usize) -> &str {
 
 /// Parses a JSON-encoded [`FileToolRequest`].
 ///
-/// Returns `Err` with a human-readable message when the JSON is malformed or
-/// names an unknown tool.
+/// Returns `Err` with a human-readable message when the JSON is malformed,
+/// names an unknown tool, or contains placeholder `"..."` values that indicate
+/// the model echoed a prompt example rather than issuing a real request.
 pub fn parse_tool_request(json: &str) -> Result<FileToolRequest, String> {
-    serde_json::from_str(json).map_err(|e| e.to_string())
+    let req: FileToolRequest = serde_json::from_str(json).map_err(|e| e.to_string())?;
+    if has_placeholder_fields(&req) {
+        return Err("tool request contains placeholder values".to_string());
+    }
+    Ok(req)
+}
+
+fn has_placeholder_fields(req: &FileToolRequest) -> bool {
+    match req {
+        FileToolRequest::ListFiles => false,
+        FileToolRequest::ReadFile { path } => path.trim() == "...",
+        FileToolRequest::WriteFile { path, content } => {
+            path.trim() == "..." || content.trim() == "..."
+        }
+        FileToolRequest::ReplaceText { path, old, new } => {
+            path.trim() == "..." || old.trim() == "..." || new.trim() == "..."
+        }
+        FileToolRequest::DeleteFile { path } => path.trim() == "...",
+    }
 }
 
 #[cfg(test)]
@@ -906,6 +925,62 @@ mod tests {
     fn parse_malformed_json_returns_error() {
         let result = parse_tool_request("not json");
         assert!(result.is_err(), "malformed JSON must fail to parse");
+    }
+
+    #[test]
+    fn parse_replace_text_with_placeholder_old_is_rejected() {
+        let result =
+            parse_tool_request(r#"{"tool":"replace_text","path":"f.txt","old":"...","new":"x"}"#);
+        assert!(
+            result.is_err(),
+            "replace_text with placeholder old must be rejected; got {result:?}"
+        );
+        assert!(
+            result.unwrap_err().contains("placeholder"),
+            "error must mention placeholder"
+        );
+    }
+
+    #[test]
+    fn parse_replace_text_with_placeholder_new_is_rejected() {
+        let result =
+            parse_tool_request(r#"{"tool":"replace_text","path":"f.txt","old":"x","new":"..."}"#);
+        assert!(
+            result.is_err(),
+            "replace_text with placeholder new must be rejected; got {result:?}"
+        );
+    }
+
+    #[test]
+    fn parse_write_file_with_placeholder_content_is_rejected() {
+        let result =
+            parse_tool_request(r#"{"tool":"write_file","path":"output.txt","content":"..."}"#);
+        assert!(
+            result.is_err(),
+            "write_file with placeholder content must be rejected; got {result:?}"
+        );
+    }
+
+    #[test]
+    fn parse_write_file_with_real_content_is_accepted() {
+        let result = parse_tool_request(
+            r#"{"tool":"write_file","path":"output.txt","content":"hello world"}"#,
+        );
+        assert!(
+            result.is_ok(),
+            "write_file with real content must parse successfully; got {result:?}"
+        );
+    }
+
+    #[test]
+    fn parse_replace_text_with_real_values_is_accepted() {
+        let result = parse_tool_request(
+            r#"{"tool":"replace_text","path":"f.txt","old":"hello","new":"goodbye"}"#,
+        );
+        assert!(
+            result.is_ok(),
+            "replace_text with real values must parse successfully; got {result:?}"
+        );
     }
 
     // ── overlay: read-after-write consistency ────────────────────────────────

@@ -1670,6 +1670,96 @@ mod tests {
         );
     }
 
+    // ── regression: echoed placeholder tool requests must not execute ───────
+    //
+    // A confused model sometimes echoes the tool-section examples verbatim,
+    // returning {"tool":"replace_text","path":"output.txt","old":"...","new":"..."}
+    // or {"tool":"write_file","path":"output.txt","content":"..."}.  These must
+    // be treated as parse failures and trigger a protocol retry, NOT executed as
+    // real tool calls.  This was the root cause of the "missing field `status`"
+    // failure observed in the 2026-06-24 run.
+
+    #[test]
+    fn echoed_replace_text_placeholder_triggers_parse_failure_not_tool_execution() {
+        use crate::telemetry::{TelemetryEvent, VecTelemetry};
+
+        let provider = ScriptedProvider::from_strs(&[
+            // Exact payload echoed by the confused model in the failing run.
+            r#"{"tool":"replace_text","path":"output.txt","old":"...","new":"..."}"#,
+            r#"{"status":"accepted","content":"haiku written"}"#,
+        ]);
+        let runner = ProviderRoleRunner::new(&provider);
+        let telemetry = VecTelemetry::new();
+
+        let output = runner.run_role(
+            RoleRequest {
+                role: DeliberationRole::Producer,
+                objective: "write a haiku".to_string(),
+                producer_content: None,
+                critic_content: None,
+                feedback: vec![],
+                tool_context: None,
+            },
+            &telemetry,
+        );
+
+        assert!(
+            matches!(output.result, RoleResult::Accepted { ref content } if content == "haiku written"),
+            "placeholder tool request must not execute; got {:?}",
+            output.result
+        );
+        let records = telemetry.records();
+        assert!(
+            records
+                .iter()
+                .all(|r| !matches!(r.event, TelemetryEvent::ToolRequested { .. })),
+            "placeholder tool request must not emit ToolRequested"
+        );
+        assert!(
+            records
+                .iter()
+                .any(|r| matches!(&r.event, TelemetryEvent::ParseFailed { .. })),
+            "placeholder tool request must emit ParseFailed"
+        );
+    }
+
+    #[test]
+    fn echoed_write_file_placeholder_triggers_parse_failure_not_tool_execution() {
+        use crate::telemetry::{TelemetryEvent, VecTelemetry};
+
+        let provider = ScriptedProvider::from_strs(&[
+            r#"{"tool":"write_file","path":"output.txt","content":"..."}"#,
+            r#"{"status":"accepted","content":"done"}"#,
+        ]);
+        let runner = ProviderRoleRunner::new(&provider);
+        let telemetry = VecTelemetry::new();
+
+        let output = runner.run_role(
+            RoleRequest {
+                role: DeliberationRole::Producer,
+                objective: "write something".to_string(),
+                producer_content: None,
+                critic_content: None,
+                feedback: vec![],
+                tool_context: None,
+            },
+            &telemetry,
+        );
+
+        assert!(
+            matches!(output.result, RoleResult::Accepted { ref content } if content == "done"),
+            "placeholder write_file must not execute; got {:?}",
+            output.result
+        );
+        let records = telemetry.records();
+        assert!(
+            records
+                .iter()
+                .all(|r| !matches!(r.event, TelemetryEvent::ToolRequested { .. })),
+            "placeholder write_file must not emit ToolRequested"
+        );
+    }
+
     #[test]
     fn tool_prompt_matches_policy() {
         let rw_policy = FileToolPolicy {
