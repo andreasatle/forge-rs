@@ -4,6 +4,25 @@ use std::path::Path;
 
 use serde::Deserialize;
 
+/// Selects which project adapter governs role prompt policy for a run.
+#[derive(Debug, Deserialize, Default, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum ProjectKind {
+    /// Default adapter — uses the hardcoded JSON protocol prompts unchanged.
+    #[default]
+    Default,
+    /// Coding adapter — uses software-oriented role prompts.
+    Coding,
+}
+
+/// Project-level configuration.
+#[derive(Debug, Deserialize, Default)]
+pub struct ProjectConfig {
+    /// Selects which project adapter to use. Defaults to [`ProjectKind::Default`].
+    #[serde(default)]
+    pub kind: ProjectKind,
+}
+
 /// Top-level configuration for a forge run.
 #[derive(Debug, Deserialize)]
 pub struct ForgeConfig {
@@ -18,6 +37,9 @@ pub struct ForgeConfig {
     /// Optional validation commands run after workspace update, before integration.
     #[serde(default)]
     pub validation: Option<ValidationConfig>,
+    /// Project adapter selection. Absent config defaults to [`ProjectKind::Default`].
+    #[serde(default)]
+    pub project: ProjectConfig,
 }
 
 /// Artifact repository configuration.
@@ -369,6 +391,55 @@ telemetry:
         assert_eq!(
             config.telemetry.directory, "/absolute/telemetry",
             "absolute telemetry directory must not be altered"
+        );
+    }
+
+    // ── project config tests ─────────────────────────────────────────────────
+
+    #[test]
+    fn config_defaults_to_default_project() {
+        let tmp = TempYaml::new(EXAMPLE_YAML);
+        let config = ForgeConfig::from_file(tmp.path()).unwrap();
+        assert_eq!(
+            config.project.kind,
+            ProjectKind::Default,
+            "absent project block must default to ProjectKind::Default"
+        );
+    }
+
+    const CODING_PROJECT_YAML: &str = r#"
+objective: "test"
+artifact:
+  repo_path: ".forge/artifacts/main.git"
+  branch: "main"
+provider:
+  base_url: "http://localhost:8080"
+  n_predict: 512
+telemetry:
+  directory: "runs"
+project:
+  kind: coding
+"#;
+
+    #[test]
+    fn config_parses_coding_project() {
+        let tmp = TempYaml::new(CODING_PROJECT_YAML);
+        let config = ForgeConfig::from_file(tmp.path()).unwrap();
+        assert_eq!(
+            config.project.kind,
+            ProjectKind::Coding,
+            "project.kind: coding must parse as ProjectKind::Coding"
+        );
+    }
+
+    #[test]
+    fn existing_configs_still_parse() {
+        let tmp = TempYaml::new(EXAMPLE_YAML);
+        let result = ForgeConfig::from_file(tmp.path());
+        assert!(
+            result.is_ok(),
+            "existing config without project: must still parse; got: {:?}",
+            result.err()
         );
     }
 }

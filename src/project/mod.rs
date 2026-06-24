@@ -5,8 +5,10 @@
 //! policy; future variants can add export config, validation config, or
 //! integration movement without changing the runtime wiring.
 
+pub mod coding;
 pub mod default;
 
+pub use coding::CodingProjectAdapter;
 pub use default::DefaultProjectAdapter;
 
 use crate::roles::RolePolicy;

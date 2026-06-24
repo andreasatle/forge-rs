@@ -96,7 +96,7 @@ mod tests {
     }
 
     fn make_forge_config(repo_path: &PathBuf, telemetry_path: &PathBuf) -> ForgeConfig {
-        use crate::config::{ArtifactConfig, ProviderConfig, TelemetryConfig};
+        use crate::config::{ArtifactConfig, ProjectConfig, ProviderConfig, TelemetryConfig};
         ForgeConfig {
             objective: "test".to_string(),
             artifact: ArtifactConfig {
@@ -115,6 +115,7 @@ mod tests {
                 directory: telemetry_path.to_str().unwrap().to_string(),
             },
             validation: None,
+            project: ProjectConfig::default(),
         }
     }
 
@@ -263,7 +264,7 @@ mod tests {
 
         // Use a non-default branch name to prove reset uses the config, not "main".
         let config = {
-            use crate::config::{ArtifactConfig, ProviderConfig, TelemetryConfig};
+            use crate::config::{ArtifactConfig, ProjectConfig, ProviderConfig, TelemetryConfig};
             ForgeConfig {
                 objective: "test".to_string(),
                 artifact: ArtifactConfig {
@@ -282,6 +283,7 @@ mod tests {
                     directory: telemetry.to_str().unwrap().to_string(),
                 },
                 validation: None,
+                project: ProjectConfig::default(),
             }
         };
 

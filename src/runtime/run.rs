@@ -11,12 +11,14 @@ static SEED_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 use crate::artifacts::{Artifact, ArtifactView};
 use crate::config::{ArtifactConfig, ForgeConfig, ValidationConfig};
+use crate::config::{ProjectConfig, ProjectKind};
 use crate::engine::run_machine_with_telemetry;
 use crate::machines::scheduler::state::SchedulerState;
 use crate::machines::scheduler::{RunRequest, SchedulerHandler, SchedulerMachine, SchedulerOutput};
 use crate::node_runner::DeliberatingNodeRunner;
-use crate::project::{DefaultProjectAdapter, ProjectAdapter};
+use crate::project::{CodingProjectAdapter, DefaultProjectAdapter, ProjectAdapter};
 use crate::providers::{LlamaCppProvider, RetryingProvider};
+use crate::roles::RolePolicy;
 use crate::runtime::checkpoint::node_counts;
 use crate::runtime::resume::find_resumable_run;
 use crate::runtime::{create_run, finalize_manifest};
@@ -70,7 +72,7 @@ impl ForgeRuntime {
             .strong_n_predict
             .unwrap_or(config.provider.n_predict) as u32;
 
-        let role_policy = DefaultProjectAdapter.role_policy();
+        let role_policy = make_role_policy(&config.project);
         let runner = DeliberatingNodeRunner::new(cheap, strong)
             .with_cheap_max_tokens(cheap_tokens)
             .with_strong_max_tokens(strong_tokens)
@@ -163,7 +165,7 @@ impl ForgeRuntime {
             .strong_n_predict
             .unwrap_or(config.provider.n_predict) as u32;
 
-        let role_policy = DefaultProjectAdapter.role_policy();
+        let role_policy = make_role_policy(&config.project);
         let runner = DeliberatingNodeRunner::new(cheap, strong)
             .with_cheap_max_tokens(cheap_tokens)
             .with_strong_max_tokens(strong_tokens)
@@ -220,6 +222,13 @@ fn runtime_result_from_scheduler_output(output: SchedulerOutput) -> Result<(), B
     match output {
         SchedulerOutput::Failed { reason, .. } => Err(format!("run failed: {reason}").into()),
         SchedulerOutput::Complete { .. } => Ok(()),
+    }
+}
+
+fn make_role_policy(project: &ProjectConfig) -> RolePolicy {
+    match project.kind {
+        ProjectKind::Default => DefaultProjectAdapter.role_policy(),
+        ProjectKind::Coding => CodingProjectAdapter.role_policy(),
     }
 }
 
@@ -351,7 +360,9 @@ fn print_summary(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{ArtifactConfig, ForgeConfig, ProviderConfig, TelemetryConfig};
+    use crate::config::{
+        ArtifactConfig, ForgeConfig, ProjectConfig, ProjectKind, ProviderConfig, TelemetryConfig,
+    };
     use crate::machines::scheduler::machine::{RecoverySummary, SchedulerOutput};
     use crate::machines::scheduler::state::RunGraph;
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -380,6 +391,37 @@ mod tests {
         }
     }
 
+    // ── adapter selection ────────────────────────────────────────────────────
+
+    #[test]
+    fn runtime_selects_coding_adapter() {
+        let policy = make_role_policy(&ProjectConfig {
+            kind: ProjectKind::Coding,
+        });
+        assert!(
+            policy.planner_system.contains("software planning"),
+            "coding adapter must produce software-planning planner prompt; got:\n{}",
+            policy.planner_system
+        );
+        assert!(
+            policy.worker_system.contains("software implementation"),
+            "coding adapter must produce software-implementation worker prompt; got:\n{}",
+            policy.worker_system
+        );
+    }
+
+    #[test]
+    fn runtime_default_adapter_preserves_behavior() {
+        let policy = make_role_policy(&ProjectConfig {
+            kind: ProjectKind::Default,
+        });
+        let expected = crate::project::DefaultProjectAdapter.role_policy();
+        assert_eq!(
+            policy.worker_system, expected.worker_system,
+            "default adapter must produce unchanged worker prompt"
+        );
+    }
+
     #[test]
     fn runtime_threads_provider_timeout() {
         // Verify that timeout_seconds from config reaches the provider constructor.
@@ -403,6 +445,7 @@ mod tests {
                 directory: "/tmp/telemetry".to_string(),
             },
             validation: None,
+            project: ProjectConfig::default(),
         };
         assert_eq!(config.provider.timeout_seconds, 42);
         let _provider =
