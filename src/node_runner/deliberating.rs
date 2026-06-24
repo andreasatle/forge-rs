@@ -866,6 +866,45 @@ mod tests {
         }
     }
 
+    #[test]
+    fn split_failure_produces_split_action() {
+        // The Critic rejects with a task-shape message that the classifier maps to Split.
+        let provider = ScriptedProvider::from_strs(&[
+            r#"{"status":"accepted","content":"draft"}"#,
+            r#"{"status":"rejected","reason":"task too large"}"#,
+        ]);
+        let runner = DeliberatingNodeRunner::new(&provider, &provider);
+        let telemetry = crate::telemetry::VecTelemetry::new();
+        let result = runner.run_node(work_request("do something"), &telemetry);
+        let NodeRunResult::Failed(failure) = result else {
+            panic!("expected Failed");
+        };
+        assert!(
+            matches!(failure.recovery, RecoveryAction::Split { .. }),
+            "task-shape failure must produce Split recovery; got {:?}",
+            failure.recovery
+        );
+        let records = telemetry.into_records();
+        let classified = records.iter().find(|r| {
+            matches!(
+                r.event,
+                crate::telemetry::TelemetryEvent::FailureClassified { .. }
+            )
+        });
+        assert!(
+            classified.is_some(),
+            "must emit FailureClassified telemetry"
+        );
+        if let Some(r) = classified {
+            match &r.event {
+                crate::telemetry::TelemetryEvent::FailureClassified { recovery, .. } => {
+                    assert_eq!(recovery, "Split");
+                }
+                _ => unreachable!(),
+            }
+        }
+    }
+
     // --- planner output tests ---
 
     #[test]
