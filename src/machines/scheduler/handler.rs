@@ -49,6 +49,11 @@ pub struct SchedulerHandler<R> {
     pending_artifact_updates: RefCell<HashMap<NodeId, ArtifactUpdate>>,
     telemetry: Rc<dyn TelemetrySink>,
     validator: Rc<dyn Validator>,
+    /// Tracks whether the integration validation gate ran and what it returned.
+    /// `Some(true)` = validation ran and passed (even if integration later failed).
+    /// `Some(false)` = validation ran and failed.
+    /// `None` = validation was never invoked (no artifact update reached the gate).
+    last_validation_passed: RefCell<Option<bool>>,
 }
 
 impl<R: NodeRunner> SchedulerHandler<R> {
@@ -60,6 +65,7 @@ impl<R: NodeRunner> SchedulerHandler<R> {
             pending_artifact_updates: RefCell::new(HashMap::new()),
             telemetry: Rc::new(NoopTelemetry),
             validator: Rc::new(AlwaysPassValidator),
+            last_validation_passed: RefCell::new(None),
         }
     }
 
@@ -72,6 +78,7 @@ impl<R: NodeRunner> SchedulerHandler<R> {
             pending_artifact_updates: RefCell::new(HashMap::new()),
             telemetry: Rc::new(NoopTelemetry),
             validator: Rc::new(AlwaysPassValidator),
+            last_validation_passed: RefCell::new(None),
         }
     }
 
@@ -88,6 +95,15 @@ impl<R: NodeRunner> SchedulerHandler<R> {
     /// Returns a clone of the current artifact, or `None` if no artifact was provided.
     pub fn artifact(&self) -> Option<Artifact> {
         self.artifact.borrow().clone()
+    }
+
+    /// Returns whether the integration validation gate ran and what it returned.
+    ///
+    /// `Some(true)` means validation ran and passed (even if CAS integration later failed).
+    /// `Some(false)` means validation ran and failed.
+    /// `None` means the gate was never reached (no artifact update was pending).
+    pub fn validation_passed(&self) -> Option<bool> {
+        *self.last_validation_passed.borrow()
     }
 }
 
@@ -199,6 +215,7 @@ impl<R: NodeRunner> Machine for SchedulerHandler<R> {
                             ));
                             let result = self.validator.validate(&workspace);
                             if result.passed {
+                                *self.last_validation_passed.borrow_mut() = Some(true);
                                 self.telemetry.record(TelemetryRecord::new(
                                     "Integration",
                                     TelemetryEvent::ValidationPassed {
@@ -224,6 +241,7 @@ impl<R: NodeRunner> Machine for SchedulerHandler<R> {
                                     }
                                 }
                             } else {
+                                *self.last_validation_passed.borrow_mut() = Some(false);
                                 self.telemetry.record(TelemetryRecord::new(
                                     "Integration",
                                     TelemetryEvent::ValidationFailed {
@@ -1279,6 +1297,150 @@ mod tests {
                 }
             ),
             "integration with no pending update must succeed without calling validator; got: {event:#?}"
+        );
+    }
+
+    #[test]
+    fn validation_pass_sets_validation_passed_true() {
+        let (_temp, artifact) = fixture("vp-pass-true");
+
+        let runner = FileWritingRunner {
+            path: "output.txt".to_string(),
+            content: "hello\n".to_string(),
+        };
+        let h = SchedulerHandler::with_artifact(runner, artifact);
+
+        h.handle_effect(SchedulerEffect::RunNode {
+            node_id: NodeId("W".to_string()),
+            kind: NodeKind::Work,
+            objective: "write a file".to_string(),
+            model_tier: ModelTier::Cheap,
+            attempt: 0,
+        });
+        assert_eq!(
+            h.validation_passed(),
+            None,
+            "validation_passed must be None before IntegrateWork"
+        );
+
+        h.handle_effect(SchedulerEffect::IntegrateWork {
+            node_id: NodeId("W".to_string()),
+            work: WorkOutput {
+                summary: "wrote output.txt".to_string(),
+            },
+        });
+
+        assert_eq!(
+            h.validation_passed(),
+            Some(true),
+            "validation_passed must be Some(true) after AlwaysPassValidator"
+        );
+    }
+
+    #[test]
+    fn validation_failure_sets_validation_passed_false() {
+        let (_temp, artifact) = fixture("vp-fail-false");
+
+        let runner = FileWritingRunner {
+            path: "output.txt".to_string(),
+            content: "hello\n".to_string(),
+        };
+        let h = SchedulerHandler::with_artifact(runner, artifact)
+            .with_validator(Rc::new(AlwaysFailValidator));
+
+        h.handle_effect(SchedulerEffect::RunNode {
+            node_id: NodeId("W".to_string()),
+            kind: NodeKind::Work,
+            objective: "write a file".to_string(),
+            model_tier: ModelTier::Cheap,
+            attempt: 0,
+        });
+
+        h.handle_effect(SchedulerEffect::IntegrateWork {
+            node_id: NodeId("W".to_string()),
+            work: WorkOutput {
+                summary: "wrote output.txt".to_string(),
+            },
+        });
+
+        assert_eq!(
+            h.validation_passed(),
+            Some(false),
+            "validation_passed must be Some(false) after AlwaysFailValidator"
+        );
+    }
+
+    #[test]
+    fn no_update_leaves_validation_passed_none() {
+        let (_temp, artifact) = fixture("vp-no-update-none");
+
+        let h = SchedulerHandler::with_artifact(StaticNodeRunner, artifact);
+
+        h.handle_effect(SchedulerEffect::RunNode {
+            node_id: NodeId("W".to_string()),
+            kind: NodeKind::Work,
+            objective: "do some work".to_string(),
+            model_tier: ModelTier::Cheap,
+            attempt: 0,
+        });
+
+        h.handle_effect(SchedulerEffect::IntegrateWork {
+            node_id: NodeId("W".to_string()),
+            work: WorkOutput {
+                summary: "no files".to_string(),
+            },
+        });
+
+        assert_eq!(
+            h.validation_passed(),
+            None,
+            "validation_passed must remain None when no artifact update was pending"
+        );
+    }
+
+    #[test]
+    fn validation_passed_true_even_when_integration_conflicts() {
+        let (_temp, artifact) = fixture("vp-true-on-cas-conflict");
+        let repo_path = artifact.repo_path.clone();
+
+        let runner = FileWritingRunner {
+            path: "output.txt".to_string(),
+            content: "hello\n".to_string(),
+        };
+        let h = SchedulerHandler::with_artifact(runner, artifact);
+
+        h.handle_effect(SchedulerEffect::RunNode {
+            node_id: NodeId("W".to_string()),
+            kind: NodeKind::Work,
+            objective: "write a file".to_string(),
+            model_tier: ModelTier::Cheap,
+            attempt: 0,
+        });
+
+        // Advance the branch externally so the integrate() CAS check fails.
+        advance_branch_in_bare(&repo_path, "main");
+
+        let event = h.handle_effect(SchedulerEffect::IntegrateWork {
+            node_id: NodeId("W".to_string()),
+            work: WorkOutput {
+                summary: "wrote output.txt".to_string(),
+            },
+        });
+
+        assert!(
+            matches!(
+                event,
+                SchedulerEvent::IntegrationReturned {
+                    outcome: IntegrationOutcome::Failed(_),
+                    ..
+                }
+            ),
+            "CAS conflict must produce IntegrationOutcome::Failed; got: {event:#?}"
+        );
+        assert_eq!(
+            h.validation_passed(),
+            Some(true),
+            "validation_passed must be Some(true) even when CAS integration fails after validation"
         );
     }
 

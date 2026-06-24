@@ -81,6 +81,7 @@ impl ForgeRuntime {
         let (output, handler) = run_machine_with_telemetry(handler, initial_state, sink.as_ref());
 
         let final_artifact = handler.artifact();
+        let validation_passed = handler.validation_passed();
         print_summary(&output, &config, final_artifact.as_ref(), &run_info);
 
         let (status, final_commit, failure_reason) = match &output {
@@ -91,7 +92,13 @@ impl ForgeRuntime {
             ),
             SchedulerOutput::Failed { reason, .. } => ("failed", None, Some(reason.as_str())),
         };
-        if let Err(e) = finalize_manifest(&run_info, status, final_commit, None, failure_reason) {
+        if let Err(e) = finalize_manifest(
+            &run_info,
+            status,
+            final_commit,
+            validation_passed,
+            failure_reason,
+        ) {
             eprintln!("warning: failed to finalize manifest: {e}");
         }
 
@@ -715,5 +722,277 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(&base);
+    }
+
+    // ── validation_passed manifest tests ─────────────────────────────────────
+
+    /// Build a bare-repo artifact and return (base_dir, artifact, initial_sha).
+    fn make_bare_artifact(label: &str) -> (PathBuf, Artifact, String) {
+        use std::fs;
+        use std::process::Command;
+
+        let base = temp_path(label);
+        let _ = fs::remove_dir_all(&base);
+        let seed = base.join("seed");
+        fs::create_dir_all(&seed).unwrap();
+
+        let git = |args: &[&str]| {
+            assert!(
+                Command::new("git")
+                    .args(args)
+                    .current_dir(&seed)
+                    .status()
+                    .unwrap()
+                    .success(),
+                "git {} failed",
+                args.join(" ")
+            );
+        };
+        git(&["init", "--quiet", "--initial-branch=main"]);
+        git(&["config", "user.name", "Runtime Test"]);
+        git(&["config", "user.email", "runtime-test@example.invalid"]);
+        fs::write(seed.join("seed.txt"), "initial\n").unwrap();
+        git(&["add", "seed.txt"]);
+        git(&["commit", "--quiet", "-m", "Initial"]);
+
+        let repo_path = base.join("artifact.git");
+        assert!(
+            Command::new("git")
+                .args(["clone", "--quiet", "--bare"])
+                .arg(&seed)
+                .arg(&repo_path)
+                .status()
+                .unwrap()
+                .success(),
+            "git clone --bare failed"
+        );
+
+        let initial_sha = String::from_utf8(
+            Command::new("git")
+                .args(["rev-parse", "HEAD"])
+                .current_dir(&repo_path)
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap()
+        .trim()
+        .to_owned();
+
+        let artifact = Artifact {
+            repo_path,
+            branch: "main".to_string(),
+            commit_sha: initial_sha.clone(),
+        };
+
+        (base, artifact, initial_sha)
+    }
+
+    #[test]
+    fn successful_validated_run_sets_validation_passed_true() {
+        use crate::artifacts::{ArtifactUpdate, FileChange};
+        use crate::machines::scheduler::{
+            NodeId, NodeKind, NodeRequest, PlanOutput, RunRequest, SchedulerHandler,
+            SchedulerMachine, WorkOutput,
+        };
+        use crate::node_runner::{NodeRunRequest, NodeRunResult, NodeRunWorkResult, NodeRunner};
+        use crate::runtime::{create_run, finalize_manifest};
+        use crate::telemetry::NoopTelemetry;
+
+        struct FileWritingRunner;
+        impl NodeRunner for FileWritingRunner {
+            fn run_node(
+                &self,
+                request: NodeRunRequest,
+                _telemetry: &dyn crate::telemetry::TelemetrySink,
+            ) -> NodeRunResult {
+                match request.kind {
+                    NodeKind::Plan => NodeRunResult::PlanAccepted(PlanOutput {
+                        children: vec![NodeRequest {
+                            id: NodeId("work".to_string()),
+                            kind: NodeKind::Work,
+                            objective: "write result.txt".to_string(),
+                            dependencies: vec![],
+                        }],
+                    }),
+                    NodeKind::Work => NodeRunResult::WorkAccepted(NodeRunWorkResult {
+                        work: WorkOutput {
+                            summary: "wrote result.txt".to_string(),
+                        },
+                        artifact_update: Some(ArtifactUpdate {
+                            changes: vec![FileChange::Write {
+                                path: "result.txt".to_string(),
+                                content: "generated\n".to_string(),
+                            }],
+                        }),
+                    }),
+                }
+            }
+        }
+
+        let (base, artifact, _) = make_bare_artifact("vp-manifest-true");
+        let runs_root = base.join("runs");
+
+        let run_info = create_run(&runs_root, "test", "repo", "provider").unwrap();
+        let handler = SchedulerHandler::with_artifact(FileWritingRunner, artifact);
+        let initial_state = SchedulerMachine::initial_state(RunRequest {
+            objective: "generate a file".to_string(),
+        });
+        let (output, handler) = run_machine_with_telemetry(handler, initial_state, &NoopTelemetry);
+
+        let validation_passed = handler.validation_passed();
+        let status = match &output {
+            SchedulerOutput::Complete { .. } => "succeeded",
+            SchedulerOutput::Failed { .. } => "failed",
+        };
+        finalize_manifest(&run_info, status, None, validation_passed, None).unwrap();
+
+        let content = std::fs::read_to_string(run_info.run_dir.join("manifest.json")).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(v["status"], "succeeded");
+        assert_eq!(
+            v["validation_passed"],
+            serde_json::Value::Bool(true),
+            "manifest must record validation_passed=true for a successful validated run"
+        );
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn validation_failure_sets_validation_passed_false_in_manifest() {
+        use crate::artifacts::Workspace;
+        use crate::artifacts::{ArtifactUpdate, FileChange};
+        use crate::machines::scheduler::{
+            NodeId, NodeKind, NodeRequest, PlanOutput, RunRequest, SchedulerHandler,
+            SchedulerMachine, WorkOutput,
+        };
+        use crate::node_runner::{NodeRunRequest, NodeRunResult, NodeRunWorkResult, NodeRunner};
+        use crate::runtime::{create_run, finalize_manifest};
+        use crate::telemetry::NoopTelemetry;
+        use crate::validation::{ValidationResult, Validator};
+
+        struct FileWritingRunner;
+        impl NodeRunner for FileWritingRunner {
+            fn run_node(
+                &self,
+                request: NodeRunRequest,
+                _telemetry: &dyn crate::telemetry::TelemetrySink,
+            ) -> NodeRunResult {
+                match request.kind {
+                    NodeKind::Plan => NodeRunResult::PlanAccepted(PlanOutput {
+                        children: vec![NodeRequest {
+                            id: NodeId("work".to_string()),
+                            kind: NodeKind::Work,
+                            objective: "write result.txt".to_string(),
+                            dependencies: vec![],
+                        }],
+                    }),
+                    NodeKind::Work => NodeRunResult::WorkAccepted(NodeRunWorkResult {
+                        work: WorkOutput {
+                            summary: "wrote result.txt".to_string(),
+                        },
+                        artifact_update: Some(ArtifactUpdate {
+                            changes: vec![FileChange::Write {
+                                path: "result.txt".to_string(),
+                                content: "generated\n".to_string(),
+                            }],
+                        }),
+                    }),
+                }
+            }
+        }
+
+        struct AlwaysFailValidator;
+        impl Validator for AlwaysFailValidator {
+            fn validate(&self, _workspace: &Workspace) -> ValidationResult {
+                ValidationResult {
+                    passed: false,
+                    summary: "intentional failure".to_string(),
+                }
+            }
+        }
+
+        let (base, artifact, _) = make_bare_artifact("vp-manifest-false");
+        let runs_root = base.join("runs");
+
+        let run_info = create_run(&runs_root, "test", "repo", "provider").unwrap();
+        let handler = SchedulerHandler::with_artifact(FileWritingRunner, artifact)
+            .with_validator(Rc::new(AlwaysFailValidator));
+        let initial_state = SchedulerMachine::initial_state(RunRequest {
+            objective: "generate a file".to_string(),
+        });
+        let (output, handler) = run_machine_with_telemetry(handler, initial_state, &NoopTelemetry);
+
+        let validation_passed = handler.validation_passed();
+        let status = match &output {
+            SchedulerOutput::Complete { .. } => "succeeded",
+            SchedulerOutput::Failed { .. } => "failed",
+        };
+        finalize_manifest(&run_info, status, None, validation_passed, None).unwrap();
+
+        let content = std::fs::read_to_string(run_info.run_dir.join("manifest.json")).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(v["status"], "failed");
+        assert_eq!(
+            v["validation_passed"],
+            serde_json::Value::Bool(false),
+            "manifest must record validation_passed=false when validator rejects"
+        );
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn provider_failure_before_validation_leaves_validation_passed_null() {
+        use crate::machines::scheduler::{RunRequest, SchedulerHandler, SchedulerMachine};
+        use crate::node_runner::{NodeRunRequest, NodeRunResult, NodeRunner};
+        use crate::runtime::{create_run, finalize_manifest};
+        use crate::telemetry::NoopTelemetry;
+
+        struct AlwaysFailRunner;
+        impl NodeRunner for AlwaysFailRunner {
+            fn run_node(
+                &self,
+                _request: NodeRunRequest,
+                _telemetry: &dyn crate::telemetry::TelemetrySink,
+            ) -> NodeRunResult {
+                use crate::machines::scheduler::event::{NodeFailure, RecoveryAction};
+                NodeRunResult::Failed(NodeFailure {
+                    reason: "provider unavailable".to_string(),
+                    recovery: RecoveryAction::Terminal {
+                        message: "provider unavailable".to_string(),
+                    },
+                })
+            }
+        }
+
+        let (base, artifact, _) = make_bare_artifact("vp-manifest-null");
+        let runs_root = base.join("runs");
+
+        let run_info = create_run(&runs_root, "test", "repo", "provider").unwrap();
+        let handler = SchedulerHandler::with_artifact(AlwaysFailRunner, artifact);
+        let initial_state = SchedulerMachine::initial_state(RunRequest {
+            objective: "do something".to_string(),
+        });
+        let (output, handler) = run_machine_with_telemetry(handler, initial_state, &NoopTelemetry);
+
+        let validation_passed = handler.validation_passed();
+        let status = match &output {
+            SchedulerOutput::Complete { .. } => "succeeded",
+            SchedulerOutput::Failed { .. } => "failed",
+        };
+        finalize_manifest(&run_info, status, None, validation_passed, None).unwrap();
+
+        let content = std::fs::read_to_string(run_info.run_dir.join("manifest.json")).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(v["status"], "failed");
+        assert_eq!(
+            v["validation_passed"],
+            serde_json::Value::Null,
+            "manifest must record validation_passed=null when failure occurs before validation"
+        );
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 }
