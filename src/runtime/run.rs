@@ -44,12 +44,31 @@ impl ForgeRuntime {
         let sink: Rc<dyn TelemetrySink> =
             Rc::new(FileTelemetry::new(run_info.telemetry_dir.clone()));
 
-        let llama =
+        let cheap_llama =
             LlamaCppProvider::new(&config.provider.base_url, config.provider.timeout_seconds);
-        let retrying = RetryingProvider::new(llama, 3);
+        let cheap = RetryingProvider::new(cheap_llama, 3);
 
-        let runner =
-            DeliberatingNodeRunner::new(retrying).with_max_tokens(config.provider.n_predict as u32);
+        let strong_base_url = config
+            .provider
+            .strong_base_url
+            .as_deref()
+            .unwrap_or(&config.provider.base_url);
+        let strong_timeout = config
+            .provider
+            .strong_timeout_seconds
+            .unwrap_or(config.provider.timeout_seconds);
+        let strong_llama = LlamaCppProvider::new(strong_base_url, strong_timeout);
+        let strong = RetryingProvider::new(strong_llama, 3);
+
+        let cheap_tokens = config.provider.n_predict as u32;
+        let strong_tokens = config
+            .provider
+            .strong_n_predict
+            .unwrap_or(config.provider.n_predict) as u32;
+
+        let runner = DeliberatingNodeRunner::new(cheap, strong)
+            .with_cheap_max_tokens(cheap_tokens)
+            .with_strong_max_tokens(strong_tokens);
         let validator = make_validator(config.validation.as_ref());
         let handler = SchedulerHandler::with_artifact(runner, artifact)
             .with_telemetry(Rc::clone(&sink))
@@ -255,6 +274,9 @@ mod tests {
                 base_url: "http://localhost:8080".to_string(),
                 n_predict: 512,
                 timeout_seconds: 42,
+                strong_base_url: None,
+                strong_n_predict: None,
+                strong_timeout_seconds: None,
             },
             telemetry: TelemetryConfig {
                 directory: "/tmp/telemetry".to_string(),
@@ -265,6 +287,30 @@ mod tests {
         let _provider =
             LlamaCppProvider::new(&config.provider.base_url, config.provider.timeout_seconds);
         // Construction succeeds: the timeout is wired through.
+    }
+
+    #[test]
+    fn strong_tier_falls_back_when_no_strong_provider_configured() {
+        let config = ProviderConfig {
+            base_url: "http://localhost:8080".to_string(),
+            n_predict: 512,
+            timeout_seconds: 120,
+            strong_base_url: None,
+            strong_n_predict: None,
+            strong_timeout_seconds: None,
+        };
+        // When strong fields are absent, both tiers must resolve to the cheap values.
+        let strong_url = config
+            .strong_base_url
+            .as_deref()
+            .unwrap_or(&config.base_url);
+        let strong_tokens = config.strong_n_predict.unwrap_or(config.n_predict);
+        let strong_timeout = config
+            .strong_timeout_seconds
+            .unwrap_or(config.timeout_seconds);
+        assert_eq!(strong_url, "http://localhost:8080");
+        assert_eq!(strong_tokens, 512);
+        assert_eq!(strong_timeout, 120);
     }
 
     #[test]

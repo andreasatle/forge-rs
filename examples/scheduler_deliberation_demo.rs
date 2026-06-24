@@ -72,7 +72,8 @@ fn main() {
 
     let llama = LlamaCppProvider::new("http://localhost:8080", 120);
     let retrying = RetryingProvider::new(llama, 3);
-    let runner = DeliberatingNodeRunner::new(retrying);
+    // Single provider for both tiers; no strong-tier endpoint configured.
+    let runner = DeliberatingNodeRunner::new(&retrying, &retrying);
     let handler = SchedulerHandler::new(runner);
 
     let initial_state = SchedulerMachine::initial_state(RunRequest {

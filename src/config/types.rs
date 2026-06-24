@@ -43,6 +43,18 @@ pub struct ProviderConfig {
     /// HTTP request timeout in seconds. Absent configs default to 120.
     #[serde(default = "default_provider_timeout_seconds")]
     pub timeout_seconds: u64,
+    /// Base URL for the strong-tier provider. When absent, the strong tier
+    /// falls back to `base_url`.
+    #[serde(default)]
+    pub strong_base_url: Option<String>,
+    /// Maximum tokens for strong-tier completions. Falls back to `n_predict`
+    /// when absent.
+    #[serde(default)]
+    pub strong_n_predict: Option<usize>,
+    /// Timeout for strong-tier completions in seconds. Falls back to
+    /// `timeout_seconds` when absent.
+    #[serde(default)]
+    pub strong_timeout_seconds: Option<u64>,
 }
 
 /// Telemetry output configuration.
@@ -269,6 +281,42 @@ validation:
         let tmp = TempYaml::new("not: valid: yaml: [");
         let result = ForgeConfig::from_file(tmp.path());
         assert!(result.is_err(), "invalid YAML must return an error");
+    }
+
+    const STRONG_PROVIDER_YAML: &str = r#"
+objective: "test"
+artifact:
+  repo_path: ".forge/artifacts/main.git"
+  branch: "main"
+provider:
+  base_url: "http://localhost:8080"
+  n_predict: 512
+  strong_base_url: "http://localhost:8081"
+  strong_n_predict: 1024
+  strong_timeout_seconds: 180
+telemetry:
+  directory: "runs"
+"#;
+
+    #[test]
+    fn config_parses_optional_strong_provider_fields() {
+        let tmp = TempYaml::new(STRONG_PROVIDER_YAML);
+        let config = ForgeConfig::from_file(tmp.path()).unwrap();
+        assert_eq!(
+            config.provider.strong_base_url.as_deref(),
+            Some("http://localhost:8081")
+        );
+        assert_eq!(config.provider.strong_n_predict, Some(1024));
+        assert_eq!(config.provider.strong_timeout_seconds, Some(180));
+    }
+
+    #[test]
+    fn strong_provider_fields_absent_defaults_to_none() {
+        let tmp = TempYaml::new(EXAMPLE_YAML);
+        let config = ForgeConfig::from_file(tmp.path()).unwrap();
+        assert!(config.provider.strong_base_url.is_none());
+        assert!(config.provider.strong_n_predict.is_none());
+        assert!(config.provider.strong_timeout_seconds.is_none());
     }
 
     const ABSOLUTE_YAML: &str = r#"

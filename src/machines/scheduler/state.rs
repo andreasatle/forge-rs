@@ -46,7 +46,7 @@ pub enum NodeKind {
 /// nodes. `Strong` is reserved for cases where the task has already proven too
 /// difficult for the cheaper tier, or where plan quality directly determines
 /// downstream work.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ModelTier {
     /// The default, cost-efficient tier. Used for initial attempts.
     Cheap,

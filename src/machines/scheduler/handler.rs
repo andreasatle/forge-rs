@@ -1684,7 +1684,7 @@ mod tests {
             r#"{"status":"accepted","content":"looks good"}"#,
             r#"{"status":"accepted","content":"approved"}"#,
         ]);
-        let runner = DeliberatingNodeRunner::new(provider);
+        let runner = DeliberatingNodeRunner::new(&provider, &provider);
         let initial_state = SchedulerMachine::initial_state(RunRequest {
             objective: "do something".to_string(),
         });
@@ -1729,7 +1729,7 @@ mod tests {
             r#"{"status":"accepted","content":"looks good"}"#,
             r#"{"status":"accepted","content":"approved"}"#,
         ]);
-        let runner = DeliberatingNodeRunner::new(provider);
+        let runner = DeliberatingNodeRunner::new(&provider, &provider);
         let initial_state = SchedulerMachine::initial_state(RunRequest {
             objective: "do something".to_string(),
         });
@@ -1814,7 +1814,7 @@ mod tests {
             r#"{"status":"accepted","content":"looks good"}"#,
             r#"{"status":"accepted","content":"approved"}"#,
         ]);
-        let runner = DeliberatingNodeRunner::new(provider);
+        let runner = DeliberatingNodeRunner::new(&provider, &provider);
         let initial_state = SchedulerMachine::initial_state(RunRequest {
             objective: "do something".to_string(),
         });

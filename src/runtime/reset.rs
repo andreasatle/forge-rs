@@ -107,6 +107,9 @@ mod tests {
                 base_url: "http://localhost:8080".to_string(),
                 n_predict: 512,
                 timeout_seconds: 120,
+                strong_base_url: None,
+                strong_n_predict: None,
+                strong_timeout_seconds: None,
             },
             telemetry: TelemetryConfig {
                 directory: telemetry_path.to_str().unwrap().to_string(),
@@ -271,6 +274,9 @@ mod tests {
                     base_url: "http://localhost:8080".to_string(),
                     n_predict: 512,
                     timeout_seconds: 120,
+                    strong_base_url: None,
+                    strong_n_predict: None,
+                    strong_timeout_seconds: None,
                 },
                 telemetry: TelemetryConfig {
                     directory: telemetry.to_str().unwrap().to_string(),

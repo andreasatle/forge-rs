@@ -590,7 +590,7 @@ impl SchedulerMachine {
                 n.dependencies.clone(),
                 n.attempt,
                 n.plan_depth,
-                n.model_tier.clone(),
+                n.model_tier,
             )
         };
         let replacement_id = NodeId(format!("{}-retry-{}", node_id.0, graph.next_id));
@@ -987,12 +987,7 @@ impl SchedulerMachine {
                         let node_id = ready[0].clone();
                         let (kind, objective, model_tier, attempt) = {
                             let n = Self::get_node(&graph, &node_id);
-                            (
-                                n.kind.clone(),
-                                n.objective.clone(),
-                                n.model_tier.clone(),
-                                n.attempt,
-                            )
+                            (n.kind.clone(), n.objective.clone(), n.model_tier, n.attempt)
                         };
                         let effect = SchedulerEffect::RunNode {
                             node_id: node_id.clone(),

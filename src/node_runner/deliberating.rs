@@ -7,7 +7,7 @@ use crate::machines::deliberation::{
     DeliberationState, DeliberationTerminalOutput, ProviderBackedDeliberationHandler,
 };
 use crate::machines::scheduler::{
-    NodeFailure, NodeId, NodeKind, NodeRequest, PlanOutput, RecoveryAction, WorkOutput,
+    ModelTier, NodeFailure, NodeId, NodeKind, NodeRequest, PlanOutput, RecoveryAction, WorkOutput,
 };
 use crate::providers::ProviderClient;
 use crate::telemetry::TelemetrySink;
@@ -16,6 +16,11 @@ use super::runner::NodeRunner;
 use super::types::{NodeRunRequest, NodeRunResult, NodeRunWorkResult};
 
 /// Runs a node by driving a [`DeliberationMachine`] with a real provider.
+///
+/// Holds a separate provider and token budget for each [`ModelTier`]. On each
+/// `run_node` call the runner inspects `request.model_tier` and routes to either
+/// `cheap_provider` or `strong_provider`. When no strong provider is configured
+/// the caller should pass the same provider for both tiers.
 ///
 /// The final producer content is mapped to [`NodeRunResult`] by kind: plan nodes
 /// produce one child work node whose objective is the producer content; work nodes
@@ -26,23 +31,37 @@ use super::types::{NodeRunRequest, NodeRunResult, NodeRunWorkResult};
 /// When the request carries an [`ArtifactView`], a brief file listing (and
 /// `README.md` if present) is prepended to the deliberation objective so the
 /// producer has file context without any workspace mutation.
-pub struct DeliberatingNodeRunner<P> {
-    provider: P,
-    max_tokens: u32,
+pub struct DeliberatingNodeRunner<C, S> {
+    cheap_provider: C,
+    strong_provider: S,
+    cheap_max_tokens: u32,
+    strong_max_tokens: u32,
 }
 
-impl<P> DeliberatingNodeRunner<P> {
-    /// Wrap a provider in a new runner using the default token budget.
-    pub fn new(provider: P) -> Self {
+impl<C, S> DeliberatingNodeRunner<C, S> {
+    /// Build a runner with separate cheap and strong providers.
+    ///
+    /// When no distinct strong provider is available, pass the same provider
+    /// (or a reference to it) for both parameters — selection will still be
+    /// explicit in the call site rather than accidental.
+    pub fn new(cheap_provider: C, strong_provider: S) -> Self {
         Self {
-            provider,
-            max_tokens: 1024,
+            cheap_provider,
+            strong_provider,
+            cheap_max_tokens: 1024,
+            strong_max_tokens: 1024,
         }
     }
 
-    /// Override the token budget forwarded to each role call.
-    pub fn with_max_tokens(mut self, max_tokens: u32) -> Self {
-        self.max_tokens = max_tokens;
+    /// Set the token budget forwarded to cheap-tier role calls.
+    pub fn with_cheap_max_tokens(mut self, max_tokens: u32) -> Self {
+        self.cheap_max_tokens = max_tokens;
+        self
+    }
+
+    /// Set the token budget forwarded to strong-tier role calls.
+    pub fn with_strong_max_tokens(mut self, max_tokens: u32) -> Self {
+        self.strong_max_tokens = max_tokens;
         self
     }
 }
@@ -92,28 +111,50 @@ impl<'a, P: ProviderClient> Machine for DeliberatingMachine<'a, P> {
     }
 }
 
-impl<P: ProviderClient> NodeRunner for DeliberatingNodeRunner<P> {
+impl<C: ProviderClient, S: ProviderClient> NodeRunner for DeliberatingNodeRunner<C, S> {
     fn run_node(&self, request: NodeRunRequest, telemetry: &dyn TelemetrySink) -> NodeRunResult {
-        let objective = enrich_objective(&request);
-        let delib_request = DeliberationRequest {
-            objective,
-            max_revisions: 1,
-        };
-        let initial_state = DeliberationState::Ready {
-            request: delib_request,
-        };
-        let machine = DeliberatingMachine {
-            handler: ProviderBackedDeliberationHandler::new_with_view(
-                &self.provider,
-                request.artifact_view.clone(),
-                self.max_tokens,
+        match request.model_tier {
+            ModelTier::Cheap => run_with_provider(
+                &self.cheap_provider,
+                request,
+                self.cheap_max_tokens,
+                telemetry,
             ),
-            telemetry,
-        };
-        let (output, machine) = run_machine_with_telemetry(machine, initial_state, telemetry);
-        let tool_artifact_update = machine.take_artifact_update();
-        map_output(output, request.kind, tool_artifact_update)
+            ModelTier::Strong => run_with_provider(
+                &self.strong_provider,
+                request,
+                self.strong_max_tokens,
+                telemetry,
+            ),
+        }
     }
+}
+
+fn run_with_provider<P: ProviderClient>(
+    provider: &P,
+    request: NodeRunRequest,
+    max_tokens: u32,
+    telemetry: &dyn TelemetrySink,
+) -> NodeRunResult {
+    let objective = enrich_objective(&request);
+    let delib_request = DeliberationRequest {
+        objective,
+        max_revisions: 1,
+    };
+    let initial_state = DeliberationState::Ready {
+        request: delib_request,
+    };
+    let machine = DeliberatingMachine {
+        handler: ProviderBackedDeliberationHandler::new_with_view(
+            provider,
+            request.artifact_view.clone(),
+            max_tokens,
+        ),
+        telemetry,
+    };
+    let (output, machine) = run_machine_with_telemetry(machine, initial_state, telemetry);
+    let tool_artifact_update = machine.take_artifact_update();
+    map_output(output, request.kind, tool_artifact_update)
 }
 
 /// Returns the objective string, optionally prefixed with artifact file context.
@@ -204,6 +245,42 @@ mod tests {
     use crate::providers::{ProviderError, ProviderErrorKind, ProviderRequest, ProviderResponse};
     use crate::telemetry::NoopTelemetry;
 
+    /// Provider that records the `max_tokens` from the first request it receives.
+    struct CapturingProvider {
+        max_tokens: RefCell<Option<u32>>,
+        responses: RefCell<VecDeque<String>>,
+    }
+
+    impl CapturingProvider {
+        fn from_strs(responses: &[&str]) -> Self {
+            Self {
+                max_tokens: RefCell::new(None),
+                responses: RefCell::new(responses.iter().map(|s| s.to_string()).collect()),
+            }
+        }
+
+        fn captured_max_tokens(&self) -> Option<u32> {
+            *self.max_tokens.borrow()
+        }
+    }
+
+    impl ProviderClient for CapturingProvider {
+        fn call(&self, req: ProviderRequest) -> Result<ProviderResponse, ProviderError> {
+            if self.max_tokens.borrow().is_none() {
+                *self.max_tokens.borrow_mut() = Some(req.max_tokens);
+            }
+            let content = self
+                .responses
+                .borrow_mut()
+                .pop_front()
+                .expect("CapturingProvider: responses exhausted");
+            Ok(ProviderResponse {
+                content,
+                finish_reason: None,
+            })
+        }
+    }
+
     struct ScriptedProvider {
         responses: RefCell<VecDeque<Result<String, ProviderError>>>,
     }
@@ -292,6 +369,16 @@ mod tests {
         }
     }
 
+    fn strong_work_request(objective: &str) -> NodeRunRequest {
+        NodeRunRequest {
+            kind: NodeKind::Work,
+            objective: objective.to_string(),
+            model_tier: ModelTier::Strong,
+            attempt: 0,
+            artifact_view: None,
+        }
+    }
+
     // --- git helpers for artifact_view tests ---
 
     static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
@@ -373,7 +460,7 @@ mod tests {
             r#"{"status":"accepted","content":"looks good"}"#,
             r#"{"status":"accepted","content":"approved"}"#,
         ]);
-        let runner = DeliberatingNodeRunner::new(provider);
+        let runner = DeliberatingNodeRunner::new(&provider, &provider);
         let result = runner.run_node(plan_request("plan the work"), &NoopTelemetry);
         let NodeRunResult::PlanAccepted(plan) = result else {
             panic!("expected PlanAccepted");
@@ -390,7 +477,7 @@ mod tests {
             r#"{"status":"accepted","content":"review ok"}"#,
             r#"{"status":"accepted","content":"approved"}"#,
         ]);
-        let runner = DeliberatingNodeRunner::new(provider);
+        let runner = DeliberatingNodeRunner::new(&provider, &provider);
         let result = runner.run_node(work_request("write some code"), &NoopTelemetry);
         let NodeRunResult::WorkAccepted(work_result) = result else {
             panic!("expected WorkAccepted");
@@ -401,7 +488,7 @@ mod tests {
     #[test]
     fn deliberating_runner_provider_failure_returns_failed() {
         let provider = ScriptedProvider::failing(ProviderErrorKind::Retryable, "timeout");
-        let runner = DeliberatingNodeRunner::new(provider);
+        let runner = DeliberatingNodeRunner::new(&provider, &provider);
         let result = runner.run_node(work_request("do something"), &NoopTelemetry);
         let NodeRunResult::Failed(failure) = result else {
             panic!("expected Failed");
@@ -419,7 +506,7 @@ mod tests {
             r#"{"status":"accepted","content":"review ok"}"#,
             r#"{"status":"accepted","content":"approved"}"#,
         ]);
-        let runner = DeliberatingNodeRunner::new(provider);
+        let runner = DeliberatingNodeRunner::new(&provider, &provider);
         let result = runner.run_node(work_request("refine the plan"), &NoopTelemetry);
         let NodeRunResult::WorkAccepted(work_result) = result else {
             panic!("expected WorkAccepted");
@@ -434,7 +521,7 @@ mod tests {
             "still not valid json",
             "also not valid json",
         ]);
-        let runner = DeliberatingNodeRunner::new(provider);
+        let runner = DeliberatingNodeRunner::new(&provider, &provider);
         let result = runner.run_node(work_request("do something"), &NoopTelemetry);
         let NodeRunResult::Failed(failure) = result else {
             panic!("expected Failed");
@@ -451,7 +538,7 @@ mod tests {
             r#"{"status":"accepted","content":"review ok"}"#,
             r#"{"status":"accepted","content":"approved"}"#,
         ]);
-        let runner = DeliberatingNodeRunner::new(provider);
+        let runner = DeliberatingNodeRunner::new(&provider, &provider);
         let result = runner.run_node(work_request("produce some output"), &NoopTelemetry);
         let NodeRunResult::WorkAccepted(work_result) = result else {
             panic!("expected WorkAccepted");
@@ -479,7 +566,7 @@ mod tests {
             r#"{"status":"accepted","content":"review ok"}"#,
             r#"{"status":"accepted","content":"approved"}"#,
         ]);
-        let runner = DeliberatingNodeRunner::new(&provider);
+        let runner = DeliberatingNodeRunner::new(&provider, &provider);
         let request = NodeRunRequest {
             kind: NodeKind::Work,
             objective: "do the thing".to_string(),
@@ -504,50 +591,18 @@ mod tests {
 
     #[test]
     fn deliberating_runner_threads_max_tokens_to_provider() {
-        struct RequestCapture {
-            max_tokens: RefCell<Option<u32>>,
-            responses: RefCell<VecDeque<String>>,
-        }
-        impl RequestCapture {
-            fn from_strs(responses: &[&str]) -> Self {
-                Self {
-                    max_tokens: RefCell::new(None),
-                    responses: RefCell::new(responses.iter().map(|s| s.to_string()).collect()),
-                }
-            }
-        }
-        impl ProviderClient for RequestCapture {
-            fn call(
-                &self,
-                req: ProviderRequest,
-            ) -> Result<crate::providers::ProviderResponse, ProviderError> {
-                if self.max_tokens.borrow().is_none() {
-                    *self.max_tokens.borrow_mut() = Some(req.max_tokens);
-                }
-                let content = self
-                    .responses
-                    .borrow_mut()
-                    .pop_front()
-                    .expect("RequestCapture: responses exhausted");
-                Ok(crate::providers::ProviderResponse {
-                    content,
-                    finish_reason: None,
-                })
-            }
-        }
-
-        let provider = RequestCapture::from_strs(&[
+        let provider = CapturingProvider::from_strs(&[
             r#"{"status":"accepted","content":"result"}"#,
             r#"{"status":"accepted","content":"review"}"#,
             r#"{"status":"accepted","content":"approved"}"#,
         ]);
-        let runner = DeliberatingNodeRunner::new(&provider).with_max_tokens(256);
+        let runner = DeliberatingNodeRunner::new(&provider, &provider).with_cheap_max_tokens(256);
         runner.run_node(work_request("test threading"), &NoopTelemetry);
 
         assert_eq!(
-            *provider.max_tokens.borrow(),
+            provider.captured_max_tokens(),
             Some(256),
-            "with_max_tokens must propagate to the provider request"
+            "with_cheap_max_tokens must propagate to the provider request"
         );
     }
 
@@ -564,7 +619,7 @@ mod tests {
             r#"{"status":"accepted","content":"looks good"}"#,
             r#"{"status":"accepted","content":"approved"}"#,
         ]);
-        let runner = DeliberatingNodeRunner::new(provider);
+        let runner = DeliberatingNodeRunner::new(&provider, &provider);
         let request = NodeRunRequest {
             kind: NodeKind::Work,
             objective: "write a result file".to_string(),
@@ -596,5 +651,67 @@ mod tests {
             }
             other => panic!("expected Write change from tool, got {other:?}"),
         }
+    }
+
+    // --- model-tier routing tests ---
+
+    #[test]
+    fn cheap_tier_uses_cheap_provider() {
+        // Strong has no responses; calling it would panic. Proves routing is correct.
+        let cheap = ScriptedProvider::from_strs(&[
+            r#"{"status":"accepted","content":"result"}"#,
+            r#"{"status":"accepted","content":"review ok"}"#,
+            r#"{"status":"accepted","content":"approved"}"#,
+        ]);
+        let strong = ScriptedProvider::from_strs(&[]);
+        let runner = DeliberatingNodeRunner::new(&cheap, &strong);
+        let result = runner.run_node(work_request("cheap tier test"), &NoopTelemetry);
+        assert!(
+            matches!(result, NodeRunResult::WorkAccepted(_)),
+            "cheap tier must route to cheap provider and succeed"
+        );
+    }
+
+    #[test]
+    fn strong_tier_uses_strong_provider() {
+        // Cheap has no responses; calling it would panic. Proves routing is correct.
+        let cheap = ScriptedProvider::from_strs(&[]);
+        let strong = ScriptedProvider::from_strs(&[
+            r#"{"status":"accepted","content":"result"}"#,
+            r#"{"status":"accepted","content":"review ok"}"#,
+            r#"{"status":"accepted","content":"approved"}"#,
+        ]);
+        let runner = DeliberatingNodeRunner::new(&cheap, &strong);
+        let result = runner.run_node(strong_work_request("strong tier test"), &NoopTelemetry);
+        assert!(
+            matches!(result, NodeRunResult::WorkAccepted(_)),
+            "strong tier must route to strong provider and succeed"
+        );
+    }
+
+    #[test]
+    fn strong_tier_uses_strong_token_budget() {
+        // Cheap has no responses — if it were called the test would panic.
+        let cheap = CapturingProvider::from_strs(&[]);
+        let strong = CapturingProvider::from_strs(&[
+            r#"{"status":"accepted","content":"result"}"#,
+            r#"{"status":"accepted","content":"review ok"}"#,
+            r#"{"status":"accepted","content":"approved"}"#,
+        ]);
+        let runner = DeliberatingNodeRunner::new(&cheap, &strong)
+            .with_cheap_max_tokens(512)
+            .with_strong_max_tokens(2048);
+        runner.run_node(strong_work_request("token budget test"), &NoopTelemetry);
+
+        assert_eq!(
+            strong.captured_max_tokens(),
+            Some(2048),
+            "strong tier must use strong_max_tokens"
+        );
+        assert_eq!(
+            cheap.captured_max_tokens(),
+            None,
+            "cheap provider must not be called for a strong-tier request"
+        );
     }
 }
