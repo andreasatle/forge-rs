@@ -1,4 +1,4 @@
-objective: "Write a short haiku about Rust state machines."
+objective: "Create a simple Rust program in src/main.rs that prints a short haiku about Rust state machines."
 artifact:
   repo_path: ".forge/artifacts/main.git"
   branch: "main"
