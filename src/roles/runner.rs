@@ -353,8 +353,8 @@ fn render_tool_section(policy: &FileToolPolicy) -> String {
     );
     if policy.allow_writes {
         s.push_str(
-            "{\"tool\":\"write_file\",\"path\":\"output.txt\",\"content\":\"...\"}\n\
-             {\"tool\":\"replace_text\",\"path\":\"output.txt\",\"old\":\"...\",\"new\":\"...\"}\n\
+            "{\"tool\":\"write_file\",\"path\":\"output.txt\",\"content\":\"Hello, world!\"}\n\
+             {\"tool\":\"replace_text\",\"path\":\"output.txt\",\"old\":\"<EXACT_EXISTING_TEXT>\",\"new\":\"<REPLACEMENT_TEXT>\"}\n\
              {\"tool\":\"delete_file\",\"path\":\"old.txt\"}\n",
         );
     }
@@ -362,7 +362,8 @@ fn render_tool_section(policy: &FileToolPolicy) -> String {
         "You may return either:\n\
          1. a tool request JSON, or\n\
          2. a final role result JSON.\n\
-         Return exactly one JSON object.",
+         Return exactly one JSON object.\n\
+         Do not copy example values. Replace them with actual file paths and content.",
     );
     s
 }
@@ -380,8 +381,9 @@ fn render_retry_prompt(original_prompt: &str, parse_error: &str) -> String {
         "{original_prompt}\n\n\
          Your previous response could not be parsed: {parse_error}\n\
          Return only one JSON object matching one of these schemas:\n\
-         {{\"status\":\"accepted\",\"content\":\"...\"}}\n\
-         {{\"status\":\"rejected\",\"reason\":\"...\"}}"
+         {{\"status\":\"accepted\",\"content\":\"<YOUR_RESPONSE_HERE>\"}}\n\
+         {{\"status\":\"rejected\",\"reason\":\"<REASON_FOR_REJECTION>\"}}\n\
+         Do not copy example values. Replace them with task-specific content."
     )
 }
 
@@ -409,8 +411,9 @@ fn render_role_prompt(
     parts.push(
         "Return exactly one JSON object. No markdown. No code fence. No explanation. \
          No text before or after the JSON.\n\
-         Accepted: {\"status\":\"accepted\",\"content\":\"...\"}\n\
-         Rejected: {\"status\":\"rejected\",\"reason\":\"...\"}\n\
+         Accepted: {\"status\":\"accepted\",\"content\":\"<YOUR_RESPONSE_HERE>\"}\n\
+         Rejected: {\"status\":\"rejected\",\"reason\":\"<REASON_FOR_REJECTION>\"}\n\
+         Do not copy example values. Replace them with task-specific content.\n\
          Producer returns accepted content. \
          Critic accepts with a review or rejects with a reason. \
          Referee accepts approval or rejects with revision feedback. \
@@ -830,7 +833,8 @@ mod tests {
         assert!(retry_prompt.contains("no JSON object found"));
         assert!(!retry_prompt.contains("invalid text"));
         assert!(retry_prompt.contains("Objective: recover output"));
-        assert!(retry_prompt.contains(r#"{"status":"accepted","content":"..."}"#));
+        assert!(retry_prompt.contains("<YOUR_RESPONSE_HERE>"));
+        assert!(!retry_prompt.contains("\"...\""));
     }
 
     #[test]
@@ -1757,6 +1761,150 @@ mod tests {
                 .iter()
                 .all(|r| !matches!(r.event, TelemetryEvent::ToolRequested { .. })),
             "placeholder write_file must not emit ToolRequested"
+        );
+    }
+
+    // ── prompt hardening: no "..." placeholders in any rendered prompt ───────
+
+    #[test]
+    fn no_runtime_prompt_contains_dot_placeholder_json_values() {
+        // Render every prompt variant and assert none contains the "..." sentinel
+        // as a JSON string value.  "..." in a JSON value is a known trigger for
+        // model placeholder-copying (see 2026-06-24 incident).
+        let no_dot = |label: &str, prompt: &str| {
+            assert!(
+                !prompt.contains("\"...\""),
+                "{label} must not contain '...' as a JSON value; got:\n{prompt}"
+            );
+        };
+
+        // Role prompts for all three roles, with and without prior content.
+        for (role, pc, cc) in [
+            (DeliberationRole::Producer, None, None),
+            (DeliberationRole::Critic, Some("draft"), None),
+            (DeliberationRole::Referee, Some("draft"), Some("looks good")),
+        ] {
+            let prompt = render_role_prompt(&role, "write a haiku about Rust", pc, cc, &[]);
+            no_dot(&format!("{role:?} role prompt"), &prompt);
+        }
+
+        // Tool section — write-enabled and read-only.
+        let rw = render_tool_section(&FileToolPolicy {
+            allow_writes: true,
+            ..FileToolPolicy::default()
+        });
+        let ro = render_tool_section(&FileToolPolicy {
+            allow_writes: false,
+            ..FileToolPolicy::default()
+        });
+        no_dot("write-enabled tool section", &rw);
+        no_dot("read-only tool section", &ro);
+
+        // Retry prompt (wraps the base role prompt).
+        let base = render_role_prompt(
+            &DeliberationRole::Producer,
+            "write a haiku",
+            None,
+            None,
+            &[],
+        );
+        let retry = render_retry_prompt(&base, "no JSON object found in role response");
+        no_dot("retry prompt", &retry);
+    }
+
+    #[test]
+    fn producer_prompt_uses_concrete_or_named_tool_examples() {
+        let rw = render_tool_section(&FileToolPolicy {
+            allow_writes: true,
+            ..FileToolPolicy::default()
+        });
+        // write_file must show a concrete content value, not "...".
+        assert!(
+            rw.contains("write_file"),
+            "write-enabled section must include write_file"
+        );
+        let write_file_pos = rw.find("write_file").unwrap();
+        let after_write = &rw[write_file_pos..];
+        assert!(
+            !after_write.starts_with(&format!(
+                "write_file\",\"path\":\"output.txt\",\"content\":\"...\""
+            )) && after_write.contains("content"),
+            "write_file example must not use '...' for content; got:\n{after_write}"
+        );
+        // replace_text must use named <PLACEHOLDER> tokens, not "...".
+        assert!(
+            rw.contains("replace_text"),
+            "write-enabled section must include replace_text"
+        );
+        assert!(
+            !rw.contains("\"old\":\"...\""),
+            "replace_text old must not be '...'; got:\n{rw}"
+        );
+        assert!(
+            !rw.contains("\"new\":\"...\""),
+            "replace_text new must not be '...'; got:\n{rw}"
+        );
+    }
+
+    #[test]
+    fn role_response_examples_do_not_use_dot_placeholders() {
+        for (role, pc, cc) in [
+            (DeliberationRole::Producer, None, None),
+            (DeliberationRole::Critic, Some("draft"), None),
+            (DeliberationRole::Referee, Some("draft"), Some("looks good")),
+        ] {
+            let prompt = render_role_prompt(&role, "test objective", pc, cc, &[]);
+            assert!(
+                !prompt.contains("\"content\":\"...\""),
+                "{role:?} prompt must not use '...' for accepted content; got:\n{prompt}"
+            );
+            assert!(
+                !prompt.contains("\"reason\":\"...\""),
+                "{role:?} prompt must not use '...' for rejected reason; got:\n{prompt}"
+            );
+        }
+        // Retry prompt schema examples also must not use "...".
+        let base = render_role_prompt(&DeliberationRole::Producer, "test", None, None, &[]);
+        let retry = render_retry_prompt(&base, "parse error");
+        assert!(
+            !retry.contains("\"content\":\"...\""),
+            "retry prompt must not use '...' for accepted content; got:\n{retry}"
+        );
+        assert!(
+            !retry.contains("\"reason\":\"...\""),
+            "retry prompt must not use '...' for rejected reason; got:\n{retry}"
+        );
+    }
+
+    #[test]
+    fn prompt_mentions_not_to_copy_example_values() {
+        // Every prompt surface that includes JSON examples must explicitly instruct
+        // the model not to copy them verbatim.
+        let base = render_role_prompt(
+            &DeliberationRole::Producer,
+            "write a haiku",
+            None,
+            None,
+            &[],
+        );
+        assert!(
+            base.contains("Do not copy example values"),
+            "role prompt must instruct model not to copy examples; got:\n{base}"
+        );
+
+        let rw = render_tool_section(&FileToolPolicy {
+            allow_writes: true,
+            ..FileToolPolicy::default()
+        });
+        assert!(
+            rw.contains("Do not copy example values"),
+            "write-enabled tool section must instruct model not to copy examples; got:\n{rw}"
+        );
+
+        let retry = render_retry_prompt(&base, "parse error");
+        assert!(
+            retry.contains("Do not copy example values"),
+            "retry prompt must instruct model not to copy examples; got:\n{retry}"
         );
     }
 
