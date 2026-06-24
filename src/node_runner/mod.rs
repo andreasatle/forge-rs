@@ -10,6 +10,7 @@
 //! - `runner.rs` — [`NodeRunner`] trait and [`StaticNodeRunner`] fake implementation
 //! - `deliberating.rs` — [`DeliberatingNodeRunner`] backed by [`DeliberationMachine`](crate::machines::deliberation::DeliberationMachine)
 
+pub mod classify;
 pub mod deliberating;
 pub mod planner;
 pub mod runner;

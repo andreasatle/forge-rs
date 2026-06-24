@@ -12,6 +12,7 @@ use crate::machines::scheduler::{
 use crate::providers::ProviderClient;
 use crate::telemetry::{TelemetryEvent, TelemetryRecord, TelemetrySink};
 
+use super::classify::{classify_deliberation_failure, recovery_label};
 use super::runner::NodeRunner;
 use super::types::{NodeRunRequest, NodeRunResult, NodeRunWorkResult};
 
@@ -215,12 +216,17 @@ fn map_output(
                 },
             }),
         },
-        DeliberationTerminalOutput::Failed { reason } => NodeRunResult::Failed(NodeFailure {
-            reason: reason.clone(),
-            recovery: RecoveryAction::Terminal {
-                message: format!("deliberation failed: {reason}"),
-            },
-        }),
+        DeliberationTerminalOutput::Failed { reason } => {
+            let recovery = classify_deliberation_failure(&reason);
+            telemetry.record(TelemetryRecord::new(
+                "DeliberatingNodeRunner",
+                TelemetryEvent::FailureClassified {
+                    reason: reason.clone(),
+                    recovery: recovery_label(&recovery).to_string(),
+                },
+            ));
+            NodeRunResult::Failed(NodeFailure { reason, recovery })
+        }
     }
 }
 
@@ -562,7 +568,7 @@ mod tests {
                 .reason
                 .contains("provider error (Retryable): connection refused")
         );
-        assert!(matches!(failure.recovery, RecoveryAction::Terminal { .. }));
+        assert!(matches!(failure.recovery, RecoveryAction::Retry { .. }));
     }
 
     #[test]
@@ -581,11 +587,12 @@ mod tests {
                 .reason
                 .contains("provider error (Retryable): connection refused")
         );
-        let RecoveryAction::Terminal { message } = failure.recovery else {
-            panic!("expected terminal recovery");
+        let RecoveryAction::Retry { message } = failure.recovery else {
+            panic!("expected retry recovery for retryable provider error");
         };
         assert!(
-            message.contains("deliberation failed: provider error (Retryable): connection refused")
+            message.contains("provider error (Retryable): connection refused"),
+            "retry message must include the original reason; got: {message}"
         );
     }
 
@@ -743,6 +750,119 @@ mod tests {
                 assert_eq!(content, "done");
             }
             other => panic!("expected Write change from tool, got {other:?}"),
+        }
+    }
+
+    // --- recovery classification runtime tests ---
+
+    #[test]
+    fn retryable_failure_produces_retry_action() {
+        let provider = ScriptedProvider::failing(
+            ProviderErrorKind::Retryable,
+            "connection refused on http://localhost:8080/completion",
+        );
+        let runner = DeliberatingNodeRunner::new(&provider, &provider);
+        let telemetry = crate::telemetry::VecTelemetry::new();
+        let result = runner.run_node(work_request("do something"), &telemetry);
+        let NodeRunResult::Failed(failure) = result else {
+            panic!("expected Failed");
+        };
+        assert!(
+            matches!(failure.recovery, RecoveryAction::Retry { .. }),
+            "retryable provider error must produce Retry recovery"
+        );
+        let records = telemetry.into_records();
+        let classified = records.iter().find(|r| {
+            matches!(
+                r.event,
+                crate::telemetry::TelemetryEvent::FailureClassified { .. }
+            )
+        });
+        assert!(
+            classified.is_some(),
+            "must emit FailureClassified telemetry"
+        );
+        if let Some(r) = classified {
+            match &r.event {
+                crate::telemetry::TelemetryEvent::FailureClassified { recovery, .. } => {
+                    assert_eq!(recovery, "Retry");
+                }
+                _ => unreachable!(),
+            }
+        }
+    }
+
+    #[test]
+    fn semantic_failure_produces_elevate_action() {
+        // Revision limit exhaustion is a semantic failure — the model ran out of
+        // revisions trying to satisfy the critic.
+        let provider = ScriptedProvider::from_strs(&[
+            r#"{"status":"accepted","content":"draft"}"#,
+            r#"{"status":"rejected","reason":"revision limit reached"}"#,
+        ]);
+        let runner = DeliberatingNodeRunner::new(&provider, &provider);
+        let telemetry = crate::telemetry::VecTelemetry::new();
+        let result = runner.run_node(work_request("do something"), &telemetry);
+        let NodeRunResult::Failed(failure) = result else {
+            panic!("expected Failed; got success or plan");
+        };
+        assert!(
+            matches!(failure.recovery, RecoveryAction::ElevateModel { .. }),
+            "semantic failure must produce ElevateModel recovery; got {:?}",
+            failure.recovery
+        );
+        let records = telemetry.into_records();
+        let classified = records.iter().find(|r| {
+            matches!(
+                r.event,
+                crate::telemetry::TelemetryEvent::FailureClassified { .. }
+            )
+        });
+        assert!(
+            classified.is_some(),
+            "must emit FailureClassified telemetry"
+        );
+        if let Some(r) = classified {
+            match &r.event {
+                crate::telemetry::TelemetryEvent::FailureClassified { recovery, .. } => {
+                    assert_eq!(recovery, "ElevateModel");
+                }
+                _ => unreachable!(),
+            }
+        }
+    }
+
+    #[test]
+    fn terminal_failure_produces_terminal_action() {
+        let provider = ScriptedProvider::failing(ProviderErrorKind::Terminal, "invalid api key");
+        let runner = DeliberatingNodeRunner::new(&provider, &provider);
+        let telemetry = crate::telemetry::VecTelemetry::new();
+        let result = runner.run_node(work_request("do something"), &telemetry);
+        let NodeRunResult::Failed(failure) = result else {
+            panic!("expected Failed");
+        };
+        assert!(
+            matches!(failure.recovery, RecoveryAction::Terminal { .. }),
+            "fatal auth failure must produce Terminal recovery"
+        );
+        let records = telemetry.into_records();
+        let classified = records.iter().find(|r| {
+            matches!(
+                r.event,
+                crate::telemetry::TelemetryEvent::FailureClassified { .. }
+            )
+        });
+        assert!(
+            classified.is_some(),
+            "must emit FailureClassified telemetry"
+        );
+        if let Some(r) = classified {
+            match &r.event {
+                crate::telemetry::TelemetryEvent::FailureClassified { recovery, .. } => {
+                    assert_eq!(recovery, "Terminal");
+                }
+                _ => unreachable!(),
+            }
         }
     }
 

@@ -181,6 +181,17 @@ pub enum TelemetryEvent {
         /// Human-readable description of the first validation error found.
         reason: String,
     },
+    /// A deliberation failure was classified and a recovery action was chosen.
+    ///
+    /// Emitted once per failure so that audit logs show why the scheduler
+    /// retried, escalated, or halted without requiring readers to understand
+    /// classification rules in source code.
+    FailureClassified {
+        /// The raw failure reason from deliberation.
+        reason: String,
+        /// The recovery action chosen: `"Retry"`, `"ElevateModel"`, or `"Terminal"`.
+        recovery: String,
+    },
 }
 
 impl TelemetryEvent {
@@ -213,6 +224,7 @@ impl TelemetryEvent {
             TelemetryEvent::PlannerOutputValidationFailed { .. } => {
                 "planner-output-validation-failed"
             }
+            TelemetryEvent::FailureClassified { .. } => "failure-classified",
         }
     }
 
@@ -298,6 +310,9 @@ impl TelemetryEvent {
             TelemetryEvent::PlannerOutputFallback => "kind: PlannerOutputFallback\n".to_string(),
             TelemetryEvent::PlannerOutputValidationFailed { reason } => {
                 format!("kind: PlannerOutputValidationFailed\nreason: {reason}\n")
+            }
+            TelemetryEvent::FailureClassified { reason, recovery } => {
+                format!("kind: FailureClassified\nreason: {reason}\nrecovery: {recovery}\n")
             }
         }
     }
