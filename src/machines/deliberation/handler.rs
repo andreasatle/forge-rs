@@ -43,11 +43,15 @@ impl<P> DeliberationHandler<ProviderRoleRunner<P>> {
         }
     }
 
-    /// Wrap a provider in a handler with an optional artifact view for file
-    /// tool support.
-    pub fn new_with_view(provider: P, artifact_view: Option<ArtifactView>) -> Self {
+    /// Wrap a provider in a handler with an optional artifact view and an
+    /// explicit token budget forwarded to the role runner.
+    pub fn new_with_view(
+        provider: P,
+        artifact_view: Option<ArtifactView>,
+        max_tokens: u32,
+    ) -> Self {
         Self {
-            runner: ProviderRoleRunner::new(provider),
+            runner: ProviderRoleRunner::new_with_max_tokens(provider, max_tokens),
             artifact_view,
             accumulated_update: RefCell::new(Vec::new()),
         }

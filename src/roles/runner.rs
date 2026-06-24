@@ -63,12 +63,24 @@ pub trait RoleRunner {
 /// provider invocation, JSON extraction/parsing, and protocol retry.
 pub struct ProviderRoleRunner<P> {
     provider: P,
+    max_tokens: u32,
 }
 
 impl<P> ProviderRoleRunner<P> {
-    /// Wrap a provider in a new runner.
+    /// Wrap a provider in a new runner using the default token budget.
     pub fn new(provider: P) -> Self {
-        Self { provider }
+        Self {
+            provider,
+            max_tokens: MAX_RESPONSE_TOKENS,
+        }
+    }
+
+    /// Wrap a provider in a new runner with an explicit token budget.
+    pub fn new_with_max_tokens(provider: P, max_tokens: u32) -> Self {
+        Self {
+            provider,
+            max_tokens,
+        }
     }
 }
 
@@ -124,7 +136,7 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
 
             let response = match self.provider.call(ProviderRequest {
                 prompt: current_prompt.clone(),
-                max_tokens: MAX_RESPONSE_TOKENS,
+                max_tokens: self.max_tokens,
                 output_schema: Some(StructuredOutput::Json),
             }) {
                 Ok(r) => r,
@@ -1267,6 +1279,92 @@ mod tests {
         assert!(
             observation.contains("[observation truncated]"),
             "truncation marker must be present; got: {observation:?}"
+        );
+    }
+
+    #[test]
+    fn role_runner_uses_configured_max_tokens() {
+        let provider = ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"done"}"#]);
+        let runner = ProviderRoleRunner::new_with_max_tokens(&provider, 256);
+
+        runner.run_role(
+            RoleRequest {
+                role: DeliberationRole::Producer,
+                objective: "test".to_string(),
+                producer_content: None,
+                critic_content: None,
+                feedback: vec![],
+                tool_context: None,
+            },
+            &crate::telemetry::NoopTelemetry,
+        );
+
+        let requests = provider.requests.borrow();
+        assert_eq!(
+            requests[0].max_tokens, 256,
+            "configured max_tokens must be forwarded to the provider"
+        );
+    }
+
+    #[test]
+    fn role_prompt_includes_tool_request_as_valid_response_when_tools_available() {
+        let provider = ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"done"}"#]);
+        let runner = ProviderRoleRunner::new(&provider);
+
+        runner.run_role(
+            RoleRequest {
+                role: DeliberationRole::Producer,
+                objective: "test with tools".to_string(),
+                producer_content: None,
+                critic_content: None,
+                feedback: vec![],
+                tool_context: Some(RoleToolContext {
+                    artifact_view: dummy_view(),
+                }),
+            },
+            &crate::telemetry::NoopTelemetry,
+        );
+
+        let requests = provider.requests.borrow();
+        let prompt = &requests[0].prompt;
+        assert!(
+            prompt.contains("tool request"),
+            "prompt must describe tool request as a valid response when tools are available"
+        );
+        assert!(
+            prompt.contains("list_files"),
+            "prompt must include example tool requests"
+        );
+    }
+
+    #[test]
+    fn role_prompt_has_single_protocol_wrapper() {
+        let provider = ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"done"}"#]);
+        let runner = ProviderRoleRunner::new(&provider);
+
+        runner.run_role(
+            RoleRequest {
+                role: DeliberationRole::Producer,
+                objective: "test".to_string(),
+                producer_content: None,
+                critic_content: None,
+                feedback: vec![],
+                tool_context: None,
+            },
+            &crate::telemetry::NoopTelemetry,
+        );
+
+        let requests = provider.requests.borrow();
+        let prompt = &requests[0].prompt;
+        // "Accepted schema:" is the old InstructedProvider outer wrapper text.
+        // render_role_prompt uses "Accepted:" (without "schema").
+        assert!(
+            !prompt.contains("Accepted schema:"),
+            "prompt must not contain InstructedProvider outer wrapper text"
+        );
+        assert!(
+            prompt.contains("\"status\""),
+            "prompt must still contain the role protocol instructions"
         );
     }
 

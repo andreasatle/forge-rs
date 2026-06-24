@@ -28,12 +28,22 @@ use super::types::{NodeRunRequest, NodeRunResult, NodeRunWorkResult};
 /// producer has file context without any workspace mutation.
 pub struct DeliberatingNodeRunner<P> {
     provider: P,
+    max_tokens: u32,
 }
 
 impl<P> DeliberatingNodeRunner<P> {
-    /// Wrap a provider in a new runner.
+    /// Wrap a provider in a new runner using the default token budget.
     pub fn new(provider: P) -> Self {
-        Self { provider }
+        Self {
+            provider,
+            max_tokens: 1024,
+        }
+    }
+
+    /// Override the token budget forwarded to each role call.
+    pub fn with_max_tokens(mut self, max_tokens: u32) -> Self {
+        self.max_tokens = max_tokens;
+        self
     }
 }
 
@@ -96,6 +106,7 @@ impl<P: ProviderClient> NodeRunner for DeliberatingNodeRunner<P> {
             handler: ProviderBackedDeliberationHandler::new_with_view(
                 &self.provider,
                 request.artifact_view.clone(),
+                self.max_tokens,
             ),
             telemetry,
         };
@@ -488,6 +499,55 @@ mod tests {
         assert!(
             first.contains("do the thing"),
             "first prompt must include the original objective; got:\n{first}"
+        );
+    }
+
+    #[test]
+    fn deliberating_runner_threads_max_tokens_to_provider() {
+        struct RequestCapture {
+            max_tokens: RefCell<Option<u32>>,
+            responses: RefCell<VecDeque<String>>,
+        }
+        impl RequestCapture {
+            fn from_strs(responses: &[&str]) -> Self {
+                Self {
+                    max_tokens: RefCell::new(None),
+                    responses: RefCell::new(responses.iter().map(|s| s.to_string()).collect()),
+                }
+            }
+        }
+        impl ProviderClient for RequestCapture {
+            fn call(
+                &self,
+                req: ProviderRequest,
+            ) -> Result<crate::providers::ProviderResponse, ProviderError> {
+                if self.max_tokens.borrow().is_none() {
+                    *self.max_tokens.borrow_mut() = Some(req.max_tokens);
+                }
+                let content = self
+                    .responses
+                    .borrow_mut()
+                    .pop_front()
+                    .expect("RequestCapture: responses exhausted");
+                Ok(crate::providers::ProviderResponse {
+                    content,
+                    finish_reason: None,
+                })
+            }
+        }
+
+        let provider = RequestCapture::from_strs(&[
+            r#"{"status":"accepted","content":"result"}"#,
+            r#"{"status":"accepted","content":"review"}"#,
+            r#"{"status":"accepted","content":"approved"}"#,
+        ]);
+        let runner = DeliberatingNodeRunner::new(&provider).with_max_tokens(256);
+        runner.run_node(work_request("test threading"), &NoopTelemetry);
+
+        assert_eq!(
+            *provider.max_tokens.borrow(),
+            Some(256),
+            "with_max_tokens must propagate to the provider request"
         );
     }
 

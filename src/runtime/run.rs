@@ -14,41 +14,10 @@ use crate::config::{ArtifactConfig, ForgeConfig, ValidationConfig};
 use crate::engine::run_machine_with_telemetry;
 use crate::machines::scheduler::{RunRequest, SchedulerHandler, SchedulerMachine, SchedulerOutput};
 use crate::node_runner::DeliberatingNodeRunner;
-use crate::providers::{
-    LlamaCppProvider, ProviderClient, ProviderError, ProviderRequest, ProviderResponse,
-    RetryingProvider,
-};
+use crate::providers::{LlamaCppProvider, RetryingProvider};
 use crate::runtime::{create_run, finalize_manifest};
 use crate::telemetry::{FileTelemetry, TelemetrySink};
 use crate::validation::{AlwaysPassValidator, CommandValidator, Validator};
-
-const PROTOCOL_PREFIX: &str = "\
-Return exactly one JSON object. No markdown. No code fence. No explanation.\n\
-No text before or after the JSON.\n\
-Accepted schema: {\"status\":\"accepted\",\"content\":\"...\"}\n\
-Rejected schema: {\"status\":\"rejected\",\"reason\":\"...\"}";
-
-const PROTOCOL_SUFFIX: &str = "\n\
-Return exactly one JSON object. No markdown. No code fence. No explanation.\n\
-Your response must be valid JSON with \"status\" set to \"accepted\" or \"rejected\".";
-
-struct InstructedProvider<P> {
-    inner: P,
-}
-
-impl<P: ProviderClient> ProviderClient for InstructedProvider<P> {
-    fn call(&self, req: ProviderRequest) -> Result<ProviderResponse, ProviderError> {
-        let wrapped = format!(
-            "{}\n\n{}\n\n{}",
-            PROTOCOL_PREFIX, req.prompt, PROTOCOL_SUFFIX
-        );
-        self.inner.call(ProviderRequest {
-            prompt: wrapped,
-            max_tokens: req.max_tokens,
-            output_schema: req.output_schema,
-        })
-    }
-}
 
 /// Entry point for a single forge run driven by a [`ForgeConfig`].
 pub struct ForgeRuntime;
@@ -77,9 +46,9 @@ impl ForgeRuntime {
 
         let llama = LlamaCppProvider::new(&config.provider.base_url);
         let retrying = RetryingProvider::new(llama, 3);
-        let instructed = InstructedProvider { inner: retrying };
 
-        let runner = DeliberatingNodeRunner::new(instructed);
+        let runner =
+            DeliberatingNodeRunner::new(retrying).with_max_tokens(config.provider.n_predict as u32);
         let validator = make_validator(config.validation.as_ref());
         let handler = SchedulerHandler::with_artifact(runner, artifact)
             .with_telemetry(Rc::clone(&sink))
@@ -268,57 +237,6 @@ mod tests {
             nodes: vec![],
             next_id: 0,
         }
-    }
-
-    struct EchoProvider;
-
-    impl ProviderClient for EchoProvider {
-        fn call(&self, req: ProviderRequest) -> Result<ProviderResponse, ProviderError> {
-            Ok(ProviderResponse {
-                content: req.prompt.clone(),
-                finish_reason: None,
-            })
-        }
-    }
-
-    #[test]
-    fn instructed_provider_preserves_output_schema() {
-        use crate::providers::types::{ProviderRequest, StructuredOutput};
-        use std::cell::RefCell;
-
-        struct CapturingProvider {
-            requests: RefCell<Vec<ProviderRequest>>,
-        }
-        impl ProviderClient for CapturingProvider {
-            fn call(&self, req: ProviderRequest) -> Result<ProviderResponse, ProviderError> {
-                self.requests.borrow_mut().push(req);
-                Ok(ProviderResponse {
-                    content: "ok".to_string(),
-                    finish_reason: None,
-                })
-            }
-        }
-
-        let capturing = CapturingProvider {
-            requests: RefCell::new(Vec::new()),
-        };
-        let provider = InstructedProvider { inner: &capturing };
-
-        provider
-            .call(ProviderRequest {
-                prompt: "test".to_string(),
-                max_tokens: 256,
-                output_schema: Some(StructuredOutput::Json),
-            })
-            .unwrap();
-
-        let reqs = capturing.requests.borrow();
-        assert_eq!(reqs.len(), 1);
-        assert_eq!(
-            reqs[0].output_schema,
-            Some(StructuredOutput::Json),
-            "InstructedProvider must forward output_schema unchanged"
-        );
     }
 
     #[test]
