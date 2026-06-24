@@ -10,6 +10,7 @@ use crate::machines::scheduler::{
     ModelTier, NodeFailure, NodeId, NodeKind, NodeRequest, PlanOutput, RecoveryAction, WorkOutput,
 };
 use crate::providers::ProviderClient;
+use crate::roles::RolePolicy;
 use crate::telemetry::{TelemetryEvent, TelemetryRecord, TelemetrySink};
 
 use super::classify::{classify_deliberation_failure, recovery_label};
@@ -37,6 +38,7 @@ pub struct DeliberatingNodeRunner<C, S> {
     strong_provider: S,
     cheap_max_tokens: u32,
     strong_max_tokens: u32,
+    role_policy: RolePolicy,
 }
 
 impl<C, S> DeliberatingNodeRunner<C, S> {
@@ -51,6 +53,7 @@ impl<C, S> DeliberatingNodeRunner<C, S> {
             strong_provider,
             cheap_max_tokens: 1024,
             strong_max_tokens: 1024,
+            role_policy: RolePolicy::default(),
         }
     }
 
@@ -63,6 +66,16 @@ impl<C, S> DeliberatingNodeRunner<C, S> {
     /// Set the token budget forwarded to strong-tier role calls.
     pub fn with_strong_max_tokens(mut self, max_tokens: u32) -> Self {
         self.strong_max_tokens = max_tokens;
+        self
+    }
+
+    /// Override the role prompt policy supplied to each role invocation.
+    ///
+    /// The policy is cloned once per node run and forwarded to the deliberation
+    /// handler. The default is [`RolePolicy::default()`], which preserves the
+    /// hardcoded behaviour.
+    pub fn with_role_policy(mut self, policy: RolePolicy) -> Self {
+        self.role_policy = policy;
         self
     }
 }
@@ -119,12 +132,14 @@ impl<C: ProviderClient, S: ProviderClient> NodeRunner for DeliberatingNodeRunner
                 &self.cheap_provider,
                 request,
                 self.cheap_max_tokens,
+                &self.role_policy,
                 telemetry,
             ),
             ModelTier::Strong => run_with_provider(
                 &self.strong_provider,
                 request,
                 self.strong_max_tokens,
+                &self.role_policy,
                 telemetry,
             ),
         }
@@ -135,6 +150,7 @@ fn run_with_provider<P: ProviderClient>(
     provider: &P,
     request: NodeRunRequest,
     max_tokens: u32,
+    policy: &RolePolicy,
     telemetry: &dyn TelemetrySink,
 ) -> NodeRunResult {
     let objective = enrich_objective(&request);
@@ -151,6 +167,7 @@ fn run_with_provider<P: ProviderClient>(
             request.artifact_view.clone(),
             max_tokens,
             request.kind.clone(),
+            policy.clone(),
         ),
         telemetry,
     };
@@ -1026,6 +1043,41 @@ mod tests {
         assert!(
             has_validation_failed,
             "must emit PlannerOutputValidationFailed telemetry"
+        );
+    }
+
+    // --- role policy threading tests ---
+
+    #[test]
+    fn runtime_uses_project_adapter_role_policy() {
+        use crate::project::DefaultProjectAdapter;
+        use crate::project::ProjectAdapter;
+
+        // Simulate the runtime: get policy from adapter, wire into runner.
+        let adapter = DefaultProjectAdapter;
+        let policy = adapter.role_policy();
+
+        // A custom marker in a policy derived from the adapter should reach the prompt.
+        let custom_policy = crate::roles::RolePolicy {
+            worker_system: "ADAPTER_MARKER_TEST".to_string(),
+            ..policy
+        };
+
+        let provider = RecordingProvider::from_strs(&[
+            r#"{"status":"accepted","content":"done"}"#,
+            r#"{"status":"accepted","content":"review ok"}"#,
+            r#"{"status":"accepted","content":"approved"}"#,
+        ]);
+        let runner =
+            DeliberatingNodeRunner::new(&provider, &provider).with_role_policy(custom_policy);
+        runner.run_node(work_request("test policy wiring"), &NoopTelemetry);
+
+        let prompts = provider.recorded_prompts();
+        assert!(!prompts.is_empty(), "provider must have received prompts");
+        assert!(
+            prompts[0].contains("ADAPTER_MARKER_TEST"),
+            "adapter role policy must reach the provider prompt; got:\n{}",
+            prompts[0]
         );
     }
 

@@ -26,6 +26,7 @@ Execution failures are handled by the framework, not the model.";
 /// Each field is injected verbatim as the final paragraph of the rendered
 /// prompt for that role. Override individual fields to change what a specific
 /// role is told to do without touching the surrounding prompt structure.
+#[derive(Clone)]
 pub struct RolePolicy {
     /// System instruction for the Planner variant of the Producer role.
     pub planner_system: String,

@@ -9,6 +9,7 @@ use std::cell::RefCell;
 
 use crate::artifacts::{ArtifactUpdate, ArtifactView, FileChange};
 use crate::machines::scheduler::NodeKind;
+use crate::roles::policy::RolePolicy;
 use crate::roles::runner::{ProviderRoleRunner, RoleRequest, RoleRunner, RoleToolContext};
 use crate::telemetry::{NoopTelemetry, TelemetrySink};
 
@@ -50,16 +51,19 @@ impl<P> DeliberationHandler<ProviderRoleRunner<P>> {
     }
 
     /// Wrap a provider in a handler with an optional artifact view, an
-    /// explicit token budget forwarded to the role runner, and the node kind
-    /// used to select `planner_system` vs `worker_system` from the policy.
+    /// explicit token budget forwarded to the role runner, the node kind
+    /// used to select `planner_system` vs `worker_system` from the policy,
+    /// and the role policy to inject into the runner.
     pub fn new_with_view(
         provider: P,
         artifact_view: Option<ArtifactView>,
         max_tokens: u32,
         node_kind: NodeKind,
+        policy: RolePolicy,
     ) -> Self {
         Self {
-            runner: ProviderRoleRunner::new_with_max_tokens(provider, max_tokens),
+            runner: ProviderRoleRunner::new_with_max_tokens(provider, max_tokens)
+                .with_policy(policy),
             artifact_view,
             node_kind,
             accumulated_update: RefCell::new(Vec::new()),

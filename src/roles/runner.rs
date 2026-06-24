@@ -100,6 +100,12 @@ impl<P> ProviderRoleRunner<P> {
             policy,
         }
     }
+
+    /// Replace the current policy, returning the updated runner.
+    pub fn with_policy(mut self, policy: RolePolicy) -> Self {
+        self.policy = policy;
+        self
+    }
 }
 
 /// Maximum number of tokens to request per provider call.

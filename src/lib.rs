@@ -20,6 +20,7 @@
 //! - [`handlers`] — effect executors that perform I/O and produce events
 //! - [`models`] — shared domain data used across machines and handlers
 //! - [`providers`] — `ProviderClient` trait and typed request/response/error types
+//! - [`project`] — [`ProjectAdapter`](project::ProjectAdapter) seam for project-specific config
 //! - [`services`] — stateless data-transformation utilities
 
 #![deny(missing_docs)]
@@ -30,6 +31,7 @@ pub mod handlers;
 pub mod machines;
 pub mod models;
 pub mod node_runner;
+pub mod project;
 pub mod providers;
 pub mod roles;
 pub mod runtime;

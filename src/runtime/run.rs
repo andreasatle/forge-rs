@@ -15,6 +15,7 @@ use crate::engine::run_machine_with_telemetry;
 use crate::machines::scheduler::state::SchedulerState;
 use crate::machines::scheduler::{RunRequest, SchedulerHandler, SchedulerMachine, SchedulerOutput};
 use crate::node_runner::DeliberatingNodeRunner;
+use crate::project::{DefaultProjectAdapter, ProjectAdapter};
 use crate::providers::{LlamaCppProvider, RetryingProvider};
 use crate::runtime::checkpoint::node_counts;
 use crate::runtime::resume::find_resumable_run;
@@ -69,9 +70,11 @@ impl ForgeRuntime {
             .strong_n_predict
             .unwrap_or(config.provider.n_predict) as u32;
 
+        let role_policy = DefaultProjectAdapter.role_policy();
         let runner = DeliberatingNodeRunner::new(cheap, strong)
             .with_cheap_max_tokens(cheap_tokens)
-            .with_strong_max_tokens(strong_tokens);
+            .with_strong_max_tokens(strong_tokens)
+            .with_role_policy(role_policy);
         let validator = make_validator(config.validation.as_ref());
         let handler = SchedulerHandler::with_artifact(runner, artifact)
             .with_telemetry(Rc::clone(&sink))
@@ -160,9 +163,11 @@ impl ForgeRuntime {
             .strong_n_predict
             .unwrap_or(config.provider.n_predict) as u32;
 
+        let role_policy = DefaultProjectAdapter.role_policy();
         let runner = DeliberatingNodeRunner::new(cheap, strong)
             .with_cheap_max_tokens(cheap_tokens)
-            .with_strong_max_tokens(strong_tokens);
+            .with_strong_max_tokens(strong_tokens)
+            .with_role_policy(role_policy);
         let validator = make_validator(config.validation.as_ref());
         let handler = SchedulerHandler::with_artifact(runner, artifact)
             .with_telemetry(Rc::clone(&sink))
