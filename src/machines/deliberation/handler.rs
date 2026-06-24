@@ -8,6 +8,7 @@
 use std::cell::RefCell;
 
 use crate::artifacts::{ArtifactUpdate, ArtifactView, FileChange};
+use crate::machines::scheduler::NodeKind;
 use crate::roles::runner::{ProviderRoleRunner, RoleRequest, RoleRunner, RoleToolContext};
 use crate::telemetry::{NoopTelemetry, TelemetrySink};
 
@@ -25,6 +26,9 @@ pub struct DeliberationHandler<R> {
     runner: R,
     /// Artifact view made available to roles as file tool context.
     artifact_view: Option<ArtifactView>,
+    /// Whether this deliberation is for a plan node or a work node.
+    /// Forwarded to every Producer RoleRequest to select the correct policy field.
+    node_kind: NodeKind,
     /// File changes accumulated across all tool loops run so far.
     accumulated_update: RefCell<Vec<FileChange>>,
 }
@@ -35,24 +39,29 @@ pub type ProviderBackedDeliberationHandler<P> = DeliberationHandler<ProviderRole
 
 impl<P> DeliberationHandler<ProviderRoleRunner<P>> {
     /// Wrap a provider in a handler with no file tool context.
+    /// Defaults to `NodeKind::Work` for policy selection.
     pub fn new(provider: P) -> Self {
         Self {
             runner: ProviderRoleRunner::new(provider),
             artifact_view: None,
+            node_kind: NodeKind::Work,
             accumulated_update: RefCell::new(Vec::new()),
         }
     }
 
-    /// Wrap a provider in a handler with an optional artifact view and an
-    /// explicit token budget forwarded to the role runner.
+    /// Wrap a provider in a handler with an optional artifact view, an
+    /// explicit token budget forwarded to the role runner, and the node kind
+    /// used to select `planner_system` vs `worker_system` from the policy.
     pub fn new_with_view(
         provider: P,
         artifact_view: Option<ArtifactView>,
         max_tokens: u32,
+        node_kind: NodeKind,
     ) -> Self {
         Self {
             runner: ProviderRoleRunner::new_with_max_tokens(provider, max_tokens),
             artifact_view,
+            node_kind,
             accumulated_update: RefCell::new(Vec::new()),
         }
     }
@@ -92,6 +101,7 @@ impl<R: RoleRunner> DeliberationHandler<R> {
                     producer_content,
                     critic_content,
                     feedback,
+                    node_kind: self.node_kind.clone(),
                     tool_context,
                 };
                 let output = self.runner.run_role(request, telemetry);
@@ -145,6 +155,7 @@ mod tests {
         DeliberationRequest, DeliberationRole, DeliberationState, DeliberationTerminalOutput,
         RevisionFeedback,
     };
+    use crate::machines::scheduler::NodeKind;
     use crate::providers::types::{ProviderError, ProviderResponse};
     use crate::providers::{ProviderClient, ProviderRequest};
     use crate::roles::runner::{RoleRequest, RoleRunOutput, RoleRunner};
@@ -279,6 +290,7 @@ mod tests {
         let handler = DeliberationHandler {
             runner,
             artifact_view: None,
+            node_kind: NodeKind::Work,
             accumulated_update: RefCell::new(Vec::new()),
         };
 

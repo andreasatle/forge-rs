@@ -150,6 +150,7 @@ fn run_with_provider<P: ProviderClient>(
             provider,
             request.artifact_view.clone(),
             max_tokens,
+            request.kind.clone(),
         ),
         telemetry,
     };

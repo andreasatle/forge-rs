@@ -8,6 +8,8 @@
 //! [`ProviderClient`]: crate::providers::ProviderClient
 //! [`RoleResult`]: crate::machines::deliberation::RoleResult
 
+pub mod policy;
 pub mod runner;
 
+pub use policy::RolePolicy;
 pub use runner::{ProviderRoleRunner, RoleRequest, RoleRunOutput, RoleRunner, RoleToolContext};

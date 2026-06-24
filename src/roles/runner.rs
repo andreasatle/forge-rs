@@ -9,7 +9,9 @@ use serde::Deserialize;
 use crate::artifacts::{ArtifactUpdate, ArtifactView};
 use crate::machines::deliberation::event::RoleResult;
 use crate::machines::deliberation::state::{DeliberationRole, RevisionFeedback};
+use crate::machines::scheduler::NodeKind;
 use crate::providers::{ProviderClient, ProviderRequest, StructuredOutput};
+use crate::roles::policy::RolePolicy;
 use crate::telemetry::{TelemetryEvent, TelemetryRecord, TelemetrySink};
 use crate::tools::{FileToolExecutor, FileToolPolicy, FileToolResponse, parse_tool_request};
 
@@ -33,6 +35,10 @@ pub struct RoleRequest {
     pub critic_content: Option<String>,
     /// Accumulated Referee rejection feedback. Empty on the first pass.
     pub feedback: Vec<RevisionFeedback>,
+    /// Whether the Producer is acting as a planner or worker.
+    /// Selects `planner_system` vs `worker_system` from the policy.
+    /// Ignored for Critic and Referee.
+    pub node_kind: NodeKind,
     /// File tool context. When `Some`, the role may issue tool requests before
     /// returning a final result. When `None`, tool request JSON is still detected
     /// but produces an error observation rather than a real tool execution.
@@ -64,22 +70,34 @@ pub trait RoleRunner {
 pub struct ProviderRoleRunner<P> {
     provider: P,
     max_tokens: u32,
+    policy: RolePolicy,
 }
 
 impl<P> ProviderRoleRunner<P> {
-    /// Wrap a provider in a new runner using the default token budget.
+    /// Wrap a provider in a new runner using the default token budget and default policy.
     pub fn new(provider: P) -> Self {
         Self {
             provider,
             max_tokens: MAX_RESPONSE_TOKENS,
+            policy: RolePolicy::default(),
         }
     }
 
-    /// Wrap a provider in a new runner with an explicit token budget.
+    /// Wrap a provider in a new runner with an explicit token budget and default policy.
     pub fn new_with_max_tokens(provider: P, max_tokens: u32) -> Self {
         Self {
             provider,
             max_tokens,
+            policy: RolePolicy::default(),
+        }
+    }
+
+    /// Wrap a provider in a new runner with an explicit policy and default token budget.
+    pub fn new_with_policy(provider: P, policy: RolePolicy) -> Self {
+        Self {
+            provider,
+            max_tokens: MAX_RESPONSE_TOKENS,
+            policy,
         }
     }
 }
@@ -102,8 +120,18 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
 
         let policy = file_tool_policy_for_role(&request.role);
 
+        let system = match &request.role {
+            DeliberationRole::Producer => match request.node_kind {
+                NodeKind::Plan => &self.policy.planner_system,
+                NodeKind::Work => &self.policy.worker_system,
+            },
+            DeliberationRole::Critic => &self.policy.critic_system,
+            DeliberationRole::Referee => &self.policy.referee_system,
+        };
+
         let base_prompt = {
             let core = render_role_prompt(
+                system,
                 &request.role,
                 &request.objective,
                 request.producer_content.as_deref(),
@@ -388,7 +416,12 @@ fn render_retry_prompt(original_prompt: &str, parse_error: &str) -> String {
 }
 
 /// Build a prompt for a single role invocation.
+///
+/// `system` is the role-specific instruction from [`RolePolicy`] and is
+/// appended as the final paragraph. Callers are responsible for selecting
+/// the correct policy field for the current role.
 fn render_role_prompt(
+    system: &str,
     role: &DeliberationRole,
     objective: &str,
     producer_content: Option<&str>,
@@ -408,18 +441,7 @@ fn render_role_prompt(
         let reasons: Vec<&str> = feedback.iter().map(|f| f.reason.as_str()).collect();
         parts.push(format!("Revision feedback: {}", reasons.join("; ")));
     }
-    parts.push(
-        "Return exactly one JSON object. No markdown. No code fence. No explanation. \
-         No text before or after the JSON.\n\
-         Accepted: {\"status\":\"accepted\",\"content\":\"<YOUR_RESPONSE_HERE>\"}\n\
-         Rejected: {\"status\":\"rejected\",\"reason\":\"<REASON_FOR_REJECTION>\"}\n\
-         Do not copy example values. Replace them with task-specific content.\n\
-         Producer returns accepted content. \
-         Critic accepts with a review or rejects with a reason. \
-         Referee accepts approval or rejects with revision feedback. \
-         Execution failures are handled by the framework, not the model."
-            .to_string(),
-    );
+    parts.push(system.to_string());
     parts.join("\n")
 }
 
@@ -526,6 +548,7 @@ mod tests {
 
     use super::*;
     use crate::artifacts::{ArtifactView, FileChange};
+    use crate::machines::scheduler::NodeKind;
     use crate::providers::types::{ProviderError, ProviderErrorKind, ProviderResponse};
 
     // --- fake providers ---
@@ -720,6 +743,7 @@ mod tests {
                     producer_content: None,
                     critic_content: None,
                     feedback: vec![],
+                    node_kind: NodeKind::Work,
                     tool_context: None,
                 },
                 &crate::telemetry::NoopTelemetry,
@@ -745,6 +769,7 @@ mod tests {
                     producer_content: None,
                     critic_content: None,
                     feedback: vec![],
+                    node_kind: NodeKind::Work,
                     tool_context: None,
                 },
                 &crate::telemetry::NoopTelemetry,
@@ -761,7 +786,9 @@ mod tests {
         let feedback = vec![RevisionFeedback {
             reason: "too vague".to_string(),
         }];
+        let default = RolePolicy::default();
         let prompt = render_role_prompt(
+            &default.worker_system,
             &DeliberationRole::Producer,
             "write a poem",
             None,
@@ -798,6 +825,7 @@ mod tests {
                     producer_content: None,
                     critic_content: None,
                     feedback: vec![],
+                    node_kind: NodeKind::Work,
                     tool_context: None,
                 },
                 &crate::telemetry::NoopTelemetry,
@@ -823,6 +851,7 @@ mod tests {
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
+                node_kind: NodeKind::Work,
                 tool_context: None,
             },
             &crate::telemetry::NoopTelemetry,
@@ -851,6 +880,7 @@ mod tests {
                     producer_content: None,
                     critic_content: None,
                     feedback: vec![],
+                    node_kind: NodeKind::Work,
                     tool_context: None,
                 },
                 &crate::telemetry::NoopTelemetry,
@@ -875,6 +905,7 @@ mod tests {
                     producer_content: Some("draft".to_string()),
                     critic_content: Some("review".to_string()),
                     feedback: vec![],
+                    node_kind: NodeKind::Work,
                     tool_context: None,
                 },
                 &crate::telemetry::NoopTelemetry,
@@ -906,6 +937,7 @@ mod tests {
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
+                node_kind: NodeKind::Work,
                 tool_context: None,
             },
             &telemetry,
@@ -965,6 +997,7 @@ mod tests {
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
+                node_kind: NodeKind::Work,
                 tool_context: None,
             },
             &telemetry,
@@ -1077,6 +1110,7 @@ mod tests {
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
+                node_kind: NodeKind::Work,
                 tool_context: Some(RoleToolContext {
                     artifact_view: view,
                 }),
@@ -1120,6 +1154,7 @@ mod tests {
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
+                node_kind: NodeKind::Work,
                 tool_context: Some(RoleToolContext {
                     artifact_view: dummy_view(),
                 }),
@@ -1160,6 +1195,7 @@ mod tests {
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
+                node_kind: NodeKind::Work,
                 tool_context: None,
             },
             &crate::telemetry::NoopTelemetry,
@@ -1193,6 +1229,7 @@ mod tests {
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
+                node_kind: NodeKind::Work,
                 tool_context: Some(RoleToolContext {
                     artifact_view: dummy_view(),
                 }),
@@ -1225,6 +1262,7 @@ mod tests {
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
+                node_kind: NodeKind::Work,
                 tool_context: None,
             },
             &crate::telemetry::NoopTelemetry,
@@ -1254,6 +1292,7 @@ mod tests {
                 producer_content: Some("draft".to_string()),
                 critic_content: None,
                 feedback: vec![],
+                node_kind: NodeKind::Work,
                 tool_context: Some(RoleToolContext {
                     artifact_view: dummy_view(),
                 }),
@@ -1312,6 +1351,7 @@ mod tests {
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
+                node_kind: NodeKind::Work,
                 tool_context: None,
             },
             &crate::telemetry::NoopTelemetry,
@@ -1336,6 +1376,7 @@ mod tests {
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
+                node_kind: NodeKind::Work,
                 tool_context: Some(RoleToolContext {
                     artifact_view: dummy_view(),
                 }),
@@ -1367,6 +1408,7 @@ mod tests {
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
+                node_kind: NodeKind::Work,
                 tool_context: None,
             },
             &crate::telemetry::NoopTelemetry,
@@ -1431,6 +1473,7 @@ mod tests {
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
+                node_kind: NodeKind::Work,
                 tool_context: Some(RoleToolContext {
                     artifact_view: view,
                 }),
@@ -1468,6 +1511,7 @@ mod tests {
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
+                node_kind: NodeKind::Work,
                 tool_context: None,
             },
             &crate::telemetry::NoopTelemetry,
@@ -1499,6 +1543,7 @@ mod tests {
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
+                node_kind: NodeKind::Work,
                 tool_context: None,
             },
             &crate::telemetry::NoopTelemetry,
@@ -1526,6 +1571,7 @@ mod tests {
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
+                node_kind: NodeKind::Work,
                 tool_context: Some(RoleToolContext {
                     artifact_view: dummy_view(),
                 }),
@@ -1562,6 +1608,7 @@ mod tests {
                 producer_content: Some("draft".to_string()),
                 critic_content: None,
                 feedback: vec![],
+                node_kind: NodeKind::Work,
                 tool_context: Some(RoleToolContext {
                     artifact_view: dummy_view(),
                 }),
@@ -1606,6 +1653,7 @@ mod tests {
                 producer_content: Some("content".to_string()),
                 critic_content: Some("looks good".to_string()),
                 feedback: vec![],
+                node_kind: NodeKind::Work,
                 tool_context: Some(RoleToolContext {
                     artifact_view: dummy_view(),
                 }),
@@ -1654,6 +1702,7 @@ mod tests {
                 producer_content: Some("draft".to_string()),
                 critic_content: None,
                 feedback: vec![],
+                node_kind: NodeKind::Work,
                 tool_context: Some(RoleToolContext {
                     artifact_view: dummy_view(),
                 }),
@@ -1702,6 +1751,7 @@ mod tests {
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
+                node_kind: NodeKind::Work,
                 tool_context: None,
             },
             &telemetry,
@@ -1745,6 +1795,7 @@ mod tests {
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
+                node_kind: NodeKind::Work,
                 tool_context: None,
             },
             &telemetry,
@@ -1779,12 +1830,28 @@ mod tests {
         };
 
         // Role prompts for all three roles, with and without prior content.
-        for (role, pc, cc) in [
-            (DeliberationRole::Producer, None, None),
-            (DeliberationRole::Critic, Some("draft"), None),
-            (DeliberationRole::Referee, Some("draft"), Some("looks good")),
+        let default = RolePolicy::default();
+        for (role, system, pc, cc) in [
+            (
+                DeliberationRole::Producer,
+                default.worker_system.as_str(),
+                None,
+                None,
+            ),
+            (
+                DeliberationRole::Critic,
+                default.critic_system.as_str(),
+                Some("draft"),
+                None,
+            ),
+            (
+                DeliberationRole::Referee,
+                default.referee_system.as_str(),
+                Some("draft"),
+                Some("looks good"),
+            ),
         ] {
-            let prompt = render_role_prompt(&role, "write a haiku about Rust", pc, cc, &[]);
+            let prompt = render_role_prompt(system, &role, "write a haiku about Rust", pc, cc, &[]);
             no_dot(&format!("{role:?} role prompt"), &prompt);
         }
 
@@ -1802,6 +1869,7 @@ mod tests {
 
         // Retry prompt (wraps the base role prompt).
         let base = render_role_prompt(
+            &default.worker_system,
             &DeliberationRole::Producer,
             "write a haiku",
             None,
@@ -1848,12 +1916,28 @@ mod tests {
 
     #[test]
     fn role_response_examples_do_not_use_dot_placeholders() {
-        for (role, pc, cc) in [
-            (DeliberationRole::Producer, None, None),
-            (DeliberationRole::Critic, Some("draft"), None),
-            (DeliberationRole::Referee, Some("draft"), Some("looks good")),
+        let default = RolePolicy::default();
+        for (role, system, pc, cc) in [
+            (
+                DeliberationRole::Producer,
+                default.worker_system.as_str(),
+                None,
+                None,
+            ),
+            (
+                DeliberationRole::Critic,
+                default.critic_system.as_str(),
+                Some("draft"),
+                None,
+            ),
+            (
+                DeliberationRole::Referee,
+                default.referee_system.as_str(),
+                Some("draft"),
+                Some("looks good"),
+            ),
         ] {
-            let prompt = render_role_prompt(&role, "test objective", pc, cc, &[]);
+            let prompt = render_role_prompt(system, &role, "test objective", pc, cc, &[]);
             assert!(
                 !prompt.contains("\"content\":\"...\""),
                 "{role:?} prompt must not use '...' for accepted content; got:\n{prompt}"
@@ -1864,7 +1948,14 @@ mod tests {
             );
         }
         // Retry prompt schema examples also must not use "...".
-        let base = render_role_prompt(&DeliberationRole::Producer, "test", None, None, &[]);
+        let base = render_role_prompt(
+            &default.worker_system,
+            &DeliberationRole::Producer,
+            "test",
+            None,
+            None,
+            &[],
+        );
         let retry = render_retry_prompt(&base, "parse error");
         assert!(
             !retry.contains("\"content\":\"...\""),
@@ -1880,7 +1971,9 @@ mod tests {
     fn prompt_mentions_not_to_copy_example_values() {
         // Every prompt surface that includes JSON examples must explicitly instruct
         // the model not to copy them verbatim.
+        let default = RolePolicy::default();
         let base = render_role_prompt(
+            &default.worker_system,
             &DeliberationRole::Producer,
             "write a haiku",
             None,
@@ -1954,5 +2047,367 @@ mod tests {
             ro_section.contains("read_file"),
             "allow_writes=false must still render read_file"
         );
+    }
+
+    // ── RolePolicy tests ─────────────────────────────────────────────────────
+
+    #[test]
+    fn default_role_policy_matches_current_prompt_behavior() {
+        let policy = RolePolicy::default();
+        let prompt = render_role_prompt(
+            &policy.worker_system,
+            &DeliberationRole::Producer,
+            "write a haiku",
+            None,
+            None,
+            &[],
+        );
+        assert!(
+            prompt.contains("\"status\""),
+            "default policy must include JSON status field; got:\n{prompt}"
+        );
+        assert!(
+            prompt.contains("Do not copy example values"),
+            "default policy must include copy-guard instruction; got:\n{prompt}"
+        );
+        assert!(
+            prompt.contains("Producer returns accepted content"),
+            "default policy must describe Producer role; got:\n{prompt}"
+        );
+        assert!(
+            prompt.contains("Critic accepts"),
+            "default policy must describe Critic role; got:\n{prompt}"
+        );
+        assert!(
+            prompt.contains("Referee accepts"),
+            "default policy must describe Referee role; got:\n{prompt}"
+        );
+        assert!(
+            !prompt.contains("\"...\""),
+            "default policy must not contain dot-placeholder JSON values; got:\n{prompt}"
+        );
+    }
+
+    #[test]
+    fn planner_prompt_uses_planner_policy() {
+        let policy = RolePolicy {
+            planner_system: "PLANNER_MARKER_XYZ".to_string(),
+            ..RolePolicy::default()
+        };
+        let prompt = render_role_prompt(
+            &policy.planner_system,
+            &DeliberationRole::Producer,
+            "plan the work",
+            None,
+            None,
+            &[],
+        );
+        assert!(
+            prompt.contains("PLANNER_MARKER_XYZ"),
+            "planner prompt must include planner_system text; got:\n{prompt}"
+        );
+        assert!(
+            !prompt.contains("WORKER_MARKER"),
+            "planner prompt must not include worker_system text"
+        );
+    }
+
+    #[test]
+    fn worker_prompt_uses_worker_policy() {
+        let policy = RolePolicy {
+            worker_system: "WORKER_MARKER_XYZ".to_string(),
+            ..RolePolicy::default()
+        };
+        let prompt = render_role_prompt(
+            &policy.worker_system,
+            &DeliberationRole::Producer,
+            "do the work",
+            None,
+            None,
+            &[],
+        );
+        assert!(
+            prompt.contains("WORKER_MARKER_XYZ"),
+            "worker prompt must include worker_system text; got:\n{prompt}"
+        );
+    }
+
+    #[test]
+    fn critic_prompt_uses_critic_policy() {
+        let policy = RolePolicy {
+            critic_system: "CRITIC_MARKER_XYZ".to_string(),
+            ..RolePolicy::default()
+        };
+        let prompt = render_role_prompt(
+            &policy.critic_system,
+            &DeliberationRole::Critic,
+            "review the draft",
+            Some("producer draft"),
+            None,
+            &[],
+        );
+        assert!(
+            prompt.contains("CRITIC_MARKER_XYZ"),
+            "critic prompt must include critic_system text; got:\n{prompt}"
+        );
+    }
+
+    #[test]
+    fn referee_prompt_uses_referee_policy() {
+        let policy = RolePolicy {
+            referee_system: "REFEREE_MARKER_XYZ".to_string(),
+            ..RolePolicy::default()
+        };
+        let prompt = render_role_prompt(
+            &policy.referee_system,
+            &DeliberationRole::Referee,
+            "approve the result",
+            Some("producer draft"),
+            Some("critic review"),
+            &[],
+        );
+        assert!(
+            prompt.contains("REFEREE_MARKER_XYZ"),
+            "referee prompt must include referee_system text; got:\n{prompt}"
+        );
+    }
+
+    #[test]
+    fn default_policy_keeps_json_protocol_instructions() {
+        let policy = RolePolicy::default();
+        for (label, system) in [
+            ("planner", policy.planner_system.as_str()),
+            ("worker", policy.worker_system.as_str()),
+            ("critic", policy.critic_system.as_str()),
+            ("referee", policy.referee_system.as_str()),
+        ] {
+            let prompt =
+                render_role_prompt(system, &DeliberationRole::Producer, "test", None, None, &[]);
+            assert!(
+                prompt.contains("Return exactly one JSON object"),
+                "{label} default policy must include JSON-only instruction; got:\n{prompt}"
+            );
+            assert!(
+                prompt.contains("<YOUR_RESPONSE_HERE>"),
+                "{label} default policy must include accepted schema placeholder; got:\n{prompt}"
+            );
+            assert!(
+                prompt.contains("<REASON_FOR_REJECTION>"),
+                "{label} default policy must include rejected schema placeholder; got:\n{prompt}"
+            );
+        }
+    }
+
+    #[test]
+    fn role_policy_does_not_change_tool_visibility() {
+        // Tool visibility is controlled by FileToolPolicy (file_tool_policy_for_role),
+        // not by RolePolicy. Verify that changing system text has no effect.
+        let policy = RolePolicy {
+            worker_system: "CUSTOM_WORKER".to_string(),
+            critic_system: "CUSTOM_CRITIC".to_string(),
+            ..RolePolicy::default()
+        };
+        let provider = ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"done"}"#]);
+        let runner = ProviderRoleRunner::new_with_policy(&provider, policy);
+
+        runner.run_role(
+            RoleRequest {
+                role: DeliberationRole::Producer,
+                objective: "produce something".to_string(),
+                producer_content: None,
+                critic_content: None,
+                feedback: vec![],
+                node_kind: NodeKind::Work,
+                tool_context: Some(RoleToolContext {
+                    artifact_view: dummy_view(),
+                }),
+            },
+            &crate::telemetry::NoopTelemetry,
+        );
+
+        let requests = provider.requests.borrow();
+        let prompt = &requests[0].prompt;
+        assert!(
+            prompt.contains("write_file"),
+            "producer must still see write tools regardless of custom policy; got:\n{prompt}"
+        );
+        assert!(
+            prompt.contains("CUSTOM_WORKER"),
+            "custom worker_system must appear in producer prompt; got:\n{prompt}"
+        );
+    }
+
+    // ── NodeKind policy routing ───────────────────────────────────────────────
+
+    #[test]
+    fn planner_node_uses_planner_policy() {
+        let policy = RolePolicy {
+            planner_system: "PLANNER_MARKER".to_string(),
+            ..RolePolicy::default()
+        };
+        let provider =
+            ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"plan done"}"#]);
+        let runner = ProviderRoleRunner::new_with_policy(&provider, policy);
+
+        runner.run_role(
+            RoleRequest {
+                role: DeliberationRole::Producer,
+                objective: "plan the work".to_string(),
+                producer_content: None,
+                critic_content: None,
+                feedback: vec![],
+                node_kind: NodeKind::Plan,
+                tool_context: None,
+            },
+            &crate::telemetry::NoopTelemetry,
+        );
+
+        let requests = provider.requests.borrow();
+        let prompt = &requests[0].prompt;
+        assert!(
+            prompt.contains("PLANNER_MARKER"),
+            "plan node must use planner_system; got:\n{prompt}"
+        );
+        assert!(
+            !prompt.contains("WORKER_MARKER"),
+            "plan node must not use worker_system"
+        );
+    }
+
+    #[test]
+    fn work_node_uses_worker_policy() {
+        let policy = RolePolicy {
+            worker_system: "WORKER_MARKER".to_string(),
+            ..RolePolicy::default()
+        };
+        let provider =
+            ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"work done"}"#]);
+        let runner = ProviderRoleRunner::new_with_policy(&provider, policy);
+
+        runner.run_role(
+            RoleRequest {
+                role: DeliberationRole::Producer,
+                objective: "do the work".to_string(),
+                producer_content: None,
+                critic_content: None,
+                feedback: vec![],
+                node_kind: NodeKind::Work,
+                tool_context: None,
+            },
+            &crate::telemetry::NoopTelemetry,
+        );
+
+        let requests = provider.requests.borrow();
+        let prompt = &requests[0].prompt;
+        assert!(
+            prompt.contains("WORKER_MARKER"),
+            "work node must use worker_system; got:\n{prompt}"
+        );
+    }
+
+    #[test]
+    fn critic_still_uses_critic_policy() {
+        let policy = RolePolicy {
+            critic_system: "CRITIC_MARKER".to_string(),
+            ..RolePolicy::default()
+        };
+        let provider =
+            ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"review done"}"#]);
+        let runner = ProviderRoleRunner::new_with_policy(&provider, policy);
+
+        runner.run_role(
+            RoleRequest {
+                role: DeliberationRole::Critic,
+                objective: "review the draft".to_string(),
+                producer_content: Some("draft".to_string()),
+                critic_content: None,
+                feedback: vec![],
+                node_kind: NodeKind::Work,
+                tool_context: None,
+            },
+            &crate::telemetry::NoopTelemetry,
+        );
+
+        let requests = provider.requests.borrow();
+        let prompt = &requests[0].prompt;
+        assert!(
+            prompt.contains("CRITIC_MARKER"),
+            "critic must use critic_system regardless of node_kind; got:\n{prompt}"
+        );
+    }
+
+    #[test]
+    fn referee_still_uses_referee_policy() {
+        let policy = RolePolicy {
+            referee_system: "REFEREE_MARKER".to_string(),
+            ..RolePolicy::default()
+        };
+        let provider =
+            ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"approved"}"#]);
+        let runner = ProviderRoleRunner::new_with_policy(&provider, policy);
+
+        runner.run_role(
+            RoleRequest {
+                role: DeliberationRole::Referee,
+                objective: "approve the result".to_string(),
+                producer_content: Some("content".to_string()),
+                critic_content: Some("review".to_string()),
+                feedback: vec![],
+                node_kind: NodeKind::Work,
+                tool_context: None,
+            },
+            &crate::telemetry::NoopTelemetry,
+        );
+
+        let requests = provider.requests.borrow();
+        let prompt = &requests[0].prompt;
+        assert!(
+            prompt.contains("REFEREE_MARKER"),
+            "referee must use referee_system regardless of node_kind; got:\n{prompt}"
+        );
+    }
+
+    #[test]
+    fn default_policy_preserves_existing_behavior() {
+        let policy = RolePolicy::default();
+        let provider = ScriptedProvider::from_strs(&[
+            r#"{"status":"accepted","content":"plan done"}"#,
+            r#"{"status":"accepted","content":"work done"}"#,
+        ]);
+        let runner = ProviderRoleRunner::new_with_policy(&provider, policy);
+
+        runner.run_role(
+            RoleRequest {
+                role: DeliberationRole::Producer,
+                objective: "plan the work".to_string(),
+                producer_content: None,
+                critic_content: None,
+                feedback: vec![],
+                node_kind: NodeKind::Plan,
+                tool_context: None,
+            },
+            &crate::telemetry::NoopTelemetry,
+        );
+        runner.run_role(
+            RoleRequest {
+                role: DeliberationRole::Producer,
+                objective: "do the work".to_string(),
+                producer_content: None,
+                critic_content: None,
+                feedback: vec![],
+                node_kind: NodeKind::Work,
+                tool_context: None,
+            },
+            &crate::telemetry::NoopTelemetry,
+        );
+
+        let requests = provider.requests.borrow();
+        for (label, req) in [("plan", &requests[0]), ("work", &requests[1])] {
+            assert!(
+                req.prompt.contains("Return exactly one JSON object"),
+                "{label} producer prompt must contain JSON protocol instructions; got:\n{}",
+                req.prompt
+            );
+        }
     }
 }
