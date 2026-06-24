@@ -29,4 +29,4 @@ pub mod sink;
 
 pub use event::{TelemetryEvent, TelemetryRecord};
 pub use file_sink::FileTelemetry;
-pub use sink::{NoopTelemetry, TelemetrySink, VecTelemetry};
+pub use sink::{ConsoleTelemetry, NoopTelemetry, TelemetrySink, VecTelemetry};

@@ -23,10 +23,12 @@ use crate::machines::scheduler::event::{
     SchedulerEvent,
 };
 use crate::machines::scheduler::machine::{SchedulerMachine, SchedulerOutput};
-use crate::machines::scheduler::state::{NodeId, SchedulerState};
+use crate::machines::scheduler::state::{NodeId, NodeKind, SchedulerState};
 use crate::node_runner::{NodeRunRequest, NodeRunResult, NodeRunner};
 use crate::runtime::checkpoint::{node_counts, save_checkpoint};
-use crate::telemetry::{NoopTelemetry, TelemetryEvent, TelemetryRecord, TelemetrySink};
+use crate::telemetry::{
+    ConsoleTelemetry, NoopTelemetry, TelemetryEvent, TelemetryRecord, TelemetrySink,
+};
 use crate::validation::{AlwaysPassValidator, Validator};
 
 /// Drives the scheduler machine using a [`NodeRunner`] to execute nodes.
@@ -209,6 +211,10 @@ impl<R: NodeRunner> Machine for SchedulerHandler<R> {
                     commit_sha: a.commit_sha.clone(),
                 });
 
+                let label = match &kind {
+                    NodeKind::Plan => "[planner]".to_string(),
+                    NodeKind::Work => format!("[worker {}]", node_id.0),
+                };
                 let request = NodeRunRequest {
                     kind,
                     objective,
@@ -216,7 +222,8 @@ impl<R: NodeRunner> Machine for SchedulerHandler<R> {
                     attempt,
                     artifact_view,
                 };
-                let result = self.runner.run_node(request, self.telemetry.as_ref());
+                let console_tel = ConsoleTelemetry::new(self.telemetry.as_ref(), label);
+                let result = self.runner.run_node(request, &console_tel);
 
                 // If the work node produced file changes, stash them under this
                 // node_id for deferred integration. Artifact truth is never
@@ -349,8 +356,15 @@ impl<R: NodeRunner> Machine for SchedulerHandler<R> {
 fn print_returned_progress(event: &SchedulerEvent) {
     match event {
         SchedulerEvent::NodeReturned { node_id, outcome } => {
-            if matches!(outcome, NodeOutcome::Failed(_)) {
+            if let NodeOutcome::Failed(failure) = outcome {
                 eprintln!("[scheduler] failed {}", node_id.0);
+                let recovery = match &failure.recovery {
+                    RecoveryAction::Retry { .. } => "Retry",
+                    RecoveryAction::Split { .. } => "Split",
+                    RecoveryAction::ElevateModel { .. } => "ElevateModel",
+                    RecoveryAction::Terminal { .. } => "Terminal",
+                };
+                eprintln!("[scheduler] recovery {recovery} {}", node_id.0);
             } else {
                 eprintln!("[scheduler] returned {}", node_id.0);
             }

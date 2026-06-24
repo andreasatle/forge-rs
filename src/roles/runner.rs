@@ -584,6 +584,22 @@ enum JsonRoleResponse {
     Rejected { reason: String },
 }
 
+/// Returns `true` if `value` exactly matches a known framework placeholder
+/// token that appears in prompt schema examples.
+///
+/// These values are template markers, not real responses. Returning them
+/// verbatim means the model copied the example rather than producing output.
+fn is_framework_placeholder(value: &str) -> bool {
+    matches!(
+        value.trim(),
+        "<YOUR_SUMMARY>"
+            | "<YOUR_RESPONSE_HERE>"
+            | "<REASON_FOR_REJECTION>"
+            | "<YOUR_REASON>"
+            | "<PLACEHOLDER>"
+    )
+}
+
 fn try_parse_role_response(raw_response: &str) -> Result<RoleResult, String> {
     let text = strip_code_fence(raw_response.trim());
     // Require the response to start directly with a JSON object.
@@ -606,6 +622,10 @@ fn try_parse_role_response(raw_response: &str) -> Result<RoleResult, String> {
                 return Err("accepted response has empty content".to_string());
             } else if content.trim() == "..." {
                 return Err("role response has placeholder accepted content".to_string());
+            } else if is_framework_placeholder(&content) {
+                return Err(format!(
+                    "role response returned framework placeholder: {content}"
+                ));
             } else {
                 RoleResult::Accepted { content }
             }
@@ -613,6 +633,10 @@ fn try_parse_role_response(raw_response: &str) -> Result<RoleResult, String> {
         Ok(JsonRoleResponse::Rejected { reason }) => {
             if reason.trim().is_empty() || reason.trim() == "..." {
                 return Err("role response has placeholder reason".to_string());
+            } else if is_framework_placeholder(&reason) {
+                return Err(format!(
+                    "role response returned framework placeholder: {reason}"
+                ));
             } else {
                 RoleResult::Rejected { reason }
             }
@@ -797,6 +821,73 @@ mod tests {
             "failure reason must mention 'placeholder'; got: {reason}"
         );
         assert!(!reason.contains("raw:"));
+    }
+
+    #[test]
+    fn placeholder_summary_is_rejected() {
+        let result = parse_role_response(r#"{"status":"accepted","content":"<YOUR_SUMMARY>"}"#);
+        let RoleResult::Failed { reason } = result else {
+            panic!("framework placeholder content must produce Failed, got {result:?}");
+        };
+        assert!(
+            reason.contains("framework placeholder"),
+            "failure reason must mention 'framework placeholder'; got: {reason}"
+        );
+    }
+
+    #[test]
+    fn placeholder_reason_is_rejected() {
+        let result =
+            parse_role_response(r#"{"status":"rejected","reason":"<REASON_FOR_REJECTION>"}"#);
+        let RoleResult::Failed { reason } = result else {
+            panic!("framework placeholder reason must produce Failed, got {result:?}");
+        };
+        assert!(
+            reason.contains("framework placeholder"),
+            "failure reason must mention 'framework placeholder'; got: {reason}"
+        );
+    }
+
+    #[test]
+    fn arbitrary_angle_bracket_text_is_allowed() {
+        let result = parse_role_response(r#"{"status":"accepted","content":"<p>hello world</p>"}"#);
+        assert!(
+            matches!(result, RoleResult::Accepted { .. }),
+            "arbitrary angle-bracket content must be accepted, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn html_like_content_is_allowed() {
+        let result = parse_role_response(
+            r#"{"status":"accepted","content":"<html><body>ok</body></html>"}"#,
+        );
+        assert!(
+            matches!(result, RoleResult::Accepted { .. }),
+            "HTML-like content must be accepted, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn xml_like_content_is_allowed() {
+        let result = parse_role_response(
+            r#"{"status":"accepted","content":"<root><item>data</item></root>"}"#,
+        );
+        assert!(
+            matches!(result, RoleResult::Accepted { .. }),
+            "XML-like content must be accepted, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn normal_summary_is_allowed() {
+        let result = parse_role_response(
+            r#"{"status":"accepted","content":"Summary of changes made to the file."}"#,
+        );
+        assert!(
+            matches!(result, RoleResult::Accepted { .. }),
+            "normal summary content must be accepted, got {result:?}"
+        );
     }
 
     #[test]

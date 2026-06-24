@@ -2,7 +2,7 @@
 
 use std::cell::RefCell;
 
-use super::event::TelemetryRecord;
+use super::event::{TelemetryEvent, TelemetryRecord};
 
 /// Receives [`TelemetryRecord`]s produced during a machine run.
 ///
@@ -57,6 +57,67 @@ impl Default for VecTelemetry {
 impl TelemetrySink for VecTelemetry {
     fn record(&self, record: TelemetryRecord) {
         self.records.borrow_mut().push(record);
+    }
+}
+
+/// A telemetry sink that emits human-readable progress lines to stderr and
+/// delegates every record to an inner sink.
+///
+/// Wrap around the shared sink for a single node run so that the correct
+/// `[planner]` or `[worker <id>]` label appears on each progress line.
+pub struct ConsoleTelemetry<'a> {
+    inner: &'a dyn TelemetrySink,
+    label: String,
+    last_role: RefCell<Option<String>>,
+}
+
+impl<'a> ConsoleTelemetry<'a> {
+    /// Create a new `ConsoleTelemetry` that prefixes every progress line with
+    /// `label` (e.g. `"[planner]"` or `"[worker root-child-0]"`).
+    pub fn new(inner: &'a dyn TelemetrySink, label: impl Into<String>) -> Self {
+        Self {
+            inner,
+            label: label.into(),
+            last_role: RefCell::new(None),
+        }
+    }
+}
+
+impl<'a> TelemetrySink for ConsoleTelemetry<'a> {
+    fn record(&self, record: TelemetryRecord) {
+        match &record.event {
+            TelemetryEvent::RolePromptRendered { .. } => {
+                if let Some(subsource) = &record.subsource {
+                    let role = role_progress_label(subsource);
+                    let mut last = self.last_role.borrow_mut();
+                    if last.as_deref() != Some(subsource.as_str()) {
+                        *last = Some(subsource.clone());
+                        eprintln!("{} {role} start", self.label);
+                    }
+                }
+                eprintln!("{} waiting for model", self.label);
+            }
+            TelemetryEvent::ToolRequested { tool } => {
+                eprintln!("{} tool {tool}", self.label);
+            }
+            TelemetryEvent::ParseSucceeded { .. } => {
+                if let Some(subsource) = &record.subsource {
+                    let role = role_progress_label(subsource);
+                    eprintln!("{} {role} complete", self.label);
+                }
+            }
+            _ => {}
+        }
+        self.inner.record(record);
+    }
+}
+
+fn role_progress_label(subsource: &str) -> &str {
+    match subsource {
+        "Producer" => "producer",
+        "Critic" => "critic",
+        "Referee" => "referee",
+        _ => subsource,
     }
 }
 
