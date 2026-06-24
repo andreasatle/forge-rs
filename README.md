@@ -20,27 +20,31 @@ Business logic belongs in pure transition functions. Side effects belong in effe
 ## Architecture
 
 ```text
-Runtime
-  ↓
+CLI
+ ↓
+ForgeRuntime
+ ↓
 SchedulerMachine
-  ↓
-DeliberationMachine
-  ↓
-Role layer
-  ↓
-Provider
+ ↓                           ↓
+[RunNode effect]        [IntegrateWork effect]
+ ↓                           ↓
+DeliberationMachine      Validator
+ ↓                           ↓
+RoleRunner               Integration (bare git, force-with-lease)
+ ↓
+Provider (cheap tier or strong tier)
 ```
 
 Artifact history is orthogonal:
 
 ```text
-Artifact = Git repository
+Artifact = bare Git repository (branch-specific)
 ```
 
 Telemetry is orthogonal:
 
 ```text
-Telemetry = file trace
+Telemetry = timestamped run directory + machine event traces
 ```
 
 ## Configuration
@@ -55,9 +59,20 @@ artifact:
 provider:
   base_url: "http://localhost:8080"
   n_predict: 512
+  timeout_seconds: 120          # optional; default 120
+  strong_base_url: "http://localhost:8081"  # optional; fallback to base_url
+  strong_n_predict: 1024        # optional; fallback to n_predict
+  strong_timeout_seconds: 180   # optional; fallback to timeout_seconds
 telemetry:
-  directory: "runs/latest"
+  directory: "runs"
+validation:                     # optional
+  commands:
+    - cargo fmt --check
+    - cargo test
+  timeout_seconds: 120          # optional; default 120 per command
 ```
+
+Relative paths in `artifact.repo_path` and `telemetry.directory` are resolved against the directory containing `forge.yaml`, not the working directory.
 
 ## CLI
 
@@ -164,8 +179,10 @@ Represents committed truth. Backed by a bare Git repository.
 Fields:
 
 - `repo_path` — path to the bare repository.
-- `branch` — logical branch name.
+- `branch` — logical branch name used for all reads and writes.
 - `commit_sha` — exact commit pinning this version.
+
+The artifact always resolves the configured `branch` by name, not `HEAD`. Bare repositories with non-default HEAD are handled correctly.
 
 ### ArtifactView
 
@@ -180,7 +197,7 @@ Path containment is enforced: absolute paths and parent traversals are rejected.
 
 ### Workspace
 
-A temporary mutable checkout cloned from an `Artifact`. Used to stage changes before integration.
+A temporary mutable checkout cloned from an `Artifact`. Created for each work node integration. The directory is deleted automatically when the workspace is dropped.
 
 ### WorkspaceFileOps
 
@@ -194,7 +211,7 @@ Operations:
 - `replace_text`
 - `delete_file`
 
-Path containment is enforced on all operations.
+Path containment is enforced on all operations. Symlink safety is enforced on top of lexical validation: all operations canonicalize the resolved path and verify it remains inside the workspace root. Broken symlinks and symlinks whose targets point outside the workspace are rejected.
 
 `replace_text` fails if the target string is absent or appears more than once.
 
@@ -210,7 +227,13 @@ Changes are applied in order. The first error stops application.
 
 ### Integration
 
-Owns Git concerns only. Given an `Artifact` and a `Workspace`, it stages all changes, commits them to the bare repository, and returns a new `Artifact` pointing at the new commit. The branch is preserved.
+Commits workspace changes into the artifact's bare repository using a CAS-safe push.
+
+Protocol:
+
+1. **CAS pre-check** — read the branch tip before staging. If it differs from the workspace base commit, return `Conflict` immediately without touching the repository.
+2. **Stage and commit** — `git add --all` and `git commit` inside the workspace.
+3. **Force-with-lease push** — push using `--force-with-lease=refs/heads/<branch>:<base>`. On failure the branch tip is re-read; if it has advanced, the error is reclassified as `Conflict` to distinguish a CAS race from an unrelated push error.
 
 ## Node execution
 
@@ -228,7 +251,9 @@ The `SchedulerHandler` connects the scheduler to the runner. For each `RunNode` 
 
 1. Builds an `ArtifactView` from the current `Artifact` snapshot.
 2. Passes the view to the runner via `NodeRunRequest`.
-3. If the runner returns `WorkAccepted` with an `ArtifactUpdate`, applies it through a `Workspace` and calls `integrate`, advancing the artifact.
+3. If the runner returns `WorkAccepted` with an `ArtifactUpdate`, runs the configured validator against a temporary workspace.
+4. If validation passes, applies the update and calls `integrate`, advancing the artifact.
+5. If validation fails, the node is marked failed and the artifact is not advanced.
 
 ### DeliberatingNodeRunner
 
@@ -242,32 +267,118 @@ Mapping from deliberation output to `NodeRunResult`:
 - Work node: `WorkAccepted` with the Producer content as summary and an `ArtifactUpdate` writing `output.txt`.
 - Deliberation failure: `Failed` with `RecoveryAction::Terminal`.
 
+## Tool system
+
+Each role invocation drives a bounded tool loop backed by a `FileToolExecutor`.
+
+### Tool loop
+
+The loop runs up to `MAX_TOOL_STEPS` (5) tool calls per role invocation. Each iteration:
+
+1. Call the provider.
+2. If the response is a tool request JSON, execute the tool and append the observation to the prompt.
+3. If the response is a role result JSON, return it.
+4. If parsing fails, retry (up to `MAX_PROTOCOL_RETRIES` = 2 additional calls).
+
+Exceeding the tool step limit is a protocol failure; the role returns `Failed`.
+
+### Role permissions
+
+```text
+Producer  — read/write (list_files, read_file, write_file, replace_text, delete_file)
+Critic    — read-only  (list_files, read_file)
+Referee   — read-only  (list_files, read_file)
+```
+
+Write operations issued by Critic or Referee receive an error observation and no update is recorded.
+
+### Read-after-write overlay
+
+`FileToolExecutor` maintains an in-memory overlay of pending writes and deletes. Reads consult the overlay before falling back to the committed artifact view. This means:
+
+- A file written in one tool call is immediately visible to a subsequent `read_file` in the same session.
+- A file deleted in one tool call is hidden from subsequent reads.
+- The overlay is local to one executor instance and is discarded after the role completes.
+
+The overlay does not mutate the artifact. Only the `ArtifactUpdate` produced at the end of the role loop is eligible for integration.
+
+## Validation
+
+When a `validation` section is present in `forge.yaml`, Forge runs the configured commands inside a temporary workspace after the Producer completes but before committing to the artifact.
+
+```yaml
+validation:
+  commands:
+    - cargo fmt --check
+    - cargo test
+  timeout_seconds: 120
+```
+
+Behavior:
+
+- Commands run in order via `sh -c` inside the workspace directory.
+- Each command gets its own independent timeout budget (`timeout_seconds`, default 120).
+- The first failing command stops the sequence; subsequent commands do not run.
+- A timeout kills the child process and counts as a failure.
+- Failed validation prevents integration; the artifact is not advanced.
+
+When `validation` is absent, all changes pass automatically.
+
 ## Providers
 
-`ProviderClient` is the trait boundary for LLM calls. It takes a `ProviderRequest` (prompt string) and returns a `ProviderResponse` (content string) or a `ProviderError`.
+`ProviderClient` is the trait boundary for LLM calls. It takes a `ProviderRequest` and returns a `ProviderResponse` or a `ProviderError`.
+
+`ProviderRequest` carries:
+
+- `prompt` — the complete prompt string.
+- `max_tokens` — maximum tokens to generate.
+- `output_schema` — optional structured output hint (`Json`).
+
+`ProviderError` classifies failures as:
+
+- `Retryable` — transient; a retry may succeed.
+- `Terminal` — permanent; retrying will not help.
+- `Timeout` — the provider did not respond within the configured deadline.
 
 Implemented providers:
 
-- `OllamaProvider` — calls a local Ollama instance.
-- `LlamaCppProvider` — calls a local llama.cpp server.
-- `RetryingProvider` — wraps any provider and retries on retryable errors.
+- `LlamaCppProvider` — calls a local llama-server `/completion` endpoint. HTTP timeout is enforced per-request.
+- `OllamaProvider` — calls a local Ollama `/api/generate` endpoint (available but not wired into `ForgeRuntime` by default).
+- `RetryingProvider` — wraps any provider and retries on `Retryable` errors.
 
-Role responses use structured JSON output.
+Role responses use structured JSON output hints (`output_schema: Some(Json)`). The LlamaCppProvider passes the prompt unchanged; it does not activate the llama.cpp grammar or JSON-schema constraint mode.
+
+### Model tier routing
+
+The runtime builds two provider stacks from a single `ProviderConfig`:
+
+- **Cheap tier** — uses `base_url`, `n_predict`, and `timeout_seconds`.
+- **Strong tier** — uses `strong_base_url` (fallback `base_url`), `strong_n_predict` (fallback `n_predict`), and `strong_timeout_seconds` (fallback `timeout_seconds`).
+
+The scheduler's `ElevateModel` recovery action upgrades a retried node to the strong tier.
 
 ## Telemetry
 
-Traces are written as numbered files under the configured telemetry directory (default: `runs/latest/`).
+Each run creates a timestamped directory under the configured `telemetry.directory`:
 
-Example trace files:
-
+```text
+runs/
+  2026-06-23-14-31-42/
+    manifest.json
+    telemetry/
+      000001--scheduler-machine--machine-started.txt
+      000005--deliberation-machine--machine-started.txt
+      000011--role-machine--producer--parse-failed.txt
+      000012--role-machine--producer--protocol-retry.txt
+  2026-06-23-15-00-01/
+    manifest.json
+    telemetry/
+  latest -> 2026-06-23-15-00-01   (symlink on Unix)
 ```
-000001-scheduler-machine-machine-started.txt
-000005-deliberation-machine-machine-started.txt
-000011-role-machine-parse-failed.txt
-000012-role-machine-protocol-retry.txt
-```
 
-Each file contains structured fields:
+The `latest` entry is updated atomically to point to the newest run after each new run directory is created.
+
+Machine event trace files contain structured fields:
 
 ```
 source: SchedulerMachine
@@ -275,7 +386,53 @@ kind: MachineStarted
 machine: SchedulerMachine
 ```
 
-The trace is intended for human inspection.
+Manifest finalization failures are logged to stderr and do not abort the run.
+
+## Run manifest
+
+Each run's `manifest.json` is created when the run starts and finalized when it ends.
+
+Initial fields (written at startup):
+
+```json
+{
+  "run_id": "2026-06-23-14-31-42",
+  "started_at": "2026-06-23T14:31:42Z",
+  "status": "running",
+  "telemetry_dir": "telemetry",
+  "artifact_repo": ".forge/artifacts/main.git",
+  "objective": "Write a short haiku about Rust state machines.",
+  "provider": "http://localhost:8080"
+}
+```
+
+Final fields (merged at completion):
+
+```json
+{
+  "completed_at": "2026-06-23T14-33-05Z",
+  "duration_seconds": 83.2,
+  "status": "succeeded",
+  "final_commit": "a0c3de5b9f...",
+  "failure_reason": null,
+  "validation_passed": true
+}
+```
+
+`validation_passed` semantics:
+
+- `true` — validation ran and all commands passed.
+- `false` — validation ran and at least one command failed or timed out.
+- `null` — validation was never reached; the run failed before the integration gate (e.g., provider error, deliberation failure).
+
+## Current Limitations
+
+- **Single-artifact runtime.** Each run operates on one artifact repository. There is no multi-artifact graph.
+- **No provider-native tools.** The LLM protocol uses plain JSON in the prompt; it does not use the provider's native function-calling or tool-use API.
+- **No llama.cpp grammar support.** The `output_schema: Json` hint is carried in `ProviderRequest` but the LlamaCppProvider does not activate the grammar or JSON-schema constraint endpoint parameter.
+- **No durable resume.** A run interrupted mid-way cannot be resumed; the artifact is consistent (commits are atomic), but the run itself must be restarted from the beginning.
+- **No prompt-window management.** The prompt grows as tool calls accumulate within a role invocation. There is no token counting, context pruning, or truncation strategy.
+- **No automatic conflict retry.** When `IntegrationError::Conflict` is returned by `integrate`, the node is marked failed. The scheduler may apply a recovery action (Retry, ElevateModel, Split), but there is no dedicated conflict-retry path that replays the tool loop against the updated artifact.
 
 ## Testing
 
@@ -285,6 +442,6 @@ cargo test
 cargo run -- run forge.yaml
 ```
 
-Tests cover machine transitions, emitted effects, integration gating, recovery behavior, graph validation, protocol violations, bounded growth, terminal states, invariant preservation, and artifact data-plane operations. Tests do not require real providers, network access, or persistent filesystem state beyond temporary directories.
+Tests cover machine transitions, emitted effects, integration gating, recovery behavior, graph validation, protocol violations, bounded growth, terminal states, invariant preservation, artifact data-plane operations, validation commands, manifest lifecycle, model tier routing, and CAS/force-with-lease semantics. Tests do not require real providers, network access, or persistent filesystem state beyond temporary directories.
 
 Run `cargo test` to see the current test count.
