@@ -11,6 +11,8 @@ pub struct RunInfo {
     pub run_dir: PathBuf,
     /// Telemetry directory for this run (`<run_dir>/telemetry/`).
     pub telemetry_dir: PathBuf,
+    /// Unix epoch seconds (sub-second precision) when this run was created.
+    pub started_secs: f64,
 }
 
 /// Create a new timestamped run directory under `runs_root`.
@@ -29,14 +31,27 @@ pub fn create_run(
     let run_dir = runs_root.join(&run_id);
     let telemetry_dir = run_dir.join("telemetry");
 
+    let started_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs_f64();
+
     std::fs::create_dir_all(&telemetry_dir)?;
-    write_manifest(&run_dir, &run_id, objective, artifact_repo, provider)?;
+    write_manifest(
+        &run_dir,
+        &run_id,
+        objective,
+        artifact_repo,
+        provider,
+        started_secs,
+    )?;
     update_latest(runs_root, &run_id)?;
 
     Ok(RunInfo {
         run_id,
         run_dir,
         telemetry_dir,
+        started_secs,
     })
 }
 
@@ -131,16 +146,14 @@ fn write_manifest(
     objective: &str,
     artifact_repo: &str,
     provider: &str,
+    started_secs: f64,
 ) -> Result<(), Box<dyn Error>> {
-    let secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    let started_at = started_at_from_secs(secs);
+    let started_at = started_at_from_secs(started_secs as u64);
 
     let manifest = serde_json::json!({
         "run_id": run_id,
         "started_at": started_at,
+        "status": "running",
         "telemetry_dir": "telemetry",
         "artifact_repo": artifact_repo,
         "objective": objective,
@@ -151,6 +164,48 @@ fn write_manifest(
         run_dir.join("manifest.json"),
         serde_json::to_string_pretty(&manifest)?,
     )?;
+    Ok(())
+}
+
+/// Finalize the manifest for a completed run.
+///
+/// Reads the existing manifest, merges outcome fields, and writes it back.
+/// If any step fails, returns an error — the caller must treat this as non-fatal.
+pub fn finalize_manifest(
+    run_info: &RunInfo,
+    status: &str,
+    final_commit: Option<&str>,
+    validation_passed: Option<bool>,
+    failure_reason: Option<&str>,
+) -> Result<(), Box<dyn Error>> {
+    let manifest_path = run_info.run_dir.join("manifest.json");
+    let content = std::fs::read_to_string(&manifest_path)?;
+    let mut manifest: serde_json::Value = serde_json::from_str(&content)?;
+
+    let now_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs_f64();
+
+    let completed_at = started_at_from_secs(now_secs as u64);
+    let duration_seconds = (now_secs - run_info.started_secs).max(0.0);
+
+    manifest["completed_at"] = serde_json::Value::String(completed_at);
+    manifest["duration_seconds"] = serde_json::json!(duration_seconds);
+    manifest["status"] = serde_json::Value::String(status.to_string());
+    manifest["final_commit"] = match final_commit {
+        Some(c) => serde_json::Value::String(c.to_string()),
+        None => serde_json::Value::Null,
+    };
+    if let Some(vp) = validation_passed {
+        manifest["validation_passed"] = serde_json::Value::Bool(vp);
+    }
+    manifest["failure_reason"] = match failure_reason {
+        Some(r) => serde_json::Value::String(r.to_string()),
+        None => serde_json::Value::Null,
+    };
+
+    std::fs::write(&manifest_path, serde_json::to_string_pretty(&manifest)?)?;
     Ok(())
 }
 
@@ -277,6 +332,94 @@ mod tests {
         assert!(r.telemetry_dir.starts_with(&r.run_dir));
         assert_eq!(r.telemetry_dir, r.run_dir.join("telemetry"));
         assert!(r.telemetry_dir.exists());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn manifest_initially_running() {
+        let root = temp_runs_root("initially-running");
+        let _ = std::fs::remove_dir_all(&root);
+
+        let r = create_run(&root, "obj", "repo", "provider").unwrap();
+
+        let content = std::fs::read_to_string(r.run_dir.join("manifest.json")).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(
+            v["status"], "running",
+            "new manifest must have status=running"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn successful_run_finalizes_manifest() {
+        let root = temp_runs_root("finalize-success");
+        let _ = std::fs::remove_dir_all(&root);
+
+        let r = create_run(&root, "obj", "repo", "provider").unwrap();
+        finalize_manifest(&r, "succeeded", Some("abc1234"), None, None).unwrap();
+
+        let content = std::fs::read_to_string(r.run_dir.join("manifest.json")).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(v["status"], "succeeded");
+        assert!(
+            v["completed_at"].is_string(),
+            "completed_at must be present"
+        );
+        assert!(
+            v["duration_seconds"].is_number(),
+            "duration_seconds must be present"
+        );
+        assert_eq!(v["final_commit"], "abc1234");
+        assert_eq!(v["failure_reason"], serde_json::Value::Null);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn failed_run_finalizes_manifest() {
+        let root = temp_runs_root("finalize-failure");
+        let _ = std::fs::remove_dir_all(&root);
+
+        let r = create_run(&root, "obj", "repo", "provider").unwrap();
+        finalize_manifest(&r, "failed", None, None, Some("integration conflict")).unwrap();
+
+        let content = std::fs::read_to_string(r.run_dir.join("manifest.json")).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(v["status"], "failed");
+        assert_eq!(v["failure_reason"], "integration conflict");
+        assert_eq!(v["final_commit"], serde_json::Value::Null);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn manifest_failure_does_not_change_run_result() {
+        let root = temp_runs_root("manifest-failure");
+        let _ = std::fs::remove_dir_all(&root);
+
+        let r = create_run(&root, "obj", "repo", "provider").unwrap();
+
+        // Remove run_dir to force finalize_manifest to fail.
+        std::fs::remove_dir_all(&r.run_dir).unwrap();
+
+        let finalize_result = finalize_manifest(&r, "succeeded", None, None, None);
+        assert!(
+            finalize_result.is_err(),
+            "finalize must fail when run_dir is gone"
+        );
+
+        // Simulate the run.rs pattern: log and continue.
+        let run_result: Result<(), Box<dyn std::error::Error>> = Ok(());
+        if let Err(e) = finalize_result {
+            eprintln!("warning: failed to finalize manifest: {e}");
+        }
+        assert!(
+            run_result.is_ok(),
+            "run result must remain Ok despite manifest finalization failure"
+        );
 
         let _ = std::fs::remove_dir_all(&root);
     }

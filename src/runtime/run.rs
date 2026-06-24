@@ -18,7 +18,7 @@ use crate::providers::{
     LlamaCppProvider, ProviderClient, ProviderError, ProviderRequest, ProviderResponse,
     RetryingProvider,
 };
-use crate::runtime::create_run;
+use crate::runtime::{create_run, finalize_manifest};
 use crate::telemetry::{FileTelemetry, TelemetrySink};
 use crate::validation::{AlwaysPassValidator, CommandValidator, Validator};
 
@@ -93,6 +93,18 @@ impl ForgeRuntime {
 
         let final_artifact = handler.artifact();
         print_summary(&output, &config, final_artifact.as_ref(), &run_info);
+
+        let (status, final_commit, failure_reason) = match &output {
+            SchedulerOutput::Complete { .. } => (
+                "succeeded",
+                final_artifact.as_ref().map(|a| a.commit_sha.as_str()),
+                None,
+            ),
+            SchedulerOutput::Failed { reason, .. } => ("failed", None, Some(reason.as_str())),
+        };
+        if let Err(e) = finalize_manifest(&run_info, status, final_commit, None, failure_reason) {
+            eprintln!("warning: failed to finalize manifest: {e}");
+        }
 
         match output {
             SchedulerOutput::Failed { reason, .. } => Err(format!("run failed: {reason}").into()),
