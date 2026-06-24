@@ -70,7 +70,7 @@ fn main() {
     println!("Objective   : {objective}");
     println!();
 
-    let llama = LlamaCppProvider::new("http://localhost:8080");
+    let llama = LlamaCppProvider::new("http://localhost:8080", 120);
     let retrying = RetryingProvider::new(llama, 3);
     let runner = DeliberatingNodeRunner::new(retrying);
     let handler = SchedulerHandler::new(runner);

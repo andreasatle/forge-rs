@@ -1,5 +1,7 @@
 //! LlamaCpp provider — calls a running `llama-server` `/completion` endpoint.
 
+use std::time::Duration;
+
 use serde::{Deserialize, Serialize};
 
 use crate::providers::client::ProviderClient;
@@ -10,13 +12,18 @@ use crate::providers::types::{
 /// Calls the llama.cpp server completion API at the given base URL.
 pub struct LlamaCppProvider {
     base_url: String,
+    agent: ureq::Agent,
 }
 
 impl LlamaCppProvider {
-    /// Create a new provider targeting `base_url` (e.g. `"http://localhost:8080"`).
-    pub fn new(base_url: impl Into<String>) -> Self {
+    /// Create a new provider targeting `base_url` with a per-request `timeout_secs` deadline.
+    pub fn new(base_url: impl Into<String>, timeout_secs: u64) -> Self {
+        let agent = ureq::AgentBuilder::new()
+            .timeout(Duration::from_secs(timeout_secs))
+            .build();
         Self {
             base_url: base_url.into(),
+            agent,
         }
     }
 }
@@ -37,6 +44,21 @@ fn classify_status(status: u16) -> ProviderErrorKind {
         429 | 500..=599 => ProviderErrorKind::Retryable,
         _ => ProviderErrorKind::Terminal,
     }
+}
+
+fn classify_transport(err: &ureq::Transport) -> ProviderErrorKind {
+    if is_timeout_source(std::error::Error::source(err)) {
+        ProviderErrorKind::Timeout
+    } else {
+        ProviderErrorKind::Retryable
+    }
+}
+
+fn is_timeout_source(source: Option<&(dyn std::error::Error + 'static)>) -> bool {
+    source
+        .and_then(|e| e.downcast_ref::<std::io::Error>())
+        .map(|e| e.kind() == std::io::ErrorKind::TimedOut)
+        .unwrap_or(false)
 }
 
 fn map_completion_response(r: CompletionResponse) -> Result<ProviderResponse, ProviderError> {
@@ -60,16 +82,20 @@ impl ProviderClient for LlamaCppProvider {
             n_predict: request.max_tokens,
         };
 
-        let http_response = ureq::post(&url).send_json(&body).map_err(|err| match err {
-            ureq::Error::Status(status, _) => ProviderError {
-                kind: classify_status(status),
-                message: format!("HTTP {status}"),
-            },
-            ureq::Error::Transport(transport_err) => ProviderError {
-                kind: ProviderErrorKind::Retryable,
-                message: format!("connection error: {transport_err}"),
-            },
-        })?;
+        let http_response = self
+            .agent
+            .post(&url)
+            .send_json(&body)
+            .map_err(|err| match err {
+                ureq::Error::Status(status, _) => ProviderError {
+                    kind: classify_status(status),
+                    message: format!("HTTP {status}"),
+                },
+                ureq::Error::Transport(transport_err) => ProviderError {
+                    kind: classify_transport(&transport_err),
+                    message: format!("connection error: {transport_err}"),
+                },
+            })?;
 
         let parsed: CompletionResponse =
             http_response.into_json().map_err(|err| ProviderError {
@@ -128,7 +154,7 @@ mod tests {
 
     #[test]
     fn llama_cpp_provider_new_stores_base_url() {
-        let p = LlamaCppProvider::new("http://localhost:8080");
+        let p = LlamaCppProvider::new("http://localhost:8080", 120);
         assert_eq!(p.base_url, "http://localhost:8080");
     }
 
@@ -136,15 +162,31 @@ mod tests {
     fn llama_provider_preserves_json_output_schema_at_boundary() {
         use crate::providers::types::StructuredOutput;
 
-        // LlamaCppProvider accepts output_schema in the request boundary.
-        // The grammar parameter is not yet wired; the field is carried and
-        // preserved so the architecture is in place for future activation.
         let req = ProviderRequest {
             prompt: "test".to_string(),
             max_tokens: 512,
             output_schema: Some(StructuredOutput::Json),
         };
         assert_eq!(req.output_schema, Some(StructuredOutput::Json));
+    }
+
+    #[test]
+    fn is_timeout_source_detects_timed_out_io_error() {
+        let ioe = std::io::Error::new(std::io::ErrorKind::TimedOut, "timed out");
+        let boxed: Box<dyn std::error::Error + 'static> = Box::new(ioe);
+        assert!(is_timeout_source(Some(boxed.as_ref())));
+    }
+
+    #[test]
+    fn is_timeout_source_returns_false_for_other_io_errors() {
+        let ioe = std::io::Error::new(std::io::ErrorKind::ConnectionRefused, "refused");
+        let boxed: Box<dyn std::error::Error + 'static> = Box::new(ioe);
+        assert!(!is_timeout_source(Some(boxed.as_ref())));
+    }
+
+    #[test]
+    fn is_timeout_source_returns_false_for_none() {
+        assert!(!is_timeout_source(None));
     }
 
     #[test]

@@ -29,6 +29,10 @@ pub struct ArtifactConfig {
     pub branch: String,
 }
 
+fn default_provider_timeout_seconds() -> u64 {
+    120
+}
+
 /// LLM provider configuration.
 #[derive(Debug, Deserialize)]
 pub struct ProviderConfig {
@@ -36,6 +40,9 @@ pub struct ProviderConfig {
     pub base_url: String,
     /// Maximum tokens to predict per completion call.
     pub n_predict: usize,
+    /// HTTP request timeout in seconds. Absent configs default to 120.
+    #[serde(default = "default_provider_timeout_seconds")]
+    pub timeout_seconds: u64,
 }
 
 /// Telemetry output configuration.
@@ -166,6 +173,44 @@ telemetry:
         let config = ForgeConfig::from_file(tmp.path()).unwrap();
         assert_eq!(config.provider.base_url, "http://localhost:8080");
         assert_eq!(config.provider.n_predict, 512);
+    }
+
+    #[test]
+    fn provider_timeout_is_optional() {
+        let tmp = TempYaml::new(EXAMPLE_YAML);
+        let config = ForgeConfig::from_file(tmp.path()).unwrap();
+        // EXAMPLE_YAML has no timeout_seconds — must still deserialize successfully.
+        let _ = config.provider.timeout_seconds;
+    }
+
+    #[test]
+    fn provider_timeout_defaults_reasonably() {
+        let tmp = TempYaml::new(EXAMPLE_YAML);
+        let config = ForgeConfig::from_file(tmp.path()).unwrap();
+        assert_eq!(
+            config.provider.timeout_seconds, 120,
+            "absent timeout_seconds must default to 120"
+        );
+    }
+
+    const PROVIDER_TIMEOUT_YAML: &str = r#"
+objective: "test"
+artifact:
+  repo_path: ".forge/artifacts/main.git"
+  branch: "main"
+provider:
+  base_url: "http://localhost:8080"
+  n_predict: 512
+  timeout_seconds: 30
+telemetry:
+  directory: "runs"
+"#;
+
+    #[test]
+    fn parses_explicit_provider_timeout() {
+        let tmp = TempYaml::new(PROVIDER_TIMEOUT_YAML);
+        let config = ForgeConfig::from_file(tmp.path()).unwrap();
+        assert_eq!(config.provider.timeout_seconds, 30);
     }
 
     #[test]

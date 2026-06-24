@@ -1,5 +1,7 @@
 //! Ollama provider — calls the local Ollama `/api/generate` endpoint.
 
+use std::time::Duration;
+
 use serde::{Deserialize, Serialize};
 
 use crate::providers::client::ProviderClient;
@@ -11,14 +13,19 @@ use crate::providers::types::{
 pub struct OllamaProvider {
     base_url: String,
     model: String,
+    agent: ureq::Agent,
 }
 
 impl OllamaProvider {
-    /// Create a new provider targeting `base_url` (e.g. `"http://localhost:11434"`) with `model`.
-    pub fn new(base_url: impl Into<String>, model: impl Into<String>) -> Self {
+    /// Create a new provider targeting `base_url` with `model` and a per-request `timeout_secs` deadline.
+    pub fn new(base_url: impl Into<String>, model: impl Into<String>, timeout_secs: u64) -> Self {
+        let agent = ureq::AgentBuilder::new()
+            .timeout(Duration::from_secs(timeout_secs))
+            .build();
         Self {
             base_url: base_url.into(),
             model: model.into(),
+            agent,
         }
     }
 }
@@ -51,6 +58,21 @@ fn classify_status(status: u16) -> ProviderErrorKind {
     }
 }
 
+fn is_timeout_source(source: Option<&(dyn std::error::Error + 'static)>) -> bool {
+    source
+        .and_then(|e| e.downcast_ref::<std::io::Error>())
+        .map(|e| e.kind() == std::io::ErrorKind::TimedOut)
+        .unwrap_or(false)
+}
+
+fn classify_transport(err: &ureq::Transport) -> ProviderErrorKind {
+    if is_timeout_source(std::error::Error::source(err)) {
+        ProviderErrorKind::Timeout
+    } else {
+        ProviderErrorKind::Retryable
+    }
+}
+
 fn map_generate_response(r: GenerateResponse) -> Result<ProviderResponse, ProviderError> {
     match r.response {
         Some(content) => Ok(ProviderResponse {
@@ -79,16 +101,20 @@ impl ProviderClient for OllamaProvider {
                 .map(|StructuredOutput::Json| "json".to_string()),
         };
 
-        let http_response = ureq::post(&url).send_json(&body).map_err(|err| match err {
-            ureq::Error::Status(status, _) => ProviderError {
-                kind: classify_status(status),
-                message: format!("HTTP {status}"),
-            },
-            ureq::Error::Transport(transport_err) => ProviderError {
-                kind: ProviderErrorKind::Retryable,
-                message: format!("connection error: {transport_err}"),
-            },
-        })?;
+        let http_response = self
+            .agent
+            .post(&url)
+            .send_json(&body)
+            .map_err(|err| match err {
+                ureq::Error::Status(status, _) => ProviderError {
+                    kind: classify_status(status),
+                    message: format!("HTTP {status}"),
+                },
+                ureq::Error::Transport(transport_err) => ProviderError {
+                    kind: classify_transport(&transport_err),
+                    message: format!("connection error: {transport_err}"),
+                },
+            })?;
 
         let parsed: GenerateResponse = http_response.into_json().map_err(|err| ProviderError {
             kind: ProviderErrorKind::Terminal,
@@ -156,9 +182,28 @@ mod tests {
 
     #[test]
     fn ollama_provider_new_stores_fields() {
-        let p = OllamaProvider::new("http://localhost:11434", "llama3");
+        let p = OllamaProvider::new("http://localhost:11434", "llama3", 120);
         assert_eq!(p.base_url, "http://localhost:11434");
         assert_eq!(p.model, "llama3");
+    }
+
+    #[test]
+    fn is_timeout_source_detects_timed_out_io_error() {
+        let ioe = std::io::Error::new(std::io::ErrorKind::TimedOut, "timed out");
+        let boxed: Box<dyn std::error::Error + 'static> = Box::new(ioe);
+        assert!(is_timeout_source(Some(boxed.as_ref())));
+    }
+
+    #[test]
+    fn is_timeout_source_returns_false_for_other_io_errors() {
+        let ioe = std::io::Error::new(std::io::ErrorKind::ConnectionRefused, "refused");
+        let boxed: Box<dyn std::error::Error + 'static> = Box::new(ioe);
+        assert!(!is_timeout_source(Some(boxed.as_ref())));
+    }
+
+    #[test]
+    fn is_timeout_source_returns_false_for_none() {
+        assert!(!is_timeout_source(None));
     }
 
     #[test]

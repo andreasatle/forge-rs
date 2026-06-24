@@ -38,6 +38,8 @@ pub enum ProviderErrorKind {
     Retryable,
     /// Permanent failure; retrying will not help.
     Terminal,
+    /// The provider did not respond within the configured deadline.
+    Timeout,
 }
 
 /// An error returned by a provider.
@@ -100,6 +102,17 @@ mod tests {
     #[test]
     fn error_kinds_are_distinct() {
         assert_ne!(ProviderErrorKind::Retryable, ProviderErrorKind::Terminal);
+    }
+
+    #[test]
+    fn provider_error_timeout_kind_exists() {
+        let err = ProviderError {
+            kind: ProviderErrorKind::Timeout,
+            message: "deadline exceeded".to_string(),
+        };
+        assert_eq!(err.kind, ProviderErrorKind::Timeout);
+        assert_ne!(err.kind, ProviderErrorKind::Retryable);
+        assert_ne!(err.kind, ProviderErrorKind::Terminal);
     }
 
     #[test]

@@ -106,6 +106,7 @@ mod tests {
             provider: ProviderConfig {
                 base_url: "http://localhost:8080".to_string(),
                 n_predict: 512,
+                timeout_seconds: 120,
             },
             telemetry: TelemetryConfig {
                 directory: telemetry_path.to_str().unwrap().to_string(),
@@ -269,6 +270,7 @@ mod tests {
                 provider: ProviderConfig {
                     base_url: "http://localhost:8080".to_string(),
                     n_predict: 512,
+                    timeout_seconds: 120,
                 },
                 telemetry: TelemetryConfig {
                     directory: telemetry.to_str().unwrap().to_string(),

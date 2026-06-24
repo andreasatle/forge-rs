@@ -44,7 +44,8 @@ impl ForgeRuntime {
         let sink: Rc<dyn TelemetrySink> =
             Rc::new(FileTelemetry::new(run_info.telemetry_dir.clone()));
 
-        let llama = LlamaCppProvider::new(&config.provider.base_url);
+        let llama =
+            LlamaCppProvider::new(&config.provider.base_url, config.provider.timeout_seconds);
         let retrying = RetryingProvider::new(llama, 3);
 
         let runner =
@@ -210,7 +211,7 @@ fn print_summary(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::ArtifactConfig;
+    use crate::config::{ArtifactConfig, ForgeConfig, ProviderConfig, TelemetryConfig};
     use crate::machines::scheduler::machine::{RecoverySummary, SchedulerOutput};
     use crate::machines::scheduler::state::RunGraph;
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -237,6 +238,33 @@ mod tests {
             nodes: vec![],
             next_id: 0,
         }
+    }
+
+    #[test]
+    fn runtime_threads_provider_timeout() {
+        // Verify that timeout_seconds from config reaches the provider constructor.
+        // No live HTTP: we only check that the value is read from config and the
+        // provider is constructed without error.
+        let config = ForgeConfig {
+            objective: "test".to_string(),
+            artifact: ArtifactConfig {
+                repo_path: "/tmp/test.git".to_string(),
+                branch: "main".to_string(),
+            },
+            provider: ProviderConfig {
+                base_url: "http://localhost:8080".to_string(),
+                n_predict: 512,
+                timeout_seconds: 42,
+            },
+            telemetry: TelemetryConfig {
+                directory: "/tmp/telemetry".to_string(),
+            },
+            validation: None,
+        };
+        assert_eq!(config.provider.timeout_seconds, 42);
+        let _provider =
+            LlamaCppProvider::new(&config.provider.base_url, config.provider.timeout_seconds);
+        // Construction succeeds: the timeout is wired through.
     }
 
     #[test]

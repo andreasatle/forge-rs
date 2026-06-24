@@ -98,6 +98,13 @@ mod tests {
         })
     }
 
+    fn timeout(msg: &str) -> Result<ProviderResponse, ProviderError> {
+        Err(ProviderError {
+            kind: ProviderErrorKind::Timeout,
+            message: msg.to_string(),
+        })
+    }
+
     fn req() -> ProviderRequest {
         ProviderRequest {
             prompt: "test".to_string(),
@@ -199,6 +206,40 @@ mod tests {
         );
         assert_eq!(requests[0].prompt, "preserve me");
         assert_eq!(requests[0].max_tokens, 512);
+    }
+
+    #[test]
+    fn retrying_provider_retries_timeouts() {
+        let inner = ScriptedProvider::new(vec![
+            timeout("deadline exceeded"),
+            timeout("deadline exceeded"),
+            ok("done"),
+        ]);
+        let client = RetryingProvider::new(inner, 5);
+        let resp = client.call(req()).unwrap();
+        assert_eq!(resp.content, "done");
+        assert_eq!(
+            client.inner.call_count(),
+            3,
+            "timeout errors must be retried like retryable errors"
+        );
+    }
+
+    #[test]
+    fn retrying_provider_exhausts_budget_on_timeout() {
+        let inner = ScriptedProvider::new(vec![
+            timeout("deadline exceeded"),
+            timeout("deadline exceeded"),
+            timeout("deadline exceeded"),
+        ]);
+        let client = RetryingProvider::new(inner, 3);
+        let err = client.call(req()).unwrap_err();
+        assert_eq!(err.kind, ProviderErrorKind::Timeout);
+        assert_eq!(
+            client.inner.call_count(),
+            3,
+            "must exhaust full budget before returning the timeout error"
+        );
     }
 
     #[test]
