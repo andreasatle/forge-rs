@@ -411,14 +411,16 @@ mod tests {
             kind: ProjectKind::Coding,
         });
         assert!(
-            policy.planner_system.contains("software planning"),
+            policy.planner_producer_system.contains("software planning"),
             "coding adapter must produce software-planning planner prompt; got:\n{}",
-            policy.planner_system
+            policy.planner_producer_system
         );
         assert!(
-            policy.worker_system.contains("software implementation"),
+            policy
+                .worker_producer_system
+                .contains("software implementation"),
             "coding adapter must produce software-implementation worker prompt; got:\n{}",
-            policy.worker_system
+            policy.worker_producer_system
         );
     }
 
@@ -429,7 +431,7 @@ mod tests {
         });
         let expected = crate::project::DefaultProjectAdapter.role_policy();
         assert_eq!(
-            policy.worker_system, expected.worker_system,
+            policy.worker_producer_system, expected.worker_producer_system,
             "default adapter must produce unchanged worker prompt"
         );
     }

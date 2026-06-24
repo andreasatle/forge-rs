@@ -52,7 +52,7 @@ impl<P> DeliberationHandler<ProviderRoleRunner<P>> {
 
     /// Wrap a provider in a handler with an optional artifact view, an
     /// explicit token budget forwarded to the role runner, the node kind
-    /// used to select `planner_system` vs `worker_system` from the policy,
+    /// used to select the matching plan/work system prompt from the policy,
     /// and the role policy to inject into the runner.
     pub fn new_with_view(
         provider: P,

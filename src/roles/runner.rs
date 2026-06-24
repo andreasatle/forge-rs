@@ -36,9 +36,8 @@ pub struct RoleRequest {
     pub critic_content: Option<String>,
     /// Accumulated Referee rejection feedback. Empty on the first pass.
     pub feedback: Vec<RevisionFeedback>,
-    /// Whether the Producer is acting as a planner or worker.
-    /// Selects `planner_system` vs `worker_system` from the policy.
-    /// Ignored for Critic and Referee.
+    /// Whether the role is acting on a planner or worker node.
+    /// Selects the matching node-kind-specific system prompt from the policy.
     pub node_kind: NodeKind,
     /// File tool context. When `Some`, the role may issue tool requests before
     /// returning a final result. When `None`, tool request JSON is still detected
@@ -127,13 +126,13 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
 
         let policy = file_tool_policy_for_role(&request.role);
 
-        let system = match &request.role {
-            DeliberationRole::Producer => match request.node_kind {
-                NodeKind::Plan => &self.policy.planner_system,
-                NodeKind::Work => &self.policy.worker_system,
-            },
-            DeliberationRole::Critic => &self.policy.critic_system,
-            DeliberationRole::Referee => &self.policy.referee_system,
+        let system = match (&request.node_kind, &request.role) {
+            (NodeKind::Plan, DeliberationRole::Producer) => &self.policy.planner_producer_system,
+            (NodeKind::Plan, DeliberationRole::Critic) => &self.policy.planner_critic_system,
+            (NodeKind::Plan, DeliberationRole::Referee) => &self.policy.planner_referee_system,
+            (NodeKind::Work, DeliberationRole::Producer) => &self.policy.worker_producer_system,
+            (NodeKind::Work, DeliberationRole::Critic) => &self.policy.worker_critic_system,
+            (NodeKind::Work, DeliberationRole::Referee) => &self.policy.worker_referee_system,
         };
 
         let base_prompt = {
@@ -898,7 +897,7 @@ mod tests {
         }];
         let default = RolePolicy::default();
         let prompt = render_role_prompt(
-            &default.worker_system,
+            &default.worker_producer_system,
             &DeliberationRole::Producer,
             "write a poem",
             None,
@@ -1946,19 +1945,19 @@ mod tests {
         for (role, system, pc, cc) in [
             (
                 DeliberationRole::Producer,
-                default.worker_system.as_str(),
+                default.worker_producer_system.as_str(),
                 None,
                 None,
             ),
             (
                 DeliberationRole::Critic,
-                default.critic_system.as_str(),
+                default.worker_critic_system.as_str(),
                 Some("draft"),
                 None,
             ),
             (
                 DeliberationRole::Referee,
-                default.referee_system.as_str(),
+                default.worker_referee_system.as_str(),
                 Some("draft"),
                 Some("looks good"),
             ),
@@ -1981,7 +1980,7 @@ mod tests {
 
         // Retry prompt (wraps the base role prompt).
         let base = render_role_prompt(
-            &default.worker_system,
+            &default.worker_producer_system,
             &DeliberationRole::Producer,
             "write a haiku",
             None,
@@ -2032,19 +2031,19 @@ mod tests {
         for (role, system, pc, cc) in [
             (
                 DeliberationRole::Producer,
-                default.worker_system.as_str(),
+                default.worker_producer_system.as_str(),
                 None,
                 None,
             ),
             (
                 DeliberationRole::Critic,
-                default.critic_system.as_str(),
+                default.worker_critic_system.as_str(),
                 Some("draft"),
                 None,
             ),
             (
                 DeliberationRole::Referee,
-                default.referee_system.as_str(),
+                default.worker_referee_system.as_str(),
                 Some("draft"),
                 Some("looks good"),
             ),
@@ -2061,7 +2060,7 @@ mod tests {
         }
         // Retry prompt schema examples also must not use "...".
         let base = render_role_prompt(
-            &default.worker_system,
+            &default.worker_producer_system,
             &DeliberationRole::Producer,
             "test",
             None,
@@ -2085,7 +2084,7 @@ mod tests {
         // the model not to copy them verbatim.
         let default = RolePolicy::default();
         let base = render_role_prompt(
-            &default.worker_system,
+            &default.worker_producer_system,
             &DeliberationRole::Producer,
             "write a haiku",
             None,
@@ -2167,7 +2166,7 @@ mod tests {
     fn default_role_policy_matches_current_prompt_behavior() {
         let policy = RolePolicy::default();
         let prompt = render_role_prompt(
-            &policy.worker_system,
+            &policy.worker_producer_system,
             &DeliberationRole::Producer,
             "write a haiku",
             None,
@@ -2203,11 +2202,11 @@ mod tests {
     #[test]
     fn planner_prompt_uses_planner_policy() {
         let policy = RolePolicy {
-            planner_system: "PLANNER_MARKER_XYZ".to_string(),
+            planner_producer_system: "PLANNER_MARKER_XYZ".to_string(),
             ..RolePolicy::default()
         };
         let prompt = render_role_prompt(
-            &policy.planner_system,
+            &policy.planner_producer_system,
             &DeliberationRole::Producer,
             "plan the work",
             None,
@@ -2216,22 +2215,22 @@ mod tests {
         );
         assert!(
             prompt.contains("PLANNER_MARKER_XYZ"),
-            "planner prompt must include planner_system text; got:\n{prompt}"
+            "planner prompt must include planner_producer_system text; got:\n{prompt}"
         );
         assert!(
             !prompt.contains("WORKER_MARKER"),
-            "planner prompt must not include worker_system text"
+            "planner prompt must not include worker_producer_system text"
         );
     }
 
     #[test]
     fn worker_prompt_uses_worker_policy() {
         let policy = RolePolicy {
-            worker_system: "WORKER_MARKER_XYZ".to_string(),
+            worker_producer_system: "WORKER_MARKER_XYZ".to_string(),
             ..RolePolicy::default()
         };
         let prompt = render_role_prompt(
-            &policy.worker_system,
+            &policy.worker_producer_system,
             &DeliberationRole::Producer,
             "do the work",
             None,
@@ -2240,18 +2239,18 @@ mod tests {
         );
         assert!(
             prompt.contains("WORKER_MARKER_XYZ"),
-            "worker prompt must include worker_system text; got:\n{prompt}"
+            "worker prompt must include worker_producer_system text; got:\n{prompt}"
         );
     }
 
     #[test]
     fn critic_prompt_uses_critic_policy() {
         let policy = RolePolicy {
-            critic_system: "CRITIC_MARKER_XYZ".to_string(),
+            worker_critic_system: "CRITIC_MARKER_XYZ".to_string(),
             ..RolePolicy::default()
         };
         let prompt = render_role_prompt(
-            &policy.critic_system,
+            &policy.worker_critic_system,
             &DeliberationRole::Critic,
             "review the draft",
             Some("producer draft"),
@@ -2260,18 +2259,18 @@ mod tests {
         );
         assert!(
             prompt.contains("CRITIC_MARKER_XYZ"),
-            "critic prompt must include critic_system text; got:\n{prompt}"
+            "critic prompt must include worker_critic_system text; got:\n{prompt}"
         );
     }
 
     #[test]
     fn referee_prompt_uses_referee_policy() {
         let policy = RolePolicy {
-            referee_system: "REFEREE_MARKER_XYZ".to_string(),
+            worker_referee_system: "REFEREE_MARKER_XYZ".to_string(),
             ..RolePolicy::default()
         };
         let prompt = render_role_prompt(
-            &policy.referee_system,
+            &policy.worker_referee_system,
             &DeliberationRole::Referee,
             "approve the result",
             Some("producer draft"),
@@ -2280,7 +2279,7 @@ mod tests {
         );
         assert!(
             prompt.contains("REFEREE_MARKER_XYZ"),
-            "referee prompt must include referee_system text; got:\n{prompt}"
+            "referee prompt must include worker_referee_system text; got:\n{prompt}"
         );
     }
 
@@ -2289,9 +2288,9 @@ mod tests {
         let policy = RolePolicy::default();
         // Worker, Critic, Referee use the status/content wrapper schema.
         for (label, system) in [
-            ("worker", policy.worker_system.as_str()),
-            ("critic", policy.critic_system.as_str()),
-            ("referee", policy.referee_system.as_str()),
+            ("worker", policy.worker_producer_system.as_str()),
+            ("critic", policy.worker_critic_system.as_str()),
+            ("referee", policy.worker_referee_system.as_str()),
         ] {
             let prompt =
                 render_role_prompt(system, &DeliberationRole::Producer, "test", None, None, &[]);
@@ -2310,7 +2309,7 @@ mod tests {
         }
         // Planner uses direct PlannerOutput schema — no status/content wrapper.
         let planner_prompt = render_role_prompt(
-            &policy.planner_system,
+            &policy.planner_producer_system,
             &DeliberationRole::Producer,
             "test",
             None,
@@ -2336,8 +2335,8 @@ mod tests {
         // Tool visibility is controlled by FileToolPolicy (file_tool_policy_for_role),
         // not by RolePolicy. Verify that changing system text has no effect.
         let policy = RolePolicy {
-            worker_system: "CUSTOM_WORKER".to_string(),
-            critic_system: "CUSTOM_CRITIC".to_string(),
+            worker_producer_system: "CUSTOM_WORKER".to_string(),
+            worker_critic_system: "CUSTOM_CRITIC".to_string(),
             ..RolePolicy::default()
         };
         let provider = ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"done"}"#]);
@@ -2366,7 +2365,7 @@ mod tests {
         );
         assert!(
             prompt.contains("CUSTOM_WORKER"),
-            "custom worker_system must appear in producer prompt; got:\n{prompt}"
+            "custom worker_producer_system must appear in producer prompt; got:\n{prompt}"
         );
     }
 
@@ -2375,7 +2374,7 @@ mod tests {
     #[test]
     fn planner_node_uses_planner_policy() {
         let policy = RolePolicy {
-            planner_system: "PLANNER_MARKER".to_string(),
+            planner_producer_system: "PLANNER_MARKER".to_string(),
             ..RolePolicy::default()
         };
         let tasks_json = r#"{"tasks":[{"id":"t1","objective":"do the work","depends_on":[]}]}"#;
@@ -2399,18 +2398,18 @@ mod tests {
         let prompt = &requests[0].prompt;
         assert!(
             prompt.contains("PLANNER_MARKER"),
-            "plan node must use planner_system; got:\n{prompt}"
+            "plan node must use planner_producer_system; got:\n{prompt}"
         );
         assert!(
             !prompt.contains("WORKER_MARKER"),
-            "plan node must not use worker_system"
+            "plan node must not use worker_producer_system"
         );
     }
 
     #[test]
     fn work_node_uses_worker_policy() {
         let policy = RolePolicy {
-            worker_system: "WORKER_MARKER".to_string(),
+            worker_producer_system: "WORKER_MARKER".to_string(),
             ..RolePolicy::default()
         };
         let provider =
@@ -2434,14 +2433,51 @@ mod tests {
         let prompt = &requests[0].prompt;
         assert!(
             prompt.contains("WORKER_MARKER"),
-            "work node must use worker_system; got:\n{prompt}"
+            "work node must use worker_producer_system; got:\n{prompt}"
         );
     }
 
     #[test]
-    fn critic_still_uses_critic_policy() {
+    fn plan_critic_uses_planner_critic_policy() {
         let policy = RolePolicy {
-            critic_system: "CRITIC_MARKER".to_string(),
+            planner_critic_system: "PLANNER_CRITIC_MARKER".to_string(),
+            worker_critic_system: "WORKER_CRITIC_MARKER".to_string(),
+            ..RolePolicy::default()
+        };
+        let provider =
+            ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"plan review done"}"#]);
+        let runner = ProviderRoleRunner::new_with_policy(&provider, policy);
+
+        runner.run_role(
+            RoleRequest {
+                role: DeliberationRole::Critic,
+                objective: "review the plan".to_string(),
+                producer_content: Some("plan graph".to_string()),
+                critic_content: None,
+                feedback: vec![],
+                node_kind: NodeKind::Plan,
+                tool_context: None,
+            },
+            &crate::telemetry::NoopTelemetry,
+        );
+
+        let requests = provider.requests.borrow();
+        let prompt = &requests[0].prompt;
+        assert!(
+            prompt.contains("PLANNER_CRITIC_MARKER"),
+            "plan critic must use planner_critic_system; got:\n{prompt}"
+        );
+        assert!(
+            !prompt.contains("WORKER_CRITIC_MARKER"),
+            "plan critic must not use worker_critic_system; got:\n{prompt}"
+        );
+    }
+
+    #[test]
+    fn work_critic_uses_worker_critic_policy() {
+        let policy = RolePolicy {
+            planner_critic_system: "PLANNER_CRITIC_MARKER".to_string(),
+            worker_critic_system: "WORKER_CRITIC_MARKER".to_string(),
             ..RolePolicy::default()
         };
         let provider =
@@ -2464,15 +2500,56 @@ mod tests {
         let requests = provider.requests.borrow();
         let prompt = &requests[0].prompt;
         assert!(
-            prompt.contains("CRITIC_MARKER"),
-            "critic must use critic_system regardless of node_kind; got:\n{prompt}"
+            prompt.contains("WORKER_CRITIC_MARKER"),
+            "work critic must use worker_critic_system; got:\n{prompt}"
+        );
+        assert!(
+            !prompt.contains("PLANNER_CRITIC_MARKER"),
+            "work critic must not use planner_critic_system; got:\n{prompt}"
         );
     }
 
     #[test]
-    fn referee_still_uses_referee_policy() {
+    fn plan_referee_uses_planner_referee_policy() {
         let policy = RolePolicy {
-            referee_system: "REFEREE_MARKER".to_string(),
+            planner_referee_system: "PLANNER_REFEREE_MARKER".to_string(),
+            worker_referee_system: "WORKER_REFEREE_MARKER".to_string(),
+            ..RolePolicy::default()
+        };
+        let provider =
+            ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"plan approved"}"#]);
+        let runner = ProviderRoleRunner::new_with_policy(&provider, policy);
+
+        runner.run_role(
+            RoleRequest {
+                role: DeliberationRole::Referee,
+                objective: "approve the plan".to_string(),
+                producer_content: Some("plan graph".to_string()),
+                critic_content: Some("plan review".to_string()),
+                feedback: vec![],
+                node_kind: NodeKind::Plan,
+                tool_context: None,
+            },
+            &crate::telemetry::NoopTelemetry,
+        );
+
+        let requests = provider.requests.borrow();
+        let prompt = &requests[0].prompt;
+        assert!(
+            prompt.contains("PLANNER_REFEREE_MARKER"),
+            "plan referee must use planner_referee_system; got:\n{prompt}"
+        );
+        assert!(
+            !prompt.contains("WORKER_REFEREE_MARKER"),
+            "plan referee must not use worker_referee_system; got:\n{prompt}"
+        );
+    }
+
+    #[test]
+    fn work_referee_uses_worker_referee_policy() {
+        let policy = RolePolicy {
+            planner_referee_system: "PLANNER_REFEREE_MARKER".to_string(),
+            worker_referee_system: "WORKER_REFEREE_MARKER".to_string(),
             ..RolePolicy::default()
         };
         let provider =
@@ -2495,8 +2572,12 @@ mod tests {
         let requests = provider.requests.borrow();
         let prompt = &requests[0].prompt;
         assert!(
-            prompt.contains("REFEREE_MARKER"),
-            "referee must use referee_system regardless of node_kind; got:\n{prompt}"
+            prompt.contains("WORKER_REFEREE_MARKER"),
+            "work referee must use worker_referee_system; got:\n{prompt}"
+        );
+        assert!(
+            !prompt.contains("PLANNER_REFEREE_MARKER"),
+            "work referee must not use planner_referee_system; got:\n{prompt}"
         );
     }
 

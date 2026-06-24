@@ -1060,7 +1060,7 @@ mod tests {
 
         // A custom marker in a policy derived from the adapter should reach the prompt.
         let custom_policy = crate::roles::RolePolicy {
-            worker_system: "ADAPTER_MARKER_TEST".to_string(),
+            worker_producer_system: "ADAPTER_MARKER_TEST".to_string(),
             ..policy
         };
 

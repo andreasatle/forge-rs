@@ -23,11 +23,13 @@ mod tests {
     fn default_project_adapter_returns_default_role_policy() {
         let adapter = DefaultProjectAdapter;
         let policy = adapter.role_policy();
-        // Worker, Critic, Referee use the status/content wrapper schema.
+        // All non-planner-producer roles use the status/content wrapper schema.
         for system in [
-            &policy.worker_system,
-            &policy.critic_system,
-            &policy.referee_system,
+            &policy.worker_producer_system,
+            &policy.planner_critic_system,
+            &policy.worker_critic_system,
+            &policy.planner_referee_system,
+            &policy.worker_referee_system,
         ] {
             assert!(
                 system.contains("\"status\""),
@@ -44,19 +46,21 @@ mod tests {
         }
         // Planner uses direct PlannerOutput schema.
         assert!(
-            policy.planner_system.contains("\"tasks\""),
-            "default planner_system must show direct tasks schema; got:\n{}",
-            policy.planner_system
+            policy.planner_producer_system.contains("\"tasks\""),
+            "default planner_producer_system must show direct tasks schema; got:\n{}",
+            policy.planner_producer_system
         );
         assert!(
-            !policy.planner_system.contains("\"status\""),
-            "default planner_system must not contain status/content wrapper; got:\n{}",
-            policy.planner_system
+            !policy.planner_producer_system.contains("\"status\""),
+            "default planner_producer_system must not contain status/content wrapper; got:\n{}",
+            policy.planner_producer_system
         );
         assert!(
-            policy.planner_system.contains("Do not copy example values"),
-            "default planner_system must include copy-guard instruction; got:\n{}",
-            policy.planner_system
+            policy
+                .planner_producer_system
+                .contains("Do not copy example values"),
+            "default planner_producer_system must include copy-guard instruction; got:\n{}",
+            policy.planner_producer_system
         );
     }
 
@@ -66,20 +70,46 @@ mod tests {
         let policy = adapter.role_policy();
         let default = RolePolicy::default();
         assert_eq!(
-            policy.planner_system, default.planner_system,
-            "DefaultProjectAdapter must preserve planner_system"
+            policy.planner_producer_system, default.planner_producer_system,
+            "DefaultProjectAdapter must preserve planner_producer_system"
         );
         assert_eq!(
-            policy.worker_system, default.worker_system,
-            "DefaultProjectAdapter must preserve worker_system"
+            policy.worker_producer_system, default.worker_producer_system,
+            "DefaultProjectAdapter must preserve worker_producer_system"
         );
         assert_eq!(
-            policy.critic_system, default.critic_system,
-            "DefaultProjectAdapter must preserve critic_system"
+            policy.planner_critic_system, default.planner_critic_system,
+            "DefaultProjectAdapter must preserve planner_critic_system"
         );
         assert_eq!(
-            policy.referee_system, default.referee_system,
-            "DefaultProjectAdapter must preserve referee_system"
+            policy.worker_critic_system, default.worker_critic_system,
+            "DefaultProjectAdapter must preserve worker_critic_system"
         );
+        assert_eq!(
+            policy.planner_referee_system, default.planner_referee_system,
+            "DefaultProjectAdapter must preserve planner_referee_system"
+        );
+        assert_eq!(
+            policy.worker_referee_system, default.worker_referee_system,
+            "DefaultProjectAdapter must preserve worker_referee_system"
+        );
+    }
+
+    #[test]
+    fn default_policy_preserves_protocol_footer() {
+        let policy = DefaultProjectAdapter.role_policy();
+        for system in [
+            policy.worker_producer_system.as_str(),
+            policy.planner_critic_system.as_str(),
+            policy.worker_critic_system.as_str(),
+            policy.planner_referee_system.as_str(),
+            policy.worker_referee_system.as_str(),
+        ] {
+            assert!(system.contains("Return exactly one JSON object"));
+            assert!(system.contains("Accepted: {\"status\":\"accepted\""));
+            assert!(system.contains("Rejected: {\"status\":\"rejected\""));
+            assert!(system.contains("Do not copy example values"));
+            assert!(system.contains("Execution failures are handled by the framework"));
+        }
     }
 }

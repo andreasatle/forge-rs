@@ -29,7 +29,22 @@ Critic accepts with a review or rejects with a reason. \
 Referee accepts approval or rejects with revision feedback. \
 Execution failures are handled by the framework, not the model.";
 
-const CODING_CRITIC_SYSTEM: &str = "You are a software review agent. \
+const CODING_PLANNER_CRITIC_SYSTEM: &str = "You are a software planning review agent. \
+Evaluate the proposed task graph, not the final implementation artifact. \
+Judge whether the graph covers the objective, tasks are bounded, each task addresses one concern, dependencies are sensible, task objectives are actionable, and worker nodes have enough detail. \
+Do not judge whether files already changed, final code compiles, or the final artifact already exists. \
+Accept with a plan review summary or reject with a specific, actionable plan revision reason.\n\
+Return exactly one JSON object. No markdown. No code fence. \
+No explanation. No text before or after the JSON.\n\
+Accepted: {\"status\":\"accepted\",\"content\":\"<YOUR_RESPONSE_HERE>\"}\n\
+Rejected: {\"status\":\"rejected\",\"reason\":\"<REASON_FOR_REJECTION>\"}\n\
+Do not copy example values. Replace them with task-specific content.\n\
+Producer returns accepted content. \
+Critic accepts with a review or rejects with a reason. \
+Referee accepts approval or rejects with revision feedback. \
+Execution failures are handled by the framework, not the model.";
+
+const CODING_WORKER_CRITIC_SYSTEM: &str = "You are a software review agent. \
 Evaluate the producer output for correctness and completeness. \
 Identify missing work, unsupported claims, and incomplete implementation. \
 Check for missed edge cases and unnecessary complexity. \
@@ -44,7 +59,22 @@ Critic accepts with a review or rejects with a reason. \
 Referee accepts approval or rejects with revision feedback. \
 Execution failures are handled by the framework, not the model.";
 
-const CODING_REFEREE_SYSTEM: &str = "You are a software acceptance agent. \
+const CODING_PLANNER_REFEREE_SYSTEM: &str = "You are a software planning acceptance agent. \
+Decide whether the proposed task graph is a structurally valid, schedulable plan. \
+Accept when tasks collectively cover the objective, dependencies make sense, and the graph is suitable for scheduling. \
+Reject with plan revision feedback when a necessary task is omitted, task objectives are too vague, dependencies are wrong or missing, or tasks are too large. \
+Do not reject because final code has not been written, artifact files do not yet exist, or final output is not yet visible.\n\
+Return exactly one JSON object. No markdown. No code fence. \
+No explanation. No text before or after the JSON.\n\
+Accepted: {\"status\":\"accepted\",\"content\":\"<YOUR_RESPONSE_HERE>\"}\n\
+Rejected: {\"status\":\"rejected\",\"reason\":\"<REASON_FOR_REJECTION>\"}\n\
+Do not copy example values. Replace them with task-specific content.\n\
+Producer returns accepted content. \
+Critic accepts with a review or rejects with a reason. \
+Referee accepts approval or rejects with revision feedback. \
+Execution failures are handled by the framework, not the model.";
+
+const CODING_WORKER_REFEREE_SYSTEM: &str = "You are a software acceptance agent. \
 Decide whether the work satisfies the objective and acceptance criteria. \
 Perform a final completeness check: every requirement must be addressed, not just the last task. \
 Accept only when the work is complete and correct. \
@@ -68,10 +98,12 @@ pub struct CodingProjectAdapter;
 impl ProjectAdapter for CodingProjectAdapter {
     fn role_policy(&self) -> RolePolicy {
         RolePolicy {
-            planner_system: CODING_PLANNER_SYSTEM.to_string(),
-            worker_system: CODING_WORKER_SYSTEM.to_string(),
-            critic_system: CODING_CRITIC_SYSTEM.to_string(),
-            referee_system: CODING_REFEREE_SYSTEM.to_string(),
+            planner_producer_system: CODING_PLANNER_SYSTEM.to_string(),
+            worker_producer_system: CODING_WORKER_SYSTEM.to_string(),
+            planner_critic_system: CODING_PLANNER_CRITIC_SYSTEM.to_string(),
+            worker_critic_system: CODING_WORKER_CRITIC_SYSTEM.to_string(),
+            planner_referee_system: CODING_PLANNER_REFEREE_SYSTEM.to_string(),
+            worker_referee_system: CODING_WORKER_REFEREE_SYSTEM.to_string(),
         }
     }
 }
@@ -86,23 +118,25 @@ mod tests {
         let coding = CodingProjectAdapter.role_policy();
         let default = DefaultProjectAdapter.role_policy();
         assert_ne!(
-            coding.planner_system, default.planner_system,
-            "coding planner_system must differ from default"
+            coding.planner_producer_system, default.planner_producer_system,
+            "coding planner_producer_system must differ from default"
         );
         assert_ne!(
-            coding.worker_system, default.worker_system,
-            "coding worker_system must differ from default"
+            coding.worker_producer_system, default.worker_producer_system,
+            "coding worker_producer_system must differ from default"
         );
     }
 
     #[test]
     fn coding_adapter_preserves_json_protocol_invariants() {
         let policy = CodingProjectAdapter.role_policy();
-        // Worker, Critic, Referee use the status/content wrapper schema.
+        // All non-planner-producer roles use the status/content wrapper schema.
         for (label, system) in [
-            ("worker", policy.worker_system.as_str()),
-            ("critic", policy.critic_system.as_str()),
-            ("referee", policy.referee_system.as_str()),
+            ("worker", policy.worker_producer_system.as_str()),
+            ("planner critic", policy.planner_critic_system.as_str()),
+            ("worker critic", policy.worker_critic_system.as_str()),
+            ("planner referee", policy.planner_referee_system.as_str()),
+            ("worker referee", policy.worker_referee_system.as_str()),
         ] {
             assert!(
                 system.contains("\"status\""),
@@ -127,24 +161,26 @@ mod tests {
         }
         // Planner uses direct PlannerOutput schema — no status/content wrapper.
         assert!(
-            policy.planner_system.contains("\"tasks\""),
+            policy.planner_producer_system.contains("\"tasks\""),
             "planner system must show direct tasks schema; got:\n{}",
-            policy.planner_system
+            policy.planner_producer_system
         );
         assert!(
-            !policy.planner_system.contains("\"status\""),
+            !policy.planner_producer_system.contains("\"status\""),
             "planner system must not contain status/content wrapper; got:\n{}",
-            policy.planner_system
+            policy.planner_producer_system
         );
         assert!(
-            policy.planner_system.contains("Do not copy example values"),
+            policy
+                .planner_producer_system
+                .contains("Do not copy example values"),
             "planner system must include copy-guard instruction; got:\n{}",
-            policy.planner_system
+            policy.planner_producer_system
         );
         assert!(
-            !policy.planner_system.contains("\"...\""),
+            !policy.planner_producer_system.contains("\"...\""),
             "planner system must not contain dot-placeholder JSON values; got:\n{}",
-            policy.planner_system
+            policy.planner_producer_system
         );
     }
 
@@ -152,14 +188,14 @@ mod tests {
     fn coding_planner_emphasizes_software_planning() {
         let policy = CodingProjectAdapter.role_policy();
         assert!(
-            policy.planner_system.contains("software planning"),
-            "planner_system must mention software planning; got:\n{}",
-            policy.planner_system
+            policy.planner_producer_system.contains("software planning"),
+            "planner_producer_system must mention software planning; got:\n{}",
+            policy.planner_producer_system
         );
         assert!(
-            policy.planner_system.contains("bounded"),
-            "planner_system must mention bounded tasks; got:\n{}",
-            policy.planner_system
+            policy.planner_producer_system.contains("bounded"),
+            "planner_producer_system must mention bounded tasks; got:\n{}",
+            policy.planner_producer_system
         );
     }
 
@@ -167,14 +203,16 @@ mod tests {
     fn coding_worker_emphasizes_implementation() {
         let policy = CodingProjectAdapter.role_policy();
         assert!(
-            policy.worker_system.contains("software implementation"),
-            "worker_system must mention software implementation; got:\n{}",
-            policy.worker_system
+            policy
+                .worker_producer_system
+                .contains("software implementation"),
+            "worker_producer_system must mention software implementation; got:\n{}",
+            policy.worker_producer_system
         );
         assert!(
-            policy.worker_system.contains("file tools"),
-            "worker_system must mention file tools; got:\n{}",
-            policy.worker_system
+            policy.worker_producer_system.contains("file tools"),
+            "worker_producer_system must mention file tools; got:\n{}",
+            policy.worker_producer_system
         );
     }
 
@@ -182,9 +220,11 @@ mod tests {
     fn coding_planner_excludes_implementation_details() {
         let policy = CodingProjectAdapter.role_policy();
         assert!(
-            policy.planner_system.contains("implementation details"),
-            "planner_system must instruct against implementation details; got:\n{}",
-            policy.planner_system
+            policy
+                .planner_producer_system
+                .contains("implementation details"),
+            "planner_producer_system must instruct against implementation details; got:\n{}",
+            policy.planner_producer_system
         );
     }
 
@@ -193,17 +233,17 @@ mod tests {
         let policy = CodingProjectAdapter.role_policy();
         assert!(
             policy
-                .worker_system
+                .worker_producer_system
                 .contains("inspect files before editing"),
-            "worker_system must instruct to inspect files before editing; got:\n{}",
-            policy.worker_system
+            "worker_producer_system must instruct to inspect files before editing; got:\n{}",
+            policy.worker_producer_system
         );
         assert!(
             policy
-                .worker_system
+                .worker_producer_system
                 .contains("Use tools before making assumptions"),
-            "worker_system must instruct to use tools before making assumptions; got:\n{}",
-            policy.worker_system
+            "worker_producer_system must instruct to use tools before making assumptions; got:\n{}",
+            policy.worker_producer_system
         );
     }
 
@@ -211,19 +251,107 @@ mod tests {
     fn coding_critic_identifies_missing_work_and_unsupported_claims() {
         let policy = CodingProjectAdapter.role_policy();
         assert!(
-            policy.critic_system.contains("missing work"),
-            "critic_system must mention missing work; got:\n{}",
-            policy.critic_system
+            policy.worker_critic_system.contains("missing work"),
+            "worker_critic_system must mention missing work; got:\n{}",
+            policy.worker_critic_system
         );
         assert!(
-            policy.critic_system.contains("unsupported claims"),
-            "critic_system must mention unsupported claims; got:\n{}",
-            policy.critic_system
+            policy.worker_critic_system.contains("unsupported claims"),
+            "worker_critic_system must mention unsupported claims; got:\n{}",
+            policy.worker_critic_system
         );
         assert!(
-            policy.critic_system.contains("incomplete implementation"),
-            "critic_system must mention incomplete implementation; got:\n{}",
-            policy.critic_system
+            policy
+                .worker_critic_system
+                .contains("incomplete implementation"),
+            "worker_critic_system must mention incomplete implementation; got:\n{}",
+            policy.worker_critic_system
+        );
+    }
+
+    #[test]
+    fn coding_planner_critic_does_not_require_final_artifact() {
+        let policy = CodingProjectAdapter.role_policy();
+        assert!(
+            policy.planner_critic_system.contains("proposed task graph"),
+            "planner_critic_system must review the proposed task graph; got:\n{}",
+            policy.planner_critic_system
+        );
+        assert!(
+            policy
+                .planner_critic_system
+                .contains("not the final implementation artifact"),
+            "planner_critic_system must not require final implementation; got:\n{}",
+            policy.planner_critic_system
+        );
+        assert!(
+            policy
+                .planner_critic_system
+                .contains("final artifact already exists"),
+            "planner_critic_system must say artifact existence is out of scope; got:\n{}",
+            policy.planner_critic_system
+        );
+    }
+
+    #[test]
+    fn coding_planner_referee_judges_plan_not_implementation() {
+        let policy = CodingProjectAdapter.role_policy();
+        assert!(
+            policy
+                .planner_referee_system
+                .contains("structurally valid, schedulable plan"),
+            "planner_referee_system must judge schedulable plan structure; got:\n{}",
+            policy.planner_referee_system
+        );
+        assert!(
+            policy
+                .planner_referee_system
+                .contains("final code has not been written"),
+            "planner_referee_system must not reject missing implementation; got:\n{}",
+            policy.planner_referee_system
+        );
+        assert!(
+            policy
+                .planner_referee_system
+                .contains("artifact files do not yet exist"),
+            "planner_referee_system must not require artifact files; got:\n{}",
+            policy.planner_referee_system
+        );
+    }
+
+    #[test]
+    fn worker_critic_still_judges_implementation() {
+        let policy = CodingProjectAdapter.role_policy();
+        assert!(
+            policy
+                .worker_critic_system
+                .contains("incomplete implementation"),
+            "worker_critic_system must still judge implementation; got:\n{}",
+            policy.worker_critic_system
+        );
+        assert!(
+            !policy.worker_critic_system.contains("proposed task graph"),
+            "worker_critic_system must not be the planner critic prompt; got:\n{}",
+            policy.worker_critic_system
+        );
+    }
+
+    #[test]
+    fn worker_referee_still_judges_completion() {
+        let policy = CodingProjectAdapter.role_policy();
+        assert!(
+            policy
+                .worker_referee_system
+                .contains("work satisfies the objective"),
+            "worker_referee_system must still judge completed work; got:\n{}",
+            policy.worker_referee_system
+        );
+        assert!(
+            policy
+                .worker_referee_system
+                .contains("work is complete and correct"),
+            "worker_referee_system must still require completion; got:\n{}",
+            policy.worker_referee_system
         );
     }
 
@@ -231,9 +359,11 @@ mod tests {
     fn coding_referee_performs_final_completeness_check() {
         let policy = CodingProjectAdapter.role_policy();
         assert!(
-            policy.referee_system.contains("final completeness check"),
-            "referee_system must include a final completeness check instruction; got:\n{}",
-            policy.referee_system
+            policy
+                .worker_referee_system
+                .contains("final completeness check"),
+            "worker_referee_system must include a final completeness check instruction; got:\n{}",
+            policy.worker_referee_system
         );
     }
 
@@ -244,20 +374,24 @@ mod tests {
         // Every coding system string must contain the same key invariant
         // strings as the default policy to ensure equal protocol hardening.
         for system in [
-            coding.planner_system.as_str(),
-            coding.worker_system.as_str(),
-            coding.critic_system.as_str(),
-            coding.referee_system.as_str(),
+            coding.planner_producer_system.as_str(),
+            coding.worker_producer_system.as_str(),
+            coding.planner_critic_system.as_str(),
+            coding.worker_critic_system.as_str(),
+            coding.planner_referee_system.as_str(),
+            coding.worker_referee_system.as_str(),
         ] {
             assert_eq!(
                 system.contains("Do not copy example values"),
-                default.worker_system.contains("Do not copy example values"),
+                default
+                    .worker_producer_system
+                    .contains("Do not copy example values"),
                 "coding system must carry the same copy-guard as the default policy"
             );
             assert_eq!(
                 system.contains("Return exactly one JSON object"),
                 default
-                    .worker_system
+                    .worker_producer_system
                     .contains("Return exactly one JSON object"),
                 "coding system must carry the same JSON-only instruction as the default policy"
             );
