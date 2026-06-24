@@ -10,6 +10,7 @@ use crate::artifacts::{ArtifactUpdate, ArtifactView};
 use crate::machines::deliberation::event::RoleResult;
 use crate::machines::deliberation::state::{DeliberationRole, RevisionFeedback};
 use crate::machines::scheduler::NodeKind;
+use crate::node_runner::planner::{parse_planner_content, validate_planner_output};
 use crate::providers::{ProviderClient, ProviderRequest, StructuredOutput};
 use crate::roles::policy::RolePolicy;
 use crate::telemetry::{TelemetryEvent, TelemetryRecord, TelemetrySink};
@@ -249,6 +250,51 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
             // Not a tool request — try to parse as a role result.
             match try_parse_role_response(&response.content) {
                 Ok(result) => {
+                    // For Plan producers: validate the accepted content as PlannerOutput.
+                    // Invalid content triggers protocol retry, not silent fallback.
+                    if request.node_kind == NodeKind::Plan
+                        && matches!(request.role, DeliberationRole::Producer)
+                        && let RoleResult::Accepted { ref content } = result
+                    {
+                        let validate_err = match parse_planner_content(content) {
+                            None => {
+                                Some("planner content is not valid PlannerOutput JSON".to_string())
+                            }
+                            Some(ref out) => validate_planner_output(out)
+                                .err()
+                                .map(|e| format!("planner content validation failed: {e}")),
+                        };
+                        if let Some(err) = validate_err {
+                            telemetry.record(TelemetryRecord::new_with_subsource(
+                                "RoleMachine",
+                                subsource,
+                                TelemetryEvent::ParseFailed {
+                                    raw_response: response.content.clone(),
+                                    parse_error: err.clone(),
+                                    attempt_count: protocol_attempt,
+                                },
+                            ));
+                            if protocol_attempt > MAX_PROTOCOL_RETRIES {
+                                return RoleRunOutput {
+                                    result: RoleResult::Failed { reason: err },
+                                    artifact_update: extract_update(&mut executor),
+                                };
+                            }
+                            let next_attempt = protocol_attempt + 1;
+                            telemetry.record(TelemetryRecord::new_with_subsource(
+                                "RoleMachine",
+                                subsource,
+                                TelemetryEvent::ProtocolRetry {
+                                    parse_error: err.clone(),
+                                    attempt_count: next_attempt,
+                                },
+                            ));
+                            current_prompt = render_retry_prompt(&base_prompt, &err);
+                            protocol_attempt = next_attempt;
+                            continue;
+                        }
+                    }
+
                     telemetry.record(TelemetryRecord::new_with_subsource(
                         "RoleMachine",
                         subsource,
@@ -461,6 +507,14 @@ enum JsonRoleResponse {
 
 fn try_parse_role_response(raw_response: &str) -> Result<RoleResult, String> {
     let text = strip_code_fence(raw_response.trim());
+    // Require the response to start directly with a JSON object.
+    // Chat-style preamble ("Here is my answer: {...}") rewards incorrect behavior.
+    if !text.starts_with('{') {
+        return Err(
+            "role response must start with a JSON object; preamble text is not permitted"
+                .to_string(),
+        );
+    }
     let json_str = match extract_json_object(text) {
         Some(s) => s,
         None => {
@@ -695,12 +749,12 @@ mod tests {
     }
 
     #[test]
-    fn preamble_then_json_parses_if_object_extractable() {
+    fn preamble_then_json_is_protocol_failure() {
         let input = "Here is the result:\n{\"status\":\"accepted\",\"content\":\"draft\"}";
         let result = parse_role_response(input);
         assert!(
-            matches!(result, RoleResult::Accepted { ref content } if content == "draft"),
-            "JSON after preamble must parse to Accepted {{ 'draft' }}, got {result:?}"
+            matches!(result, RoleResult::Failed { .. }),
+            "preamble before JSON must be a protocol failure, got {result:?}"
         );
     }
 
@@ -865,7 +919,8 @@ mod tests {
 
         let requests = provider.requests.borrow();
         let retry_prompt = &requests[1].prompt;
-        assert!(retry_prompt.contains("no JSON object found"));
+        // "invalid text" starts with 'i', not '{', so preamble check fires.
+        assert!(retry_prompt.contains("preamble text is not permitted"));
         assert!(!retry_prompt.contains("invalid text"));
         assert!(retry_prompt.contains("Objective: recover output"));
         assert!(retry_prompt.contains("<YOUR_RESPONSE_HERE>"));
@@ -951,12 +1006,13 @@ mod tests {
 
         let records = telemetry.records();
         assert!(records.iter().all(|record| record.source == "RoleMachine"));
+        // "invalid text" starts with 'i', not '{', so preamble check fires.
         assert!(records.iter().any(|record| matches!(
             &record.event,
             TelemetryEvent::RolePromptRendered {
                 attempt_count: 2,
                 prompt,
-            } if prompt.contains("no JSON object found")
+            } if prompt.contains("preamble text is not permitted")
         )));
         assert!(records.iter().any(|record| matches!(
             &record.event,
@@ -968,7 +1024,7 @@ mod tests {
         assert!(records.iter().any(|record| matches!(
             &record.event,
             TelemetryEvent::ParseFailed { parse_error, .. }
-                if parse_error.contains("no JSON object found")
+                if parse_error.contains("preamble text is not permitted")
         )));
         assert!(records.iter().any(|record| matches!(
             &record.event,
@@ -2251,8 +2307,10 @@ mod tests {
             planner_system: "PLANNER_MARKER".to_string(),
             ..RolePolicy::default()
         };
-        let provider =
-            ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"plan done"}"#]);
+        let tasks_json = r#"{"tasks":[{"id":"t1","objective":"do the work","depends_on":[]}]}"#;
+        let plan_response =
+            serde_json::json!({"status": "accepted", "content": tasks_json}).to_string();
+        let provider = ScriptedProvider::from_strs(&[&plan_response]);
         let runner = ProviderRoleRunner::new_with_policy(&provider, policy);
 
         runner.run_role(
@@ -2376,8 +2434,11 @@ mod tests {
     #[test]
     fn default_policy_preserves_existing_behavior() {
         let policy = RolePolicy::default();
+        let tasks_json = r#"{"tasks":[{"id":"t1","objective":"do the work","depends_on":[]}]}"#;
+        let plan_response =
+            serde_json::json!({"status": "accepted", "content": tasks_json}).to_string();
         let provider = ScriptedProvider::from_strs(&[
-            r#"{"status":"accepted","content":"plan done"}"#,
+            &plan_response,
             r#"{"status":"accepted","content":"work done"}"#,
         ]);
         let runner = ProviderRoleRunner::new_with_policy(&provider, policy);
@@ -2415,5 +2476,341 @@ mod tests {
                 req.prompt
             );
         }
+    }
+
+    // ── Step 1: planner tool exclusion (runner-level) ────────────────────────
+
+    #[test]
+    fn planner_prompt_omits_tool_section() {
+        // When node_kind is Plan and tool_context is None, no tool section appears.
+        let tasks_json = r#"{"tasks":[{"id":"t1","objective":"do the work","depends_on":[]}]}"#;
+        let plan_response =
+            serde_json::json!({"status": "accepted", "content": tasks_json}).to_string();
+        let provider = ScriptedProvider::from_strs(&[&plan_response]);
+        let runner = ProviderRoleRunner::new(&provider);
+
+        runner.run_role(
+            RoleRequest {
+                role: DeliberationRole::Producer,
+                objective: "plan the work".to_string(),
+                producer_content: None,
+                critic_content: None,
+                feedback: vec![],
+                node_kind: NodeKind::Plan,
+                tool_context: None,
+            },
+            &crate::telemetry::NoopTelemetry,
+        );
+
+        let requests = provider.requests.borrow();
+        let prompt = &requests[0].prompt;
+        assert!(
+            !prompt.contains("list_files"),
+            "planner prompt must not include tool section; got:\n{prompt}"
+        );
+        assert!(
+            !prompt.contains("write_file"),
+            "planner prompt must not include write tools; got:\n{prompt}"
+        );
+    }
+
+    #[test]
+    fn planner_tool_request_produces_error_observation() {
+        // Even if a plan-node model emits a tool request, it gets "no file tools available"
+        // rather than actual execution, because tool_context is None for plan nodes.
+        let tasks_json = r#"{"tasks":[{"id":"t1","objective":"do the thing","depends_on":[]}]}"#;
+        let accepted_response =
+            serde_json::json!({"status": "accepted", "content": tasks_json}).to_string();
+        let provider = ScriptedProvider::from_strs(&[
+            r#"{"tool":"read_file","path":"hello.txt"}"#,
+            &accepted_response,
+        ]);
+        let runner = ProviderRoleRunner::new(&provider);
+
+        let output = runner.run_role(
+            RoleRequest {
+                role: DeliberationRole::Producer,
+                objective: "plan the work".to_string(),
+                producer_content: None,
+                critic_content: None,
+                feedback: vec![],
+                node_kind: NodeKind::Plan,
+                tool_context: None,
+            },
+            &crate::telemetry::NoopTelemetry,
+        );
+
+        assert!(
+            matches!(output.result, RoleResult::Accepted { .. }),
+            "plan node must accept valid PlannerOutput after tool error; got {:?}",
+            output.result
+        );
+        let second_prompt = &provider.requests.borrow()[1].prompt;
+        assert!(
+            second_prompt.contains("no file tools available"),
+            "plan tool request must produce error observation; got:\n{second_prompt}"
+        );
+    }
+
+    #[test]
+    fn worker_prompt_still_has_write_tools() {
+        // Work nodes with tool_context keep write tools (existing behaviour preserved).
+        let provider = ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"done"}"#]);
+        let runner = ProviderRoleRunner::new(&provider);
+
+        runner.run_role(
+            RoleRequest {
+                role: DeliberationRole::Producer,
+                objective: "implement the feature".to_string(),
+                producer_content: None,
+                critic_content: None,
+                feedback: vec![],
+                node_kind: NodeKind::Work,
+                tool_context: Some(RoleToolContext {
+                    artifact_view: dummy_view(),
+                }),
+            },
+            &crate::telemetry::NoopTelemetry,
+        );
+
+        let requests = provider.requests.borrow();
+        let prompt = &requests[0].prompt;
+        assert!(
+            prompt.contains("write_file"),
+            "worker prompt must still include write_file; got:\n{prompt}"
+        );
+        assert!(
+            prompt.contains("replace_text"),
+            "worker prompt must still include replace_text; got:\n{prompt}"
+        );
+    }
+
+    // ── Step 2: planner content validation ───────────────────────────────────
+
+    #[test]
+    fn planner_accepts_valid_planner_output() {
+        let tasks_json = r#"{"tasks":[{"id":"t1","objective":"do the thing","depends_on":[]}]}"#;
+        let accepted_response =
+            serde_json::json!({"status": "accepted", "content": tasks_json}).to_string();
+        let provider = ScriptedProvider::from_strs(&[&accepted_response]);
+        let runner = ProviderRoleRunner::new(&provider);
+
+        let output = runner.run_role(
+            RoleRequest {
+                role: DeliberationRole::Producer,
+                objective: "plan the work".to_string(),
+                producer_content: None,
+                critic_content: None,
+                feedback: vec![],
+                node_kind: NodeKind::Plan,
+                tool_context: None,
+            },
+            &crate::telemetry::NoopTelemetry,
+        );
+
+        assert!(
+            matches!(output.result, RoleResult::Accepted { .. }),
+            "valid PlannerOutput must be accepted without retry; got {:?}",
+            output.result
+        );
+        assert_eq!(
+            provider.requests.borrow().len(),
+            1,
+            "no retry needed for valid PlannerOutput"
+        );
+    }
+
+    #[test]
+    fn planner_retries_invalid_planner_output() {
+        let tasks_json = r#"{"tasks":[{"id":"t1","objective":"do the thing","depends_on":[]}]}"#;
+        let good_response =
+            serde_json::json!({"status": "accepted", "content": tasks_json}).to_string();
+        let provider = ScriptedProvider::from_strs(&[
+            r#"{"status":"accepted","content":"Here is my plan: do things step by step."}"#,
+            &good_response,
+        ]);
+        let runner = ProviderRoleRunner::new(&provider);
+
+        let output = runner.run_role(
+            RoleRequest {
+                role: DeliberationRole::Producer,
+                objective: "plan the work".to_string(),
+                producer_content: None,
+                critic_content: None,
+                feedback: vec![],
+                node_kind: NodeKind::Plan,
+                tool_context: None,
+            },
+            &crate::telemetry::NoopTelemetry,
+        );
+
+        assert!(
+            matches!(output.result, RoleResult::Accepted { .. }),
+            "valid PlannerOutput on retry must succeed; got {:?}",
+            output.result
+        );
+        assert_eq!(
+            provider.requests.borrow().len(),
+            2,
+            "must retry once for invalid planner content"
+        );
+    }
+
+    #[test]
+    fn planner_rejects_prose_content_in_coding_mode() {
+        let provider = ScriptedProvider::from_strs(&[
+            r#"{"status":"accepted","content":"Plan: first do this, then that."}"#,
+            r#"{"status":"accepted","content":"Revised plan: still prose."}"#,
+            r#"{"status":"accepted","content":"Final prose attempt."}"#,
+        ]);
+        let runner = ProviderRoleRunner::new(&provider);
+
+        let output = runner.run_role(
+            RoleRequest {
+                role: DeliberationRole::Producer,
+                objective: "plan the work".to_string(),
+                producer_content: None,
+                critic_content: None,
+                feedback: vec![],
+                node_kind: NodeKind::Plan,
+                tool_context: None,
+            },
+            &crate::telemetry::NoopTelemetry,
+        );
+
+        assert!(
+            matches!(output.result, RoleResult::Failed { .. }),
+            "prose planner content must fail after retries exhausted; got {:?}",
+            output.result
+        );
+        assert_eq!(
+            provider.requests.borrow().len(),
+            3,
+            "must attempt initial + MAX_PROTOCOL_RETRIES = 3 total calls"
+        );
+    }
+
+    // ── Step 3: preamble detection ────────────────────────────────────────────
+
+    #[test]
+    fn role_response_with_preamble_fails() {
+        let input = "Here is my answer:\n{\"status\":\"accepted\",\"content\":\"draft\"}";
+        let result = parse_role_response(input);
+        assert!(
+            matches!(result, RoleResult::Failed { .. }),
+            "preamble before JSON must be a protocol failure; got {result:?}"
+        );
+    }
+
+    #[test]
+    fn clean_role_response_succeeds() {
+        let input = r#"{"status":"accepted","content":"draft"}"#;
+        let result = parse_role_response(input);
+        assert!(
+            matches!(result, RoleResult::Accepted { ref content } if content == "draft"),
+            "clean JSON response must succeed; got {result:?}"
+        );
+    }
+
+    #[test]
+    fn tool_request_detection_still_works_with_no_preamble() {
+        // Tool requests starting with { are still detected and produce an error observation
+        // (since tool_context is None), then the model returns a clean result.
+        let provider = ScriptedProvider::from_strs(&[
+            r#"{"tool":"list_files"}"#,
+            r#"{"status":"accepted","content":"listed files"}"#,
+        ]);
+        let runner = ProviderRoleRunner::new(&provider);
+
+        let output = runner.run_role(
+            RoleRequest {
+                role: DeliberationRole::Producer,
+                objective: "test".to_string(),
+                producer_content: None,
+                critic_content: None,
+                feedback: vec![],
+                node_kind: NodeKind::Work,
+                tool_context: None,
+            },
+            &crate::telemetry::NoopTelemetry,
+        );
+
+        assert!(
+            matches!(output.result, RoleResult::Accepted { .. }),
+            "tool request without context must continue to final result; got {:?}",
+            output.result
+        );
+        assert_eq!(provider.requests.borrow().len(), 2);
+        assert!(
+            provider.requests.borrow()[1]
+                .prompt
+                .contains("no file tools available"),
+            "second prompt must include error observation from tool attempt"
+        );
+    }
+
+    #[test]
+    fn preamble_triggers_retry_in_runner_loop() {
+        // Preamble causes parse failure; on retry the model returns clean JSON.
+        let provider = ScriptedProvider::from_strs(&[
+            "Here is the result:\n{\"status\":\"accepted\",\"content\":\"draft\"}",
+            r#"{"status":"accepted","content":"recovered"}"#,
+        ]);
+        let runner = ProviderRoleRunner::new(&provider);
+
+        let output = runner.run_role(
+            RoleRequest {
+                role: DeliberationRole::Producer,
+                objective: "produce output".to_string(),
+                producer_content: None,
+                critic_content: None,
+                feedback: vec![],
+                node_kind: NodeKind::Work,
+                tool_context: None,
+            },
+            &crate::telemetry::NoopTelemetry,
+        );
+
+        assert!(
+            matches!(output.result, RoleResult::Accepted { ref content } if content == "recovered"),
+            "clean JSON on retry must succeed; got {:?}",
+            output.result
+        );
+        assert_eq!(
+            provider.requests.borrow().len(),
+            2,
+            "must retry once after preamble failure"
+        );
+    }
+
+    #[test]
+    fn planner_output_fallback_no_longer_hides_invalid_plan() {
+        // Prose content that used to silently fall back to a single work node
+        // now triggers retry and eventual failure.
+        let provider = ScriptedProvider::from_strs(&[
+            r#"{"status":"accepted","content":"Do the task however you like."}"#,
+            r#"{"status":"accepted","content":"Still prose."}"#,
+            r#"{"status":"accepted","content":"More prose."}"#,
+        ]);
+        let runner = ProviderRoleRunner::new(&provider);
+
+        let output = runner.run_role(
+            RoleRequest {
+                role: DeliberationRole::Producer,
+                objective: "plan the work".to_string(),
+                producer_content: None,
+                critic_content: None,
+                feedback: vec![],
+                node_kind: NodeKind::Plan,
+                tool_context: None,
+            },
+            &crate::telemetry::NoopTelemetry,
+        );
+
+        assert!(
+            matches!(output.result, RoleResult::Failed { .. }),
+            "invalid planner content must no longer fall back silently; got {:?}",
+            output.result
+        );
     }
 }

@@ -95,10 +95,15 @@ impl<R: RoleRunner> DeliberationHandler<R> {
                 critic_content,
                 feedback,
             } => {
-                let tool_context = self
-                    .artifact_view
-                    .clone()
-                    .map(|v| RoleToolContext { artifact_view: v });
+                // Plan nodes must not have file tools — suppress tool context entirely.
+                // Worker roles keep the artifact view so the Producer can read/write files.
+                let tool_context = if self.node_kind == NodeKind::Plan {
+                    None
+                } else {
+                    self.artifact_view
+                        .clone()
+                        .map(|v| RoleToolContext { artifact_view: v })
+                };
                 let request = RoleRequest {
                     role: role.clone(),
                     objective,
@@ -365,6 +370,100 @@ mod tests {
             }
             other => panic!("expected Complete with 'draft v2', got {other:?}"),
         }
+    }
+
+    // --- Step 1: planner tool suppression ---
+
+    fn dummy_view() -> ArtifactView {
+        use std::path::PathBuf;
+        ArtifactView {
+            repo_path: PathBuf::from("/nonexistent"),
+            commit_sha: "deadbeef".to_string(),
+        }
+    }
+
+    #[test]
+    fn planner_handler_passes_no_tool_context_for_plan_nodes() {
+        let runner = ScriptedRoleRunner::new(vec![RoleResult::Accepted {
+            content: r#"{"tasks":[]}"#.to_string(),
+        }]);
+        let handler = DeliberationHandler {
+            runner,
+            artifact_view: Some(dummy_view()),
+            node_kind: NodeKind::Plan,
+            accumulated_update: RefCell::new(Vec::new()),
+        };
+
+        let effect = run_role_effect(
+            DeliberationRole::Producer,
+            "plan the work",
+            None,
+            None,
+            vec![],
+        );
+        handler.handle_effect(effect);
+
+        let req = &handler.runner.requests.borrow()[0];
+        assert!(
+            req.tool_context.is_none(),
+            "plan node must have no tool context even when artifact_view is set"
+        );
+    }
+
+    #[test]
+    fn worker_handler_passes_tool_context_when_view_available() {
+        let runner = ScriptedRoleRunner::new(vec![RoleResult::Accepted {
+            content: "work done".to_string(),
+        }]);
+        let handler = DeliberationHandler {
+            runner,
+            artifact_view: Some(dummy_view()),
+            node_kind: NodeKind::Work,
+            accumulated_update: RefCell::new(Vec::new()),
+        };
+
+        let effect = run_role_effect(
+            DeliberationRole::Producer,
+            "do the work",
+            None,
+            None,
+            vec![],
+        );
+        handler.handle_effect(effect);
+
+        let req = &handler.runner.requests.borrow()[0];
+        assert!(
+            req.tool_context.is_some(),
+            "work node must have tool context when artifact_view is set"
+        );
+    }
+
+    #[test]
+    fn planner_handler_no_tool_context_without_view() {
+        let runner = ScriptedRoleRunner::new(vec![RoleResult::Accepted {
+            content: r#"{"tasks":[]}"#.to_string(),
+        }]);
+        let handler = DeliberationHandler {
+            runner,
+            artifact_view: None,
+            node_kind: NodeKind::Plan,
+            accumulated_update: RefCell::new(Vec::new()),
+        };
+
+        let effect = run_role_effect(
+            DeliberationRole::Producer,
+            "plan the work",
+            None,
+            None,
+            vec![],
+        );
+        handler.handle_effect(effect);
+
+        let req = &handler.runner.requests.borrow()[0];
+        assert!(
+            req.tool_context.is_none(),
+            "plan node must have no tool context regardless of whether artifact_view is set"
+        );
     }
 
     // --- verify NoopTelemetry path still compiles ---
