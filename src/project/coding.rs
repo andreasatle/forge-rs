@@ -7,6 +7,7 @@ const CODING_PLANNER_SYSTEM: &str = "You are a software planning agent. \
 Decompose the objective into bounded, independent tasks. \
 Each task must address exactly one concern. \
 Express dependencies explicitly. \
+Do not include implementation details in plan nodes — describe what to achieve, not how. \
 Output a structured task list that the execution framework can schedule.\n\
 Return exactly one JSON object. No markdown. No code fence. \
 No explanation. No text before or after the JSON.\n\
@@ -21,7 +22,8 @@ Execution failures are handled by the framework, not the model.";
 const CODING_WORKER_SYSTEM: &str = "You are a software implementation agent. \
 Implement the requested change precisely. \
 Use available file tools to read, modify, and write artifact files. \
-Produce concrete, complete work — do not leave placeholders or stubs.\n\
+Use tools before making assumptions about file contents — inspect files before editing them. \
+Produce concrete, complete artifact changes — do not leave placeholders or stubs.\n\
 Return exactly one JSON object. No markdown. No code fence. \
 No explanation. No text before or after the JSON.\n\
 Accepted: {\"status\":\"accepted\",\"content\":\"<YOUR_RESPONSE_HERE>\"}\n\
@@ -34,6 +36,7 @@ Execution failures are handled by the framework, not the model.";
 
 const CODING_CRITIC_SYSTEM: &str = "You are a software review agent. \
 Evaluate the producer output for correctness and completeness. \
+Identify missing work, unsupported claims, and incomplete implementation. \
 Check for missed edge cases and unnecessary complexity. \
 Accept with a review summary or reject with a specific, actionable reason.\n\
 Return exactly one JSON object. No markdown. No code fence. \
@@ -48,6 +51,7 @@ Execution failures are handled by the framework, not the model.";
 
 const CODING_REFEREE_SYSTEM: &str = "You are a software acceptance agent. \
 Decide whether the work satisfies the objective and acceptance criteria. \
+Perform a final completeness check: every requirement must be addressed, not just the last task. \
 Accept only when the work is complete and correct. \
 Reject with specific revision feedback otherwise.\n\
 Return exactly one JSON object. No markdown. No code fence. \
@@ -155,6 +159,65 @@ mod tests {
             policy.worker_system.contains("file tools"),
             "worker_system must mention file tools; got:\n{}",
             policy.worker_system
+        );
+    }
+
+    #[test]
+    fn coding_planner_excludes_implementation_details() {
+        let policy = CodingProjectAdapter.role_policy();
+        assert!(
+            policy.planner_system.contains("implementation details"),
+            "planner_system must instruct against implementation details; got:\n{}",
+            policy.planner_system
+        );
+    }
+
+    #[test]
+    fn coding_worker_inspects_before_editing() {
+        let policy = CodingProjectAdapter.role_policy();
+        assert!(
+            policy
+                .worker_system
+                .contains("inspect files before editing"),
+            "worker_system must instruct to inspect files before editing; got:\n{}",
+            policy.worker_system
+        );
+        assert!(
+            policy
+                .worker_system
+                .contains("Use tools before making assumptions"),
+            "worker_system must instruct to use tools before making assumptions; got:\n{}",
+            policy.worker_system
+        );
+    }
+
+    #[test]
+    fn coding_critic_identifies_missing_work_and_unsupported_claims() {
+        let policy = CodingProjectAdapter.role_policy();
+        assert!(
+            policy.critic_system.contains("missing work"),
+            "critic_system must mention missing work; got:\n{}",
+            policy.critic_system
+        );
+        assert!(
+            policy.critic_system.contains("unsupported claims"),
+            "critic_system must mention unsupported claims; got:\n{}",
+            policy.critic_system
+        );
+        assert!(
+            policy.critic_system.contains("incomplete implementation"),
+            "critic_system must mention incomplete implementation; got:\n{}",
+            policy.critic_system
+        );
+    }
+
+    #[test]
+    fn coding_referee_performs_final_completeness_check() {
+        let policy = CodingProjectAdapter.role_policy();
+        assert!(
+            policy.referee_system.contains("final completeness check"),
+            "referee_system must include a final completeness check instruction; got:\n{}",
+            policy.referee_system
         );
     }
 

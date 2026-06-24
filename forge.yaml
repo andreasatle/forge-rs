@@ -7,3 +7,5 @@ provider:
   n_predict: 512
 telemetry:
   directory: "runs"
+project:
+  kind: coding
