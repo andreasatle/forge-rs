@@ -223,13 +223,17 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                     };
                 }
 
-                let observation = match &mut executor {
+                let (observation, mutation_recorded) = match &mut executor {
                     Some(exec) => {
                         let max_obs = exec.policy().max_observation_bytes;
                         let response = exec.execute(tool_req);
-                        format_tool_observation(&response, max_obs)
+                        let recorded = matches!(response, FileToolResponse::UpdateRecorded { .. });
+                        (format_tool_observation(&response, max_obs), recorded)
                     }
-                    None => r#"{"ok":false,"error":"no file tools available"}"#.to_string(),
+                    None => (
+                        r#"{"ok":false,"error":"no file tools available"}"#.to_string(),
+                        false,
+                    ),
                 };
 
                 telemetry.record(TelemetryRecord::new_with_subsource(
@@ -241,7 +245,8 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                     },
                 ));
 
-                current_prompt = format!("{current_prompt}\n\nTool result:\n{observation}");
+                let obs_section = format_observation_section(&observation, mutation_recorded);
+                current_prompt = format!("{current_prompt}\n\n{obs_section}");
                 protocol_attempt = 1;
                 continue;
             }
@@ -457,6 +462,31 @@ fn cap_observation(s: String, max_bytes: usize) -> String {
         boundary -= 1;
     }
     format!("{}{MARKER}", &s[..boundary])
+}
+
+/// Wraps a tool observation with protocol guidance for the model.
+///
+/// `mutation_recorded` is true when the preceding tool was a successful write,
+/// replace, or delete — i.e., `FileToolResponse::UpdateRecorded`. In that case
+/// a stronger hint is appended telling the model to return final accepted JSON
+/// without further reads unless strictly necessary.
+fn format_observation_section(observation: &str, mutation_recorded: bool) -> String {
+    let base = format!(
+        "Framework tool observation:\n{observation}\n\
+         This is framework output, not a valid response format.\n\
+         If the requested change is complete, return exactly:\n\
+         {{\"status\":\"accepted\",\"content\":\"Summarize the completed change.\"}}\n\
+         Only call another tool if more information is strictly required."
+    );
+    if mutation_recorded {
+        format!(
+            "{base}\n\
+             The change was recorded successfully.\n\
+             If no further file inspection is strictly required, return final accepted JSON now."
+        )
+    } else {
+        base
+    }
 }
 
 /// Returns the tool-availability section appended to a prompt when tools are enabled.
@@ -1241,7 +1271,7 @@ mod tests {
         );
         let second_prompt = &provider.requests.borrow()[1].prompt;
         assert!(
-            second_prompt.contains("Tool result:"),
+            second_prompt.contains("Framework tool observation:"),
             "second prompt must include tool observation"
         );
         assert!(
@@ -1601,8 +1631,8 @@ mod tests {
         );
         // The tool result section must not contain the full 20 KiB of content.
         let obs_start = second_prompt
-            .find("Tool result:")
-            .expect("prompt must contain Tool result:");
+            .find("Framework tool observation:")
+            .expect("prompt must contain Framework tool observation:");
         let obs_len = second_prompt[obs_start..].len();
         assert!(
             obs_len < 20 * 1024,
@@ -3190,6 +3220,262 @@ mod tests {
         assert!(
             prompt.contains("<YOUR_RESPONSE_HERE>"),
             "referee prompt must still contain accepted schema placeholder; got:\n{prompt}"
+        );
+    }
+
+    // ── tool observation protocol: anti-echo hardening ───────────────────────
+
+    #[test]
+    fn tool_observation_warns_not_to_copy_observation_json() {
+        let (_temp, view) = make_view("obs-warn");
+        let provider = ScriptedProvider::from_strs(&[
+            r#"{"tool":"read_file","path":"hello.txt"}"#,
+            r#"{"status":"accepted","content":"done"}"#,
+        ]);
+        let runner = ProviderRoleRunner::new(&provider);
+
+        runner.run_role(
+            RoleRequest {
+                role: DeliberationRole::Producer,
+                objective: "read hello.txt".to_string(),
+                producer_content: None,
+                critic_content: None,
+                feedback: vec![],
+                node_kind: NodeKind::Work,
+                tool_context: Some(RoleToolContext {
+                    artifact_view: view,
+                }),
+            },
+            &crate::telemetry::NoopTelemetry,
+        );
+
+        let requests = provider.requests.borrow();
+        let second_prompt = &requests[1].prompt;
+        assert!(
+            second_prompt.contains("Framework tool observation:"),
+            "observation section must use 'Framework tool observation:' header; got:\n{second_prompt}"
+        );
+        assert!(
+            second_prompt.contains("not a valid response format"),
+            "observation section must warn model not to copy it; got:\n{second_prompt}"
+        );
+    }
+
+    #[test]
+    fn successful_replace_text_observation_instructs_final_response() {
+        // hello.txt from make_view contains "hello world\n"
+        let (_temp, view) = make_view("replace-text-final");
+        let provider = ScriptedProvider::from_strs(&[
+            r#"{"tool":"replace_text","path":"hello.txt","old":"hello world","new":"goodbye"}"#,
+            r#"{"status":"accepted","content":"replaced hello with goodbye"}"#,
+        ]);
+        let runner = ProviderRoleRunner::new(&provider);
+
+        runner.run_role(
+            RoleRequest {
+                role: DeliberationRole::Producer,
+                objective: "replace hello with goodbye in hello.txt".to_string(),
+                producer_content: None,
+                critic_content: None,
+                feedback: vec![],
+                node_kind: NodeKind::Work,
+                tool_context: Some(RoleToolContext {
+                    artifact_view: view,
+                }),
+            },
+            &crate::telemetry::NoopTelemetry,
+        );
+
+        let requests = provider.requests.borrow();
+        assert_eq!(requests.len(), 2, "must call provider twice");
+        let second_prompt = &requests[1].prompt;
+        assert!(
+            second_prompt.contains("The change was recorded successfully."),
+            "successful replace_text must produce mutation-recorded hint; got:\n{second_prompt}"
+        );
+        assert!(
+            second_prompt.contains("return final accepted JSON now"),
+            "successful replace_text must instruct model to return final JSON; got:\n{second_prompt}"
+        );
+    }
+
+    #[test]
+    fn successful_write_file_observation_instructs_final_response() {
+        let provider = ScriptedProvider::from_strs(&[
+            r#"{"tool":"write_file","path":"result.txt","content":"some output"}"#,
+            r#"{"status":"accepted","content":"wrote result.txt"}"#,
+        ]);
+        let runner = ProviderRoleRunner::new(&provider);
+
+        runner.run_role(
+            RoleRequest {
+                role: DeliberationRole::Producer,
+                objective: "write result.txt".to_string(),
+                producer_content: None,
+                critic_content: None,
+                feedback: vec![],
+                node_kind: NodeKind::Work,
+                tool_context: Some(RoleToolContext {
+                    artifact_view: dummy_view(),
+                }),
+            },
+            &crate::telemetry::NoopTelemetry,
+        );
+
+        let requests = provider.requests.borrow();
+        assert_eq!(requests.len(), 2, "must call provider twice");
+        let second_prompt = &requests[1].prompt;
+        assert!(
+            second_prompt.contains("The change was recorded successfully."),
+            "successful write_file must produce mutation-recorded hint; got:\n{second_prompt}"
+        );
+        assert!(
+            second_prompt.contains("return final accepted JSON now"),
+            "successful write_file must instruct model to return final JSON; got:\n{second_prompt}"
+        );
+    }
+
+    #[test]
+    fn successful_delete_file_observation_instructs_final_response() {
+        let provider = ScriptedProvider::from_strs(&[
+            r#"{"tool":"delete_file","path":"old.txt"}"#,
+            r#"{"status":"accepted","content":"deleted old.txt"}"#,
+        ]);
+        let runner = ProviderRoleRunner::new(&provider);
+
+        runner.run_role(
+            RoleRequest {
+                role: DeliberationRole::Producer,
+                objective: "delete old.txt".to_string(),
+                producer_content: None,
+                critic_content: None,
+                feedback: vec![],
+                node_kind: NodeKind::Work,
+                tool_context: Some(RoleToolContext {
+                    artifact_view: dummy_view(),
+                }),
+            },
+            &crate::telemetry::NoopTelemetry,
+        );
+
+        let requests = provider.requests.borrow();
+        assert_eq!(requests.len(), 2, "must call provider twice");
+        let second_prompt = &requests[1].prompt;
+        assert!(
+            second_prompt.contains("The change was recorded successfully."),
+            "successful delete_file must produce mutation-recorded hint; got:\n{second_prompt}"
+        );
+        assert!(
+            second_prompt.contains("return final accepted JSON now"),
+            "successful delete_file must instruct model to return final JSON; got:\n{second_prompt}"
+        );
+    }
+
+    #[test]
+    fn read_file_observation_after_mutation_instructs_final_response_if_complete() {
+        // Sequence: write_file (mutation recorded), read_file (verify), accepted.
+        // After the read_file observation the prompt must still contain the
+        // "if complete, return exactly" instruction even though read_file is
+        // not a mutating operation.
+        let provider = ScriptedProvider::from_strs(&[
+            r#"{"tool":"write_file","path":"data.txt","content":"hello"}"#,
+            r#"{"tool":"read_file","path":"data.txt"}"#,
+            r#"{"status":"accepted","content":"wrote and verified data.txt"}"#,
+        ]);
+        let runner = ProviderRoleRunner::new(&provider);
+
+        runner.run_role(
+            RoleRequest {
+                role: DeliberationRole::Producer,
+                objective: "write data.txt and verify it".to_string(),
+                producer_content: None,
+                critic_content: None,
+                feedback: vec![],
+                node_kind: NodeKind::Work,
+                tool_context: Some(RoleToolContext {
+                    artifact_view: dummy_view(),
+                }),
+            },
+            &crate::telemetry::NoopTelemetry,
+        );
+
+        let requests = provider.requests.borrow();
+        assert_eq!(requests.len(), 3, "must call provider three times");
+        let third_prompt = &requests[2].prompt;
+        assert!(
+            third_prompt.contains("If the requested change is complete, return exactly:"),
+            "read_file observation must include 'if complete, return' instruction; got:\n{third_prompt}"
+        );
+        // The most recent observation section (from read_file) must NOT say the
+        // change was recorded — that was only true for the preceding write_file.
+        let last_obs_pos = third_prompt
+            .rfind("Framework tool observation:")
+            .expect("prompt must contain Framework tool observation:");
+        let last_obs_section = &third_prompt[last_obs_pos..];
+        assert!(
+            !last_obs_section.contains("The change was recorded successfully."),
+            "read_file observation section must not claim mutation was recorded; got:\n{last_obs_section}"
+        );
+    }
+
+    #[test]
+    fn observation_json_echo_triggers_protocol_retry_not_tool_execution() {
+        use crate::telemetry::{TelemetryEvent, VecTelemetry};
+
+        // Sequence: write_file (recorded), then model echoes the observation
+        // JSON {"ok":true,"description":"write out.txt"} as its response,
+        // then model finally returns accepted JSON.
+        let provider = ScriptedProvider::from_strs(&[
+            r#"{"tool":"write_file","path":"out.txt","content":"data"}"#,
+            r#"{"ok":true,"description":"write out.txt"}"#,
+            r#"{"status":"accepted","content":"done"}"#,
+        ]);
+        let runner = ProviderRoleRunner::new(&provider);
+        let telemetry = VecTelemetry::new();
+
+        let output = runner.run_role(
+            RoleRequest {
+                role: DeliberationRole::Producer,
+                objective: "write out.txt".to_string(),
+                producer_content: None,
+                critic_content: None,
+                feedback: vec![],
+                node_kind: NodeKind::Work,
+                tool_context: Some(RoleToolContext {
+                    artifact_view: dummy_view(),
+                }),
+            },
+            &telemetry,
+        );
+
+        assert!(
+            matches!(output.result, RoleResult::Accepted { .. }),
+            "must recover from observation echo via protocol retry; got {:?}",
+            output.result
+        );
+        let records = telemetry.records();
+        // Only one ToolRequested event (for write_file) — the echo is NOT a tool call.
+        let tool_requested_count = records
+            .iter()
+            .filter(|r| matches!(r.event, TelemetryEvent::ToolRequested { .. }))
+            .count();
+        assert_eq!(
+            tool_requested_count, 1,
+            "observation echo must not trigger ToolRequested; got {tool_requested_count}"
+        );
+        // The echo must trigger ParseFailed.
+        assert!(
+            records
+                .iter()
+                .any(|r| matches!(r.event, TelemetryEvent::ParseFailed { .. })),
+            "observation echo must trigger ParseFailed"
+        );
+        // And ProtocolRetry.
+        assert!(
+            records
+                .iter()
+                .any(|r| matches!(r.event, TelemetryEvent::ProtocolRetry { .. })),
+            "observation echo must trigger ProtocolRetry"
         );
     }
 }
