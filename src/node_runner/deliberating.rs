@@ -222,9 +222,9 @@ fn map_output(
             }),
         },
         DeliberationTerminalOutput::Failed { reason } => NodeRunResult::Failed(NodeFailure {
-            reason,
+            reason: reason.clone(),
             recovery: RecoveryAction::Terminal {
-                message: "deliberation failed".to_string(),
+                message: format!("deliberation failed: {reason}"),
             },
         }),
     }
@@ -487,13 +487,45 @@ mod tests {
 
     #[test]
     fn deliberating_runner_provider_failure_returns_failed() {
-        let provider = ScriptedProvider::failing(ProviderErrorKind::Retryable, "timeout");
+        let provider = ScriptedProvider::failing(
+            ProviderErrorKind::Retryable,
+            "connection refused on http://localhost:8080/completion",
+        );
         let runner = DeliberatingNodeRunner::new(&provider, &provider);
         let result = runner.run_node(work_request("do something"), &NoopTelemetry);
         let NodeRunResult::Failed(failure) = result else {
             panic!("expected Failed");
         };
+        assert!(
+            failure
+                .reason
+                .contains("provider error (Retryable): connection refused")
+        );
         assert!(matches!(failure.recovery, RecoveryAction::Terminal { .. }));
+    }
+
+    #[test]
+    fn deliberating_runner_preserves_deliberation_failure_reason() {
+        let provider = ScriptedProvider::failing(
+            ProviderErrorKind::Retryable,
+            "connection refused on http://localhost:8080/completion",
+        );
+        let runner = DeliberatingNodeRunner::new(&provider, &provider);
+        let result = runner.run_node(work_request("do something"), &NoopTelemetry);
+        let NodeRunResult::Failed(failure) = result else {
+            panic!("expected Failed");
+        };
+        assert!(
+            failure
+                .reason
+                .contains("provider error (Retryable): connection refused")
+        );
+        let RecoveryAction::Terminal { message } = failure.recovery else {
+            panic!("expected terminal recovery");
+        };
+        assert!(
+            message.contains("deliberation failed: provider error (Retryable): connection refused")
+        );
     }
 
     #[test]

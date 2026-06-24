@@ -102,10 +102,14 @@ impl ForgeRuntime {
             eprintln!("warning: failed to finalize manifest: {e}");
         }
 
-        match output {
-            SchedulerOutput::Failed { reason, .. } => Err(format!("run failed: {reason}").into()),
-            SchedulerOutput::Complete { .. } => Ok(()),
-        }
+        runtime_result_from_scheduler_output(output)
+    }
+}
+
+fn runtime_result_from_scheduler_output(output: SchedulerOutput) -> Result<(), Box<dyn Error>> {
+    match output {
+        SchedulerOutput::Failed { reason, .. } => Err(format!("run failed: {reason}").into()),
+        SchedulerOutput::Complete { .. } => Ok(()),
     }
 }
 
@@ -326,15 +330,26 @@ mod tests {
             graph: empty_graph(),
             reason: "something went wrong".to_string(),
         };
-        let result: Result<(), Box<dyn std::error::Error>> = match output {
-            SchedulerOutput::Failed { reason, .. } => Err(format!("run failed: {reason}").into()),
-            SchedulerOutput::Complete { .. } => Ok(()),
-        };
+        let result = runtime_result_from_scheduler_output(output);
         assert!(result.is_err(), "Failed output must produce an error");
         assert!(
             result.unwrap_err().to_string().contains("run failed"),
             "error message must mention run failed"
         );
+    }
+
+    #[test]
+    fn runtime_error_includes_provider_failure_reason() {
+        let output = SchedulerOutput::Failed {
+            graph: empty_graph(),
+            reason: "deliberation failed: provider error (Retryable): connection refused"
+                .to_string(),
+        };
+        let result = runtime_result_from_scheduler_output(output);
+        let err = result.expect_err("failed output must become an error");
+        let message = err.to_string();
+        assert!(message.contains("run failed"));
+        assert!(message.contains("provider error (Retryable): connection refused"));
     }
 
     #[test]
@@ -348,10 +363,7 @@ mod tests {
                 split_count: 0,
             },
         };
-        let result: Result<(), Box<dyn std::error::Error>> = match output {
-            SchedulerOutput::Failed { reason, .. } => Err(format!("run failed: {reason}").into()),
-            SchedulerOutput::Complete { .. } => Ok(()),
-        };
+        let result = runtime_result_from_scheduler_output(output);
         assert!(result.is_ok(), "Complete output must return Ok");
     }
 
@@ -944,7 +956,7 @@ mod tests {
     }
 
     #[test]
-    fn provider_failure_before_validation_leaves_validation_passed_null() {
+    fn failed_manifest_contains_concrete_failure_reason() {
         use crate::machines::scheduler::{RunRequest, SchedulerHandler, SchedulerMachine};
         use crate::node_runner::{NodeRunRequest, NodeRunResult, NodeRunner};
         use crate::runtime::{create_run, finalize_manifest};
@@ -959,9 +971,9 @@ mod tests {
             ) -> NodeRunResult {
                 use crate::machines::scheduler::event::{NodeFailure, RecoveryAction};
                 NodeRunResult::Failed(NodeFailure {
-                    reason: "provider unavailable".to_string(),
+                    reason: "provider error (Retryable): connection refused".to_string(),
                     recovery: RecoveryAction::Terminal {
-                        message: "provider unavailable".to_string(),
+                        message: "deliberation failed".to_string(),
                     },
                 })
             }
@@ -978,11 +990,11 @@ mod tests {
         let (output, handler) = run_machine_with_telemetry(handler, initial_state, &NoopTelemetry);
 
         let validation_passed = handler.validation_passed();
-        let status = match &output {
-            SchedulerOutput::Complete { .. } => "succeeded",
-            SchedulerOutput::Failed { .. } => "failed",
+        let (status, failure_reason) = match &output {
+            SchedulerOutput::Complete { .. } => ("succeeded", None),
+            SchedulerOutput::Failed { reason, .. } => ("failed", Some(reason.as_str())),
         };
-        finalize_manifest(&run_info, status, None, validation_passed, None).unwrap();
+        finalize_manifest(&run_info, status, None, validation_passed, failure_reason).unwrap();
 
         let content = std::fs::read_to_string(run_info.run_dir.join("manifest.json")).unwrap();
         let v: serde_json::Value = serde_json::from_str(&content).unwrap();
@@ -991,6 +1003,13 @@ mod tests {
             v["validation_passed"],
             serde_json::Value::Null,
             "manifest must record validation_passed=null when failure occurs before validation"
+        );
+        assert!(
+            v["failure_reason"]
+                .as_str()
+                .unwrap()
+                .contains("provider error (Retryable): connection refused"),
+            "manifest must record the concrete provider failure reason"
         );
 
         let _ = std::fs::remove_dir_all(&base);

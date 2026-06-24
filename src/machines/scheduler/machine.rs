@@ -657,6 +657,7 @@ impl SchedulerMachine {
     fn route_recovery(
         graph: RunGraph,
         node_id: &NodeId,
+        failure_reason: String,
         recovery: RecoveryAction,
     ) -> Transition<SchedulerState, SchedulerEffect> {
         match recovery {
@@ -747,20 +748,34 @@ impl SchedulerMachine {
             }
 
             RecoveryAction::Terminal { message } => {
+                let reason = Self::terminal_failure_reason(&failure_reason, &message);
                 let graph = Self::mark_node(graph, node_id, NodeStatus::Failed);
                 let graph = Self::cancel_pending_dependents(graph, node_id);
                 Transition {
                     state: SchedulerState::Failed {
                         graph: graph.clone(),
-                        reason: message.clone(),
+                        reason: reason.clone(),
                     },
-                    effects: vec![SchedulerEffect::ReturnFailed {
-                        graph,
-                        reason: message,
-                    }],
+                    effects: vec![SchedulerEffect::ReturnFailed { graph, reason }],
                 }
             }
         }
+    }
+
+    fn terminal_failure_reason(failure_reason: &str, terminal_message: &str) -> String {
+        if terminal_message.is_empty() {
+            return failure_reason.to_string();
+        }
+        if failure_reason.is_empty()
+            || terminal_message == failure_reason
+            || terminal_message.contains(failure_reason)
+        {
+            return terminal_message.to_string();
+        }
+        if failure_reason.contains(terminal_message) {
+            return failure_reason.to_string();
+        }
+        format!("{terminal_message}: {failure_reason}")
     }
 
     /// Handle an `ElevateModel` recovery: create a replacement at `Strong` tier.
@@ -1108,10 +1123,9 @@ impl SchedulerMachine {
                         }
                     }
 
-                    Failed(NodeFailure {
-                        reason: _,
-                        recovery,
-                    }) => Self::route_recovery(graph, &node_id, recovery),
+                    Failed(NodeFailure { reason, recovery }) => {
+                        Self::route_recovery(graph, &node_id, reason, recovery)
+                    }
                 }
             }
 
@@ -1157,10 +1171,9 @@ impl SchedulerMachine {
                             effects: vec![],
                         }
                     }
-                    IntegrationOutcome::Failed(IntegrationFailure {
-                        reason: _,
-                        recovery,
-                    }) => Self::route_recovery(graph, &node_id, recovery),
+                    IntegrationOutcome::Failed(IntegrationFailure { reason, recovery }) => {
+                        Self::route_recovery(graph, &node_id, reason, recovery)
+                    }
                 }
             }
 
@@ -1679,6 +1692,88 @@ mod tests {
         };
         let output = run_machine(scheduler_handler(), SchedulerState::Running { graph });
         assert!(matches!(output, SchedulerOutput::Failed { .. }));
+    }
+
+    #[test]
+    fn scheduler_output_includes_node_failure_reason() {
+        let graph = RunGraph {
+            nodes: vec![Node {
+                id: NodeId("T".to_string()),
+                kind: NodeKind::Work,
+                objective: "fail this step".to_string(),
+                dependencies: vec![],
+                status: NodeStatus::Running,
+                attempt: 0,
+                plan_depth: 0,
+                model_tier: ModelTier::Cheap,
+                summary: None,
+                origin: NodeOrigin::Root,
+            }],
+            next_id: 0,
+        };
+
+        let t = do_transition(
+            SchedulerState::Waiting {
+                graph,
+                running: NodeId("T".to_string()),
+            },
+            SchedulerEvent::NodeReturned {
+                node_id: NodeId("T".to_string()),
+                outcome: NodeOutcome::Failed(NodeFailure {
+                    reason: "provider error (Retryable): connection refused".to_string(),
+                    recovery: RecoveryAction::Terminal {
+                        message: "deliberation failed".to_string(),
+                    },
+                }),
+            },
+        );
+
+        let SchedulerState::Failed { reason, .. } = t.state else {
+            panic!("expected Failed, got {:#?}", t.state);
+        };
+        assert!(reason.contains("deliberation failed"));
+        assert!(reason.contains("provider error (Retryable): connection refused"));
+    }
+
+    #[test]
+    fn scheduler_output_includes_integration_failure_reason() {
+        let graph = RunGraph {
+            nodes: vec![Node {
+                id: NodeId("W".to_string()),
+                kind: NodeKind::Work,
+                objective: "integrate this step".to_string(),
+                dependencies: vec![],
+                status: NodeStatus::Integrating,
+                attempt: 0,
+                plan_depth: 0,
+                model_tier: ModelTier::Cheap,
+                summary: None,
+                origin: NodeOrigin::Root,
+            }],
+            next_id: 0,
+        };
+
+        let t = do_transition(
+            SchedulerState::Waiting {
+                graph,
+                running: NodeId("W".to_string()),
+            },
+            SchedulerEvent::IntegrationReturned {
+                node_id: NodeId("W".to_string()),
+                outcome: IntegrationOutcome::Failed(IntegrationFailure {
+                    reason: "validation failed: cargo test failed".to_string(),
+                    recovery: RecoveryAction::Terminal {
+                        message: "integration failed".to_string(),
+                    },
+                }),
+            },
+        );
+
+        let SchedulerState::Failed { reason, .. } = t.state else {
+            panic!("expected Failed, got {:#?}", t.state);
+        };
+        assert!(reason.contains("integration failed"));
+        assert!(reason.contains("validation failed: cargo test failed"));
     }
 
     #[test]
