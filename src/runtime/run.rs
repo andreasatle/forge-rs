@@ -47,6 +47,7 @@ impl ForgeRuntime {
             &config.artifact.repo_path,
             &config.provider.base_url,
         )?;
+        eprintln!("[run] started {}", run_info.run_id);
         let sink: Rc<dyn TelemetrySink> =
             Rc::new(FileTelemetry::new(run_info.telemetry_dir.clone()));
 
@@ -88,6 +89,7 @@ impl ForgeRuntime {
         });
 
         let (output, handler) = run_machine_with_telemetry(handler, initial_state, sink.as_ref());
+        print_run_progress_result(&output);
 
         let final_artifact = handler.artifact();
         let validation_passed = handler.validation_passed();
@@ -126,6 +128,12 @@ impl ForgeRuntime {
     pub fn resume(config: ForgeConfig) -> Result<(), Box<dyn Error>> {
         let runs_root = PathBuf::from(&config.telemetry.directory);
         let (run_dir, initial_state) = find_resumable_run(&runs_root)?;
+        let run_id = run_dir
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned();
+        eprintln!("[run] resumed {run_id}");
 
         let artifact = load_or_create_artifact(&config.artifact)?;
         let sink: Rc<dyn TelemetrySink> = Rc::new(FileTelemetry::new(run_dir.join("telemetry")));
@@ -177,11 +185,7 @@ impl ForgeRuntime {
             .with_checkpoint_dir(run_dir.clone());
 
         let run_info = crate::runtime::RunInfo {
-            run_id: run_dir
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .into_owned(),
+            run_id,
             run_dir: run_dir.clone(),
             telemetry_dir: run_dir.join("telemetry"),
             started_secs: std::time::SystemTime::now()
@@ -191,6 +195,7 @@ impl ForgeRuntime {
         };
 
         let (output, handler) = run_machine_with_telemetry(handler, initial_state, sink.as_ref());
+        print_run_progress_result(&output);
 
         let final_artifact = handler.artifact();
         let validation_passed = handler.validation_passed();
@@ -222,6 +227,13 @@ fn runtime_result_from_scheduler_output(output: SchedulerOutput) -> Result<(), B
     match output {
         SchedulerOutput::Failed { reason, .. } => Err(format!("run failed: {reason}").into()),
         SchedulerOutput::Complete { .. } => Ok(()),
+    }
+}
+
+fn print_run_progress_result(output: &SchedulerOutput) {
+    match output {
+        SchedulerOutput::Complete { .. } => eprintln!("[run] complete"),
+        SchedulerOutput::Failed { .. } => eprintln!("[run] failed"),
     }
 }
 

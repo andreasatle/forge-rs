@@ -177,6 +177,7 @@ impl<R: NodeRunner> Machine for SchedulerHandler<R> {
         state: SchedulerState,
         event: SchedulerEvent,
     ) -> Transition<SchedulerState, SchedulerEffect> {
+        print_returned_progress(&event);
         let is_progress_event = matches!(
             event,
             SchedulerEvent::NodeReturned { .. } | SchedulerEvent::IntegrationReturned { .. }
@@ -197,6 +198,7 @@ impl<R: NodeRunner> Machine for SchedulerHandler<R> {
                 model_tier,
                 attempt,
             } => {
+                eprintln!("[scheduler] dispatch {} {:?}", node_id.0, kind);
                 // Snapshot the current artifact before running the node.
                 // The clone is cheap (three fields) and avoids holding a borrow
                 // across the runner call.
@@ -234,6 +236,7 @@ impl<R: NodeRunner> Machine for SchedulerHandler<R> {
             }
 
             SchedulerEffect::IntegrateWork { node_id, work } => {
+                eprintln!("[integration] start {}", node_id.0);
                 // Retrieve any artifact update that was stashed during RunNode.
                 let pending_update = self.pending_artifact_updates.borrow_mut().remove(&node_id);
                 let artifact_snapshot = self.artifact.borrow().clone();
@@ -340,6 +343,26 @@ impl<R: NodeRunner> Machine for SchedulerHandler<R> {
 
     fn output(&self, state: &SchedulerState) -> Option<SchedulerOutput> {
         SchedulerMachine.output(state)
+    }
+}
+
+fn print_returned_progress(event: &SchedulerEvent) {
+    match event {
+        SchedulerEvent::NodeReturned { node_id, outcome } => {
+            if matches!(outcome, NodeOutcome::Failed(_)) {
+                eprintln!("[scheduler] failed {}", node_id.0);
+            } else {
+                eprintln!("[scheduler] returned {}", node_id.0);
+            }
+        }
+        SchedulerEvent::IntegrationReturned { node_id, outcome } => {
+            if matches!(outcome, IntegrationOutcome::Failed(_)) {
+                eprintln!("[integration] failed {}", node_id.0);
+            } else {
+                eprintln!("[integration] complete {}", node_id.0);
+            }
+        }
+        SchedulerEvent::Start => {}
     }
 }
 
