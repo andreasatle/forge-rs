@@ -6,8 +6,37 @@ use serde::{Deserialize, Serialize};
 
 use crate::providers::client::ProviderClient;
 use crate::providers::types::{
-    ProviderError, ProviderErrorKind, ProviderRequest, ProviderResponse,
+    ProviderError, ProviderErrorKind, ProviderRequest, ProviderResponse, StructuredOutput,
 };
+
+/// GBNF grammar that constrains llama.cpp output to a valid JSON object.
+///
+/// Uses the object-root form because all role outputs are JSON objects.
+/// Reference: <https://github.com/ggerganov/llama.cpp/blob/master/grammars/json.gbnf>
+const JSON_GBNF: &str = r#"root   ::= object
+value  ::= object | array | string | number | ("true" | "false" | "null") ws
+
+object ::=
+  "{" ws (
+            string ":" ws value
+    ("," ws string ":" ws value)*
+  )? "}" ws
+
+array  ::=
+  "[" ws (
+            value
+    ("," ws value)*
+  )? "]" ws
+
+string ::=
+  "\"" (
+    [^\\"\x7F\x00-\x1F] |
+    "\\" (["\\/bfnrt] | "u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F])
+  )* "\"" ws
+
+number ::= ("-"? ([0-9] | [1-9] [0-9]*)) ("." [0-9]+)? (([eE] [-+]? [0-9]+))? ws
+
+ws ::= ([ \t\n] ws)?"#;
 
 /// Calls the llama.cpp server completion API at the given base URL.
 pub struct LlamaCppProvider {
@@ -32,6 +61,8 @@ impl LlamaCppProvider {
 struct CompletionRequest {
     prompt: String,
     n_predict: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    grammar: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -77,9 +108,14 @@ fn map_completion_response(r: CompletionResponse) -> Result<ProviderResponse, Pr
 impl ProviderClient for LlamaCppProvider {
     fn call(&self, request: ProviderRequest) -> Result<ProviderResponse, ProviderError> {
         let url = format!("{}/completion", self.base_url);
+        let grammar = request
+            .output_schema
+            .as_ref()
+            .map(|StructuredOutput::Json| JSON_GBNF.to_string());
         let body = CompletionRequest {
             prompt: request.prompt,
             n_predict: request.max_tokens,
+            grammar,
         };
 
         let http_response = self
@@ -159,15 +195,72 @@ mod tests {
     }
 
     #[test]
-    fn llama_provider_preserves_json_output_schema_at_boundary() {
-        use crate::providers::types::StructuredOutput;
-
+    fn llama_provider_includes_json_grammar_for_json_output() {
         let req = ProviderRequest {
             prompt: "test".to_string(),
             max_tokens: 512,
             output_schema: Some(StructuredOutput::Json),
         };
-        assert_eq!(req.output_schema, Some(StructuredOutput::Json));
+        let grammar = req
+            .output_schema
+            .as_ref()
+            .map(|StructuredOutput::Json| JSON_GBNF.to_string());
+        assert!(grammar.is_some());
+        let g = grammar.unwrap();
+        assert!(g.contains("root"));
+        assert!(g.contains("object"));
+    }
+
+    #[test]
+    fn llama_provider_omits_grammar_without_json_output() {
+        let req = ProviderRequest {
+            prompt: "test".to_string(),
+            max_tokens: 512,
+            output_schema: None,
+        };
+        let grammar = req
+            .output_schema
+            .as_ref()
+            .map(|StructuredOutput::Json| JSON_GBNF.to_string());
+        assert!(grammar.is_none());
+    }
+
+    #[test]
+    fn json_gbnf_root_is_object() {
+        assert!(JSON_GBNF.starts_with("root   ::= object"));
+    }
+
+    #[test]
+    fn llama_provider_preserves_max_tokens_with_json_grammar() {
+        let body = CompletionRequest {
+            prompt: "test".to_string(),
+            n_predict: 256,
+            grammar: Some(JSON_GBNF.to_string()),
+        };
+        assert_eq!(body.n_predict, 256);
+        assert!(body.grammar.is_some());
+    }
+
+    #[test]
+    fn completion_request_grammar_omitted_when_none() {
+        let body = CompletionRequest {
+            prompt: "test".to_string(),
+            n_predict: 128,
+            grammar: None,
+        };
+        let json = serde_json::to_string(&body).unwrap();
+        assert!(!json.contains("grammar"));
+    }
+
+    #[test]
+    fn completion_request_grammar_present_when_some() {
+        let body = CompletionRequest {
+            prompt: "test".to_string(),
+            n_predict: 128,
+            grammar: Some(JSON_GBNF.to_string()),
+        };
+        let json = serde_json::to_string(&body).unwrap();
+        assert!(json.contains("\"grammar\""));
     }
 
     #[test]
