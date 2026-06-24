@@ -10,7 +10,7 @@ use crate::machines::scheduler::{
     ModelTier, NodeFailure, NodeId, NodeKind, NodeRequest, PlanOutput, RecoveryAction, WorkOutput,
 };
 use crate::providers::ProviderClient;
-use crate::telemetry::TelemetrySink;
+use crate::telemetry::{TelemetryEvent, TelemetryRecord, TelemetrySink};
 
 use super::runner::NodeRunner;
 use super::types::{NodeRunRequest, NodeRunResult, NodeRunWorkResult};
@@ -154,7 +154,7 @@ fn run_with_provider<P: ProviderClient>(
     };
     let (output, machine) = run_machine_with_telemetry(machine, initial_state, telemetry);
     let tool_artifact_update = machine.take_artifact_update();
-    map_output(output, request.kind, tool_artifact_update)
+    map_output(output, request.kind, tool_artifact_update, telemetry)
 }
 
 /// Returns the objective string, optionally prefixed with artifact file context.
@@ -191,17 +191,11 @@ fn map_output(
     output: DeliberationTerminalOutput,
     kind: NodeKind,
     tool_artifact_update: Option<ArtifactUpdate>,
+    telemetry: &dyn TelemetrySink,
 ) -> NodeRunResult {
     match output {
         DeliberationTerminalOutput::Complete(out) => match kind {
-            NodeKind::Plan => NodeRunResult::PlanAccepted(PlanOutput {
-                children: vec![NodeRequest {
-                    id: NodeId("child-1".to_string()),
-                    kind: NodeKind::Work,
-                    objective: out.content,
-                    dependencies: vec![],
-                }],
-            }),
+            NodeKind::Plan => map_plan_output(out.content, telemetry),
             NodeKind::Work => NodeRunResult::WorkAccepted(NodeRunWorkResult {
                 work: WorkOutput {
                     summary: out.content.clone(),
@@ -227,6 +221,73 @@ fn map_output(
                 message: format!("deliberation failed: {reason}"),
             },
         }),
+    }
+}
+
+/// Map a plan node's raw content to a [`NodeRunResult`].
+///
+/// Attempts to parse `content` as a structured [`PlannerOutput`] JSON object.
+///
+/// - If parsing succeeds and the graph is valid: emits `PlannerOutputParsed`
+///   and returns `PlanAccepted` with one `NodeRequest` per task.
+/// - If parsing succeeds but validation fails: emits
+///   `PlannerOutputValidationFailed` and returns `Failed` with `Terminal`
+///   recovery. The planner produced unambiguously invalid structured output;
+///   failing loudly is the right response.
+/// - If parsing fails (prose or unexpected schema): emits
+///   `PlannerOutputFallback` and returns `PlanAccepted` with a single work
+///   node whose objective is the raw content. This preserves backward
+///   compatibility while the planner prompt is being migrated.
+fn map_plan_output(content: String, telemetry: &dyn TelemetrySink) -> NodeRunResult {
+    use crate::node_runner::planner::{
+        parse_planner_content, planner_output_to_plan_output, validate_planner_output,
+    };
+
+    match parse_planner_content(&content) {
+        Some(planner_out) => match validate_planner_output(&planner_out) {
+            Ok(()) => {
+                let task_count = planner_out.tasks.len();
+                let dependency_count: usize =
+                    planner_out.tasks.iter().map(|t| t.depends_on.len()).sum();
+                telemetry.record(TelemetryRecord::new(
+                    "DeliberatingNodeRunner",
+                    TelemetryEvent::PlannerOutputParsed {
+                        task_count,
+                        dependency_count,
+                    },
+                ));
+                NodeRunResult::PlanAccepted(planner_output_to_plan_output(planner_out))
+            }
+            Err(e) => {
+                let reason = e.to_string();
+                telemetry.record(TelemetryRecord::new(
+                    "DeliberatingNodeRunner",
+                    TelemetryEvent::PlannerOutputValidationFailed {
+                        reason: reason.clone(),
+                    },
+                ));
+                NodeRunResult::Failed(NodeFailure {
+                    reason: reason.clone(),
+                    recovery: RecoveryAction::Terminal {
+                        message: format!("planner output validation failed: {reason}"),
+                    },
+                })
+            }
+        },
+        None => {
+            telemetry.record(TelemetryRecord::new(
+                "DeliberatingNodeRunner",
+                TelemetryEvent::PlannerOutputFallback,
+            ));
+            NodeRunResult::PlanAccepted(PlanOutput {
+                children: vec![NodeRequest {
+                    id: NodeId("child-1".to_string()),
+                    kind: NodeKind::Work,
+                    objective: content,
+                    dependencies: vec![],
+                }],
+            })
+        }
     }
 }
 
@@ -683,6 +744,129 @@ mod tests {
             }
             other => panic!("expected Write change from tool, got {other:?}"),
         }
+    }
+
+    // --- planner output tests ---
+
+    #[test]
+    fn prose_planner_output_falls_back_to_single_work_node() {
+        let provider = ScriptedProvider::from_strs(&[
+            r#"{"status":"accepted","content":"Just do the work however you see fit."}"#,
+            r#"{"status":"accepted","content":"looks good"}"#,
+            r#"{"status":"accepted","content":"approved"}"#,
+        ]);
+        let runner = DeliberatingNodeRunner::new(&provider, &provider);
+        let telemetry = crate::telemetry::VecTelemetry::new();
+        let result = runner.run_node(plan_request("plan the work"), &telemetry);
+
+        let NodeRunResult::PlanAccepted(plan) = result else {
+            panic!("expected PlanAccepted");
+        };
+        assert_eq!(
+            plan.children.len(),
+            1,
+            "fallback must produce single work node"
+        );
+        assert_eq!(plan.children[0].kind, NodeKind::Work);
+        assert_eq!(
+            plan.children[0].objective,
+            "Just do the work however you see fit."
+        );
+
+        let records = telemetry.into_records();
+        let has_fallback = records.iter().any(|r| {
+            matches!(
+                r.event,
+                crate::telemetry::TelemetryEvent::PlannerOutputFallback
+            )
+        });
+        assert!(has_fallback, "must emit PlannerOutputFallback telemetry");
+    }
+
+    #[test]
+    fn structured_planner_output_creates_multiple_work_nodes() {
+        let tasks_json = r#"{"tasks":[{"id":"alpha","objective":"do alpha","depends_on":[]},{"id":"beta","objective":"do beta","depends_on":["alpha"]}]}"#;
+        let response = serde_json::json!({"status": "accepted", "content": tasks_json}).to_string();
+        let provider = ScriptedProvider::from_strs(&[
+            &response,
+            r#"{"status":"accepted","content":"looks good"}"#,
+            r#"{"status":"accepted","content":"approved"}"#,
+        ]);
+        let runner = DeliberatingNodeRunner::new(&provider, &provider);
+        let telemetry = crate::telemetry::VecTelemetry::new();
+        let result = runner.run_node(plan_request("plan the work"), &telemetry);
+
+        let NodeRunResult::PlanAccepted(plan) = result else {
+            panic!("expected PlanAccepted");
+        };
+        assert_eq!(plan.children.len(), 2, "must produce two work nodes");
+        assert_eq!(plan.children[0].id, NodeId("alpha".to_string()));
+        assert_eq!(plan.children[0].objective, "do alpha");
+        assert!(plan.children[0].dependencies.is_empty());
+        assert_eq!(plan.children[1].id, NodeId("beta".to_string()));
+        assert_eq!(plan.children[1].objective, "do beta");
+        assert_eq!(
+            plan.children[1].dependencies,
+            vec![NodeId("alpha".to_string())]
+        );
+
+        let records = telemetry.into_records();
+        let parsed = records.iter().find(|r| {
+            matches!(
+                r.event,
+                crate::telemetry::TelemetryEvent::PlannerOutputParsed { .. }
+            )
+        });
+        assert!(parsed.is_some(), "must emit PlannerOutputParsed telemetry");
+        if let Some(r) = parsed {
+            match &r.event {
+                crate::telemetry::TelemetryEvent::PlannerOutputParsed {
+                    task_count,
+                    dependency_count,
+                } => {
+                    assert_eq!(*task_count, 2);
+                    assert_eq!(*dependency_count, 1);
+                }
+                _ => unreachable!(),
+            }
+        }
+    }
+
+    #[test]
+    fn invalid_structured_plan_returns_failed() {
+        // Parses as PlannerOutput but has a self-dependency — validation must fail loudly.
+        let tasks_json = r#"{"tasks":[{"id":"x","objective":"do x","depends_on":["x"]}]}"#;
+        let response = serde_json::json!({"status": "accepted", "content": tasks_json}).to_string();
+        let provider = ScriptedProvider::from_strs(&[
+            &response,
+            r#"{"status":"accepted","content":"looks good"}"#,
+            r#"{"status":"accepted","content":"approved"}"#,
+        ]);
+        let runner = DeliberatingNodeRunner::new(&provider, &provider);
+        let telemetry = crate::telemetry::VecTelemetry::new();
+        let result = runner.run_node(plan_request("plan the work"), &telemetry);
+
+        let NodeRunResult::Failed(failure) = result else {
+            panic!("expected Failed for invalid structured plan");
+        };
+        assert!(
+            failure.reason.contains("self-dependency"),
+            "failure reason must describe the validation error; got: {}",
+            failure.reason
+        );
+        assert!(matches!(failure.recovery, RecoveryAction::Terminal { .. }));
+
+        let records = telemetry.into_records();
+        let has_validation_failed = records.iter().any(|r| {
+            matches!(
+                r.event,
+                crate::telemetry::TelemetryEvent::PlannerOutputValidationFailed { .. }
+            )
+        });
+        assert!(
+            has_validation_failed,
+            "must emit PlannerOutputValidationFailed telemetry"
+        );
     }
 
     // --- model-tier routing tests ---

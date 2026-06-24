@@ -17,7 +17,7 @@
 //! - Effect handling or node execution — those live in `handler.rs` behind the
 //!   `NodeRunner` boundary.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::engine::Transition;
 
@@ -268,21 +268,46 @@ impl SchedulerMachine {
     /// Each `NodeRequest` becomes a real node with a fresh ID derived from the
     /// parent's ID and the current counter. Children always start at `attempt 0`
     /// with `ModelTier::Cheap`; the planner specifies everything else.
+    ///
+    /// Intra-batch dependencies (where a child depends on a sibling in the same
+    /// `PlanOutput` by the sibling's `NodeRequest.id`) are rewritten to the
+    /// actual graph `NodeId` assigned to that sibling at insertion time.
+    /// Dependencies that reference existing graph nodes are left unchanged.
     fn insert_children(
         mut graph: RunGraph,
         parent_id: &NodeId,
         children: Vec<NodeRequest>,
     ) -> RunGraph {
         let parent_depth = Self::get_node(&graph, parent_id).plan_depth;
+
+        // Pre-compute the graph NodeId that will be assigned to each planner-local id.
+        let local_to_graph: HashMap<NodeId, NodeId> = children
+            .iter()
+            .enumerate()
+            .map(|(i, req)| {
+                let graph_id = NodeId(format!(
+                    "{}-child-{}",
+                    parent_id.0,
+                    graph.next_id + i as u32
+                ));
+                (req.id.clone(), graph_id)
+            })
+            .collect();
+
         for req in children {
             let id = NodeId(format!("{}-child-{}", parent_id.0, graph.next_id));
             graph.next_id += 1;
             let plan_depth = Self::plan_child_depth(parent_depth, &req.kind);
+            let dependencies = req
+                .dependencies
+                .into_iter()
+                .map(|dep| local_to_graph.get(&dep).cloned().unwrap_or(dep))
+                .collect();
             graph.nodes.push(Node {
                 id,
                 kind: req.kind,
                 objective: req.objective,
-                dependencies: req.dependencies,
+                dependencies,
                 status: NodeStatus::Pending,
                 attempt: 0,
                 plan_depth,
@@ -319,21 +344,17 @@ impl SchedulerMachine {
         }
     }
 
-    /// Verify that every dependency listed in every child request already exists
-    /// in the graph.
+    /// Verify that every dependency listed in every child request is either an
+    /// existing graph node or another sibling request in the same batch.
     ///
     /// Returns `Err` with a descriptive message on the first invalid reference.
     /// The graph is not mutated; callers must not insert children when this
     /// returns `Err`.
     ///
-    /// Two failure modes are distinguished:
-    /// - A dependency that matches another sibling's `id` in the same batch →
-    ///   "same-batch sibling dependency" (explicit unsupported-policy rejection).
-    /// - A dependency that exists nowhere → "unknown node id" (existing error).
-    ///
-    /// Sibling dependencies inside a single PlanOutput are intentionally unsupported.
-    /// Dependencies may only reference nodes that already exist in the graph.
-    /// This is a phase decision, not a limitation of the overall architecture.
+    /// Intra-batch sibling dependencies are allowed: a child may depend on
+    /// another child in the same `PlanOutput` by referencing its planner-local
+    /// `NodeRequest.id`. `insert_children` rewrites those local ids to the
+    /// actual graph `NodeId`s assigned at insertion time.
     fn validate_plan_dependencies(
         graph: &RunGraph,
         children: &[NodeRequest],
@@ -342,14 +363,8 @@ impl SchedulerMachine {
         let sibling_ids: HashSet<&NodeId> = children.iter().map(|c| &c.id).collect();
         for child in children {
             for dep in &child.dependencies {
-                if known.contains(dep) {
+                if known.contains(dep) || sibling_ids.contains(dep) {
                     continue;
-                }
-                if sibling_ids.contains(dep) {
-                    return Err(format!(
-                        "same-batch sibling dependency: node {} depends on sibling {}",
-                        child.id.0, dep.0
-                    ));
                 }
                 return Err(format!(
                     "plan output references unknown node id: {:?}",
@@ -2150,9 +2165,10 @@ mod tests {
     }
 
     #[test]
-    fn same_batch_sibling_dependency_fails() {
+    fn sibling_dependencies_are_resolved_to_graph_ids() {
         // A plan output where B depends on A from the same batch.
-        // Sibling dependencies inside a single PlanOutput are intentionally unsupported.
+        // Sibling deps are now supported: B's local dep on "A" must be
+        // rewritten to the actual graph NodeId assigned to A on insertion.
         let graph = RunGraph {
             nodes: vec![plan_node("P", "plan something", &[])],
             next_id: 0,
@@ -2183,26 +2199,206 @@ mod tests {
             },
         );
 
-        let SchedulerState::Failed { graph, reason } = t.state else {
-            panic!("expected Failed, got {:#?}", t.state);
+        let SchedulerState::Running { graph } = t.state else {
+            panic!("expected Running, got {:#?}", t.state);
         };
-        assert_eq!(graph.nodes.len(), 1, "no children should be inserted");
-        assert!(
-            reason.contains("same-batch sibling dependency"),
-            "reason should name the policy, got: {reason:?}"
+        assert_eq!(graph.nodes.len(), 3, "P + two children must be inserted");
+        assert_eq!(
+            graph.nodes[0].status,
+            NodeStatus::Completed,
+            "P must be Completed"
         );
-        assert!(
-            reason.contains("A"),
-            "reason should name the referenced sibling, got: {reason:?}"
+
+        let child_a = graph
+            .nodes
+            .iter()
+            .find(|n| n.objective == "step A")
+            .expect("child A not found");
+        let child_b = graph
+            .nodes
+            .iter()
+            .find(|n| n.objective == "step B")
+            .expect("child B not found");
+
+        assert_eq!(child_b.dependencies.len(), 1);
+        assert_eq!(
+            child_b.dependencies[0], child_a.id,
+            "B must depend on A's graph id"
         );
-        assert!(
-            reason.contains("B"),
-            "reason should name the dependent node, got: {reason:?}"
+        assert_ne!(
+            child_b.dependencies[0],
+            NodeId("A".to_string()),
+            "B must not retain the planner-local id"
         );
-        assert!(matches!(
-            t.effects.as_slice(),
-            [SchedulerEffect::ReturnFailed { .. }]
-        ));
+    }
+
+    #[test]
+    fn planner_can_create_two_work_nodes_with_dependency() {
+        // End-to-end: a plan node expands into two work nodes where B depends
+        // on A. Verify the scheduler runs A first, then B after A completes.
+        let graph = RunGraph {
+            nodes: vec![plan_node("root", "plan a two-step task", &[])],
+            next_id: 0,
+        };
+
+        // Dispatch the root plan node.
+        let t = do_transition(SchedulerState::Running { graph }, SchedulerEvent::Start);
+        let SchedulerState::Waiting { graph, .. } = t.state else {
+            panic!("expected Waiting after dispatching root");
+        };
+
+        // Root plan returns two tasks: write-tests (no deps) and implement (depends on write-tests).
+        let t = do_transition(
+            SchedulerState::Waiting {
+                graph,
+                running: NodeId("root".to_string()),
+            },
+            SchedulerEvent::NodeReturned {
+                node_id: NodeId("root".to_string()),
+                outcome: NodeOutcome::PlanAccepted(PlanOutput {
+                    children: vec![
+                        NodeRequest {
+                            id: NodeId("write-tests".to_string()),
+                            kind: NodeKind::Work,
+                            objective: "write tests".to_string(),
+                            dependencies: vec![],
+                        },
+                        NodeRequest {
+                            id: NodeId("implement".to_string()),
+                            kind: NodeKind::Work,
+                            objective: "implement feature".to_string(),
+                            dependencies: vec![NodeId("write-tests".to_string())],
+                        },
+                    ],
+                }),
+            },
+        );
+
+        let SchedulerState::Running { graph } = t.state else {
+            panic!("expected Running after plan expansion");
+        };
+        assert_eq!(graph.nodes.len(), 3, "root + two children");
+
+        // Only write-tests must be ready; implement is blocked on it.
+        let ready = SchedulerMachine::find_ready(&graph);
+        assert_eq!(ready.len(), 1, "only one node must be ready");
+        let write_tests_id = ready[0].clone();
+        let write_tests_node = graph.nodes.iter().find(|n| n.id == write_tests_id).unwrap();
+        assert_eq!(write_tests_node.objective, "write tests");
+
+        let implement_node = graph
+            .nodes
+            .iter()
+            .find(|n| n.objective == "implement feature")
+            .unwrap();
+        assert!(
+            implement_node.dependencies.contains(&write_tests_id),
+            "implement must depend on write-tests graph id"
+        );
+
+        // Dispatch write-tests.
+        let t = do_transition(SchedulerState::Running { graph }, SchedulerEvent::Start);
+        let SchedulerState::Waiting { graph, .. } = t.state else {
+            panic!("expected Waiting after dispatching write-tests");
+        };
+
+        // write-tests completes → Integrating.
+        let t = do_transition(
+            SchedulerState::Waiting {
+                graph,
+                running: write_tests_id.clone(),
+            },
+            SchedulerEvent::NodeReturned {
+                node_id: write_tests_id.clone(),
+                outcome: NodeOutcome::WorkAccepted(WorkOutput {
+                    summary: "tests written".to_string(),
+                }),
+            },
+        );
+        let SchedulerState::Waiting { graph, .. } = t.state else {
+            panic!("expected Waiting (Integrating) after write-tests WorkAccepted");
+        };
+
+        // Integration succeeds → Running.
+        let t = do_transition(
+            SchedulerState::Waiting {
+                graph,
+                running: write_tests_id.clone(),
+            },
+            SchedulerEvent::IntegrationReturned {
+                node_id: write_tests_id.clone(),
+                outcome: crate::machines::scheduler::event::IntegrationOutcome::Succeeded(
+                    crate::machines::scheduler::event::IntegrationOutput {
+                        summary: "tests integrated".to_string(),
+                    },
+                ),
+            },
+        );
+        let SchedulerState::Running { graph } = t.state else {
+            panic!("expected Running after write-tests integration");
+        };
+
+        // Now implement must be the only ready node.
+        let ready = SchedulerMachine::find_ready(&graph);
+        assert_eq!(ready.len(), 1, "implement must be the only ready node");
+        let implement_id = ready[0].clone();
+        let implement_node = graph.nodes.iter().find(|n| n.id == implement_id).unwrap();
+        assert_eq!(implement_node.objective, "implement feature");
+
+        // Dispatch implement.
+        let t = do_transition(SchedulerState::Running { graph }, SchedulerEvent::Start);
+        let SchedulerState::Waiting { graph, .. } = t.state else {
+            panic!("expected Waiting after dispatching implement");
+        };
+
+        // implement completes → Integrating.
+        let t = do_transition(
+            SchedulerState::Waiting {
+                graph,
+                running: implement_id.clone(),
+            },
+            SchedulerEvent::NodeReturned {
+                node_id: implement_id.clone(),
+                outcome: NodeOutcome::WorkAccepted(WorkOutput {
+                    summary: "feature implemented".to_string(),
+                }),
+            },
+        );
+        let SchedulerState::Waiting { graph, .. } = t.state else {
+            panic!("expected Waiting (Integrating) after implement WorkAccepted");
+        };
+
+        // Integration succeeds → Running.
+        let t = do_transition(
+            SchedulerState::Waiting {
+                graph,
+                running: implement_id.clone(),
+            },
+            SchedulerEvent::IntegrationReturned {
+                node_id: implement_id.clone(),
+                outcome: crate::machines::scheduler::event::IntegrationOutcome::Succeeded(
+                    crate::machines::scheduler::event::IntegrationOutput {
+                        summary: "implementation integrated".to_string(),
+                    },
+                ),
+            },
+        );
+        let SchedulerState::Running { graph } = t.state else {
+            panic!("expected Running after implement integration");
+        };
+
+        // All nodes terminal → Complete.
+        let t = do_transition(SchedulerState::Running { graph }, SchedulerEvent::Start);
+        let SchedulerState::Complete { graph } = t.state else {
+            panic!("expected Complete, got {:#?}", t.state);
+        };
+
+        let completed: Vec<_> = graph
+            .nodes
+            .iter()
+            .filter(|n| n.status == NodeStatus::Completed)
+            .collect();
+        assert_eq!(completed.len(), 3, "all three nodes must be Completed");
     }
 
     #[test]

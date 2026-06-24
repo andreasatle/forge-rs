@@ -165,6 +165,22 @@ pub enum TelemetryEvent {
     },
     /// The tool loop reached its hard step limit without a final role result.
     ToolLoopLimitReached,
+    /// A plan node's provider output was parsed as a structured task graph.
+    PlannerOutputParsed {
+        /// Number of tasks in the parsed graph.
+        task_count: usize,
+        /// Total number of dependency edges across all tasks.
+        dependency_count: usize,
+    },
+    /// A plan node's provider output could not be parsed as a structured task
+    /// graph and fell back to a single work node containing the raw content.
+    PlannerOutputFallback,
+    /// A plan node's provider output parsed successfully but failed structural
+    /// validation. The run is halted.
+    PlannerOutputValidationFailed {
+        /// Human-readable description of the first validation error found.
+        reason: String,
+    },
 }
 
 impl TelemetryEvent {
@@ -192,6 +208,11 @@ impl TelemetryEvent {
             TelemetryEvent::ToolRequested { .. } => "tool-requested",
             TelemetryEvent::ToolReturned { .. } => "tool-returned",
             TelemetryEvent::ToolLoopLimitReached => "tool-loop-limit-reached",
+            TelemetryEvent::PlannerOutputParsed { .. } => "planner-output-parsed",
+            TelemetryEvent::PlannerOutputFallback => "planner-output-fallback",
+            TelemetryEvent::PlannerOutputValidationFailed { .. } => {
+                "planner-output-validation-failed"
+            }
         }
     }
 
@@ -268,6 +289,16 @@ impl TelemetryEvent {
                 format!("kind: ToolReturned\ntool: {tool}\nresult: {result}\n")
             }
             TelemetryEvent::ToolLoopLimitReached => "kind: ToolLoopLimitReached\n".to_string(),
+            TelemetryEvent::PlannerOutputParsed {
+                task_count,
+                dependency_count,
+            } => format!(
+                "kind: PlannerOutputParsed\ntask_count: {task_count}\ndependency_count: {dependency_count}\n"
+            ),
+            TelemetryEvent::PlannerOutputFallback => "kind: PlannerOutputFallback\n".to_string(),
+            TelemetryEvent::PlannerOutputValidationFailed { reason } => {
+                format!("kind: PlannerOutputValidationFailed\nreason: {reason}\n")
+            }
         }
     }
 }

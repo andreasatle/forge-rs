@@ -11,6 +11,7 @@
 //! - `deliberating.rs` — [`DeliberatingNodeRunner`] backed by [`DeliberationMachine`](crate::machines::deliberation::DeliberationMachine)
 
 pub mod deliberating;
+pub mod planner;
 pub mod runner;
 pub mod types;
 
