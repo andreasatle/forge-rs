@@ -100,6 +100,8 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
         let subsource = role_subsource(&request.role);
         let has_tools = request.tool_context.is_some();
 
+        let policy = file_tool_policy_for_role(&request.role);
+
         let base_prompt = {
             let core = render_role_prompt(
                 &request.role,
@@ -109,13 +111,12 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                 &request.feedback,
             );
             if has_tools {
-                format!("{core}\n\n{}", render_tool_section())
+                format!("{core}\n\n{}", render_tool_section(&policy))
             } else {
                 core
             }
         };
 
-        let policy = file_tool_policy_for_role(&request.role);
         let mut executor: Option<FileToolExecutor> = request
             .tool_context
             .map(|ctx| FileToolExecutor::with_policy(ctx.artifact_view, policy));
@@ -340,17 +341,30 @@ fn cap_observation(s: String, max_bytes: usize) -> String {
 }
 
 /// Returns the tool-availability section appended to a prompt when tools are enabled.
-fn render_tool_section() -> &'static str {
-    "Available file tools:\n\
-     {\"tool\":\"list_files\"}\n\
-     {\"tool\":\"read_file\",\"path\":\"README.md\"}\n\
-     {\"tool\":\"write_file\",\"path\":\"output.txt\",\"content\":\"...\"}\n\
-     {\"tool\":\"replace_text\",\"path\":\"output.txt\",\"old\":\"...\",\"new\":\"...\"}\n\
-     {\"tool\":\"delete_file\",\"path\":\"old.txt\"}\n\
-     You may return either:\n\
-     1. a tool request JSON, or\n\
-     2. a final role result JSON.\n\
-     Return exactly one JSON object."
+///
+/// Write tools (`write_file`, `replace_text`, `delete_file`) are only included
+/// when `policy.allow_writes` is true, keeping the advertised schema consistent
+/// with what the executor will actually permit.
+fn render_tool_section(policy: &FileToolPolicy) -> String {
+    let mut s = String::from(
+        "Available file tools:\n\
+         {\"tool\":\"list_files\"}\n\
+         {\"tool\":\"read_file\",\"path\":\"README.md\"}\n",
+    );
+    if policy.allow_writes {
+        s.push_str(
+            "{\"tool\":\"write_file\",\"path\":\"output.txt\",\"content\":\"...\"}\n\
+             {\"tool\":\"replace_text\",\"path\":\"output.txt\",\"old\":\"...\",\"new\":\"...\"}\n\
+             {\"tool\":\"delete_file\",\"path\":\"old.txt\"}\n",
+        );
+    }
+    s.push_str(
+        "You may return either:\n\
+         1. a tool request JSON, or\n\
+         2. a final role result JSON.\n\
+         Return exactly one JSON object.",
+    );
+    s
 }
 
 fn role_subsource(role: &DeliberationRole) -> &'static str {
@@ -1491,6 +1505,216 @@ mod tests {
             requests[0].output_schema,
             Some(StructuredOutput::Json),
             "RoleRunner must request Json structured output"
+        );
+    }
+
+    // ── prompt/policy consistency ────────────────────────────────────────────
+
+    #[test]
+    fn producer_prompt_lists_write_tools() {
+        let provider = ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"done"}"#]);
+        let runner = ProviderRoleRunner::new(&provider);
+
+        runner.run_role(
+            RoleRequest {
+                role: DeliberationRole::Producer,
+                objective: "produce something".to_string(),
+                producer_content: None,
+                critic_content: None,
+                feedback: vec![],
+                tool_context: Some(RoleToolContext {
+                    artifact_view: dummy_view(),
+                }),
+            },
+            &crate::telemetry::NoopTelemetry,
+        );
+
+        let requests = provider.requests.borrow();
+        let prompt = &requests[0].prompt;
+        assert!(
+            prompt.contains("write_file"),
+            "producer prompt must include write_file; got:\n{prompt}"
+        );
+        assert!(
+            prompt.contains("replace_text"),
+            "producer prompt must include replace_text; got:\n{prompt}"
+        );
+        assert!(
+            prompt.contains("delete_file"),
+            "producer prompt must include delete_file; got:\n{prompt}"
+        );
+    }
+
+    #[test]
+    fn critic_prompt_omits_write_tools() {
+        let provider =
+            ScriptedProvider::from_strs(&[r#"{"status":"rejected","reason":"needs work"}"#]);
+        let runner = ProviderRoleRunner::new(&provider);
+
+        runner.run_role(
+            RoleRequest {
+                role: DeliberationRole::Critic,
+                objective: "review the draft".to_string(),
+                producer_content: Some("draft".to_string()),
+                critic_content: None,
+                feedback: vec![],
+                tool_context: Some(RoleToolContext {
+                    artifact_view: dummy_view(),
+                }),
+            },
+            &crate::telemetry::NoopTelemetry,
+        );
+
+        let requests = provider.requests.borrow();
+        let prompt = &requests[0].prompt;
+        assert!(
+            !prompt.contains("write_file"),
+            "critic prompt must not include write_file; got:\n{prompt}"
+        );
+        assert!(
+            !prompt.contains("replace_text"),
+            "critic prompt must not include replace_text; got:\n{prompt}"
+        );
+        assert!(
+            !prompt.contains("delete_file"),
+            "critic prompt must not include delete_file; got:\n{prompt}"
+        );
+        assert!(
+            prompt.contains("list_files"),
+            "critic prompt must include list_files; got:\n{prompt}"
+        );
+        assert!(
+            prompt.contains("read_file"),
+            "critic prompt must include read_file; got:\n{prompt}"
+        );
+    }
+
+    #[test]
+    fn referee_prompt_omits_write_tools() {
+        let provider =
+            ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"approved"}"#]);
+        let runner = ProviderRoleRunner::new(&provider);
+
+        runner.run_role(
+            RoleRequest {
+                role: DeliberationRole::Referee,
+                objective: "approve the result".to_string(),
+                producer_content: Some("content".to_string()),
+                critic_content: Some("looks good".to_string()),
+                feedback: vec![],
+                tool_context: Some(RoleToolContext {
+                    artifact_view: dummy_view(),
+                }),
+            },
+            &crate::telemetry::NoopTelemetry,
+        );
+
+        let requests = provider.requests.borrow();
+        let prompt = &requests[0].prompt;
+        assert!(
+            !prompt.contains("write_file"),
+            "referee prompt must not include write_file; got:\n{prompt}"
+        );
+        assert!(
+            !prompt.contains("replace_text"),
+            "referee prompt must not include replace_text; got:\n{prompt}"
+        );
+        assert!(
+            !prompt.contains("delete_file"),
+            "referee prompt must not include delete_file; got:\n{prompt}"
+        );
+        assert!(
+            prompt.contains("list_files"),
+            "referee prompt must include list_files; got:\n{prompt}"
+        );
+        assert!(
+            prompt.contains("read_file"),
+            "referee prompt must include read_file; got:\n{prompt}"
+        );
+    }
+
+    #[test]
+    fn read_only_role_write_request_still_rejected() {
+        // Even when the prompt omits write tools, a malicious/confused model
+        // that sends a write request must still be rejected by the executor.
+        let provider = ScriptedProvider::from_strs(&[
+            r#"{"tool":"write_file","path":"bad.txt","content":"sneaky"}"#,
+            r#"{"status":"rejected","reason":"cannot write"}"#,
+        ]);
+        let runner = ProviderRoleRunner::new(&provider);
+
+        let output = runner.run_role(
+            RoleRequest {
+                role: DeliberationRole::Critic,
+                objective: "review".to_string(),
+                producer_content: Some("draft".to_string()),
+                critic_content: None,
+                feedback: vec![],
+                tool_context: Some(RoleToolContext {
+                    artifact_view: dummy_view(),
+                }),
+            },
+            &crate::telemetry::NoopTelemetry,
+        );
+
+        let requests = provider.requests.borrow();
+        assert_eq!(requests.len(), 2, "provider must be called twice");
+        let second_prompt = &requests[1].prompt;
+        assert!(
+            second_prompt.contains("not permitted"),
+            "executor must reject write even when prompt omits write tools; got:\n{second_prompt}"
+        );
+        assert!(
+            output.artifact_update.is_none(),
+            "rejected write must not produce an artifact update"
+        );
+    }
+
+    #[test]
+    fn tool_prompt_matches_policy() {
+        let rw_policy = FileToolPolicy {
+            allow_writes: true,
+            ..FileToolPolicy::default()
+        };
+        let ro_policy = FileToolPolicy {
+            allow_writes: false,
+            ..FileToolPolicy::default()
+        };
+
+        let rw_section = super::render_tool_section(&rw_policy);
+        let ro_section = super::render_tool_section(&ro_policy);
+
+        assert!(
+            rw_section.contains("write_file"),
+            "allow_writes=true must render write_file"
+        );
+        assert!(
+            rw_section.contains("replace_text"),
+            "allow_writes=true must render replace_text"
+        );
+        assert!(
+            rw_section.contains("delete_file"),
+            "allow_writes=true must render delete_file"
+        );
+        assert!(
+            !ro_section.contains("write_file"),
+            "allow_writes=false must not render write_file"
+        );
+        assert!(
+            !ro_section.contains("replace_text"),
+            "allow_writes=false must not render replace_text"
+        );
+        assert!(
+            !ro_section.contains("delete_file"),
+            "allow_writes=false must not render delete_file"
+        );
+        assert!(
+            ro_section.contains("list_files"),
+            "allow_writes=false must still render list_files"
+        );
+        assert!(
+            ro_section.contains("read_file"),
+            "allow_writes=false must still render read_file"
         );
     }
 }
