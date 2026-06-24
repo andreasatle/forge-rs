@@ -1,9 +1,10 @@
-use std::path::PathBuf;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
 use crate::artifacts::file_ops::validate_relative_path;
-use crate::artifacts::{ArtifactUpdate, ArtifactView, FileChange};
+use crate::artifacts::{ArtifactError, ArtifactUpdate, ArtifactView, FileChange};
 
 /// Policy controlling what a [`FileToolExecutor`] may do.
 #[derive(Clone, Debug)]
@@ -91,12 +92,25 @@ pub enum FileToolResponse {
     },
 }
 
+/// A pending file state within a single [`FileToolExecutor`] lifetime.
+enum OverlayEntry {
+    /// The file has been written with this content (create or overwrite).
+    Written(String),
+    /// The file has been deleted.
+    Deleted,
+}
+
 /// Executes file tool requests, delegating reads to an [`ArtifactView`] and
 /// accumulating write operations as a pending [`ArtifactUpdate`].
+///
+/// An in-memory overlay makes writes immediately visible to subsequent reads
+/// within the same executor — the "read after write" invariant. The overlay
+/// disappears when the executor is consumed; only [`ArtifactUpdate`] survives.
 pub struct FileToolExecutor {
     view: ArtifactView,
     update: ArtifactUpdate,
     policy: FileToolPolicy,
+    overlay: HashMap<PathBuf, OverlayEntry>,
 }
 
 impl FileToolExecutor {
@@ -112,7 +126,35 @@ impl FileToolExecutor {
             view,
             update: ArtifactUpdate::default(),
             policy,
+            overlay: HashMap::new(),
         }
+    }
+
+    /// Reads a file, consulting the overlay before falling back to the artifact view.
+    fn overlay_read_content(&self, path: &str) -> Result<String, ArtifactError> {
+        match self.overlay.get(Path::new(path)) {
+            Some(OverlayEntry::Written(content)) => Ok(content.clone()),
+            Some(OverlayEntry::Deleted) => Err(ArtifactError::FileNotFound),
+            None => self.view.read_file(path),
+        }
+    }
+
+    /// Lists files, overlaying pending writes (additions) and deletes (removals)
+    /// on top of the committed artifact view.
+    fn overlay_list_files(&self) -> Result<Vec<PathBuf>, ArtifactError> {
+        let mut paths = self.view.list_files()?;
+        for (overlay_path, entry) in &self.overlay {
+            match entry {
+                OverlayEntry::Written(_) => {
+                    if !paths.contains(overlay_path) {
+                        paths.push(overlay_path.clone());
+                    }
+                }
+                OverlayEntry::Deleted => paths.retain(|p| p != overlay_path),
+            }
+        }
+        paths.sort();
+        Ok(paths)
     }
 
     /// Returns the policy governing this executor.
@@ -122,21 +164,22 @@ impl FileToolExecutor {
 
     /// Executes a tool request and returns the result.
     ///
-    /// Read operations (`ListFiles`, `ReadFile`) call through to the artifact
-    /// view immediately. Write operations (`WriteFile`, `ReplaceText`,
-    /// `DeleteFile`) validate the path and then append to the pending update
-    /// without touching the artifact. The pending update is retrieved with
-    /// [`FileToolExecutor::into_update`].
+    /// Read operations (`ListFiles`, `ReadFile`) consult the overlay first and
+    /// fall back to the artifact view, so writes made earlier in the same
+    /// executor session are immediately visible. Write operations (`WriteFile`,
+    /// `ReplaceText`, `DeleteFile`) update the overlay and append to the
+    /// pending update without touching the committed artifact. The pending
+    /// update is retrieved with [`FileToolExecutor::into_update`].
     pub fn execute(&mut self, request: FileToolRequest) -> FileToolResponse {
         match request {
-            FileToolRequest::ListFiles => match self.view.list_files() {
+            FileToolRequest::ListFiles => match self.overlay_list_files() {
                 Ok(paths) => FileToolResponse::FileList { paths },
                 Err(e) => FileToolResponse::Failed {
                     reason: e.to_string(),
                 },
             },
 
-            FileToolRequest::ReadFile { path } => match self.view.read_file(&path) {
+            FileToolRequest::ReadFile { path } => match self.overlay_read_content(&path) {
                 Ok(content) => {
                     if content.len() > self.policy.max_read_bytes {
                         let truncated =
@@ -184,6 +227,8 @@ impl FileToolExecutor {
                     };
                 }
                 let description = format!("write {path}");
+                self.overlay
+                    .insert(PathBuf::from(&path), OverlayEntry::Written(content.clone()));
                 self.update
                     .changes
                     .push(FileChange::Write { path, content });
@@ -210,6 +255,37 @@ impl FileToolExecutor {
                         reason: e.to_string(),
                     };
                 }
+                // Read overlay-aware content to validate and apply the replacement now,
+                // so subsequent reads within this session see the updated state.
+                let content = match self.overlay_read_content(&path) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        let msg = e.to_string();
+                        let reason = if msg.contains("utf-8") || msg.contains("utf8") {
+                            "binary or non-UTF-8 file cannot be read as text".to_string()
+                        } else {
+                            msg
+                        };
+                        return FileToolResponse::Failed { reason };
+                    }
+                };
+                let mut occurrences = content.match_indices(old.as_str());
+                let Some((start, _)) = occurrences.next() else {
+                    return FileToolResponse::Failed {
+                        reason: "replacement target not found".to_string(),
+                    };
+                };
+                if occurrences.next().is_some() {
+                    return FileToolResponse::Failed {
+                        reason: "replacement target occurs more than once".to_string(),
+                    };
+                }
+                let mut updated = String::with_capacity(content.len() - old.len() + new.len());
+                updated.push_str(&content[..start]);
+                updated.push_str(&new);
+                updated.push_str(&content[start + old.len()..]);
+                self.overlay
+                    .insert(PathBuf::from(&path), OverlayEntry::Written(updated));
                 let description = format!("replace text in {path}");
                 self.update
                     .changes
@@ -229,6 +305,8 @@ impl FileToolExecutor {
                     };
                 }
                 let description = format!("delete {path}");
+                self.overlay
+                    .insert(PathBuf::from(&path), OverlayEntry::Deleted);
                 self.update.changes.push(FileChange::Delete { path });
                 FileToolResponse::UpdateRecorded { description }
             }
@@ -659,7 +737,13 @@ mod tests {
 
     #[test]
     fn replace_text_records_update() {
+        // ReplaceText now reads overlay-aware content to apply the replacement
+        // immediately, so the file must be present (here via a prior WriteFile).
         let mut executor = FileToolExecutor::new(dummy_view());
+        executor.execute(FileToolRequest::WriteFile {
+            path: "output.txt".to_owned(),
+            content: "hello world".to_owned(),
+        });
 
         let response = executor.execute(FileToolRequest::ReplaceText {
             path: "output.txt".to_owned(),
@@ -674,11 +758,17 @@ mod tests {
         let update = executor.into_update();
         assert_eq!(
             update.changes,
-            vec![FileChange::Replace {
-                path: "output.txt".to_owned(),
-                old: "hello".to_owned(),
-                new: "goodbye".to_owned(),
-            }]
+            vec![
+                FileChange::Write {
+                    path: "output.txt".to_owned(),
+                    content: "hello world".to_owned(),
+                },
+                FileChange::Replace {
+                    path: "output.txt".to_owned(),
+                    old: "hello".to_owned(),
+                    new: "goodbye".to_owned(),
+                },
+            ]
         );
     }
 
@@ -816,5 +906,162 @@ mod tests {
     fn parse_malformed_json_returns_error() {
         let result = parse_tool_request("not json");
         assert!(result.is_err(), "malformed JSON must fail to parse");
+    }
+
+    // ── overlay: read-after-write consistency ────────────────────────────────
+
+    #[test]
+    fn write_then_read_sees_new_content() {
+        let mut executor = FileToolExecutor::new(dummy_view());
+        executor.execute(FileToolRequest::WriteFile {
+            path: "foo.txt".to_owned(),
+            content: "hello".to_owned(),
+        });
+
+        let response = executor.execute(FileToolRequest::ReadFile {
+            path: "foo.txt".to_owned(),
+        });
+
+        assert_eq!(
+            response,
+            FileToolResponse::FileContents {
+                path: "foo.txt".to_owned(),
+                content: "hello".to_owned(),
+            },
+            "read after write must return the written content"
+        );
+    }
+
+    #[test]
+    fn write_replace_read_sees_final_content() {
+        let mut executor = FileToolExecutor::new(dummy_view());
+        executor.execute(FileToolRequest::WriteFile {
+            path: "foo.txt".to_owned(),
+            content: "hello world".to_owned(),
+        });
+        executor.execute(FileToolRequest::ReplaceText {
+            path: "foo.txt".to_owned(),
+            old: "hello".to_owned(),
+            new: "goodbye".to_owned(),
+        });
+
+        let response = executor.execute(FileToolRequest::ReadFile {
+            path: "foo.txt".to_owned(),
+        });
+
+        assert_eq!(
+            response,
+            FileToolResponse::FileContents {
+                path: "foo.txt".to_owned(),
+                content: "goodbye world".to_owned(),
+            },
+            "read after write+replace must return the final content"
+        );
+    }
+
+    #[test]
+    fn delete_then_read_fails() {
+        let mut executor = FileToolExecutor::new(dummy_view());
+        executor.execute(FileToolRequest::WriteFile {
+            path: "foo.txt".to_owned(),
+            content: "hello".to_owned(),
+        });
+        executor.execute(FileToolRequest::DeleteFile {
+            path: "foo.txt".to_owned(),
+        });
+
+        let response = executor.execute(FileToolRequest::ReadFile {
+            path: "foo.txt".to_owned(),
+        });
+
+        assert!(
+            matches!(response, FileToolResponse::Failed { .. }),
+            "read after delete must fail; got {response:?}"
+        );
+    }
+
+    #[test]
+    fn delete_artifact_file_then_read_fails() {
+        let (_temp, view) = make_view("delete-artifact-read");
+        let mut executor = FileToolExecutor::new(view);
+        // hello.txt exists in the committed artifact view
+        executor.execute(FileToolRequest::DeleteFile {
+            path: "hello.txt".to_owned(),
+        });
+
+        let response = executor.execute(FileToolRequest::ReadFile {
+            path: "hello.txt".to_owned(),
+        });
+
+        assert!(
+            matches!(response, FileToolResponse::Failed { .. }),
+            "read after deleting an artifact file must fail; got {response:?}"
+        );
+    }
+
+    #[test]
+    fn overlay_does_not_modify_artifact_view() {
+        let (_temp, view) = make_view("overlay-no-modify");
+        let mut executor_a = FileToolExecutor::new(view.clone());
+        executor_a.execute(FileToolRequest::WriteFile {
+            path: "new.txt".to_owned(),
+            content: "written in overlay".to_owned(),
+        });
+
+        // A fresh executor from the same view must not see the overlay write.
+        let mut executor_b = FileToolExecutor::new(view);
+        let response = executor_b.execute(FileToolRequest::ReadFile {
+            path: "new.txt".to_owned(),
+        });
+
+        assert!(
+            matches!(response, FileToolResponse::Failed { .. }),
+            "second executor must not see first executor's overlay; got {response:?}"
+        );
+    }
+
+    #[test]
+    fn overlay_is_per_executor() {
+        let (_temp, view) = make_view("overlay-per-executor");
+        let mut executor_a = FileToolExecutor::new(view.clone());
+        let mut executor_b = FileToolExecutor::new(view);
+
+        executor_a.execute(FileToolRequest::WriteFile {
+            path: "shared.txt".to_owned(),
+            content: "executor a content".to_owned(),
+        });
+
+        let response_b = executor_b.execute(FileToolRequest::ReadFile {
+            path: "shared.txt".to_owned(),
+        });
+
+        assert!(
+            matches!(response_b, FileToolResponse::Failed { .. }),
+            "executor B must not see executor A's overlay write; got {response_b:?}"
+        );
+    }
+
+    #[test]
+    fn list_files_reflects_overlay() {
+        let (_temp, view) = make_view("list-overlay");
+        let mut executor = FileToolExecutor::new(view);
+        // hello.txt exists in the committed artifact view.
+        executor.execute(FileToolRequest::WriteFile {
+            path: "new.txt".to_owned(),
+            content: "new content".to_owned(),
+        });
+        executor.execute(FileToolRequest::DeleteFile {
+            path: "hello.txt".to_owned(),
+        });
+
+        let response = executor.execute(FileToolRequest::ListFiles);
+
+        assert_eq!(
+            response,
+            FileToolResponse::FileList {
+                paths: vec![PathBuf::from("new.txt")],
+            },
+            "list must include new.txt and exclude deleted hello.txt; got {response:?}"
+        );
     }
 }
