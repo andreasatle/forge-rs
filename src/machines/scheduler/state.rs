@@ -13,11 +13,13 @@
 //! - `RunGraph::next_id` is an internal generator cursor used when the
 //!   scheduler mints new identifiers.
 
+use serde::{Deserialize, Serialize};
+
 /// An opaque, stable identifier for a node in the run graph.
 ///
 /// IDs are unique within a run. The string form is human-readable but must not
 /// be parsed; its internal structure is an implementation detail.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct NodeId(pub String);
 
 /// Whether a node performs planning or execution.
@@ -32,7 +34,7 @@ pub struct NodeId(pub String);
 ///   string. When the runner reports `WorkAccepted`, the node moves to
 ///   `Integrating` and an `IntegrateWork` effect is emitted. The node reaches
 ///   `Completed` only after `IntegrationReturned(Succeeded)` arrives.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum NodeKind {
     /// A planning node. Decomposes an objective into child nodes.
     Plan,
@@ -46,7 +48,7 @@ pub enum NodeKind {
 /// nodes. `Strong` is reserved for cases where the task has already proven too
 /// difficult for the cheaper tier, or where plan quality directly determines
 /// downstream work.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum ModelTier {
     /// The default, cost-efficient tier. Used for initial attempts.
     Cheap,
@@ -59,7 +61,7 @@ pub enum ModelTier {
 ///
 /// Stored on every node so the scheduler can derive a typed `RecoverySummary`
 /// from the final graph without inspecting IDs or objective strings.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum NodeOrigin {
     /// The root plan node created directly from a `RunRequest`.
     Root,
@@ -91,7 +93,7 @@ pub enum NodeOrigin {
 ///
 /// A `Failed` node is never resurrected. Recovery always creates a *new*
 /// replacement node, so the original failure is preserved for inspection.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum NodeStatus {
     /// Not yet eligible to run; waiting for dependencies to complete.
     Pending,
@@ -116,7 +118,7 @@ pub enum NodeStatus {
 /// Each node carries everything the scheduler and runner need to dispatch,
 /// track, and audit it. Fields are set at creation and updated only through
 /// the explicit graph-mutation helpers on `SchedulerMachine`.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Node {
     /// Stable identifier, unique within the run graph.
     pub id: NodeId,
@@ -158,7 +160,7 @@ pub struct Node {
 /// The graph only grows: nodes are appended on plan expansion and recovery, but
 /// never removed. This ensures the full execution history is always available
 /// for debugging and audit.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RunGraph {
     /// All nodes, in insertion order. The ordering has no semantic meaning;
     /// the scheduler scans the vec when computing ready sets.
@@ -207,7 +209,7 @@ pub struct RunRequest {
 ///              ├─ recoverable failure ─→ Running  (insert replacement)
 ///              └─ Terminal failure ────→ Failed   (cancel dependents)
 /// ```
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum SchedulerState {
     /// The scheduler is ready to scan the graph and dispatch the next node.
     ///

@@ -192,6 +192,20 @@ pub enum TelemetryEvent {
         /// The recovery action chosen: `"Retry"`, `"ElevateModel"`, or `"Terminal"`.
         recovery: String,
     },
+    /// A scheduler checkpoint was written to disk after a progress event.
+    CheckpointSaved {
+        /// Total node count in the graph at save time.
+        node_count: usize,
+        /// Number of nodes in `Completed` status at save time.
+        completed_count: usize,
+    },
+    /// A scheduler checkpoint was loaded from disk at resume time.
+    CheckpointLoaded {
+        /// Total node count in the restored graph.
+        node_count: usize,
+        /// Number of nodes already `Completed` in the restored graph.
+        completed_count: usize,
+    },
 }
 
 impl TelemetryEvent {
@@ -225,6 +239,8 @@ impl TelemetryEvent {
                 "planner-output-validation-failed"
             }
             TelemetryEvent::FailureClassified { .. } => "failure-classified",
+            TelemetryEvent::CheckpointSaved { .. } => "checkpoint-saved",
+            TelemetryEvent::CheckpointLoaded { .. } => "checkpoint-loaded",
         }
     }
 
@@ -314,6 +330,18 @@ impl TelemetryEvent {
             TelemetryEvent::FailureClassified { reason, recovery } => {
                 format!("kind: FailureClassified\nreason: {reason}\nrecovery: {recovery}\n")
             }
+            TelemetryEvent::CheckpointSaved {
+                node_count,
+                completed_count,
+            } => format!(
+                "kind: CheckpointSaved\nnode_count: {node_count}\ncompleted_count: {completed_count}\n"
+            ),
+            TelemetryEvent::CheckpointLoaded {
+                node_count,
+                completed_count,
+            } => format!(
+                "kind: CheckpointLoaded\nnode_count: {node_count}\ncompleted_count: {completed_count}\n"
+            ),
         }
     }
 }

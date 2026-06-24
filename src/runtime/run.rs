@@ -12,11 +12,14 @@ static SEED_COUNTER: AtomicU64 = AtomicU64::new(0);
 use crate::artifacts::{Artifact, ArtifactView};
 use crate::config::{ArtifactConfig, ForgeConfig, ValidationConfig};
 use crate::engine::run_machine_with_telemetry;
+use crate::machines::scheduler::state::SchedulerState;
 use crate::machines::scheduler::{RunRequest, SchedulerHandler, SchedulerMachine, SchedulerOutput};
 use crate::node_runner::DeliberatingNodeRunner;
 use crate::providers::{LlamaCppProvider, RetryingProvider};
+use crate::runtime::checkpoint::node_counts;
+use crate::runtime::resume::find_resumable_run;
 use crate::runtime::{create_run, finalize_manifest};
-use crate::telemetry::{FileTelemetry, TelemetrySink};
+use crate::telemetry::{FileTelemetry, TelemetryEvent, TelemetryRecord, TelemetrySink};
 use crate::validation::{AlwaysPassValidator, CommandValidator, Validator};
 
 /// Entry point for a single forge run driven by a [`ForgeConfig`].
@@ -72,11 +75,113 @@ impl ForgeRuntime {
         let validator = make_validator(config.validation.as_ref());
         let handler = SchedulerHandler::with_artifact(runner, artifact)
             .with_telemetry(Rc::clone(&sink))
-            .with_validator(validator);
+            .with_validator(validator)
+            .with_checkpoint_dir(run_info.run_dir.clone());
 
         let initial_state = SchedulerMachine::initial_state(RunRequest {
             objective: config.objective.clone(),
         });
+
+        let (output, handler) = run_machine_with_telemetry(handler, initial_state, sink.as_ref());
+
+        let final_artifact = handler.artifact();
+        let validation_passed = handler.validation_passed();
+        print_summary(&output, &config, final_artifact.as_ref(), &run_info);
+
+        let (status, final_commit, failure_reason) = match &output {
+            SchedulerOutput::Complete { .. } => (
+                "succeeded",
+                final_artifact.as_ref().map(|a| a.commit_sha.as_str()),
+                None,
+            ),
+            SchedulerOutput::Failed { reason, .. } => ("failed", None, Some(reason.as_str())),
+        };
+        if let Err(e) = finalize_manifest(
+            &run_info,
+            status,
+            final_commit,
+            validation_passed,
+            failure_reason,
+        ) {
+            eprintln!("warning: failed to finalize manifest: {e}");
+        }
+
+        runtime_result_from_scheduler_output(output)
+    }
+
+    /// Resume a previously interrupted forge run.
+    ///
+    /// Scans `config.telemetry.directory` for a run whose `manifest.json` has
+    /// `status == "running"` and loads its `graph.json` checkpoint. Exactly one
+    /// such run must exist; zero or multiple produce a clear error.
+    ///
+    /// The restored state is normalized before re-entry: any node that was
+    /// mid-execution at crash time is reset to `Pending` so the scheduler
+    /// re-dispatches it. Completed work (durable in git) is preserved.
+    pub fn resume(config: ForgeConfig) -> Result<(), Box<dyn Error>> {
+        let runs_root = PathBuf::from(&config.telemetry.directory);
+        let (run_dir, initial_state) = find_resumable_run(&runs_root)?;
+
+        let artifact = load_or_create_artifact(&config.artifact)?;
+        let sink: Rc<dyn TelemetrySink> = Rc::new(FileTelemetry::new(run_dir.join("telemetry")));
+
+        let graph = match &initial_state {
+            SchedulerState::Running { graph } => graph,
+            _ => unreachable!("normalize_for_resume always returns Running"),
+        };
+        let (node_count, completed_count) = node_counts(graph);
+        sink.record(TelemetryRecord::new(
+            "Checkpoint",
+            TelemetryEvent::CheckpointLoaded {
+                node_count,
+                completed_count,
+            },
+        ));
+
+        let cheap_llama =
+            LlamaCppProvider::new(&config.provider.base_url, config.provider.timeout_seconds);
+        let cheap = RetryingProvider::new(cheap_llama, 3);
+
+        let strong_base_url = config
+            .provider
+            .strong_base_url
+            .as_deref()
+            .unwrap_or(&config.provider.base_url);
+        let strong_timeout = config
+            .provider
+            .strong_timeout_seconds
+            .unwrap_or(config.provider.timeout_seconds);
+        let strong_llama = LlamaCppProvider::new(strong_base_url, strong_timeout);
+        let strong = RetryingProvider::new(strong_llama, 3);
+
+        let cheap_tokens = config.provider.n_predict as u32;
+        let strong_tokens = config
+            .provider
+            .strong_n_predict
+            .unwrap_or(config.provider.n_predict) as u32;
+
+        let runner = DeliberatingNodeRunner::new(cheap, strong)
+            .with_cheap_max_tokens(cheap_tokens)
+            .with_strong_max_tokens(strong_tokens);
+        let validator = make_validator(config.validation.as_ref());
+        let handler = SchedulerHandler::with_artifact(runner, artifact)
+            .with_telemetry(Rc::clone(&sink))
+            .with_validator(validator)
+            .with_checkpoint_dir(run_dir.clone());
+
+        let run_info = crate::runtime::RunInfo {
+            run_id: run_dir
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned(),
+            run_dir: run_dir.clone(),
+            telemetry_dir: run_dir.join("telemetry"),
+            started_secs: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs_f64(),
+        };
 
         let (output, handler) = run_machine_with_telemetry(handler, initial_state, sink.as_ref());
 

@@ -10,6 +10,7 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::rc::Rc;
 
 use crate::artifacts::{
@@ -24,6 +25,7 @@ use crate::machines::scheduler::event::{
 use crate::machines::scheduler::machine::{SchedulerMachine, SchedulerOutput};
 use crate::machines::scheduler::state::{NodeId, SchedulerState};
 use crate::node_runner::{NodeRunRequest, NodeRunResult, NodeRunner};
+use crate::runtime::checkpoint::{node_counts, save_checkpoint};
 use crate::telemetry::{NoopTelemetry, TelemetryEvent, TelemetryRecord, TelemetrySink};
 use crate::validation::{AlwaysPassValidator, Validator};
 
@@ -54,6 +56,9 @@ pub struct SchedulerHandler<R> {
     /// `Some(false)` = validation ran and failed.
     /// `None` = validation was never invoked (no artifact update reached the gate).
     last_validation_passed: RefCell<Option<bool>>,
+    /// When set, the handler writes `graph.json` to this directory after
+    /// `NodeReturned` and `IntegrationReturned` transitions.
+    checkpoint_dir: Option<PathBuf>,
 }
 
 impl<R: NodeRunner> SchedulerHandler<R> {
@@ -66,6 +71,7 @@ impl<R: NodeRunner> SchedulerHandler<R> {
             telemetry: Rc::new(NoopTelemetry),
             validator: Rc::new(AlwaysPassValidator),
             last_validation_passed: RefCell::new(None),
+            checkpoint_dir: None,
         }
     }
 
@@ -79,6 +85,7 @@ impl<R: NodeRunner> SchedulerHandler<R> {
             telemetry: Rc::new(NoopTelemetry),
             validator: Rc::new(AlwaysPassValidator),
             last_validation_passed: RefCell::new(None),
+            checkpoint_dir: None,
         }
     }
 
@@ -90,6 +97,18 @@ impl<R: NodeRunner> SchedulerHandler<R> {
     /// Replace the default [`AlwaysPassValidator`] with a custom validator.
     pub fn with_validator(self, validator: Rc<dyn Validator>) -> Self {
         Self { validator, ..self }
+    }
+
+    /// Enable checkpoint writes to `dir` after each progress event.
+    ///
+    /// When set, the handler writes `graph.json` to `dir` after every
+    /// `NodeReturned` and `IntegrationReturned` transition that leaves the
+    /// scheduler in a non-terminal state.
+    pub fn with_checkpoint_dir(self, dir: PathBuf) -> Self {
+        Self {
+            checkpoint_dir: Some(dir),
+            ..self
+        }
     }
 
     /// Returns a clone of the current artifact, or `None` if no artifact was provided.
@@ -104,6 +123,38 @@ impl<R: NodeRunner> SchedulerHandler<R> {
     /// `None` means the gate was never reached (no artifact update was pending).
     pub fn validation_passed(&self) -> Option<bool> {
         *self.last_validation_passed.borrow()
+    }
+
+    fn maybe_save_checkpoint(&self, state: &SchedulerState) {
+        let Some(dir) = &self.checkpoint_dir else {
+            return;
+        };
+        let is_active = matches!(
+            state,
+            SchedulerState::Running { .. } | SchedulerState::Waiting { .. }
+        );
+        if !is_active {
+            return;
+        }
+        let graph = match state {
+            SchedulerState::Running { graph } | SchedulerState::Waiting { graph, .. } => graph,
+            _ => return,
+        };
+        let (node_count, completed_count) = node_counts(graph);
+        match save_checkpoint(dir, state) {
+            Ok(()) => {
+                self.telemetry.record(TelemetryRecord::new(
+                    "Checkpoint",
+                    TelemetryEvent::CheckpointSaved {
+                        node_count,
+                        completed_count,
+                    },
+                ));
+            }
+            Err(e) => {
+                eprintln!("warning: failed to save checkpoint: {e}");
+            }
+        }
     }
 }
 
@@ -126,7 +177,15 @@ impl<R: NodeRunner> Machine for SchedulerHandler<R> {
         state: SchedulerState,
         event: SchedulerEvent,
     ) -> Transition<SchedulerState, SchedulerEffect> {
-        SchedulerMachine.transition(state, event)
+        let is_progress_event = matches!(
+            event,
+            SchedulerEvent::NodeReturned { .. } | SchedulerEvent::IntegrationReturned { .. }
+        );
+        let result = SchedulerMachine.transition(state, event);
+        if is_progress_event {
+            self.maybe_save_checkpoint(&result.state);
+        }
+        result
     }
 
     fn handle_effect(&self, effect: SchedulerEffect) -> SchedulerEvent {
@@ -2009,5 +2068,91 @@ mod tests {
         // dir, which we removed — but the key structural guarantee is that the code
         // path through SchedulerHandler and DeliberatingNodeRunner never calls
         // FileTelemetry::new internally.
+    }
+
+    // ── checkpoint tests ──────────────────────────────────────────────────────
+
+    #[test]
+    fn checkpoint_written_after_node_returned() {
+        use crate::engine::run_machine;
+        use crate::runtime::checkpoint::load_checkpoint;
+
+        let seq = NEXT_TEST_ID.fetch_add(1, Ordering::Relaxed);
+        let dir =
+            std::env::temp_dir().join(format!("forge-handler-ckpt-{}-{seq}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        let state = SchedulerState::Running {
+            graph: RunGraph {
+                nodes: vec![work_node("W", "do some work")],
+                next_id: 0,
+            },
+        };
+        run_machine(
+            SchedulerHandler::new(StaticNodeRunner).with_checkpoint_dir(dir.clone()),
+            state,
+        );
+
+        let checkpoint_path = dir.join("graph.json");
+        assert!(
+            checkpoint_path.exists(),
+            "graph.json must be written after run"
+        );
+        // The checkpoint captures the last non-terminal state (Running, not Complete).
+        // The final Complete state is a terminal and is never checkpointed.
+        let loaded = load_checkpoint(&dir).unwrap();
+        let SchedulerState::Running { graph } = loaded else {
+            panic!("expected Running state in checkpoint");
+        };
+        assert!(
+            graph
+                .nodes
+                .iter()
+                .all(|n| n.status == NodeStatus::Completed),
+            "all nodes must be Completed in the final checkpoint"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn checkpoint_load_round_trip() {
+        use crate::runtime::checkpoint::{load_checkpoint, save_checkpoint};
+
+        let seq = NEXT_TEST_ID.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!(
+            "forge-handler-ckpt-rt-{}-{seq}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        let state = SchedulerState::Running {
+            graph: RunGraph {
+                nodes: vec![
+                    Node {
+                        id: NodeId("A".to_string()),
+                        kind: NodeKind::Work,
+                        objective: "do A".to_string(),
+                        dependencies: vec![],
+                        status: NodeStatus::Completed,
+                        attempt: 0,
+                        plan_depth: 0,
+                        model_tier: ModelTier::Cheap,
+                        summary: Some("done".to_string()),
+                        origin: NodeOrigin::Root,
+                    },
+                    work_node("B", "do B"),
+                ],
+                next_id: 1,
+            },
+        };
+
+        save_checkpoint(&dir, &state).unwrap();
+        let loaded = load_checkpoint(&dir).unwrap();
+        assert_eq!(state, loaded);
+
+        let _ = fs::remove_dir_all(&dir);
     }
 }
