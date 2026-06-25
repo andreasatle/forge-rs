@@ -9,6 +9,10 @@ Each task must address exactly one concern. \
 Express dependencies explicitly. \
 Do not include implementation details in plan nodes — describe what to achieve, not how. \
 Output a structured task list that the execution framework can schedule.\n\
+Every task must target a concrete artifact operation: create, modify, or delete named files. \
+Do not emit tasks whose only output is a decision, design choice, analysis, or content definition. \
+Encode such decisions directly into the objective of the task that writes or modifies the file. \
+Each task must be self-contained enough for a worker to execute without access to sibling task reasoning.\n\
 Return exactly one JSON object. No markdown. No code fence. \
 No explanation. No text before or after the JSON.\n\
 {\"tasks\":[{\"id\":\"task-id\",\"objective\":\"Task objective.\",\"depends_on\":[]}]}\n\
@@ -32,6 +36,8 @@ Execution failures are handled by the framework, not the model.";
 const CODING_PLANNER_CRITIC_SYSTEM: &str = "You are a software planning review agent. \
 Evaluate the proposed task graph, not the final implementation artifact. \
 Judge whether the graph covers the objective, tasks are bounded, each task addresses one concern, dependencies are sensible, task objectives are actionable, and worker nodes have enough detail. \
+Reject any task that does not identify a concrete file target or produce a verifiable artifact change. \
+Reject pure-reasoning tasks such as \"define content\", \"decide design\", \"analyze approach\", or \"plan implementation\" unless they are embedded in an artifact-changing task. \
 Do not judge whether files already changed, final code compiles, or the final artifact already exists. \
 Accept with a plan review summary or reject with a specific, actionable plan revision reason.\n\
 Return exactly one JSON object. No markdown. No code fence. \
@@ -65,7 +71,9 @@ Execution failures are handled by the framework, not the model.";
 const CODING_PLANNER_REFEREE_SYSTEM: &str = "You are a software planning acceptance agent. \
 Decide whether the proposed task graph is a structurally valid, schedulable plan. \
 Accept when tasks collectively cover the objective, dependencies make sense, and the graph is suitable for scheduling. \
-Reject with plan revision feedback when a necessary task is omitted, task objectives are too vague, dependencies are wrong or missing, or tasks are too large. \
+A schedulable coding task must have an observable artifact outcome: it must create, modify, or delete named files. \
+Reject plans containing tasks that cannot be verified through file changes or artifact inspection. \
+Reject with plan revision feedback when a necessary task is omitted, task objectives are too vague, dependencies are wrong or missing, tasks are too large, or any task is a pure-reasoning step with no artifact target. \
 Do not reject because final code has not been written, artifact files do not yet exist, or final output is not yet visible.\n\
 Return exactly one JSON object. No markdown. No code fence. \
 No explanation. No text before or after the JSON.\n\
@@ -433,6 +441,100 @@ mod tests {
                 .contains("inspect the relevant files with read_file"),
             "planner_referee_system must not contain worker artifact inspection instruction; got:\n{}",
             policy.planner_referee_system
+        );
+    }
+
+    // ── artifact-operation invariant tests ───────────────────────────────────
+
+    #[test]
+    fn coding_planner_requires_concrete_artifact_operation() {
+        let policy = CodingProjectAdapter.role_policy();
+        assert!(
+            policy
+                .planner_producer_system
+                .contains("concrete artifact operation"),
+            "planner_producer_system must require concrete artifact operations; got:\n{}",
+            policy.planner_producer_system
+        );
+    }
+
+    #[test]
+    fn coding_planner_names_files_as_artifact_targets() {
+        let policy = CodingProjectAdapter.role_policy();
+        assert!(
+            policy.planner_producer_system.contains("named files"),
+            "planner_producer_system must mention named files as artifact targets; got:\n{}",
+            policy.planner_producer_system
+        );
+    }
+
+    #[test]
+    fn coding_planner_prohibits_pure_reasoning_tasks() {
+        let policy = CodingProjectAdapter.role_policy();
+        assert!(
+            policy
+                .planner_producer_system
+                .contains("Do not emit tasks whose only output is a decision"),
+            "planner_producer_system must prohibit pure-reasoning tasks; got:\n{}",
+            policy.planner_producer_system
+        );
+    }
+
+    #[test]
+    fn coding_planner_critic_rejects_pure_reasoning_tasks() {
+        let policy = CodingProjectAdapter.role_policy();
+        assert!(
+            policy
+                .planner_critic_system
+                .contains("Reject pure-reasoning tasks"),
+            "planner_critic_system must instruct to reject pure-reasoning tasks; got:\n{}",
+            policy.planner_critic_system
+        );
+    }
+
+    #[test]
+    fn coding_planner_critic_requires_file_target() {
+        let policy = CodingProjectAdapter.role_policy();
+        assert!(
+            policy
+                .planner_critic_system
+                .contains("concrete file target"),
+            "planner_critic_system must require a concrete file target; got:\n{}",
+            policy.planner_critic_system
+        );
+    }
+
+    #[test]
+    fn coding_planner_referee_requires_observable_artifact_outcome() {
+        let policy = CodingProjectAdapter.role_policy();
+        assert!(
+            policy
+                .planner_referee_system
+                .contains("observable artifact outcome"),
+            "planner_referee_system must require observable artifact outcome; got:\n{}",
+            policy.planner_referee_system
+        );
+    }
+
+    #[test]
+    fn coding_planner_referee_rejects_unverifiable_tasks() {
+        let policy = CodingProjectAdapter.role_policy();
+        assert!(
+            policy
+                .planner_referee_system
+                .contains("cannot be verified through file changes"),
+            "planner_referee_system must reject tasks not verifiable through file changes; got:\n{}",
+            policy.planner_referee_system
+        );
+    }
+
+    #[test]
+    fn coding_planner_self_contained_task_requirement() {
+        let policy = CodingProjectAdapter.role_policy();
+        assert!(
+            policy.planner_producer_system.contains("self-contained"),
+            "planner_producer_system must require self-contained task objectives; got:\n{}",
+            policy.planner_producer_system
         );
     }
 
