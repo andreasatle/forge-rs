@@ -717,6 +717,7 @@ fn is_framework_placeholder(value: &str) -> bool {
             | "<REASON_FOR_REJECTION>"
             | "<YOUR_REASON>"
             | "<PLACEHOLDER>"
+            | "<REASON>"
     )
 }
 
@@ -973,6 +974,22 @@ mod tests {
             parse_role_response(r#"{"status":"rejected","reason":"<REASON_FOR_REJECTION>"}"#);
         let RoleResult::Failed { reason } = result else {
             panic!("framework placeholder reason must produce Failed, got {result:?}");
+        };
+        assert!(
+            reason.contains("framework placeholder"),
+            "failure reason must mention 'framework placeholder'; got: {reason}"
+        );
+    }
+
+    #[test]
+    fn angle_bracket_reason_placeholder_is_rejected() {
+        // Regression: "<REASON>" is exactly MIN_CONTENT_LENGTH chars so it slips
+        // past the length guard; it must be caught by is_framework_placeholder.
+        let result = parse_role_response(r#"{"status":"rejected","reason":"<REASON>"}"#);
+        let RoleResult::Failed { reason } = result else {
+            panic!(
+                r#"placeholder {{"status":"rejected","reason":"<REASON>"}} must produce Failed, got {result:?}"#
+            );
         };
         assert!(
             reason.contains("framework placeholder"),
