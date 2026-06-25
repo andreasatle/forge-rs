@@ -6,7 +6,7 @@
 
 use serde::Deserialize;
 
-use crate::artifacts::{ArtifactUpdate, ArtifactView};
+use crate::artifacts::{ArtifactRead, ArtifactUpdate};
 use crate::machines::deliberation::event::RoleResult;
 use crate::machines::deliberation::state::{DeliberationRole, RevisionFeedback};
 use crate::machines::scheduler::NodeKind;
@@ -17,10 +17,19 @@ use crate::telemetry::{TelemetryEvent, TelemetryRecord, TelemetrySink};
 use crate::tools::{FileToolExecutor, FileToolPolicy, FileToolResponse, parse_tool_request};
 
 /// A read-only view of the artifact made available to role tool loops.
-#[derive(Debug)]
 pub struct RoleToolContext {
     /// The artifact snapshot the role may read from and accumulate changes against.
-    pub artifact_view: ArtifactView,
+    /// May be a plain [`ArtifactView`] (for Producer) or a [`StagedArtifactView`]
+    /// that includes the Producer's pending writes (for Critic and Referee).
+    pub artifact_view: Box<dyn ArtifactRead>,
+}
+
+impl std::fmt::Debug for RoleToolContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RoleToolContext")
+            .field("artifact_view", &"<dyn ArtifactRead>")
+            .finish()
+    }
 }
 
 /// All inputs needed to execute one role invocation.
@@ -1655,7 +1664,7 @@ mod tests {
                 feedback: vec![],
                 node_kind: NodeKind::Work,
                 tool_context: Some(RoleToolContext {
-                    artifact_view: view,
+                    artifact_view: Box::new(view),
                 }),
             },
             &crate::telemetry::NoopTelemetry,
@@ -1699,7 +1708,7 @@ mod tests {
                 feedback: vec![],
                 node_kind: NodeKind::Work,
                 tool_context: Some(RoleToolContext {
-                    artifact_view: dummy_view(),
+                    artifact_view: Box::new(dummy_view()),
                 }),
             },
             &crate::telemetry::NoopTelemetry,
@@ -1774,7 +1783,7 @@ mod tests {
                 feedback: vec![],
                 node_kind: NodeKind::Work,
                 tool_context: Some(RoleToolContext {
-                    artifact_view: dummy_view(),
+                    artifact_view: Box::new(dummy_view()),
                 }),
             },
             &crate::telemetry::NoopTelemetry,
@@ -1837,7 +1846,7 @@ mod tests {
                 feedback: vec![],
                 node_kind: NodeKind::Work,
                 tool_context: Some(RoleToolContext {
-                    artifact_view: dummy_view(),
+                    artifact_view: Box::new(dummy_view()),
                 }),
             },
             &crate::telemetry::NoopTelemetry,
@@ -1923,7 +1932,7 @@ mod tests {
                 feedback: vec![],
                 node_kind: NodeKind::Work,
                 tool_context: Some(RoleToolContext {
-                    artifact_view: dummy_view(),
+                    artifact_view: Box::new(dummy_view()),
                 }),
             },
             &crate::telemetry::NoopTelemetry,
@@ -2021,7 +2030,7 @@ mod tests {
                 feedback: vec![],
                 node_kind: NodeKind::Work,
                 tool_context: Some(RoleToolContext {
-                    artifact_view: view,
+                    artifact_view: Box::new(view),
                 }),
             },
             &crate::telemetry::NoopTelemetry,
@@ -2122,7 +2131,7 @@ mod tests {
                 feedback: vec![],
                 node_kind: NodeKind::Work,
                 tool_context: Some(RoleToolContext {
-                    artifact_view: dummy_view(),
+                    artifact_view: Box::new(dummy_view()),
                 }),
             },
             &crate::telemetry::NoopTelemetry,
@@ -2159,7 +2168,7 @@ mod tests {
                 feedback: vec![],
                 node_kind: NodeKind::Work,
                 tool_context: Some(RoleToolContext {
-                    artifact_view: dummy_view(),
+                    artifact_view: Box::new(dummy_view()),
                 }),
             },
             &crate::telemetry::NoopTelemetry,
@@ -2204,7 +2213,7 @@ mod tests {
                 feedback: vec![],
                 node_kind: NodeKind::Work,
                 tool_context: Some(RoleToolContext {
-                    artifact_view: dummy_view(),
+                    artifact_view: Box::new(dummy_view()),
                 }),
             },
             &crate::telemetry::NoopTelemetry,
@@ -2253,7 +2262,7 @@ mod tests {
                 feedback: vec![],
                 node_kind: NodeKind::Work,
                 tool_context: Some(RoleToolContext {
-                    artifact_view: dummy_view(),
+                    artifact_view: Box::new(dummy_view()),
                 }),
             },
             &crate::telemetry::NoopTelemetry,
@@ -2790,7 +2799,7 @@ mod tests {
                 feedback: vec![],
                 node_kind: NodeKind::Work,
                 tool_context: Some(RoleToolContext {
-                    artifact_view: dummy_view(),
+                    artifact_view: Box::new(dummy_view()),
                 }),
             },
             &crate::telemetry::NoopTelemetry,
@@ -3151,7 +3160,7 @@ mod tests {
                 feedback: vec![],
                 node_kind: NodeKind::Work,
                 tool_context: Some(RoleToolContext {
-                    artifact_view: dummy_view(),
+                    artifact_view: Box::new(dummy_view()),
                 }),
             },
             &crate::telemetry::NoopTelemetry,
@@ -3654,7 +3663,7 @@ mod tests {
                 feedback: vec![],
                 node_kind: NodeKind::Work,
                 tool_context: Some(RoleToolContext {
-                    artifact_view: view,
+                    artifact_view: Box::new(view),
                 }),
             },
             &crate::telemetry::NoopTelemetry,
@@ -3691,7 +3700,7 @@ mod tests {
                 feedback: vec![],
                 node_kind: NodeKind::Work,
                 tool_context: Some(RoleToolContext {
-                    artifact_view: view,
+                    artifact_view: Box::new(view),
                 }),
             },
             &crate::telemetry::NoopTelemetry,
@@ -3731,7 +3740,7 @@ mod tests {
                 feedback: vec![],
                 node_kind: NodeKind::Work,
                 tool_context: Some(RoleToolContext {
-                    artifact_view: dummy_view(),
+                    artifact_view: Box::new(dummy_view()),
                 }),
             },
             &crate::telemetry::NoopTelemetry,
@@ -3771,7 +3780,7 @@ mod tests {
                 feedback: vec![],
                 node_kind: NodeKind::Work,
                 tool_context: Some(RoleToolContext {
-                    artifact_view: dummy_view(),
+                    artifact_view: Box::new(dummy_view()),
                 }),
             },
             &crate::telemetry::NoopTelemetry,
@@ -3815,7 +3824,7 @@ mod tests {
                 feedback: vec![],
                 node_kind: NodeKind::Work,
                 tool_context: Some(RoleToolContext {
-                    artifact_view: dummy_view(),
+                    artifact_view: Box::new(dummy_view()),
                 }),
             },
             &crate::telemetry::NoopTelemetry,
@@ -3860,7 +3869,7 @@ mod tests {
                 feedback: vec![],
                 node_kind: NodeKind::Work,
                 tool_context: Some(RoleToolContext {
-                    artifact_view: dummy_view(),
+                    artifact_view: Box::new(dummy_view()),
                 }),
             },
             &telemetry,
@@ -3916,7 +3925,7 @@ mod tests {
                 feedback: vec![],
                 node_kind: NodeKind::Work,
                 tool_context: Some(RoleToolContext {
-                    artifact_view: dummy_view(),
+                    artifact_view: Box::new(dummy_view()),
                 }),
             },
             &crate::telemetry::NoopTelemetry,
@@ -3953,7 +3962,7 @@ mod tests {
                 feedback: vec![],
                 node_kind: NodeKind::Work,
                 tool_context: Some(RoleToolContext {
-                    artifact_view: view,
+                    artifact_view: Box::new(view),
                 }),
             },
             &crate::telemetry::NoopTelemetry,
@@ -3989,7 +3998,7 @@ mod tests {
                 feedback: vec![],
                 node_kind: NodeKind::Work,
                 tool_context: Some(RoleToolContext {
-                    artifact_view: dummy_view(),
+                    artifact_view: Box::new(dummy_view()),
                 }),
             },
             &crate::telemetry::NoopTelemetry,
@@ -4026,7 +4035,7 @@ mod tests {
                 feedback: vec![],
                 node_kind: NodeKind::Work,
                 tool_context: Some(RoleToolContext {
-                    artifact_view: dummy_view(),
+                    artifact_view: Box::new(dummy_view()),
                 }),
             },
             &crate::telemetry::NoopTelemetry,
@@ -4067,7 +4076,7 @@ mod tests {
                 feedback: vec![],
                 node_kind: NodeKind::Work,
                 tool_context: Some(RoleToolContext {
-                    artifact_view: dummy_view(),
+                    artifact_view: Box::new(dummy_view()),
                 }),
             },
             &telemetry,
@@ -4123,7 +4132,7 @@ mod tests {
                 feedback: vec![],
                 node_kind: NodeKind::Work,
                 tool_context: Some(RoleToolContext {
-                    artifact_view: dummy_view(),
+                    artifact_view: Box::new(dummy_view()),
                 }),
             },
             &crate::telemetry::NoopTelemetry,
@@ -4197,7 +4206,7 @@ mod tests {
                 feedback: vec![],
                 node_kind: NodeKind::Work,
                 tool_context: Some(RoleToolContext {
-                    artifact_view: dummy_view(),
+                    artifact_view: Box::new(dummy_view()),
                 }),
             },
             &crate::telemetry::NoopTelemetry,
@@ -4231,7 +4240,7 @@ mod tests {
                 feedback: vec![],
                 node_kind: NodeKind::Work,
                 tool_context: Some(RoleToolContext {
-                    artifact_view: dummy_view(),
+                    artifact_view: Box::new(dummy_view()),
                 }),
             },
             &crate::telemetry::NoopTelemetry,
@@ -4307,7 +4316,7 @@ mod tests {
                 feedback: vec![],
                 node_kind: NodeKind::Work,
                 tool_context: Some(RoleToolContext {
-                    artifact_view: dummy_view(),
+                    artifact_view: Box::new(dummy_view()),
                 }),
             },
             &crate::telemetry::NoopTelemetry,
@@ -4351,7 +4360,7 @@ mod tests {
                 feedback: vec![],
                 node_kind: NodeKind::Work,
                 tool_context: Some(RoleToolContext {
-                    artifact_view: dummy_view(),
+                    artifact_view: Box::new(dummy_view()),
                 }),
             },
             &crate::telemetry::NoopTelemetry,
@@ -4393,7 +4402,7 @@ mod tests {
                 feedback: vec![],
                 node_kind: NodeKind::Work,
                 tool_context: Some(RoleToolContext {
-                    artifact_view: dummy_view(),
+                    artifact_view: Box::new(dummy_view()),
                 }),
             },
             &crate::telemetry::NoopTelemetry,
@@ -4433,7 +4442,7 @@ mod tests {
                 feedback: vec![],
                 node_kind: NodeKind::Work,
                 tool_context: Some(RoleToolContext {
-                    artifact_view: dummy_view(),
+                    artifact_view: Box::new(dummy_view()),
                 }),
             },
             &telemetry,
@@ -4483,7 +4492,7 @@ mod tests {
                 feedback: vec![],
                 node_kind: NodeKind::Work,
                 tool_context: Some(RoleToolContext {
-                    artifact_view: dummy_view(),
+                    artifact_view: Box::new(dummy_view()),
                 }),
             },
             &crate::telemetry::NoopTelemetry,
@@ -4529,7 +4538,7 @@ mod tests {
                     feedback: vec![],
                     node_kind: NodeKind::Work,
                     tool_context: Some(RoleToolContext {
-                        artifact_view: dummy_view(),
+                        artifact_view: Box::new(dummy_view()),
                     }),
                 },
                 &crate::telemetry::NoopTelemetry,

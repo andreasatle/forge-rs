@@ -7,12 +7,14 @@
 mod artifact;
 pub(crate) mod file_ops;
 mod integration;
+mod staged;
 mod update;
 mod workspace;
 
 pub use artifact::{Artifact, ArtifactView};
 pub use file_ops::{ArtifactError, WorkspaceFileOps};
 pub use integration::{IntegrationError, integrate};
+pub use staged::{ArtifactRead, StagedArtifactView, StagedEntry};
 pub use update::{ArtifactUpdate, FileChange};
 pub use workspace::{Workspace, create_temporary_workspace, create_workspace};
 

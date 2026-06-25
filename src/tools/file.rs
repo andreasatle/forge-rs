@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 
 use crate::artifacts::file_ops::validate_relative_path;
-use crate::artifacts::{ArtifactError, ArtifactUpdate, ArtifactView, FileChange};
+use crate::artifacts::{ArtifactError, ArtifactRead, ArtifactUpdate, FileChange};
 
 /// Policy controlling what a [`FileToolExecutor`] may do.
 #[derive(Clone, Debug)]
@@ -100,14 +100,14 @@ enum OverlayEntry {
     Deleted,
 }
 
-/// Executes file tool requests, delegating reads to an [`ArtifactView`] and
-/// accumulating write operations as a pending [`ArtifactUpdate`].
+/// Executes file tool requests, delegating reads to an [`ArtifactRead`] source
+/// and accumulating write operations as a pending [`ArtifactUpdate`].
 ///
 /// An in-memory overlay makes writes immediately visible to subsequent reads
 /// within the same executor — the "read after write" invariant. The overlay
 /// disappears when the executor is consumed; only [`ArtifactUpdate`] survives.
 pub struct FileToolExecutor {
-    view: ArtifactView,
+    view: Box<dyn ArtifactRead>,
     update: ArtifactUpdate,
     policy: FileToolPolicy,
     overlay: HashMap<PathBuf, OverlayEntry>,
@@ -116,14 +116,14 @@ pub struct FileToolExecutor {
 impl FileToolExecutor {
     /// Creates a new executor backed by `view` with the default policy
     /// (writes allowed, conservative size limits).
-    pub fn new(view: ArtifactView) -> Self {
+    pub fn new(view: impl ArtifactRead + 'static) -> Self {
         Self::with_policy(view, FileToolPolicy::default())
     }
 
     /// Creates a new executor backed by `view` with an explicit `policy`.
-    pub fn with_policy(view: ArtifactView, policy: FileToolPolicy) -> Self {
+    pub fn with_policy(view: impl ArtifactRead + 'static, policy: FileToolPolicy) -> Self {
         Self {
-            view,
+            view: Box::new(view),
             update: ArtifactUpdate::default(),
             policy,
             overlay: HashMap::new(),

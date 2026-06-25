@@ -7,7 +7,10 @@
 
 use std::cell::RefCell;
 
-use crate::artifacts::{ArtifactUpdate, ArtifactView, FileChange};
+use crate::artifacts::{
+    ArtifactRead, ArtifactUpdate, ArtifactView, FileChange, StagedArtifactView,
+};
+use crate::machines::deliberation::state::DeliberationRole;
 use crate::machines::scheduler::NodeKind;
 use crate::roles::policy::RolePolicy;
 use crate::roles::runner::{ProviderRoleRunner, RoleRequest, RoleRunner, RoleToolContext};
@@ -96,13 +99,31 @@ impl<R: RoleRunner> DeliberationHandler<R> {
                 feedback,
             } => {
                 // Plan nodes must not have file tools — suppress tool context entirely.
-                // Worker roles keep the artifact view so the Producer can read/write files.
+                // For work nodes: Producer sees the committed base view; Critic and
+                // Referee get a StagedArtifactView that layers the Producer's pending
+                // writes on top, so they can read files before integration.
                 let tool_context = if self.node_kind == NodeKind::Plan {
                     None
                 } else {
-                    self.artifact_view
-                        .clone()
-                        .map(|v| RoleToolContext { artifact_view: v })
+                    match &self.artifact_view {
+                        None => None,
+                        Some(base) => {
+                            let view: Box<dyn ArtifactRead> = match &role {
+                                DeliberationRole::Producer => Box::new(base.clone()),
+                                DeliberationRole::Critic | DeliberationRole::Referee => {
+                                    let changes = self.accumulated_update.borrow().clone();
+                                    let update = ArtifactUpdate { changes };
+                                    Box::new(
+                                        StagedArtifactView::from_update(base.clone(), &update)
+                                            .expect("staged view construction must succeed for a valid accumulated update"),
+                                    )
+                                }
+                            };
+                            Some(RoleToolContext {
+                                artifact_view: view,
+                            })
+                        }
+                    }
                 };
                 let request = RoleRequest {
                     role: role.clone(),
