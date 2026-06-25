@@ -119,6 +119,10 @@ const MAX_PROTOCOL_RETRIES: usize = 2;
 /// loop is declared a protocol failure.
 const MAX_TOOL_STEPS: usize = 5;
 
+/// Maximum number of tool observations allowed for Critic and Referee before
+/// decision pressure activates and further tool calls are prohibited.
+const MAX_READ_ONLY_TOOL_STEPS: usize = 2;
+
 /// Minimum number of non-whitespace characters required in accepted content or
 /// a rejection reason. Responses shorter than this are degenerate (e.g. `{`,
 /// `ok`) and are treated as protocol failures so the retry loop can recover.
@@ -167,6 +171,13 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
         // Completion pressure applies only to Work+Producer after a successful mutation.
         let is_work_producer = request.node_kind == NodeKind::Work
             && matches!(request.role, DeliberationRole::Producer);
+        // Decision pressure applies to Critic and Referee after bounded read-only tool use.
+        let is_read_only_reviewer = matches!(
+            request.role,
+            DeliberationRole::Critic | DeliberationRole::Referee
+        );
+        let mut read_only_tool_steps: usize = 0;
+        let mut decision_pressure_active = false;
         let mut final_response_only = false;
 
         loop {
@@ -239,7 +250,11 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                             attempt_count: next_attempt,
                         },
                     ));
-                    let violation_note = render_completion_pressure_violation_note();
+                    let violation_note = if decision_pressure_active {
+                        render_decision_pressure_violation_note()
+                    } else {
+                        render_completion_pressure_violation_note()
+                    };
                     observation_suffix = format!("{observation_suffix}\n\n{violation_note}");
                     current_prompt = format!("{core_prompt}{observation_suffix}");
                     protocol_attempt = next_attempt;
@@ -297,8 +312,21 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                     final_response_only = true;
                 }
 
+                // Enter decision-pressure mode after bounded read-only observations on Critic/Referee.
+                if is_read_only_reviewer {
+                    read_only_tool_steps += 1;
+                    if read_only_tool_steps >= MAX_READ_ONLY_TOOL_STEPS {
+                        final_response_only = true;
+                        decision_pressure_active = true;
+                    }
+                }
+
                 let obs_section = if final_response_only {
-                    format_completion_pressure_section(&observation)
+                    if decision_pressure_active {
+                        format_decision_pressure_section(&observation)
+                    } else {
+                        format_completion_pressure_section(&observation)
+                    }
                 } else {
                     format_observation_section(&observation, mutation_recorded)
                 };
@@ -634,11 +662,42 @@ fn format_completion_pressure_section(observation: &str) -> String {
     )
 }
 
+/// Formats the observation section that signals decision-pressure mode for
+/// read-only reviewer roles (Critic, Referee).
+///
+/// Called instead of [`format_observation_section`] once a Critic or Referee
+/// has exhausted its `MAX_READ_ONLY_TOOL_STEPS` budget. Removes tool-calling
+/// as a valid next step and directs the model to return its final role result.
+fn format_decision_pressure_section(observation: &str) -> String {
+    format!(
+        "Framework tool observation:\n{observation}\n\
+         This is framework output, not a valid response format.\n\
+         You have gathered sufficient evidence to make a decision.\n\
+         Do not call any more tools.\n\
+         Return exactly one of:\n\
+         {{\"status\":\"accepted\",\"content\":\"$RESPONSE_SUMMARY\"}}\n\
+         {{\"status\":\"rejected\",\"reason\":\"$REASON_FOR_REJECTION\"}}\n\
+         Do not copy example values. Replace them with task-specific content."
+    )
+}
+
 /// Returns the note appended to the prompt when the model sends a tool request
 /// while completion pressure is active.
 fn render_completion_pressure_violation_note() -> String {
     "Tools are no longer available.\n\
      The requested change has already been recorded.\n\
+     Return a final role response:\n\
+     {\"status\":\"accepted\",\"content\":\"$RESPONSE_SUMMARY\"}\n\
+     {\"status\":\"rejected\",\"reason\":\"$REASON_FOR_REJECTION\"}\n\
+     Do not copy example values. Replace them with task-specific content."
+        .to_string()
+}
+
+/// Returns the note appended to the prompt when a Critic or Referee sends a
+/// tool request while decision pressure is active.
+fn render_decision_pressure_violation_note() -> String {
+    "Tools are no longer available.\n\
+     You have gathered sufficient evidence to make a decision.\n\
      Return a final role response:\n\
      {\"status\":\"accepted\",\"content\":\"$RESPONSE_SUMMARY\"}\n\
      {\"status\":\"rejected\",\"reason\":\"$REASON_FOR_REJECTION\"}\n\
@@ -4226,5 +4285,268 @@ mod tests {
             !write_line.contains("Hello, world!"),
             "write_file example must not use 'Hello, world!' as the content; got:\n{write_line}"
         );
+    }
+
+    // ── Decision pressure tests ──────────────────────────────────────────────
+
+    #[test]
+    fn critic_enters_decision_pressure_after_max_read_only_steps() {
+        // After exactly MAX_READ_ONLY_TOOL_STEPS tool observations Critic must
+        // receive a decision-pressure observation and then return a final result.
+        let mut responses: Vec<&str> = vec![r#"{"tool":"list_files"}"#; MAX_READ_ONLY_TOOL_STEPS];
+        responses.push(r#"{"status":"rejected","reason":"files look insufficient for the task"}"#);
+        let provider = ScriptedProvider::from_strs(&responses);
+        let runner = ProviderRoleRunner::new(&provider);
+
+        let output = runner.run_role(
+            RoleRequest {
+                role: DeliberationRole::Critic,
+                objective: "review the draft".to_string(),
+                producer_content: Some("draft content".to_string()),
+                critic_content: None,
+                feedback: vec![],
+                node_kind: NodeKind::Work,
+                tool_context: Some(RoleToolContext {
+                    artifact_view: dummy_view(),
+                }),
+            },
+            &crate::telemetry::NoopTelemetry,
+        );
+
+        assert!(
+            matches!(output.result, RoleResult::Rejected { .. }),
+            "critic must return final result after decision pressure; got {:?}",
+            output.result
+        );
+        let requests = provider.requests.borrow();
+        assert_eq!(
+            requests.len(),
+            MAX_READ_ONLY_TOOL_STEPS + 1,
+            "provider must be called MAX_READ_ONLY_TOOL_STEPS + 1 times"
+        );
+        let last_prompt = &requests[MAX_READ_ONLY_TOOL_STEPS].prompt;
+        assert!(
+            last_prompt.contains("sufficient evidence"),
+            "decision-pressure prompt must mention 'sufficient evidence'; got:\n{last_prompt}"
+        );
+        assert!(
+            last_prompt.contains("Do not call any more tools."),
+            "decision-pressure prompt must prohibit further tools; got:\n{last_prompt}"
+        );
+    }
+
+    #[test]
+    fn referee_enters_decision_pressure_after_max_read_only_steps() {
+        let mut responses: Vec<&str> = vec![r#"{"tool":"list_files"}"#; MAX_READ_ONLY_TOOL_STEPS];
+        responses.push(r#"{"status":"accepted","content":"reviewed all evidence and approved"}"#);
+        let provider = ScriptedProvider::from_strs(&responses);
+        let runner = ProviderRoleRunner::new(&provider);
+
+        let output = runner.run_role(
+            RoleRequest {
+                role: DeliberationRole::Referee,
+                objective: "approve the result".to_string(),
+                producer_content: Some("content".to_string()),
+                critic_content: Some("review".to_string()),
+                feedback: vec![],
+                node_kind: NodeKind::Work,
+                tool_context: Some(RoleToolContext {
+                    artifact_view: dummy_view(),
+                }),
+            },
+            &crate::telemetry::NoopTelemetry,
+        );
+
+        assert!(
+            matches!(output.result, RoleResult::Accepted { .. }),
+            "referee must return final result after decision pressure; got {:?}",
+            output.result
+        );
+        let requests = provider.requests.borrow();
+        assert_eq!(
+            requests.len(),
+            MAX_READ_ONLY_TOOL_STEPS + 1,
+            "provider must be called MAX_READ_ONLY_TOOL_STEPS + 1 times"
+        );
+        let last_prompt = &requests[MAX_READ_ONLY_TOOL_STEPS].prompt;
+        assert!(
+            last_prompt.contains("sufficient evidence"),
+            "decision-pressure prompt must mention 'sufficient evidence'; got:\n{last_prompt}"
+        );
+    }
+
+    #[test]
+    fn critic_decision_pressure_hides_tool_section() {
+        let mut responses: Vec<&str> = vec![r#"{"tool":"list_files"}"#; MAX_READ_ONLY_TOOL_STEPS];
+        responses.push(
+            r#"{"status":"rejected","reason":"cannot determine quality without more context"}"#,
+        );
+        let provider = ScriptedProvider::from_strs(&responses);
+        let runner = ProviderRoleRunner::new(&provider);
+
+        runner.run_role(
+            RoleRequest {
+                role: DeliberationRole::Critic,
+                objective: "review the draft".to_string(),
+                producer_content: Some("draft".to_string()),
+                critic_content: None,
+                feedback: vec![],
+                node_kind: NodeKind::Work,
+                tool_context: Some(RoleToolContext {
+                    artifact_view: dummy_view(),
+                }),
+            },
+            &crate::telemetry::NoopTelemetry,
+        );
+
+        let requests = provider.requests.borrow();
+        let pressure_prompt = &requests[MAX_READ_ONLY_TOOL_STEPS].prompt;
+        assert!(
+            !pressure_prompt.contains("Available file tools:"),
+            "decision-pressure prompt must not include the tool section; got:\n{pressure_prompt}"
+        );
+        assert!(
+            !pressure_prompt.contains("list_files"),
+            "decision-pressure prompt must not list file tools; got:\n{pressure_prompt}"
+        );
+    }
+
+    #[test]
+    fn critic_decision_pressure_rejects_further_tool_calls() {
+        use crate::telemetry::{TelemetryEvent, VecTelemetry};
+
+        // After MAX_READ_ONLY_TOOL_STEPS observations the (MAX+1)-th tool call
+        // must be a protocol violation, then the model returns a final result.
+        let mut responses: Vec<&str> = vec![r#"{"tool":"list_files"}"#; MAX_READ_ONLY_TOOL_STEPS];
+        responses.push(r#"{"tool":"list_files"}"#); // violation
+        responses.push(r#"{"status":"rejected","reason":"output does not meet requirements"}"#);
+        let provider = ScriptedProvider::from_strs(&responses);
+        let runner = ProviderRoleRunner::new(&provider);
+        let telemetry = VecTelemetry::new();
+
+        let output = runner.run_role(
+            RoleRequest {
+                role: DeliberationRole::Critic,
+                objective: "review the draft".to_string(),
+                producer_content: Some("draft".to_string()),
+                critic_content: None,
+                feedback: vec![],
+                node_kind: NodeKind::Work,
+                tool_context: Some(RoleToolContext {
+                    artifact_view: dummy_view(),
+                }),
+            },
+            &telemetry,
+        );
+
+        assert!(
+            matches!(output.result, RoleResult::Rejected { .. }),
+            "critic must reject after CP violation is retried; got {:?}",
+            output.result
+        );
+        let records = telemetry.records();
+        // The tool call after pressure must NOT emit ToolRequested.
+        let tool_requested_count = records
+            .iter()
+            .filter(|r| matches!(r.event, TelemetryEvent::ToolRequested { .. }))
+            .count();
+        assert_eq!(
+            tool_requested_count, MAX_READ_ONLY_TOOL_STEPS,
+            "only the first {MAX_READ_ONLY_TOOL_STEPS} tool calls must emit ToolRequested; got {tool_requested_count}"
+        );
+        // Violation must emit ParseFailed with 'no tools are available'.
+        assert!(
+            records.iter().any(
+                |r| matches!(&r.event, TelemetryEvent::ParseFailed { parse_error, .. }
+                    if parse_error.contains("no tools are available"))
+            ),
+            "decision-pressure violation must emit ParseFailed with 'no tools are available'"
+        );
+    }
+
+    #[test]
+    fn producer_not_affected_by_decision_pressure() {
+        // Producer may use more than MAX_READ_ONLY_TOOL_STEPS read-only tool calls
+        // without entering decision pressure.
+        let list_count = MAX_READ_ONLY_TOOL_STEPS + 1;
+        let mut responses: Vec<&str> = vec![r#"{"tool":"list_files"}"#; list_count];
+        responses.push(r#"{"status":"accepted","content":"produced the required output"}"#);
+        let provider = ScriptedProvider::from_strs(&responses);
+        let runner = ProviderRoleRunner::new(&provider);
+
+        let output = runner.run_role(
+            RoleRequest {
+                role: DeliberationRole::Producer,
+                objective: "list files and produce output".to_string(),
+                producer_content: None,
+                critic_content: None,
+                feedback: vec![],
+                node_kind: NodeKind::Work,
+                tool_context: Some(RoleToolContext {
+                    artifact_view: dummy_view(),
+                }),
+            },
+            &crate::telemetry::NoopTelemetry,
+        );
+
+        assert!(
+            matches!(output.result, RoleResult::Accepted { .. }),
+            "producer must succeed with more than MAX_READ_ONLY_TOOL_STEPS reads; got {:?}",
+            output.result
+        );
+        assert_eq!(
+            provider.requests.borrow().len(),
+            list_count + 1,
+            "producer must be allowed {list_count} tool calls"
+        );
+        // None of the prompts must contain decision-pressure text.
+        for (i, req) in provider.requests.borrow().iter().enumerate() {
+            assert!(
+                !req.prompt.contains("sufficient evidence"),
+                "producer prompt[{i}] must not contain decision-pressure text; got:\n{}",
+                req.prompt
+            );
+        }
+    }
+
+    #[test]
+    fn read_only_tool_steps_counter_is_per_invocation() {
+        // Each invocation starts with a fresh counter. Two separate invocations
+        // each with MAX_READ_ONLY_TOOL_STEPS - 1 tool steps must not trigger pressure.
+        for _ in 0..2 {
+            let provider = ScriptedProvider::from_strs(&[
+                r#"{"tool":"list_files"}"#,
+                r#"{"status":"rejected","reason":"draft does not satisfy the requirements"}"#,
+            ]);
+            let runner = ProviderRoleRunner::new(&provider);
+
+            let output = runner.run_role(
+                RoleRequest {
+                    role: DeliberationRole::Critic,
+                    objective: "review the draft".to_string(),
+                    producer_content: Some("draft".to_string()),
+                    critic_content: None,
+                    feedback: vec![],
+                    node_kind: NodeKind::Work,
+                    tool_context: Some(RoleToolContext {
+                        artifact_view: dummy_view(),
+                    }),
+                },
+                &crate::telemetry::NoopTelemetry,
+            );
+
+            assert!(
+                matches!(output.result, RoleResult::Rejected { .. }),
+                "critic with 1 tool step must succeed without decision pressure; got {:?}",
+                output.result
+            );
+            let requests = provider.requests.borrow();
+            assert_eq!(requests.len(), 2, "provider must be called twice");
+            let second_prompt = &requests[1].prompt;
+            assert!(
+                !second_prompt.contains("sufficient evidence"),
+                "second prompt must not contain decision-pressure text; got:\n{second_prompt}"
+            );
+        }
     }
 }
