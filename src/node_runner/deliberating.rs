@@ -817,11 +817,18 @@ mod tests {
 
     #[test]
     fn semantic_failure_produces_elevate_action() {
-        // Revision limit exhaustion is a semantic failure — the model ran out of
-        // revisions trying to satisfy the critic.
+        // Revision limit exhaustion is a semantic failure. The runner allows 1 revision,
+        // so both Referee rejections are needed to exhaust the budget and produce
+        // "revision limit exhausted: ..." → ElevateModel.
         let provider = ScriptedProvider::from_strs(&[
-            r#"{"status":"accepted","content":"draft output"}"#,
-            r#"{"status":"rejected","reason":"revision limit reached"}"#,
+            // Round 1: Producer → Critic → Referee rejects → revision loop.
+            r#"{"status":"accepted","content":"draft v1"}"#,
+            r#"{"status":"accepted","content":"review ok"}"#,
+            r#"{"status":"rejected","reason":"needs improvement"}"#,
+            // Round 2: Producer → Critic → Referee rejects → budget exhausted.
+            r#"{"status":"accepted","content":"draft v2"}"#,
+            r#"{"status":"accepted","content":"review ok"}"#,
+            r#"{"status":"rejected","reason":"still not good enough"}"#,
         ]);
         let runner = DeliberatingNodeRunner::new(&provider, &provider);
         let telemetry = crate::telemetry::VecTelemetry::new();
@@ -891,9 +898,18 @@ mod tests {
 
     #[test]
     fn split_failure_produces_split_action() {
-        // The Critic rejects with a task-shape message that the classifier maps to Split.
+        // Referee rejects with "task too large" twice, exhausting the revision budget.
+        // The failure reason is "revision limit exhausted: task too large".
+        // The classifier checks task-shape signals (Split) before revision-exhaustion
+        // (ElevateModel), so "task too large" wins and maps to Split.
         let provider = ScriptedProvider::from_strs(&[
-            r#"{"status":"accepted","content":"draft output"}"#,
+            // Round 1: Producer → Critic → Referee rejects "task too large" → revision loop.
+            r#"{"status":"accepted","content":"draft v1"}"#,
+            r#"{"status":"accepted","content":"review ok"}"#,
+            r#"{"status":"rejected","reason":"task too large"}"#,
+            // Round 2: Producer → Critic → Referee rejects "task too large" → budget exhausted.
+            r#"{"status":"accepted","content":"draft v2"}"#,
+            r#"{"status":"accepted","content":"review ok"}"#,
             r#"{"status":"rejected","reason":"task too large"}"#,
         ]);
         let runner = DeliberatingNodeRunner::new(&provider, &provider);

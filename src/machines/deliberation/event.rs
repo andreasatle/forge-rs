@@ -12,7 +12,9 @@ pub enum RoleResult {
     },
     /// The role completed successfully but rejected the current content.
     ///
-    /// For Producer and Critic, rejection is a terminal failure.
+    /// For Producer, rejection is a terminal failure.
+    /// For Critic, rejection is advisory — the machine routes to the Referee,
+    /// which makes the final accept/reject decision.
     /// For Referee, rejection triggers a revision loop (if revisions remain).
     Rejected {
         /// Human-readable explanation of why the content was rejected.

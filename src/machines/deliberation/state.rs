@@ -71,8 +71,10 @@ pub enum DeliberationState {
         /// Content accepted by the Producer. `None` while waiting for Producer;
         /// `Some` while waiting for Critic or Referee.
         producer_content: Option<String>,
-        /// Content accepted by the Critic. `None` until Critic completes;
-        /// `Some` while waiting for Referee.
+        /// Content from the Critic stage. `None` until Critic completes.
+        /// When the Critic accepts, this holds its review. When the Critic rejects,
+        /// this holds the prefixed rejection reason (`"Critic rejected: {reason}"`),
+        /// forwarded to the Referee as advisory input.
         critic_content: Option<String>,
         /// Number of revision loops completed so far.
         revision_count: usize,

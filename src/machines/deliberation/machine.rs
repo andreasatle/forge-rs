@@ -5,6 +5,10 @@
 //! up to `max_revisions` times. Final output is always the producer content;
 //! critic and referee content do not replace it.
 //!
+//! The Critic is advisory. The Referee is authoritative. Critic rejection is not
+//! terminal — it routes to the Referee, which makes the final accept/reject
+//! decision. Only the Referee controls revision.
+//!
 //! ```text
 //! Ready + Start
 //!     → Waiting(Producer, revision_count=0, feedback=[])
@@ -24,8 +28,10 @@
 //!     → Waiting(Referee, producer_content=Some(pc), critic_content=Some(content))
 //!     + RunRole(Referee, …)
 //!
-//! Waiting(Critic, Some(_)) + RoleReturned(Critic, Rejected { reason })
-//!     → Failed + ReturnFailed
+//! Waiting(Critic, Some(pc)) + RoleReturned(Critic, Rejected { reason })
+//!     → Waiting(Referee, producer_content=Some(pc), critic_content=Some("Critic rejected: {reason}"))
+//!     + RunRole(Referee, producer_content=Some(pc), critic_content=Some("Critic rejected: {reason}"))
+//!     (Critic is advisory; Referee decides)
 //!
 //! Waiting(Critic, Some(_)) + RoleReturned(Critic, Failed { reason })
 //!     → Failed + ReturnFailed  (execution failure, not semantic rejection)
@@ -239,12 +245,15 @@ impl Machine for DeliberationMachine {
                 },
             },
 
-            // Critic rejected → failed. Prefix the reason so classify_deliberation_failure
-            // can reach the ElevateModel arm ("critic rejected" pattern).
+            // Critic rejected → route to Referee with the rejection reason as critic_content.
+            // The Critic is advisory; only the Referee is authoritative.
             (
                 DeliberationState::Waiting {
+                    request,
                     role: DeliberationRole::Critic,
-                    producer_content: Some(_),
+                    producer_content: Some(producer_content),
+                    revision_count,
+                    feedback,
                     ..
                 },
                 DeliberationEvent::RoleReturned {
@@ -252,12 +261,23 @@ impl Machine for DeliberationMachine {
                     result: RoleResult::Rejected { reason },
                 },
             ) => {
-                let prefixed = format!("critic rejected: {reason}");
+                let critic_content = format!("Critic rejected: {reason}");
                 Transition {
-                    effects: vec![DeliberationEffect::ReturnFailed {
-                        reason: prefixed.clone(),
+                    effects: vec![DeliberationEffect::RunRole {
+                        role: DeliberationRole::Referee,
+                        objective: request.objective.clone(),
+                        producer_content: Some(producer_content.clone()),
+                        critic_content: Some(critic_content.clone()),
+                        feedback: feedback.clone(),
                     }],
-                    state: DeliberationState::Failed { reason: prefixed },
+                    state: DeliberationState::Waiting {
+                        request,
+                        role: DeliberationRole::Referee,
+                        producer_content: Some(producer_content),
+                        critic_content: Some(critic_content),
+                        revision_count,
+                        feedback,
+                    },
                 }
             }
 
@@ -681,7 +701,7 @@ mod tests {
     }
 
     #[test]
-    fn critic_rejection_fails_with_prefixed_reason() {
+    fn critic_rejection_routes_to_referee() {
         let after_producer = step(
             step(ready("write a poem"), DeliberationEvent::Start).state,
             DeliberationEvent::RoleReturned {
@@ -704,21 +724,37 @@ mod tests {
         );
 
         assert!(
-            matches!(&t.state, DeliberationState::Failed { reason } if reason == "critic rejected: too short"),
-            "expected Failed with prefixed reason, got {:?}",
+            matches!(
+                &t.state,
+                DeliberationState::Waiting {
+                    role: DeliberationRole::Referee,
+                    producer_content: Some(pc),
+                    critic_content: Some(cc),
+                    ..
+                } if pc == "draft content" && cc == "Critic rejected: too short"
+            ),
+            "expected Waiting(Referee) with prefixed critic_content, got {:?}",
             t.state
         );
 
         assert_eq!(t.effects.len(), 1);
         assert!(
-            matches!(&t.effects[0], DeliberationEffect::ReturnFailed { reason } if reason == "critic rejected: too short"),
-            "expected ReturnFailed with prefixed reason, got {:?}",
+            matches!(
+                &t.effects[0],
+                DeliberationEffect::RunRole {
+                    role: DeliberationRole::Referee,
+                    producer_content: Some(pc),
+                    critic_content: Some(cc),
+                    ..
+                } if pc == "draft content" && cc == "Critic rejected: too short"
+            ),
+            "expected RunRole(Referee) with prefixed critic_content, got {:?}",
             t.effects[0]
         );
     }
 
     #[test]
-    fn critic_rejection_reason_contains_critic_rejected_prefix() {
+    fn critic_rejection_passes_reason_as_critic_content() {
         let after_producer = step(
             step(ready("write a poem"), DeliberationEvent::Start).state,
             DeliberationEvent::RoleReturned {
@@ -740,17 +776,172 @@ mod tests {
             },
         );
 
-        let reason = match &t.state {
-            DeliberationState::Failed { reason } => reason,
-            other => panic!("expected Failed, got {:?}", other),
+        let critic_content = match &t.state {
+            DeliberationState::Waiting {
+                critic_content: Some(cc),
+                ..
+            } => cc,
+            other => panic!("expected Waiting with critic_content, got {:?}", other),
         };
         assert!(
-            reason.starts_with("critic rejected:"),
-            "reason must start with 'critic rejected:'; got: {reason}"
+            critic_content.starts_with("Critic rejected:"),
+            "critic_content must start with 'Critic rejected:'; got: {critic_content}"
         );
         assert!(
-            reason.contains("5-7-5"),
-            "reason must contain the original critique; got: {reason}"
+            critic_content.contains("5-7-5"),
+            "critic_content must contain the original critique; got: {critic_content}"
+        );
+    }
+
+    #[test]
+    fn critic_rejection_does_not_emit_return_failed() {
+        let after_producer = step(
+            step(ready("write a poem"), DeliberationEvent::Start).state,
+            DeliberationEvent::RoleReturned {
+                role: DeliberationRole::Producer,
+                result: RoleResult::Accepted {
+                    content: "draft content".to_string(),
+                },
+            },
+        )
+        .state;
+
+        let t = step(
+            after_producer,
+            DeliberationEvent::RoleReturned {
+                role: DeliberationRole::Critic,
+                result: RoleResult::Rejected {
+                    reason: "not good enough".to_string(),
+                },
+            },
+        );
+
+        assert_eq!(t.effects.len(), 1);
+        assert!(
+            !matches!(&t.effects[0], DeliberationEffect::ReturnFailed { .. }),
+            "Critic rejection must not emit ReturnFailed, got {:?}",
+            t.effects[0]
+        );
+    }
+
+    #[test]
+    fn referee_rejection_after_critic_rejection_loops_when_revisions_remain() {
+        let after_producer = step(
+            step(
+                DeliberationState::Ready {
+                    request: crate::machines::deliberation::state::DeliberationRequest {
+                        objective: "write a poem".to_string(),
+                        max_revisions: 1,
+                    },
+                },
+                DeliberationEvent::Start,
+            )
+            .state,
+            DeliberationEvent::RoleReturned {
+                role: DeliberationRole::Producer,
+                result: RoleResult::Accepted {
+                    content: "draft content".to_string(),
+                },
+            },
+        )
+        .state;
+
+        // Critic rejects → routes to Referee.
+        let after_critic_rejection = step(
+            after_producer,
+            DeliberationEvent::RoleReturned {
+                role: DeliberationRole::Critic,
+                result: RoleResult::Rejected {
+                    reason: "too short".to_string(),
+                },
+            },
+        )
+        .state;
+
+        // Referee also rejects — should loop back to Producer.
+        let t = step(
+            after_critic_rejection,
+            DeliberationEvent::RoleReturned {
+                role: DeliberationRole::Referee,
+                result: RoleResult::Rejected {
+                    reason: "still not acceptable".to_string(),
+                },
+            },
+        );
+
+        assert!(
+            matches!(
+                &t.state,
+                DeliberationState::Waiting {
+                    role: DeliberationRole::Producer,
+                    revision_count: 1,
+                    ..
+                }
+            ),
+            "expected Waiting(Producer) revision loop, got {:?}",
+            t.state
+        );
+        assert_eq!(t.effects.len(), 1);
+        assert!(
+            matches!(
+                &t.effects[0],
+                DeliberationEffect::RunRole {
+                    role: DeliberationRole::Producer,
+                    ..
+                }
+            ),
+            "expected RunRole(Producer), got {:?}",
+            t.effects[0]
+        );
+    }
+
+    #[test]
+    fn referee_rejection_after_critic_rejection_exhausts_budget_when_no_revisions_remain() {
+        // max_revisions=0: any Referee rejection must fail immediately.
+        let after_producer = step(
+            step(ready("write a poem"), DeliberationEvent::Start).state,
+            DeliberationEvent::RoleReturned {
+                role: DeliberationRole::Producer,
+                result: RoleResult::Accepted {
+                    content: "draft content".to_string(),
+                },
+            },
+        )
+        .state;
+
+        // Critic rejects → routes to Referee.
+        let after_critic_rejection = step(
+            after_producer,
+            DeliberationEvent::RoleReturned {
+                role: DeliberationRole::Critic,
+                result: RoleResult::Rejected {
+                    reason: "too short".to_string(),
+                },
+            },
+        )
+        .state;
+
+        // Referee rejects — no revisions remain → fail.
+        let t = step(
+            after_critic_rejection,
+            DeliberationEvent::RoleReturned {
+                role: DeliberationRole::Referee,
+                result: RoleResult::Rejected {
+                    reason: "still not acceptable".to_string(),
+                },
+            },
+        );
+
+        assert!(
+            matches!(&t.state, DeliberationState::Failed { reason } if reason.contains("revision limit exhausted")),
+            "expected Failed with 'revision limit exhausted', got {:?}",
+            t.state
+        );
+        assert_eq!(t.effects.len(), 1);
+        assert!(
+            matches!(&t.effects[0], DeliberationEffect::ReturnFailed { reason } if reason.contains("revision limit exhausted")),
+            "expected ReturnFailed with 'revision limit exhausted', got {:?}",
+            t.effects[0]
         );
     }
 
