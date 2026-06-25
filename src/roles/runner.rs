@@ -572,7 +572,7 @@ fn render_tool_section(policy: &FileToolPolicy) -> String {
     );
     if policy.allow_writes {
         s.push_str(
-            "{\"tool\":\"write_file\",\"path\":\"output.txt\",\"content\":\"Hello, world!\"}\n\
+            "{\"tool\":\"write_file\",\"path\":\"<TARGET_FILE>\",\"content\":\"<FILE_CONTENT>\"}\n\
              {\"tool\":\"replace_text\",\"path\":\"output.txt\",\"old\":\"<EXACT_EXISTING_TEXT>\",\"new\":\"<REPLACEMENT_TEXT>\"}\n\
              {\"tool\":\"delete_file\",\"path\":\"old.txt\"}\n",
         );
@@ -4152,6 +4152,44 @@ mod tests {
         assert!(
             !prompt.contains("Do not call any more tools."),
             "referee prompt must not contain CP instruction; got:\n{prompt}"
+        );
+    }
+
+    // ── write_file example hardening ─────────────────────────────────────────
+
+    #[test]
+    fn write_tool_example_does_not_use_output_txt() {
+        let rw = render_tool_section(&FileToolPolicy {
+            allow_writes: true,
+            ..FileToolPolicy::default()
+        });
+        let write_file_pos = rw.find("write_file").expect("write_file must appear");
+        let after_write = &rw[write_file_pos..];
+        let next_brace = after_write
+            .find('}')
+            .expect("write_file line must have closing brace");
+        let write_line = &after_write[..=next_brace];
+        assert!(
+            !write_line.contains("output.txt"),
+            "write_file example must not use 'output.txt' as the path; got:\n{write_line}"
+        );
+    }
+
+    #[test]
+    fn write_tool_example_does_not_use_hello_world() {
+        let rw = render_tool_section(&FileToolPolicy {
+            allow_writes: true,
+            ..FileToolPolicy::default()
+        });
+        let write_file_pos = rw.find("write_file").expect("write_file must appear");
+        let after_write = &rw[write_file_pos..];
+        let next_brace = after_write
+            .find('}')
+            .expect("write_file line must have closing brace");
+        let write_line = &after_write[..=next_brace];
+        assert!(
+            !write_line.contains("Hello, world!"),
+            "write_file example must not use 'Hello, world!' as the content; got:\n{write_line}"
         );
     }
 }

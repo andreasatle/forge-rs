@@ -1,6 +1,6 @@
 //! NodeRunner backed by DeliberationMachine.
 
-use crate::artifacts::{ArtifactUpdate, ArtifactView, FileChange};
+use crate::artifacts::{ArtifactUpdate, ArtifactView};
 use crate::engine::{Machine, Transition, run_machine_with_telemetry};
 use crate::machines::deliberation::{
     DeliberationEffect, DeliberationEvent, DeliberationMachine, DeliberationRequest,
@@ -215,21 +215,9 @@ fn map_output(
             NodeKind::Plan => map_plan_output(out.content, telemetry),
             NodeKind::Work => NodeRunResult::WorkAccepted(NodeRunWorkResult {
                 work: WorkOutput {
-                    summary: out.content.clone(),
+                    summary: out.content,
                 },
-                // When tool calls produced file changes, use those changes as
-                // the artifact update. Otherwise fall back to writing the
-                // producer content to output.txt.
-                artifact_update: if let Some(update) = tool_artifact_update {
-                    Some(update)
-                } else {
-                    Some(ArtifactUpdate {
-                        changes: vec![FileChange::Write {
-                            path: "output.txt".to_owned(),
-                            content: out.content,
-                        }],
-                    })
-                },
+                artifact_update: tool_artifact_update,
             }),
         },
         DeliberationTerminalOutput::Failed { reason } => {
@@ -326,7 +314,7 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     use super::*;
-    use crate::artifacts::ArtifactView;
+    use crate::artifacts::{ArtifactView, FileChange};
     use crate::machines::scheduler::{ModelTier, NodeId};
     use crate::providers::{ProviderError, ProviderErrorKind, ProviderRequest, ProviderResponse};
     use crate::telemetry::NoopTelemetry;
@@ -653,7 +641,7 @@ mod tests {
     // --- new tests ---
 
     #[test]
-    fn deliberating_work_result_contains_artifact_update() {
+    fn worker_without_tool_update_does_not_create_output_txt() {
         let provider = ScriptedProvider::from_strs(&[
             r#"{"status":"accepted","content":"output content"}"#,
             r#"{"status":"accepted","content":"review ok"}"#,
@@ -664,17 +652,31 @@ mod tests {
         let NodeRunResult::WorkAccepted(work_result) = result else {
             panic!("expected WorkAccepted");
         };
-        let update = work_result
-            .artifact_update
-            .expect("DeliberatingNodeRunner must produce an ArtifactUpdate for work nodes");
-        assert_eq!(update.changes.len(), 1);
-        match &update.changes[0] {
-            FileChange::Write { path, content } => {
-                assert_eq!(path, "output.txt");
-                assert_eq!(content, "output content");
-            }
-            other => panic!("expected Write change, got {other:?}"),
-        }
+        assert!(
+            work_result.artifact_update.is_none(),
+            "worker with no tool calls must produce no artifact_update; got {:?}",
+            work_result.artifact_update
+        );
+    }
+
+    #[test]
+    fn worker_summary_is_not_converted_to_artifact_update() {
+        let provider = ScriptedProvider::from_strs(&[
+            r#"{"status":"accepted","content":"summary of the work done"}"#,
+            r#"{"status":"accepted","content":"review ok"}"#,
+            r#"{"status":"accepted","content":"approved"}"#,
+        ]);
+        let runner = DeliberatingNodeRunner::new(&provider, &provider);
+        let result = runner.run_node(work_request("do some work"), &NoopTelemetry);
+        let NodeRunResult::WorkAccepted(work_result) = result else {
+            panic!("expected WorkAccepted");
+        };
+        assert_eq!(work_result.work.summary, "summary of the work done");
+        assert!(
+            work_result.artifact_update.is_none(),
+            "summary must not be converted to an artifact update; got {:?}",
+            work_result.artifact_update
+        );
     }
 
     #[test]

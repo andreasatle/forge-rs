@@ -48,6 +48,9 @@ const CODING_WORKER_CRITIC_SYSTEM: &str = "You are a software review agent. \
 Evaluate the producer output for correctness and completeness. \
 Identify missing work, unsupported claims, and incomplete implementation. \
 Check for missed edge cases and unnecessary complexity. \
+Use list_files/read_file to inspect the artifact before accepting. \
+Do not accept based only on the producer summary. \
+Verify required files exist and file contents satisfy the objective. \
 Accept with a review summary or reject with a specific, actionable reason.\n\
 Return exactly one JSON object. No markdown. No code fence. \
 No explanation. No text before or after the JSON.\n\
@@ -77,6 +80,8 @@ Execution failures are handled by the framework, not the model.";
 const CODING_WORKER_REFEREE_SYSTEM: &str = "You are a software acceptance agent. \
 Decide whether the work satisfies the objective and acceptance criteria. \
 Perform a final completeness check: every requirement must be addressed, not just the last task. \
+Before accepting, inspect the relevant files with read_file. \
+Reject if the artifact contents do not satisfy the objective, even if the producer or critic claims they do. \
 Accept only when the work is complete and correct. \
 Reject with specific revision feedback otherwise.\n\
 Return exactly one JSON object. No markdown. No code fence. \
@@ -364,6 +369,70 @@ mod tests {
                 .contains("final completeness check"),
             "worker_referee_system must include a final completeness check instruction; got:\n{}",
             policy.worker_referee_system
+        );
+    }
+
+    #[test]
+    fn coding_worker_critic_requires_artifact_inspection() {
+        let policy = CodingProjectAdapter.role_policy();
+        assert!(
+            policy
+                .worker_critic_system
+                .contains("list_files/read_file to inspect the artifact"),
+            "worker_critic_system must instruct to inspect artifact before accepting; got:\n{}",
+            policy.worker_critic_system
+        );
+        assert!(
+            policy
+                .worker_critic_system
+                .contains("Do not accept based only on the producer summary"),
+            "worker_critic_system must not allow accepting on summary alone; got:\n{}",
+            policy.worker_critic_system
+        );
+        assert!(
+            policy
+                .worker_critic_system
+                .contains("Verify required files exist"),
+            "worker_critic_system must require verifying files exist; got:\n{}",
+            policy.worker_critic_system
+        );
+    }
+
+    #[test]
+    fn coding_worker_referee_requires_artifact_inspection() {
+        let policy = CodingProjectAdapter.role_policy();
+        assert!(
+            policy
+                .worker_referee_system
+                .contains("inspect the relevant files with read_file"),
+            "worker_referee_system must instruct to inspect files before accepting; got:\n{}",
+            policy.worker_referee_system
+        );
+        assert!(
+            policy
+                .worker_referee_system
+                .contains("even if the producer or critic claims they do"),
+            "worker_referee_system must reject when artifact does not satisfy objective regardless of claims; got:\n{}",
+            policy.worker_referee_system
+        );
+    }
+
+    #[test]
+    fn planner_prompts_not_affected_by_artifact_inspection() {
+        let policy = CodingProjectAdapter.role_policy();
+        assert!(
+            !policy
+                .planner_critic_system
+                .contains("list_files/read_file to inspect the artifact"),
+            "planner_critic_system must not contain worker artifact inspection instruction; got:\n{}",
+            policy.planner_critic_system
+        );
+        assert!(
+            !policy
+                .planner_referee_system
+                .contains("inspect the relevant files with read_file"),
+            "planner_referee_system must not contain worker artifact inspection instruction; got:\n{}",
+            policy.planner_referee_system
         );
     }
 

@@ -350,7 +350,10 @@ fn has_placeholder_fields(req: &FileToolRequest) -> bool {
         FileToolRequest::ListFiles => false,
         FileToolRequest::ReadFile { path } => path.trim() == "...",
         FileToolRequest::WriteFile { path, content } => {
-            path.trim() == "..." || content.trim() == "..."
+            path.trim() == "..."
+                || content.trim() == "..."
+                || path.trim() == "<TARGET_FILE>"
+                || content.trim() == "<FILE_CONTENT>"
         }
         FileToolRequest::ReplaceText { path, old, new } => {
             path.trim() == "..." || old.trim() == "..." || new.trim() == "..."
