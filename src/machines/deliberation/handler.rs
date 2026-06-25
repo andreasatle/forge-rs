@@ -337,15 +337,15 @@ mod tests {
     fn run_machine_with_provider_handler_success() {
         let machine = ProvidedMachine {
             handler: ProviderBackedDeliberationHandler::new(ScriptedProvider::from_strs(&[
-                r#"{"status":"accepted","content":"draft"}"#,
-                r#"{"status":"accepted","content":"review"}"#,
+                r#"{"status":"accepted","content":"draft output"}"#,
+                r#"{"status":"accepted","content":"review done"}"#,
                 r#"{"status":"accepted","content":"approved"}"#,
             ])),
         };
         let output = run_machine(machine, ready("write a poem", 0));
         match output {
             DeliberationTerminalOutput::Complete(out) => {
-                assert_eq!(out.content, "draft");
+                assert_eq!(out.content, "draft output");
             }
             other => panic!("expected Complete, got {other:?}"),
         }
@@ -356,7 +356,7 @@ mod tests {
         let machine = ProvidedMachine {
             handler: ProviderBackedDeliberationHandler::new(ScriptedProvider::from_strs(&[
                 r#"{"status":"accepted","content":"draft v1"}"#,
-                r#"{"status":"accepted","content":"review"}"#,
+                r#"{"status":"accepted","content":"review done"}"#,
                 r#"{"status":"rejected","reason":"needs changes"}"#,
                 r#"{"status":"accepted","content":"draft v2"}"#,
                 r#"{"status":"accepted","content":"review ok"}"#,
@@ -471,7 +471,7 @@ mod tests {
     #[test]
     fn handle_effect_without_telemetry_compiles() {
         let handler = ProviderBackedDeliberationHandler::new(ScriptedProvider::from_strs(&[
-            r#"{"status":"accepted","content":"ok"}"#,
+            r#"{"status":"accepted","content":"completed"}"#,
         ]));
         let event = handler.handle_effect(run_role_effect(
             DeliberationRole::Producer,

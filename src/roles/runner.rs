@@ -119,6 +119,11 @@ const MAX_PROTOCOL_RETRIES: usize = 2;
 /// loop is declared a protocol failure.
 const MAX_TOOL_STEPS: usize = 5;
 
+/// Minimum number of non-whitespace characters required in accepted content or
+/// a rejection reason. Responses shorter than this are degenerate (e.g. `{`,
+/// `ok`) and are treated as protocol failures so the retry loop can recover.
+const MIN_CONTENT_LENGTH: usize = 8;
+
 impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
     fn run_role(&self, request: RoleRequest, telemetry: &dyn TelemetrySink) -> RoleRunOutput {
         let subsource = role_subsource(&request.role);
@@ -733,24 +738,36 @@ fn try_parse_role_response(raw_response: &str) -> Result<RoleResult, String> {
     };
     let result = match serde_json::from_str::<JsonRoleResponse>(json_str) {
         Ok(JsonRoleResponse::Accepted { content }) => {
-            if content.trim().is_empty() {
+            let trimmed = content.trim();
+            if trimmed.is_empty() {
                 return Err("accepted response has empty content".to_string());
-            } else if content.trim() == "..." {
+            } else if trimmed == "..." {
                 return Err("role response has placeholder accepted content".to_string());
             } else if is_framework_placeholder(&content) {
                 return Err(format!(
                     "role response returned framework placeholder: {content}"
+                ));
+            } else if trimmed.len() < MIN_CONTENT_LENGTH {
+                return Err(format!(
+                    "accepted content is too short to be a meaningful summary ({} chars)",
+                    trimmed.len()
                 ));
             } else {
                 RoleResult::Accepted { content }
             }
         }
         Ok(JsonRoleResponse::Rejected { reason }) => {
-            if reason.trim().is_empty() || reason.trim() == "..." {
+            let trimmed = reason.trim();
+            if trimmed.is_empty() || trimmed == "..." {
                 return Err("role response has placeholder reason".to_string());
             } else if is_framework_placeholder(&reason) {
                 return Err(format!(
                     "role response returned framework placeholder: {reason}"
+                ));
+            } else if trimmed.len() < MIN_CONTENT_LENGTH {
+                return Err(format!(
+                    "rejection reason is too short to be meaningful ({} chars)",
+                    trimmed.len()
                 ));
             } else {
                 RoleResult::Rejected { reason }
@@ -878,9 +895,9 @@ mod tests {
 
     #[test]
     fn json_accepted_response_maps_to_role_accepted() {
-        let result = parse_role_response(r#"{"status":"accepted","content":"draft"}"#);
+        let result = parse_role_response(r#"{"status":"accepted","content":"draft output"}"#);
         assert!(
-            matches!(result, RoleResult::Accepted { ref content } if content == "draft"),
+            matches!(result, RoleResult::Accepted { ref content } if content == "draft output"),
             "expected Accepted {{ 'draft' }}, got {result:?}"
         );
     }
@@ -963,6 +980,91 @@ mod tests {
         );
     }
 
+    // --- minimum-length guard tests ---
+
+    #[test]
+    fn single_brace_accepted_content_fails() {
+        let result = parse_role_response(r#"{"status":"accepted","content":"{"}"#);
+        let RoleResult::Failed { reason } = result else {
+            panic!("single-char content must produce Failed, got {result:?}");
+        };
+        assert!(
+            reason.contains("too short"),
+            "failure reason must mention 'too short'; got: {reason}"
+        );
+    }
+
+    #[test]
+    fn two_char_accepted_content_fails() {
+        let result = parse_role_response(r#"{"status":"accepted","content":"ok"}"#);
+        let RoleResult::Failed { reason } = result else {
+            panic!("two-char content must produce Failed, got {result:?}");
+        };
+        assert!(
+            reason.contains("too short"),
+            "failure reason must mention 'too short'; got: {reason}"
+        );
+    }
+
+    #[test]
+    fn meaningful_accepted_content_passes() {
+        let result = parse_role_response(
+            r#"{"status":"accepted","content":"Created src/main.rs with a Rust program that prints a haiku."}"#,
+        );
+        assert!(
+            matches!(result, RoleResult::Accepted { .. }),
+            "long meaningful content must be accepted, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn single_brace_rejection_reason_fails() {
+        let result = parse_role_response(r#"{"status":"rejected","reason":"{"}"#);
+        let RoleResult::Failed { reason } = result else {
+            panic!("single-char reason must produce Failed, got {result:?}");
+        };
+        assert!(
+            reason.contains("too short"),
+            "failure reason must mention 'too short'; got: {reason}"
+        );
+    }
+
+    #[test]
+    fn two_char_rejection_reason_fails() {
+        let result = parse_role_response(r#"{"status":"rejected","reason":"ok"}"#);
+        let RoleResult::Failed { reason } = result else {
+            panic!("two-char reason must produce Failed, got {result:?}");
+        };
+        assert!(
+            reason.contains("too short"),
+            "failure reason must mention 'too short'; got: {reason}"
+        );
+    }
+
+    #[test]
+    fn min_length_boundary_accepted_content_passes() {
+        // Exactly MIN_CONTENT_LENGTH characters must be accepted.
+        let content = "a".repeat(super::MIN_CONTENT_LENGTH);
+        let input = format!(r#"{{"status":"accepted","content":"{content}"}}"#);
+        let result = parse_role_response(&input);
+        assert!(
+            matches!(result, RoleResult::Accepted { .. }),
+            "content at exactly MIN_CONTENT_LENGTH must be accepted, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn min_length_boundary_rejection_reason_passes() {
+        // Exactly MIN_CONTENT_LENGTH characters must be accepted.
+        let reason = "a".repeat(super::MIN_CONTENT_LENGTH);
+        let input = format!(r#"{{"status":"rejected","reason":"{reason}"}}"#);
+        let result = parse_role_response(&input);
+        assert!(
+            matches!(result, RoleResult::Rejected { .. }),
+            "reason at exactly MIN_CONTENT_LENGTH must be accepted, got {result:?}"
+        );
+    }
+
     #[test]
     fn arbitrary_angle_bracket_text_is_allowed() {
         let result = parse_role_response(r#"{"status":"accepted","content":"<p>hello world</p>"}"#);
@@ -1025,10 +1127,10 @@ mod tests {
 
     #[test]
     fn fenced_json_parses() {
-        let input = "```json\n{\"status\":\"accepted\",\"content\":\"draft\"}\n```";
+        let input = "```json\n{\"status\":\"accepted\",\"content\":\"draft output\"}\n```";
         let result = parse_role_response(input);
         assert!(
-            matches!(result, RoleResult::Accepted { ref content } if content == "draft"),
+            matches!(result, RoleResult::Accepted { ref content } if content == "draft output"),
             "fenced JSON must parse to Accepted {{ 'draft' }}, got {result:?}"
         );
     }
@@ -1045,10 +1147,10 @@ mod tests {
 
     #[test]
     fn json_with_trailing_text_parses_first_object() {
-        let input = r#"{"status":"accepted","content":"draft"}\nSome trailing explanation the model added."#;
+        let input = r#"{"status":"accepted","content":"draft output"}\nSome trailing explanation the model added."#;
         let result = parse_role_response(input);
         assert!(
-            matches!(result, RoleResult::Accepted { ref content } if content == "draft"),
+            matches!(result, RoleResult::Accepted { ref content } if content == "draft output"),
             "trailing text after JSON must be ignored, got {result:?}"
         );
     }
@@ -1688,7 +1790,8 @@ mod tests {
 
     #[test]
     fn role_runner_uses_configured_max_tokens() {
-        let provider = ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"done"}"#]);
+        let provider =
+            ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"completed"}"#]);
         let runner = ProviderRoleRunner::new_with_max_tokens(&provider, 256);
 
         runner.run_role(
@@ -1713,7 +1816,8 @@ mod tests {
 
     #[test]
     fn role_prompt_includes_tool_request_as_valid_response_when_tools_available() {
-        let provider = ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"done"}"#]);
+        let provider =
+            ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"completed"}"#]);
         let runner = ProviderRoleRunner::new(&provider);
 
         runner.run_role(
@@ -1745,7 +1849,8 @@ mod tests {
 
     #[test]
     fn role_prompt_has_single_protocol_wrapper() {
-        let provider = ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"done"}"#]);
+        let provider =
+            ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"completed"}"#]);
         let runner = ProviderRoleRunner::new(&provider);
 
         runner.run_role(
@@ -1809,7 +1914,7 @@ mod tests {
 
         let provider = ScriptedProvider::from_strs(&[
             r#"{"tool":"read_file","path":"large.txt"}"#,
-            r#"{"status":"accepted","content":"done"}"#,
+            r#"{"status":"accepted","content":"completed"}"#,
         ]);
         let runner = ProviderRoleRunner::new(&provider);
 
@@ -1848,7 +1953,8 @@ mod tests {
 
     #[test]
     fn scripted_provider_supports_request_response_objects() {
-        let provider = ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"done"}"#]);
+        let provider =
+            ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"completed"}"#]);
         let runner = ProviderRoleRunner::new(&provider);
 
         runner.run_role(
@@ -1880,7 +1986,8 @@ mod tests {
     fn role_runner_requests_json_output() {
         use crate::providers::StructuredOutput;
 
-        let provider = ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"done"}"#]);
+        let provider =
+            ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"completed"}"#]);
         let runner = ProviderRoleRunner::new(&provider);
 
         runner.run_role(
@@ -1908,7 +2015,8 @@ mod tests {
 
     #[test]
     fn producer_prompt_lists_write_tools() {
-        let provider = ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"done"}"#]);
+        let provider =
+            ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"completed"}"#]);
         let runner = ProviderRoleRunner::new(&provider);
 
         runner.run_role(
@@ -2130,7 +2238,7 @@ mod tests {
 
         let provider = ScriptedProvider::from_strs(&[
             r#"{"tool":"write_file","path":"output.txt","content":"..."}"#,
-            r#"{"status":"accepted","content":"done"}"#,
+            r#"{"status":"accepted","content":"completed"}"#,
         ]);
         let runner = ProviderRoleRunner::new(&provider);
         let telemetry = VecTelemetry::new();
@@ -2149,7 +2257,7 @@ mod tests {
         );
 
         assert!(
-            matches!(output.result, RoleResult::Accepted { ref content } if content == "done"),
+            matches!(output.result, RoleResult::Accepted { ref content } if content == "completed"),
             "placeholder write_file must not execute; got {:?}",
             output.result
         );
@@ -2575,7 +2683,8 @@ mod tests {
             worker_critic_system: "CUSTOM_CRITIC".to_string(),
             ..RolePolicy::default()
         };
-        let provider = ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"done"}"#]);
+        let provider =
+            ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"completed"}"#]);
         let runner = ProviderRoleRunner::new_with_policy(&provider, policy);
 
         runner.run_role(
@@ -2935,7 +3044,8 @@ mod tests {
     #[test]
     fn worker_prompt_still_has_write_tools() {
         // Work nodes with tool_context keep write tools (existing behaviour preserved).
-        let provider = ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"done"}"#]);
+        let provider =
+            ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"completed"}"#]);
         let runner = ProviderRoleRunner::new(&provider);
 
         runner.run_role(
@@ -3080,10 +3190,10 @@ mod tests {
 
     #[test]
     fn clean_role_response_succeeds() {
-        let input = r#"{"status":"accepted","content":"draft"}"#;
+        let input = r#"{"status":"accepted","content":"draft output"}"#;
         let result = parse_role_response(input);
         assert!(
-            matches!(result, RoleResult::Accepted { ref content } if content == "draft"),
+            matches!(result, RoleResult::Accepted { ref content } if content == "draft output"),
             "clean JSON response must succeed; got {result:?}"
         );
     }
@@ -3331,7 +3441,8 @@ mod tests {
 
     #[test]
     fn worker_still_uses_status_content_schema() {
-        let provider = ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"done"}"#]);
+        let provider =
+            ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"completed"}"#]);
         let runner = ProviderRoleRunner::new(&provider);
 
         runner.run_role(
@@ -3436,7 +3547,7 @@ mod tests {
         let (_temp, view) = make_view("obs-warn");
         let provider = ScriptedProvider::from_strs(&[
             r#"{"tool":"read_file","path":"hello.txt"}"#,
-            r#"{"status":"accepted","content":"done"}"#,
+            r#"{"status":"accepted","content":"completed"}"#,
         ]);
         let runner = ProviderRoleRunner::new(&provider);
 
@@ -3641,7 +3752,7 @@ mod tests {
         let provider = ScriptedProvider::from_strs(&[
             r#"{"tool":"write_file","path":"out.txt","content":"data"}"#,
             r#"{"ok":true,"description":"write out.txt"}"#,
-            r#"{"status":"accepted","content":"done"}"#,
+            r#"{"status":"accepted","content":"completed"}"#,
         ]);
         let runner = ProviderRoleRunner::new(&provider);
         let telemetry = VecTelemetry::new();
@@ -3808,7 +3919,7 @@ mod tests {
         // After a successful mutation the prompt must not contain the tool section.
         let provider = ScriptedProvider::from_strs(&[
             r#"{"tool":"write_file","path":"out.txt","content":"data"}"#,
-            r#"{"status":"accepted","content":"done"}"#,
+            r#"{"status":"accepted","content":"completed"}"#,
         ]);
         let runner = ProviderRoleRunner::new(&provider);
 
@@ -3848,7 +3959,7 @@ mod tests {
         let provider = ScriptedProvider::from_strs(&[
             r#"{"tool":"write_file","path":"out.txt","content":"data"}"#,
             r#"{"tool":"list_files"}"#,
-            r#"{"status":"accepted","content":"done"}"#,
+            r#"{"status":"accepted","content":"completed"}"#,
         ]);
         let runner = ProviderRoleRunner::new(&provider);
         let telemetry = VecTelemetry::new();

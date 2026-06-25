@@ -621,7 +621,7 @@ mod tests {
     fn deliberating_runner_revision_uses_latest_producer_content() {
         let provider = ScriptedProvider::from_strs(&[
             r#"{"status":"accepted","content":"draft v1"}"#,
-            r#"{"status":"accepted","content":"review"}"#,
+            r#"{"status":"accepted","content":"review done"}"#,
             r#"{"status":"rejected","reason":"needs work"}"#,
             r#"{"status":"accepted","content":"draft v2"}"#,
             r#"{"status":"accepted","content":"review ok"}"#,
@@ -683,7 +683,7 @@ mod tests {
         let view = make_artifact_view(&temp, "hello.txt", "world\n");
 
         let provider = RecordingProvider::from_strs(&[
-            r#"{"status":"accepted","content":"draft"}"#,
+            r#"{"status":"accepted","content":"draft output"}"#,
             r#"{"status":"accepted","content":"review ok"}"#,
             r#"{"status":"accepted","content":"approved"}"#,
         ]);
@@ -713,8 +713,8 @@ mod tests {
     #[test]
     fn deliberating_runner_threads_max_tokens_to_provider() {
         let provider = CapturingProvider::from_strs(&[
-            r#"{"status":"accepted","content":"result"}"#,
-            r#"{"status":"accepted","content":"review"}"#,
+            r#"{"status":"accepted","content":"task completed"}"#,
+            r#"{"status":"accepted","content":"review done"}"#,
             r#"{"status":"accepted","content":"approved"}"#,
         ]);
         let runner = DeliberatingNodeRunner::new(&provider, &provider).with_cheap_max_tokens(256);
@@ -818,7 +818,7 @@ mod tests {
         // Revision limit exhaustion is a semantic failure — the model ran out of
         // revisions trying to satisfy the critic.
         let provider = ScriptedProvider::from_strs(&[
-            r#"{"status":"accepted","content":"draft"}"#,
+            r#"{"status":"accepted","content":"draft output"}"#,
             r#"{"status":"rejected","reason":"revision limit reached"}"#,
         ]);
         let runner = DeliberatingNodeRunner::new(&provider, &provider);
@@ -891,7 +891,7 @@ mod tests {
     fn split_failure_produces_split_action() {
         // The Critic rejects with a task-shape message that the classifier maps to Split.
         let provider = ScriptedProvider::from_strs(&[
-            r#"{"status":"accepted","content":"draft"}"#,
+            r#"{"status":"accepted","content":"draft output"}"#,
             r#"{"status":"rejected","reason":"task too large"}"#,
         ]);
         let runner = DeliberatingNodeRunner::new(&provider, &provider);
@@ -1065,7 +1065,7 @@ mod tests {
         };
 
         let provider = RecordingProvider::from_strs(&[
-            r#"{"status":"accepted","content":"done"}"#,
+            r#"{"status":"accepted","content":"completed"}"#,
             r#"{"status":"accepted","content":"review ok"}"#,
             r#"{"status":"accepted","content":"approved"}"#,
         ]);
@@ -1088,7 +1088,7 @@ mod tests {
     fn cheap_tier_uses_cheap_provider() {
         // Strong has no responses; calling it would panic. Proves routing is correct.
         let cheap = ScriptedProvider::from_strs(&[
-            r#"{"status":"accepted","content":"result"}"#,
+            r#"{"status":"accepted","content":"task completed"}"#,
             r#"{"status":"accepted","content":"review ok"}"#,
             r#"{"status":"accepted","content":"approved"}"#,
         ]);
@@ -1106,7 +1106,7 @@ mod tests {
         // Cheap has no responses; calling it would panic. Proves routing is correct.
         let cheap = ScriptedProvider::from_strs(&[]);
         let strong = ScriptedProvider::from_strs(&[
-            r#"{"status":"accepted","content":"result"}"#,
+            r#"{"status":"accepted","content":"task completed"}"#,
             r#"{"status":"accepted","content":"review ok"}"#,
             r#"{"status":"accepted","content":"approved"}"#,
         ]);
@@ -1123,7 +1123,7 @@ mod tests {
         // Cheap has no responses — if it were called the test would panic.
         let cheap = CapturingProvider::from_strs(&[]);
         let strong = CapturingProvider::from_strs(&[
-            r#"{"status":"accepted","content":"result"}"#,
+            r#"{"status":"accepted","content":"task completed"}"#,
             r#"{"status":"accepted","content":"review ok"}"#,
             r#"{"status":"accepted","content":"approved"}"#,
         ]);
