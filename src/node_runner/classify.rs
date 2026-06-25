@@ -227,6 +227,29 @@ mod tests {
     }
 
     #[test]
+    fn critic_rejected_prefixed_reason_classified_as_elevate_model() {
+        // This is the format emitted by DeliberationMachine when the Critic rejects.
+        assert!(matches!(
+            classify_deliberation_failure(
+                "critic rejected: the haiku is not following the 5-7-5 syllable structure"
+            ),
+            RecoveryAction::ElevateModel { .. }
+        ));
+    }
+
+    #[test]
+    fn critic_rejected_semantic_reason_without_prefix_is_terminal() {
+        // Verifies that a raw semantic critique without the "critic rejected:" prefix
+        // still falls through to Terminal — the prefix is load-bearing.
+        assert!(matches!(
+            classify_deliberation_failure(
+                "the haiku is not following the 5-7-5 syllable structure"
+            ),
+            RecoveryAction::Terminal { .. }
+        ));
+    }
+
+    #[test]
     fn referee_rejected_classified_as_elevate_model() {
         assert!(matches!(
             classify_deliberation_failure("referee rejected: content did not meet quality bar"),

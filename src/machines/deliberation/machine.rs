@@ -239,7 +239,8 @@ impl Machine for DeliberationMachine {
                 },
             },
 
-            // Critic rejected → failed.
+            // Critic rejected → failed. Prefix the reason so classify_deliberation_failure
+            // can reach the ElevateModel arm ("critic rejected" pattern).
             (
                 DeliberationState::Waiting {
                     role: DeliberationRole::Critic,
@@ -250,12 +251,15 @@ impl Machine for DeliberationMachine {
                     role: DeliberationRole::Critic,
                     result: RoleResult::Rejected { reason },
                 },
-            ) => Transition {
-                effects: vec![DeliberationEffect::ReturnFailed {
-                    reason: reason.clone(),
-                }],
-                state: DeliberationState::Failed { reason },
-            },
+            ) => {
+                let prefixed = format!("critic rejected: {reason}");
+                Transition {
+                    effects: vec![DeliberationEffect::ReturnFailed {
+                        reason: prefixed.clone(),
+                    }],
+                    state: DeliberationState::Failed { reason: prefixed },
+                }
+            }
 
             // Critic execution failure → terminal.
             (
@@ -677,7 +681,7 @@ mod tests {
     }
 
     #[test]
-    fn critic_rejection_fails() {
+    fn critic_rejection_fails_with_prefixed_reason() {
         let after_producer = step(
             step(ready("write a poem"), DeliberationEvent::Start).state,
             DeliberationEvent::RoleReturned {
@@ -700,16 +704,53 @@ mod tests {
         );
 
         assert!(
-            matches!(&t.state, DeliberationState::Failed { reason } if reason == "too short"),
-            "expected Failed, got {:?}",
+            matches!(&t.state, DeliberationState::Failed { reason } if reason == "critic rejected: too short"),
+            "expected Failed with prefixed reason, got {:?}",
             t.state
         );
 
         assert_eq!(t.effects.len(), 1);
         assert!(
-            matches!(&t.effects[0], DeliberationEffect::ReturnFailed { reason } if reason == "too short"),
-            "expected ReturnFailed, got {:?}",
+            matches!(&t.effects[0], DeliberationEffect::ReturnFailed { reason } if reason == "critic rejected: too short"),
+            "expected ReturnFailed with prefixed reason, got {:?}",
             t.effects[0]
+        );
+    }
+
+    #[test]
+    fn critic_rejection_reason_contains_critic_rejected_prefix() {
+        let after_producer = step(
+            step(ready("write a poem"), DeliberationEvent::Start).state,
+            DeliberationEvent::RoleReturned {
+                role: DeliberationRole::Producer,
+                result: RoleResult::Accepted {
+                    content: "draft content".to_string(),
+                },
+            },
+        )
+        .state;
+
+        let t = step(
+            after_producer,
+            DeliberationEvent::RoleReturned {
+                role: DeliberationRole::Critic,
+                result: RoleResult::Rejected {
+                    reason: "the haiku is not following the 5-7-5 syllable structure".to_string(),
+                },
+            },
+        );
+
+        let reason = match &t.state {
+            DeliberationState::Failed { reason } => reason,
+            other => panic!("expected Failed, got {:?}", other),
+        };
+        assert!(
+            reason.starts_with("critic rejected:"),
+            "reason must start with 'critic rejected:'; got: {reason}"
+        );
+        assert!(
+            reason.contains("5-7-5"),
+            "reason must contain the original critique; got: {reason}"
         );
     }
 
