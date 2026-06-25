@@ -572,8 +572,8 @@ fn render_tool_section(policy: &FileToolPolicy) -> String {
     );
     if policy.allow_writes {
         s.push_str(
-            "{\"tool\":\"write_file\",\"path\":\"<TARGET_FILE>\",\"content\":\"<FILE_CONTENT>\"}\n\
-             {\"tool\":\"replace_text\",\"path\":\"output.txt\",\"old\":\"<EXACT_EXISTING_TEXT>\",\"new\":\"<REPLACEMENT_TEXT>\"}\n\
+            "{\"tool\":\"write_file\",\"path\":\"$TARGET_FILE\",\"content\":\"$FILE_CONTENT\"}\n\
+             {\"tool\":\"replace_text\",\"path\":\"output.txt\",\"old\":\"$EXACT_EXISTING_TEXT\",\"new\":\"$REPLACEMENT_TEXT\"}\n\
              {\"tool\":\"delete_file\",\"path\":\"old.txt\"}\n",
         );
     }
@@ -600,8 +600,8 @@ fn render_retry_prompt(original_prompt: &str, parse_error: &str) -> String {
         "{original_prompt}\n\n\
          Your previous response could not be parsed: {parse_error}\n\
          Return only one JSON object matching one of these schemas:\n\
-         {{\"status\":\"accepted\",\"content\":\"<YOUR_RESPONSE_HERE>\"}}\n\
-         {{\"status\":\"rejected\",\"reason\":\"<REASON_FOR_REJECTION>\"}}\n\
+         {{\"status\":\"accepted\",\"content\":\"$RESPONSE_SUMMARY\"}}\n\
+         {{\"status\":\"rejected\",\"reason\":\"$REASON_FOR_REJECTION\"}}\n\
          Do not copy example values. Replace them with task-specific content."
     )
 }
@@ -628,8 +628,8 @@ fn format_completion_pressure_section(observation: &str) -> String {
          The requested change has already been recorded.\n\
          Do not call any more tools.\n\
          Return exactly one of:\n\
-         {{\"status\":\"accepted\",\"content\":\"<YOUR_RESPONSE_HERE>\"}}\n\
-         {{\"status\":\"rejected\",\"reason\":\"<REASON_FOR_REJECTION>\"}}\n\
+         {{\"status\":\"accepted\",\"content\":\"$RESPONSE_SUMMARY\"}}\n\
+         {{\"status\":\"rejected\",\"reason\":\"$REASON_FOR_REJECTION\"}}\n\
          Do not copy example values. Replace them with task-specific content."
     )
 }
@@ -640,8 +640,8 @@ fn render_completion_pressure_violation_note() -> String {
     "Tools are no longer available.\n\
      The requested change has already been recorded.\n\
      Return a final role response:\n\
-     {\"status\":\"accepted\",\"content\":\"<YOUR_RESPONSE_HERE>\"}\n\
-     {\"status\":\"rejected\",\"reason\":\"<REASON_FOR_REJECTION>\"}\n\
+     {\"status\":\"accepted\",\"content\":\"$RESPONSE_SUMMARY\"}\n\
+     {\"status\":\"rejected\",\"reason\":\"$REASON_FOR_REJECTION\"}\n\
      Do not copy example values. Replace them with task-specific content."
         .to_string()
 }
@@ -660,8 +660,8 @@ fn render_completion_pressure_retry_prompt(
          Your previous response could not be parsed: {parse_error}\n\
          Tools are no longer available.\n\
          Return exactly one of:\n\
-         {{\"status\":\"accepted\",\"content\":\"<YOUR_RESPONSE_HERE>\"}}\n\
-         {{\"status\":\"rejected\",\"reason\":\"<REASON_FOR_REJECTION>\"}}\n\
+         {{\"status\":\"accepted\",\"content\":\"$RESPONSE_SUMMARY\"}}\n\
+         {{\"status\":\"rejected\",\"reason\":\"$REASON_FOR_REJECTION\"}}\n\
          Do not copy example values. Replace them with task-specific content."
     )
 }
@@ -704,21 +704,14 @@ enum JsonRoleResponse {
     Rejected { reason: String },
 }
 
-/// Returns `true` if `value` exactly matches a known framework placeholder
-/// token that appears in prompt schema examples.
+/// Returns `true` if `value` exactly matches a framework placeholder token.
 ///
-/// These values are template markers, not real responses. Returning them
-/// verbatim means the model copied the example rather than producing output.
+/// Framework placeholders follow the convention `$[A-Z_]+`: a dollar sign
+/// followed by one or more uppercase ASCII letters or underscores. Only exact
+/// matches are rejected — strings that merely *contain* a dollar sign are not.
 fn is_framework_placeholder(value: &str) -> bool {
-    matches!(
-        value.trim(),
-        "<YOUR_SUMMARY>"
-            | "<YOUR_RESPONSE_HERE>"
-            | "<REASON_FOR_REJECTION>"
-            | "<YOUR_REASON>"
-            | "<PLACEHOLDER>"
-            | "<REASON>"
-    )
+    let s = value.trim();
+    s.starts_with('$') && s.len() > 1 && s[1..].bytes().all(|b| b.is_ascii_uppercase() || b == b'_')
 }
 
 fn try_parse_role_response(raw_response: &str) -> Result<RoleResult, String> {
@@ -958,7 +951,7 @@ mod tests {
 
     #[test]
     fn placeholder_summary_is_rejected() {
-        let result = parse_role_response(r#"{"status":"accepted","content":"<YOUR_SUMMARY>"}"#);
+        let result = parse_role_response(r#"{"status":"accepted","content":"$RESPONSE_SUMMARY"}"#);
         let RoleResult::Failed { reason } = result else {
             panic!("framework placeholder content must produce Failed, got {result:?}");
         };
@@ -971,7 +964,7 @@ mod tests {
     #[test]
     fn placeholder_reason_is_rejected() {
         let result =
-            parse_role_response(r#"{"status":"rejected","reason":"<REASON_FOR_REJECTION>"}"#);
+            parse_role_response(r#"{"status":"rejected","reason":"$REASON_FOR_REJECTION"}"#);
         let RoleResult::Failed { reason } = result else {
             panic!("framework placeholder reason must produce Failed, got {result:?}");
         };
@@ -982,14 +975,39 @@ mod tests {
     }
 
     #[test]
-    fn angle_bracket_reason_placeholder_is_rejected() {
-        // Regression: "<REASON>" is exactly MIN_CONTENT_LENGTH chars so it slips
-        // past the length guard; it must be caught by is_framework_placeholder.
-        let result = parse_role_response(r#"{"status":"rejected","reason":"<REASON>"}"#);
+    fn dollar_reason_placeholder_is_rejected() {
+        // "$REASON" is exactly MIN_CONTENT_LENGTH chars so it slips past the
+        // length guard; it must be caught by is_framework_placeholder.
+        let result = parse_role_response(r#"{"status":"rejected","reason":"$REASON"}"#);
         let RoleResult::Failed { reason } = result else {
             panic!(
-                r#"placeholder {{"status":"rejected","reason":"<REASON>"}} must produce Failed, got {result:?}"#
+                r#"placeholder {{"status":"rejected","reason":"$REASON"}} must produce Failed, got {result:?}"#
             );
+        };
+        assert!(
+            reason.contains("framework placeholder"),
+            "failure reason must mention 'framework placeholder'; got: {reason}"
+        );
+    }
+
+    #[test]
+    fn dollar_response_summary_placeholder_is_rejected() {
+        let result = parse_role_response(r#"{"status":"accepted","content":"$RESPONSE_SUMMARY"}"#);
+        let RoleResult::Failed { reason } = result else {
+            panic!("$RESPONSE_SUMMARY placeholder must produce Failed, got {result:?}");
+        };
+        assert!(
+            reason.contains("framework placeholder"),
+            "failure reason must mention 'framework placeholder'; got: {reason}"
+        );
+    }
+
+    #[test]
+    fn dollar_reason_for_rejection_placeholder_is_rejected() {
+        let result =
+            parse_role_response(r#"{"status":"rejected","reason":"$REASON_FOR_REJECTION"}"#);
+        let RoleResult::Failed { reason } = result else {
+            panic!("$REASON_FOR_REJECTION placeholder must produce Failed, got {result:?}");
         };
         assert!(
             reason.contains("framework placeholder"),
@@ -1327,7 +1345,7 @@ mod tests {
         assert!(retry_prompt.contains("preamble text is not permitted"));
         assert!(!retry_prompt.contains("invalid text"));
         assert!(retry_prompt.contains("Objective: recover output"));
-        assert!(retry_prompt.contains("<YOUR_RESPONSE_HERE>"));
+        assert!(retry_prompt.contains("$RESPONSE_SUMMARY"));
         assert!(!retry_prompt.contains("\"...\""));
     }
 
@@ -2660,11 +2678,11 @@ mod tests {
                 "{label} default policy must include JSON-only instruction; got:\n{prompt}"
             );
             assert!(
-                prompt.contains("<YOUR_RESPONSE_HERE>"),
+                prompt.contains("$RESPONSE_SUMMARY"),
                 "{label} default policy must include accepted schema placeholder; got:\n{prompt}"
             );
             assert!(
-                prompt.contains("<REASON_FOR_REJECTION>"),
+                prompt.contains("$REASON_FOR_REJECTION"),
                 "{label} default policy must include rejected schema placeholder; got:\n{prompt}"
             );
         }
@@ -2686,7 +2704,7 @@ mod tests {
             "planner default policy must include direct tasks schema; got:\n{planner_prompt}"
         );
         assert!(
-            !planner_prompt.contains("<YOUR_RESPONSE_HERE>"),
+            !planner_prompt.contains("$RESPONSE_SUMMARY"),
             "planner default policy must not include status/content placeholder; got:\n{planner_prompt}"
         );
     }
@@ -3386,7 +3404,7 @@ mod tests {
             "planner prompt must not show status/content wrapper; got:\n{prompt}"
         );
         assert!(
-            !prompt.contains("<YOUR_RESPONSE_HERE>"),
+            !prompt.contains("$RESPONSE_SUMMARY"),
             "planner prompt must not show accepted placeholder; got:\n{prompt}"
         );
     }
@@ -3482,11 +3500,11 @@ mod tests {
             "worker prompt must still contain status/content schema; got:\n{prompt}"
         );
         assert!(
-            prompt.contains("<YOUR_RESPONSE_HERE>"),
+            prompt.contains("$RESPONSE_SUMMARY"),
             "worker prompt must still contain accepted schema placeholder; got:\n{prompt}"
         );
         assert!(
-            prompt.contains("<REASON_FOR_REJECTION>"),
+            prompt.contains("$REASON_FOR_REJECTION"),
             "worker prompt must still contain rejected schema placeholder; got:\n{prompt}"
         );
         assert!(
@@ -3521,7 +3539,7 @@ mod tests {
             "critic prompt must still contain status/content schema; got:\n{prompt}"
         );
         assert!(
-            prompt.contains("<YOUR_RESPONSE_HERE>"),
+            prompt.contains("$RESPONSE_SUMMARY"),
             "critic prompt must still contain accepted schema placeholder; got:\n{prompt}"
         );
     }
@@ -3552,7 +3570,7 @@ mod tests {
             "referee prompt must still contain status/content schema; got:\n{prompt}"
         );
         assert!(
-            prompt.contains("<YOUR_RESPONSE_HERE>"),
+            prompt.contains("$RESPONSE_SUMMARY"),
             "referee prompt must still contain accepted schema placeholder; got:\n{prompt}"
         );
     }

@@ -14,8 +14,8 @@
 /// JSON protocol instructions for Worker, Critic, and Referee roles.
 const DEFAULT_SYSTEM: &str = "Return exactly one JSON object. No markdown. No code fence. \
 No explanation. No text before or after the JSON.\n\
-Accepted: {\"status\":\"accepted\",\"content\":\"<YOUR_RESPONSE_HERE>\"}\n\
-Rejected: {\"status\":\"rejected\",\"reason\":\"<REASON_FOR_REJECTION>\"}\n\
+Accepted: {\"status\":\"accepted\",\"content\":\"$RESPONSE_SUMMARY\"}\n\
+Rejected: {\"status\":\"rejected\",\"reason\":\"$REASON_FOR_REJECTION\"}\n\
 Do not copy example values. Replace them with task-specific content.\n\
 Producer returns accepted content. \
 Critic accepts with a review or rejects with a reason. \
@@ -162,16 +162,14 @@ mod tests {
             policy.worker_producer_system
         );
         assert!(
-            policy
-                .worker_producer_system
-                .contains("<YOUR_RESPONSE_HERE>"),
+            policy.worker_producer_system.contains("$RESPONSE_SUMMARY"),
             "worker_producer_system must show accepted schema placeholder; got:\n{}",
             policy.worker_producer_system
         );
         assert!(
             policy
                 .worker_producer_system
-                .contains("<REASON_FOR_REJECTION>"),
+                .contains("$REASON_FOR_REJECTION"),
             "worker_producer_system must show rejected schema placeholder; got:\n{}",
             policy.worker_producer_system
         );
@@ -191,7 +189,7 @@ mod tests {
             policy.worker_critic_system
         );
         assert!(
-            policy.worker_critic_system.contains("<YOUR_RESPONSE_HERE>"),
+            policy.worker_critic_system.contains("$RESPONSE_SUMMARY"),
             "worker_critic_system must show accepted schema placeholder; got:\n{}",
             policy.worker_critic_system
         );
@@ -211,9 +209,7 @@ mod tests {
             policy.worker_referee_system
         );
         assert!(
-            policy
-                .worker_referee_system
-                .contains("<YOUR_RESPONSE_HERE>"),
+            policy.worker_referee_system.contains("$RESPONSE_SUMMARY"),
             "worker_referee_system must show accepted schema placeholder; got:\n{}",
             policy.worker_referee_system
         );

@@ -21,8 +21,8 @@ Use tools before making assumptions about file contents — inspect files before
 Produce concrete, complete artifact changes — do not leave placeholders or stubs.\n\
 Return exactly one JSON object. No markdown. No code fence. \
 No explanation. No text before or after the JSON.\n\
-Accepted: {\"status\":\"accepted\",\"content\":\"<YOUR_RESPONSE_HERE>\"}\n\
-Rejected: {\"status\":\"rejected\",\"reason\":\"<REASON_FOR_REJECTION>\"}\n\
+Accepted: {\"status\":\"accepted\",\"content\":\"$RESPONSE_SUMMARY\"}\n\
+Rejected: {\"status\":\"rejected\",\"reason\":\"$REASON_FOR_REJECTION\"}\n\
 Do not copy example values. Replace them with task-specific content.\n\
 Producer returns accepted content. \
 Critic accepts with a review or rejects with a reason. \
@@ -36,8 +36,8 @@ Do not judge whether files already changed, final code compiles, or the final ar
 Accept with a plan review summary or reject with a specific, actionable plan revision reason.\n\
 Return exactly one JSON object. No markdown. No code fence. \
 No explanation. No text before or after the JSON.\n\
-Accepted: {\"status\":\"accepted\",\"content\":\"<YOUR_RESPONSE_HERE>\"}\n\
-Rejected: {\"status\":\"rejected\",\"reason\":\"<REASON_FOR_REJECTION>\"}\n\
+Accepted: {\"status\":\"accepted\",\"content\":\"$RESPONSE_SUMMARY\"}\n\
+Rejected: {\"status\":\"rejected\",\"reason\":\"$REASON_FOR_REJECTION\"}\n\
 Do not copy example values. Replace them with task-specific content.\n\
 Producer returns accepted content. \
 Critic accepts with a review or rejects with a reason. \
@@ -54,8 +54,8 @@ Verify required files exist and file contents satisfy the objective. \
 Accept with a review summary or reject with a specific, actionable reason.\n\
 Return exactly one JSON object. No markdown. No code fence. \
 No explanation. No text before or after the JSON.\n\
-Accepted: {\"status\":\"accepted\",\"content\":\"<YOUR_RESPONSE_HERE>\"}\n\
-Rejected: {\"status\":\"rejected\",\"reason\":\"<REASON_FOR_REJECTION>\"}\n\
+Accepted: {\"status\":\"accepted\",\"content\":\"$RESPONSE_SUMMARY\"}\n\
+Rejected: {\"status\":\"rejected\",\"reason\":\"$REASON_FOR_REJECTION\"}\n\
 Do not copy example values. Replace them with task-specific content.\n\
 Producer returns accepted content. \
 Critic accepts with a review or rejects with a reason. \
@@ -69,8 +69,8 @@ Reject with plan revision feedback when a necessary task is omitted, task object
 Do not reject because final code has not been written, artifact files do not yet exist, or final output is not yet visible.\n\
 Return exactly one JSON object. No markdown. No code fence. \
 No explanation. No text before or after the JSON.\n\
-Accepted: {\"status\":\"accepted\",\"content\":\"<YOUR_RESPONSE_HERE>\"}\n\
-Rejected: {\"status\":\"rejected\",\"reason\":\"<REASON_FOR_REJECTION>\"}\n\
+Accepted: {\"status\":\"accepted\",\"content\":\"$RESPONSE_SUMMARY\"}\n\
+Rejected: {\"status\":\"rejected\",\"reason\":\"$REASON_FOR_REJECTION\"}\n\
 Do not copy example values. Replace them with task-specific content.\n\
 Producer returns accepted content. \
 Critic accepts with a review or rejects with a reason. \
@@ -86,8 +86,8 @@ Accept only when the work is complete and correct. \
 Reject with specific revision feedback otherwise.\n\
 Return exactly one JSON object. No markdown. No code fence. \
 No explanation. No text before or after the JSON.\n\
-Accepted: {\"status\":\"accepted\",\"content\":\"<YOUR_RESPONSE_HERE>\"}\n\
-Rejected: {\"status\":\"rejected\",\"reason\":\"<REASON_FOR_REJECTION>\"}\n\
+Accepted: {\"status\":\"accepted\",\"content\":\"$RESPONSE_SUMMARY\"}\n\
+Rejected: {\"status\":\"rejected\",\"reason\":\"$REASON_FOR_REJECTION\"}\n\
 Do not copy example values. Replace them with task-specific content.\n\
 Producer returns accepted content. \
 Critic accepts with a review or rejects with a reason. \
@@ -156,11 +156,11 @@ mod tests {
                 "{label} system must not contain dot-placeholder JSON values; got:\n{system}"
             );
             assert!(
-                system.contains("<YOUR_RESPONSE_HERE>"),
+                system.contains("$RESPONSE_SUMMARY"),
                 "{label} system must include accepted schema placeholder; got:\n{system}"
             );
             assert!(
-                system.contains("<REASON_FOR_REJECTION>"),
+                system.contains("$REASON_FOR_REJECTION"),
                 "{label} system must include rejected schema placeholder; got:\n{system}"
             );
         }

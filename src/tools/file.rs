@@ -345,6 +345,12 @@ pub fn parse_tool_request(json: &str) -> Result<FileToolRequest, String> {
     Ok(req)
 }
 
+/// Returns `true` if `s` exactly matches a framework placeholder (`$[A-Z_]+`).
+fn is_dollar_placeholder(s: &str) -> bool {
+    let s = s.trim();
+    s.starts_with('$') && s.len() > 1 && s[1..].bytes().all(|b| b.is_ascii_uppercase() || b == b'_')
+}
+
 fn has_placeholder_fields(req: &FileToolRequest) -> bool {
     match req {
         FileToolRequest::ListFiles => false,
@@ -352,8 +358,8 @@ fn has_placeholder_fields(req: &FileToolRequest) -> bool {
         FileToolRequest::WriteFile { path, content } => {
             path.trim() == "..."
                 || content.trim() == "..."
-                || path.trim() == "<TARGET_FILE>"
-                || content.trim() == "<FILE_CONTENT>"
+                || is_dollar_placeholder(path)
+                || is_dollar_placeholder(content)
         }
         FileToolRequest::ReplaceText { path, old, new } => {
             path.trim() == "..." || old.trim() == "..." || new.trim() == "..."
@@ -961,6 +967,36 @@ mod tests {
         assert!(
             result.is_err(),
             "write_file with placeholder content must be rejected; got {result:?}"
+        );
+    }
+
+    #[test]
+    fn parse_write_file_with_dollar_placeholder_path_is_rejected() {
+        let result = parse_tool_request(
+            r#"{"tool":"write_file","path":"$TARGET_FILE","content":"real content"}"#,
+        );
+        assert!(
+            result.is_err(),
+            "write_file with $TARGET_FILE path must be rejected; got {result:?}"
+        );
+        assert!(
+            result.unwrap_err().contains("placeholder"),
+            "error must mention placeholder"
+        );
+    }
+
+    #[test]
+    fn parse_write_file_with_dollar_placeholder_content_is_rejected() {
+        let result = parse_tool_request(
+            r#"{"tool":"write_file","path":"real.txt","content":"$FILE_CONTENT"}"#,
+        );
+        assert!(
+            result.is_err(),
+            "write_file with $FILE_CONTENT content must be rejected; got {result:?}"
+        );
+        assert!(
+            result.unwrap_err().contains("placeholder"),
+            "error must mention placeholder"
         );
     }
 
