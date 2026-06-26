@@ -4,7 +4,23 @@ use std::io::{Read, Seek, SeekFrom};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
+use serde::Deserialize;
+
 use crate::artifacts::Workspace;
+
+/// A structured command specification executed directly without a shell.
+///
+/// The program is invoked via [`Command::new`]; args are passed as-is and are
+/// never interpreted by a shell. Use `CommandSpec { program: "sh".into(), args:
+/// vec!["-c".into(), cmd] }` to run shell syntax when needed.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct CommandSpec {
+    /// The program to execute.
+    pub program: String,
+    /// Arguments passed to the program without shell interpretation.
+    #[serde(default)]
+    pub args: Vec<String>,
+}
 
 /// Outcome of a workspace validation pass.
 pub struct ValidationResult {
@@ -34,27 +50,27 @@ impl Validator for AlwaysPassValidator {
     }
 }
 
-/// Validates a workspace by running shell commands inside it.
+/// Validates a workspace by running [`CommandSpec`] commands directly inside it.
 ///
-/// Commands run in order via `sh -c`; validation stops on the first failure.
-/// Both stdout and stderr are captured and included in the failure summary.
+/// Commands run in order; validation stops on the first failure.
 /// Each command gets its own independent timeout budget.
+/// Commands are executed via [`Command::new`] — no shell is involved.
 pub struct CommandValidator {
-    commands: Vec<String>,
+    commands: Vec<CommandSpec>,
     timeout: Duration,
 }
 
 impl CommandValidator {
-    /// Create a new `CommandValidator` with the given commands and timeout.
-    pub fn new(commands: Vec<String>, timeout: Duration) -> Self {
+    /// Create a new `CommandValidator` with the given command specs and timeout.
+    pub fn new(commands: Vec<CommandSpec>, timeout: Duration) -> Self {
         Self { commands, timeout }
     }
 }
 
 impl Validator for CommandValidator {
     fn validate(&self, workspace: &Workspace) -> ValidationResult {
-        for command in &self.commands {
-            let result = run_with_timeout(command, workspace.path(), self.timeout);
+        for spec in &self.commands {
+            let result = run_command_with_timeout(spec, workspace.path(), self.timeout);
             if !result.passed {
                 return result;
             }
@@ -67,18 +83,30 @@ impl Validator for CommandValidator {
     }
 }
 
-/// Run `command` via `sh -c` in `dir` with a hard deadline.
+fn command_display(spec: &CommandSpec) -> String {
+    let mut parts = vec![spec.program.clone()];
+    parts.extend(spec.args.iter().cloned());
+    parts.join(" ")
+}
+
+/// Run `spec` directly (no shell) in `dir` with a hard deadline.
 ///
 /// Stdout and stderr are redirected to anonymous temp files so large output
 /// cannot fill the pipe buffer and deadlock the child. The parent polls
 /// `try_wait` every 50 ms and kills the child if it outlives `timeout`.
-fn run_with_timeout(command: &str, dir: &std::path::Path, timeout: Duration) -> ValidationResult {
+fn run_command_with_timeout(
+    spec: &CommandSpec,
+    dir: &std::path::Path,
+    timeout: Duration,
+) -> ValidationResult {
+    let display = command_display(spec);
+
     let mut stdout_file = match tempfile::tempfile() {
         Ok(f) => f,
         Err(e) => {
             return ValidationResult {
                 passed: false,
-                summary: format!("command `{command}` failed to start: {e}"),
+                summary: format!("command `{display}` failed to start: {e}"),
             };
         }
     };
@@ -87,7 +115,7 @@ fn run_with_timeout(command: &str, dir: &std::path::Path, timeout: Duration) -> 
         Err(e) => {
             return ValidationResult {
                 passed: false,
-                summary: format!("command `{command}` failed to start: {e}"),
+                summary: format!("command `{display}` failed to start: {e}"),
             };
         }
     };
@@ -97,7 +125,7 @@ fn run_with_timeout(command: &str, dir: &std::path::Path, timeout: Duration) -> 
         Err(e) => {
             return ValidationResult {
                 passed: false,
-                summary: format!("command `{command}` failed to start: {e}"),
+                summary: format!("command `{display}` failed to start: {e}"),
             };
         }
     };
@@ -106,13 +134,13 @@ fn run_with_timeout(command: &str, dir: &std::path::Path, timeout: Duration) -> 
         Err(e) => {
             return ValidationResult {
                 passed: false,
-                summary: format!("command `{command}` failed to start: {e}"),
+                summary: format!("command `{display}` failed to start: {e}"),
             };
         }
     };
 
-    let mut child = match Command::new("sh")
-        .args(["-c", command])
+    let mut child = match Command::new(&spec.program)
+        .args(&spec.args)
         .current_dir(dir)
         .stdout(Stdio::from(stdout_fd))
         .stderr(Stdio::from(stderr_fd))
@@ -122,7 +150,7 @@ fn run_with_timeout(command: &str, dir: &std::path::Path, timeout: Duration) -> 
         Err(e) => {
             return ValidationResult {
                 passed: false,
-                summary: format!("command `{command}` failed to start: {e}"),
+                summary: format!("command `{display}` failed to start: {e}"),
             };
         }
     };
@@ -135,7 +163,7 @@ fn run_with_timeout(command: &str, dir: &std::path::Path, timeout: Duration) -> 
             Err(e) => {
                 return ValidationResult {
                     passed: false,
-                    summary: format!("command `{command}` failed to start: {e}"),
+                    summary: format!("command `{display}` failed to start: {e}"),
                 };
             }
             Ok(Some(status)) => {
@@ -159,7 +187,7 @@ fn run_with_timeout(command: &str, dir: &std::path::Path, timeout: Duration) -> 
                 return ValidationResult {
                     passed: false,
                     summary: format!(
-                        "command `{command}` failed (exit {code})\nstdout: {stdout}\nstderr: {stderr}"
+                        "command `{display}` failed (exit {code})\nstdout: {stdout}\nstderr: {stderr}"
                     ),
                 };
             }
@@ -171,7 +199,7 @@ fn run_with_timeout(command: &str, dir: &std::path::Path, timeout: Duration) -> 
                     return ValidationResult {
                         passed: false,
                         summary: format!(
-                            "validation command timed out after {secs} seconds\ncommand:\n{command}"
+                            "validation command timed out after {secs} seconds\ncommand:\n{display}"
                         ),
                     };
                 }
@@ -203,12 +231,22 @@ mod tests {
         Duration::from_secs(30)
     }
 
+    fn spec(program: &str, args: &[&str]) -> CommandSpec {
+        CommandSpec {
+            program: program.to_string(),
+            args: args.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
     #[test]
     fn command_validator_passes_when_command_exits_zero() {
         let (path, ws) = temp_workspace();
         std::fs::write(path.join("expected.txt"), "").unwrap();
 
-        let v = CommandValidator::new(vec!["test -f expected.txt".to_string()], default_timeout());
+        let v = CommandValidator::new(
+            vec![spec("test", &["-f", "expected.txt"])],
+            default_timeout(),
+        );
         let result = v.validate(&ws);
 
         assert!(result.passed, "expected pass, got: {}", result.summary);
@@ -221,16 +259,14 @@ mod tests {
         let (path, ws) = temp_workspace();
 
         let v = CommandValidator::new(
-            vec!["test -f this_file_does_not_exist.txt".to_string()],
+            vec![spec("test", &["-f", "this_file_does_not_exist.txt"])],
             default_timeout(),
         );
         let result = v.validate(&ws);
 
         assert!(!result.passed, "expected failure");
         assert!(
-            result
-                .summary
-                .contains("test -f this_file_does_not_exist.txt"),
+            result.summary.contains("this_file_does_not_exist.txt"),
             "summary must include the failing command, got: {}",
             result.summary
         );
@@ -248,9 +284,8 @@ mod tests {
         let (path, ws) = temp_workspace();
         std::fs::write(path.join("workspace_marker.txt"), "").unwrap();
 
-        // If cwd is the workspace path, this relative test will succeed.
         let v = CommandValidator::new(
-            vec!["test -f workspace_marker.txt".to_string()],
+            vec![spec("test", &["-f", "workspace_marker.txt"])],
             default_timeout(),
         );
         let result = v.validate(&ws);
@@ -271,9 +306,8 @@ mod tests {
 
         let v = CommandValidator::new(
             vec![
-                "false".to_string(),
-                // This would create the marker file, but must never run.
-                format!("touch {}", marker.display()),
+                spec("false", &[]),
+                spec("touch", &[&marker.display().to_string()]),
             ],
             default_timeout(),
         );
@@ -292,7 +326,7 @@ mod tests {
     fn command_validator_fails_when_command_times_out() {
         let (_path, ws) = temp_workspace();
 
-        let v = CommandValidator::new(vec!["sleep 5".to_string()], Duration::from_secs(1));
+        let v = CommandValidator::new(vec![spec("sleep", &["5"])], Duration::from_secs(1));
         let result = v.validate(&ws);
 
         assert!(!result.passed, "timed-out command must fail validation");
@@ -318,18 +352,117 @@ mod tests {
         let (_path1, ws1) = temp_workspace();
         let (_path2, ws2) = temp_workspace();
 
-        // First validator times out.
-        let v1 = CommandValidator::new(vec!["sleep 5".to_string()], Duration::from_secs(1));
+        let v1 = CommandValidator::new(vec![spec("sleep", &["5"])], Duration::from_secs(1));
         let r1 = v1.validate(&ws1);
         assert!(!r1.passed, "first validator must time out and fail");
 
-        // Second validator must still work normally.
-        let v2 = CommandValidator::new(vec!["echo ok".to_string()], default_timeout());
+        let v2 = CommandValidator::new(vec![spec("echo", &["ok"])], default_timeout());
         let r2 = v2.validate(&ws2);
         assert!(
             r2.passed,
             "second validator must pass after the first timed out; got: {}",
             r2.summary
+        );
+    }
+
+    // ── direct-exec tests ─────────────────────────────────────────────────────
+
+    #[test]
+    fn command_validator_executes_directly_without_shell() {
+        let (_path, ws) = temp_workspace();
+
+        // 'false' exits 1. Summary must name the program directly, not wrap in "sh -c".
+        let v = CommandValidator::new(vec![spec("false", &[])], default_timeout());
+        let result = v.validate(&ws);
+
+        assert!(!result.passed, "false must fail");
+        assert!(
+            result.summary.contains("false"),
+            "summary must mention the command; got: {}",
+            result.summary
+        );
+        assert!(
+            !result.summary.contains("sh -c"),
+            "summary must not mention a shell wrapper; got: {}",
+            result.summary
+        );
+    }
+
+    #[test]
+    fn command_validator_passes_with_direct_true() {
+        let (_path, ws) = temp_workspace();
+
+        let v = CommandValidator::new(vec![spec("true", &[])], default_timeout());
+        let result = v.validate(&ws);
+
+        assert!(
+            result.passed,
+            "direct exec of 'true' must pass: {}",
+            result.summary
+        );
+    }
+
+    #[test]
+    fn command_spec_args_are_passed_without_shell_interpretation() {
+        let (path, ws) = temp_workspace();
+        // Create a file whose name contains a shell-special character.
+        // If the args were shell-expanded, "*.marker" might glob-expand or cause issues.
+        // With direct exec, "*.marker" is passed literally to 'test -f'.
+        std::fs::write(path.join("*.marker"), "").unwrap();
+
+        let v = CommandValidator::new(vec![spec("test", &["-f", "*.marker"])], default_timeout());
+        let result = v.validate(&ws);
+
+        assert!(
+            result.passed,
+            "literal filename with special char must be found via direct exec; got: {}",
+            result.summary
+        );
+
+        let _ = std::fs::remove_dir_all(&path);
+    }
+
+    // ── backward-compat shell translation test ────────────────────────────────
+
+    #[test]
+    fn shell_wrapped_command_spec_runs_correctly() {
+        let (_path, ws) = temp_workspace();
+
+        // This is how the backward-compat translation wraps raw YAML commands.
+        let v = CommandValidator::new(
+            vec![CommandSpec {
+                program: "sh".to_string(),
+                args: vec!["-c".to_string(), "true".to_string()],
+            }],
+            default_timeout(),
+        );
+        let result = v.validate(&ws);
+
+        assert!(
+            result.passed,
+            "sh -c true wrapped as CommandSpec must pass: {}",
+            result.summary
+        );
+    }
+
+    #[test]
+    fn shell_wrapped_failure_surfaces_correct_command_display() {
+        let (_path, ws) = temp_workspace();
+
+        let v = CommandValidator::new(
+            vec![CommandSpec {
+                program: "sh".to_string(),
+                args: vec!["-c".to_string(), "false".to_string()],
+            }],
+            default_timeout(),
+        );
+        let result = v.validate(&ws);
+
+        assert!(!result.passed, "sh -c false must fail");
+        assert!(
+            result.summary.contains("sh"),
+            "summary must mention the sh program; got: {}",
+            result.summary
         );
     }
 }

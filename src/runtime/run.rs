@@ -9,10 +9,11 @@ use std::time::Duration;
 
 static SEED_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-use crate::artifacts::{Artifact, ArtifactView};
+use crate::artifacts::{Artifact, ArtifactView, create_temporary_workspace, integrate};
 use crate::config::{ArtifactConfig, ForgeConfig, ValidationConfig};
 use crate::config::{ProjectConfig, ProjectKind};
 use crate::engine::run_machine_with_telemetry;
+use crate::language::registry::language_spec;
 use crate::machines::scheduler::state::SchedulerState;
 use crate::machines::scheduler::{RunRequest, SchedulerHandler, SchedulerMachine, SchedulerOutput};
 use crate::node_runner::DeliberatingNodeRunner;
@@ -23,7 +24,7 @@ use crate::runtime::checkpoint::node_counts;
 use crate::runtime::resume::find_resumable_run;
 use crate::runtime::{create_run, finalize_manifest};
 use crate::telemetry::{FileTelemetry, TelemetryEvent, TelemetryRecord, TelemetrySink};
-use crate::validation::{AlwaysPassValidator, CommandValidator, Validator};
+use crate::validation::{AlwaysPassValidator, CommandSpec, CommandValidator, Validator};
 
 /// Entry point for a single forge run driven by a [`ForgeConfig`].
 pub struct ForgeRuntime;
@@ -38,7 +39,8 @@ impl ForgeRuntime {
     /// 4. Drive the scheduler to completion.
     /// 5. Print a summary to stdout.
     pub fn run(config: ForgeConfig) -> Result<(), Box<dyn Error>> {
-        let artifact = load_or_create_artifact(&config.artifact)?;
+        let artifact =
+            load_or_create_artifact(&config.artifact, config.project.language.as_deref())?;
 
         let runs_root = PathBuf::from(&config.telemetry.directory);
         let run_info = create_run(
@@ -78,7 +80,10 @@ impl ForgeRuntime {
             .with_cheap_max_tokens(cheap_tokens)
             .with_strong_max_tokens(strong_tokens)
             .with_role_policy(role_policy);
-        let validator = make_validator(config.validation.as_ref());
+        let validator = make_validator(
+            config.project.language.as_deref(),
+            config.validation.as_ref(),
+        )?;
         let handler = SchedulerHandler::with_artifact(runner, artifact)
             .with_telemetry(Rc::clone(&sink))
             .with_validator(validator)
@@ -135,7 +140,8 @@ impl ForgeRuntime {
             .into_owned();
         eprintln!("[run] resumed {run_id}");
 
-        let artifact = load_or_create_artifact(&config.artifact)?;
+        let artifact =
+            load_or_create_artifact(&config.artifact, config.project.language.as_deref())?;
         let sink: Rc<dyn TelemetrySink> = Rc::new(FileTelemetry::new(run_dir.join("telemetry")));
 
         let graph = match &initial_state {
@@ -178,7 +184,10 @@ impl ForgeRuntime {
             .with_cheap_max_tokens(cheap_tokens)
             .with_strong_max_tokens(strong_tokens)
             .with_role_policy(role_policy);
-        let validator = make_validator(config.validation.as_ref());
+        let validator = make_validator(
+            config.project.language.as_deref(),
+            config.validation.as_ref(),
+        )?;
         let handler = SchedulerHandler::with_artifact(runner, artifact)
             .with_telemetry(Rc::clone(&sink))
             .with_validator(validator)
@@ -244,22 +253,64 @@ fn make_role_policy(project: &ProjectConfig) -> RolePolicy {
     }
 }
 
-fn make_validator(config: Option<&ValidationConfig>) -> Rc<dyn Validator> {
-    match config {
+fn make_validator(
+    language: Option<&str>,
+    validation_config: Option<&ValidationConfig>,
+) -> Result<Rc<dyn Validator>, Box<dyn Error>> {
+    if let Some(lang) = language {
+        let spec = language_spec(lang).ok_or_else(|| format!("unknown language: '{lang}'"))?;
+        let timeout = Duration::from_secs(120);
+        return Ok(Rc::new(CommandValidator::new(
+            spec.validation.commands,
+            timeout,
+        )));
+    }
+
+    match validation_config {
         Some(v) if !v.commands.is_empty() => {
             let timeout = Duration::from_secs(v.timeout_seconds.unwrap_or(120));
-            Rc::new(CommandValidator::new(v.commands.clone(), timeout))
+            let specs = v
+                .commands
+                .iter()
+                .map(|cmd| CommandSpec {
+                    program: "sh".to_string(),
+                    args: vec!["-c".to_string(), cmd.clone()],
+                })
+                .collect();
+            Ok(Rc::new(CommandValidator::new(specs, timeout)))
         }
-        _ => Rc::new(AlwaysPassValidator),
+        _ => Ok(Rc::new(AlwaysPassValidator)),
     }
 }
 
 /// Load the artifact at `config.repo_path`, creating a bare repo if it does not exist.
-pub fn load_or_create_artifact(config: &ArtifactConfig) -> Result<Artifact, Box<dyn Error>> {
+///
+/// When `language` is `Some` and the repo is newly created, the language's
+/// init commands are executed in a temporary workspace and committed as the
+/// first real artifact revision.
+pub fn load_or_create_artifact(
+    config: &ArtifactConfig,
+    language: Option<&str>,
+) -> Result<Artifact, Box<dyn Error>> {
     let repo_path = PathBuf::from(&config.repo_path);
 
     if !repo_path.exists() {
         create_bare_repo(&repo_path, &config.branch)?;
+
+        if let Some(lang) = language {
+            let spec =
+                language_spec(lang).expect("language already validated by ForgeConfig::from_file");
+            if !spec.init.commands.is_empty() {
+                let repo_abs = repo_path.canonicalize()?;
+                let seed_sha = git_rev_parse_branch(&repo_abs, &config.branch)?;
+                let seed_artifact = Artifact {
+                    repo_path: repo_abs,
+                    branch: config.branch.clone(),
+                    commit_sha: seed_sha,
+                };
+                run_language_init(&seed_artifact, &spec.init.commands)?;
+            }
+        }
     }
 
     let repo_path = repo_path.canonicalize()?;
@@ -270,6 +321,22 @@ pub fn load_or_create_artifact(config: &ArtifactConfig) -> Result<Artifact, Box<
         branch: config.branch.clone(),
         commit_sha,
     })
+}
+
+/// Run language init commands in a temporary workspace and commit the result.
+fn run_language_init(artifact: &Artifact, commands: &[CommandSpec]) -> Result<(), Box<dyn Error>> {
+    let workspace = create_temporary_workspace(artifact)?;
+
+    let timeout = Duration::from_secs(300);
+    let validator = CommandValidator::new(commands.to_vec(), timeout);
+    let result = validator.validate(&workspace);
+
+    if !result.passed {
+        return Err(format!("language initialization failed: {}", result.summary).into());
+    }
+
+    integrate(artifact, &workspace)?;
+    Ok(())
 }
 
 fn create_bare_repo(path: &Path, branch: &str) -> Result<(), Box<dyn Error>> {
@@ -409,6 +476,7 @@ mod tests {
     fn runtime_selects_coding_adapter() {
         let policy = make_role_policy(&ProjectConfig {
             kind: ProjectKind::Coding,
+            language: None,
         });
         assert!(
             policy.planner_producer_system.contains("software planning"),
@@ -428,6 +496,7 @@ mod tests {
     fn runtime_default_adapter_preserves_behavior() {
         let policy = make_role_policy(&ProjectConfig {
             kind: ProjectKind::Default,
+            language: None,
         });
         let expected = crate::project::DefaultProjectAdapter.role_policy();
         assert_eq!(
@@ -540,7 +609,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&path);
 
         let config = artifact_config(&path);
-        let result = load_or_create_artifact(&config);
+        let result = load_or_create_artifact(&config, None);
 
         assert!(result.is_ok(), "expected artifact creation to succeed");
         assert!(path.exists(), "bare repo directory must be created");
@@ -554,7 +623,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&path);
 
         let config = artifact_config(&path);
-        let artifact = load_or_create_artifact(&config).unwrap();
+        let artifact = load_or_create_artifact(&config, None).unwrap();
 
         assert_eq!(artifact.branch, "main");
 
@@ -567,8 +636,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&path);
 
         let config = artifact_config(&path);
-        let first = load_or_create_artifact(&config).unwrap();
-        let second = load_or_create_artifact(&config).unwrap();
+        let first = load_or_create_artifact(&config, None).unwrap();
+        let second = load_or_create_artifact(&config, None).unwrap();
 
         assert_eq!(
             first.commit_sha, second.commit_sha,
@@ -591,7 +660,7 @@ mod tests {
             branch: "main".to_string(),
         };
 
-        let artifact = load_or_create_artifact(&config).unwrap();
+        let artifact = load_or_create_artifact(&config, None).unwrap();
 
         assert!(
             artifact.repo_path.is_absolute(),
@@ -714,7 +783,7 @@ mod tests {
             branch: "main".to_string(),
         };
 
-        let artifact = load_or_create_artifact(&config).unwrap();
+        let artifact = load_or_create_artifact(&config, None).unwrap();
         assert_eq!(
             artifact.commit_sha, sha_main,
             "must resolve configured branch (main), not bare repo HEAD (other)"
@@ -728,7 +797,7 @@ mod tests {
         use crate::artifacts::Workspace;
 
         let ws = Workspace::at_path(std::env::temp_dir(), "abc".to_string());
-        let validator = make_validator(None);
+        let validator = make_validator(None, None).unwrap();
         let result = validator.validate(&ws);
         assert!(
             result.passed,
@@ -747,11 +816,53 @@ mod tests {
             commands: vec!["false".to_string()],
             timeout_seconds: None,
         };
-        let validator = make_validator(Some(&config));
+        let validator = make_validator(None, Some(&config)).unwrap();
         let result = validator.validate(&ws);
         assert!(
             !result.passed,
             "configured command validator must run commands and fail on non-zero exit"
+        );
+    }
+
+    #[test]
+    fn runtime_language_validator_uses_language_spec_commands() {
+        use crate::artifacts::Workspace;
+
+        let ws = Workspace::at_path(std::env::temp_dir(), "abc".to_string());
+        // Rust language spec provides validation commands — they won't pass
+        // in a non-Rust workspace, but we can verify a CommandValidator is returned
+        // by checking it is not the AlwaysPassValidator (which always passes).
+        //
+        // We use "rust" which provides cargo commands; in a bare temp dir they will
+        // fail, confirming a real CommandValidator was wired up.
+        let validator = make_validator(Some("rust"), None).unwrap();
+        let result = validator.validate(&ws);
+        // cargo fmt --check, cargo check, cargo test will all fail in a temp dir
+        assert!(
+            !result.passed,
+            "rust language validator must run cargo commands that fail in a temp dir; got: {}",
+            result.summary
+        );
+    }
+
+    #[test]
+    fn runtime_backward_compat_validation_yaml_translates_to_sh_wrapper() {
+        use crate::artifacts::Workspace;
+        use crate::config::ValidationConfig;
+
+        let ws = Workspace::at_path(std::env::temp_dir(), "abc".to_string());
+        // Raw YAML commands are wrapped in sh -c for backward compatibility.
+        // A passing shell command confirms the translation works.
+        let config = ValidationConfig {
+            commands: vec!["true".to_string()],
+            timeout_seconds: None,
+        };
+        let validator = make_validator(None, Some(&config)).unwrap();
+        let result = validator.validate(&ws);
+        assert!(
+            result.passed,
+            "sh-wrapped 'true' must pass via backward-compat translation; got: {}",
+            result.summary
         );
     }
 
@@ -765,14 +876,14 @@ mod tests {
             repo_path: base.join("artifact.git").to_str().unwrap().to_string(),
             branch: "other".to_string(),
         };
-        load_or_create_artifact(&config_other).unwrap();
+        load_or_create_artifact(&config_other, None).unwrap();
 
         // Now try to load with branch "main", which does not exist.
         let config_main = ArtifactConfig {
             repo_path: base.join("artifact.git").to_str().unwrap().to_string(),
             branch: "main".to_string(),
         };
-        let result = load_or_create_artifact(&config_main);
+        let result = load_or_create_artifact(&config_main, None);
         assert!(
             result.is_err(),
             "must fail when configured branch is absent"

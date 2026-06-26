@@ -1,0 +1,14 @@
+prompt_guidance: |
+  Write idiomatic Rust.
+init:
+  commands:
+    - program: cargo
+      args: ["init", "--vcs", "none", "."]
+validation:
+  commands:
+    - program: cargo
+      args: ["fmt", "--check"]
+    - program: cargo
+      args: ["check"]
+    - program: cargo
+      args: ["test"]

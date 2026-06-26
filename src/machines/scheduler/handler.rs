@@ -1595,7 +1595,13 @@ mod tests {
             content: "hello\n".to_string(),
         };
         // Validator times out immediately — sleep 5 with a 1-second budget.
-        let validator = CommandValidator::new(vec!["sleep 5".to_string()], Duration::from_secs(1));
+        let validator = CommandValidator::new(
+            vec![crate::validation::CommandSpec {
+                program: "sleep".to_string(),
+                args: vec!["5".to_string()],
+            }],
+            Duration::from_secs(1),
+        );
         let h =
             SchedulerHandler::with_artifact(runner, artifact).with_validator(Rc::new(validator));
 

@@ -6,7 +6,7 @@ use crate::config::ForgeConfig;
 
 /// Print the artifact commit history (newest first) from the config's artifact repo.
 pub fn run_history(config: ForgeConfig) -> Result<(), Box<dyn Error>> {
-    let artifact = super::load_or_create_artifact(&config.artifact)?;
+    let artifact = super::load_or_create_artifact(&config.artifact, None)?;
     let log = artifact_log(&artifact)?;
     print!("{log}");
     Ok(())
@@ -115,7 +115,7 @@ mod tests {
             branch: "main".to_string(),
         };
 
-        let artifact = crate::runtime::load_or_create_artifact(&config).unwrap();
+        let artifact = crate::runtime::load_or_create_artifact(&config, None).unwrap();
         let log = artifact_log(&artifact).unwrap();
 
         assert!(

@@ -7,4 +7,6 @@
 
 mod validator;
 
-pub use validator::{AlwaysPassValidator, CommandValidator, ValidationResult, Validator};
+pub use validator::{
+    AlwaysPassValidator, CommandSpec, CommandValidator, ValidationResult, Validator,
+};

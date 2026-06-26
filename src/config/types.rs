@@ -21,6 +21,12 @@ pub struct ProjectConfig {
     /// Selects which project adapter to use. Defaults to [`ProjectKind::Default`].
     #[serde(default)]
     pub kind: ProjectKind,
+    /// Language identifier used to load init and validation specs.
+    ///
+    /// When set, the named language spec provides init and validation commands.
+    /// Mutually exclusive with an explicit `validation` block.
+    #[serde(default)]
+    pub language: Option<String>,
 }
 
 /// Top-level configuration for a forge run.
@@ -101,6 +107,10 @@ impl ForgeConfig {
     /// Relative paths in `artifact.repo_path` and `telemetry.directory` are
     /// resolved against the directory containing the config file, not the
     /// process working directory.
+    ///
+    /// Returns an error if:
+    /// - Both `project.language` and `validation` are specified (mutually exclusive).
+    /// - `project.language` names an unknown language.
     pub fn from_file(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
         let config_path = Path::new(path);
         let content = std::fs::read_to_string(config_path)?;
@@ -112,6 +122,20 @@ impl ForgeConfig {
         if let Some(dir) = config_dir {
             config.artifact.repo_path = resolve_relative(&config.artifact.repo_path, dir);
             config.telemetry.directory = resolve_relative(&config.telemetry.directory, dir);
+        }
+
+        if config.project.language.is_some() && config.validation.is_some() {
+            return Err(
+                "project.language and validation.commands are mutually exclusive; \
+                 remove one or the other"
+                    .into(),
+            );
+        }
+
+        if let Some(lang) = &config.project.language
+            && crate::language::registry::language_spec(lang).is_none()
+        {
+            return Err(format!("unknown language: '{lang}'").into());
         }
 
         Ok(config)
@@ -440,6 +464,105 @@ project:
             result.is_ok(),
             "existing config without project: must still parse; got: {:?}",
             result.err()
+        );
+    }
+
+    // ── language config tests ────────────────────────────────────────────────
+
+    const RUST_LANGUAGE_YAML: &str = r#"
+objective: "implement a CLI tool"
+artifact:
+  repo_path: ".forge/artifacts/main.git"
+  branch: "main"
+provider:
+  base_url: "http://localhost:8080"
+  n_predict: 512
+telemetry:
+  directory: "runs"
+project:
+  language: rust
+"#;
+
+    #[test]
+    fn config_parses_project_language_rust() {
+        let tmp = TempYaml::new(RUST_LANGUAGE_YAML);
+        let config = ForgeConfig::from_file(tmp.path()).unwrap();
+        assert_eq!(
+            config.project.language.as_deref(),
+            Some("rust"),
+            "project.language: rust must parse as Some(\"rust\")"
+        );
+    }
+
+    #[test]
+    fn config_language_defaults_to_none() {
+        let tmp = TempYaml::new(EXAMPLE_YAML);
+        let config = ForgeConfig::from_file(tmp.path()).unwrap();
+        assert!(
+            config.project.language.is_none(),
+            "absent project.language must default to None"
+        );
+    }
+
+    const UNKNOWN_LANGUAGE_YAML: &str = r#"
+objective: "test"
+artifact:
+  repo_path: ".forge/artifacts/main.git"
+  branch: "main"
+provider:
+  base_url: "http://localhost:8080"
+  n_predict: 512
+telemetry:
+  directory: "runs"
+project:
+  language: cobol
+"#;
+
+    #[test]
+    fn unknown_language_fails_loudly() {
+        let tmp = TempYaml::new(UNKNOWN_LANGUAGE_YAML);
+        let result = ForgeConfig::from_file(tmp.path());
+        assert!(result.is_err(), "unknown language must be a hard error");
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("unknown language"),
+            "error must mention unknown language; got: {msg}"
+        );
+        assert!(
+            msg.contains("cobol"),
+            "error must name the unknown language; got: {msg}"
+        );
+    }
+
+    const LANGUAGE_AND_VALIDATION_YAML: &str = r#"
+objective: "test"
+artifact:
+  repo_path: ".forge/artifacts/main.git"
+  branch: "main"
+provider:
+  base_url: "http://localhost:8080"
+  n_predict: 512
+telemetry:
+  directory: "runs"
+project:
+  language: rust
+validation:
+  commands:
+    - cargo test
+"#;
+
+    #[test]
+    fn language_and_validation_commands_are_mutually_exclusive() {
+        let tmp = TempYaml::new(LANGUAGE_AND_VALIDATION_YAML);
+        let result = ForgeConfig::from_file(tmp.path());
+        assert!(
+            result.is_err(),
+            "specifying both project.language and validation must be an error"
+        );
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("mutually exclusive"),
+            "error must mention mutual exclusion; got: {msg}"
         );
     }
 }

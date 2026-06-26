@@ -55,7 +55,7 @@ pub fn run_reset(config: ForgeConfig) -> Result<(), Box<dyn Error>> {
         std::fs::remove_dir_all(&repo_path)?;
     }
 
-    let artifact = super::load_or_create_artifact(&config.artifact)?;
+    let artifact = super::load_or_create_artifact(&config.artifact, None)?;
 
     let short_sha = &artifact.commit_sha[..artifact.commit_sha.len().min(7)];
     println!("Reset complete. Initial commit: {short_sha}");
@@ -178,7 +178,7 @@ mod tests {
             branch: "main".to_string(),
         };
 
-        let artifact = crate::runtime::load_or_create_artifact(&artifact_config).unwrap();
+        let artifact = crate::runtime::load_or_create_artifact(&artifact_config, None).unwrap();
 
         let workspace_path = base.join("workspace");
         let mut workspace = create_workspace(&artifact, workspace_path);
@@ -222,7 +222,7 @@ mod tests {
             branch: "main".to_string(),
         };
 
-        let artifact = crate::runtime::load_or_create_artifact(&artifact_config).unwrap();
+        let artifact = crate::runtime::load_or_create_artifact(&artifact_config, None).unwrap();
 
         let config = make_forge_config(&repo_path, &telemetry);
         run_reset(config).unwrap();
@@ -233,7 +233,7 @@ mod tests {
             "only Initial after reset"
         );
 
-        let artifact = crate::runtime::load_or_create_artifact(&artifact_config).unwrap();
+        let artifact = crate::runtime::load_or_create_artifact(&artifact_config, None).unwrap();
         let workspace_path = base.join("workspace-post-reset");
         let mut workspace = create_workspace(&artifact, workspace_path);
         ArtifactUpdate {

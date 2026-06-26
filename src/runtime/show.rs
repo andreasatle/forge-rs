@@ -5,7 +5,7 @@ use crate::config::ForgeConfig;
 
 /// Display the current artifact contents from the config's artifact repo.
 pub fn run_show(config: ForgeConfig) -> Result<(), Box<dyn Error>> {
-    let artifact = super::load_or_create_artifact(&config.artifact)?;
+    let artifact = super::load_or_create_artifact(&config.artifact, None)?;
     let output = artifact_contents(&artifact)?;
     print!("{output}");
     Ok(())
@@ -170,7 +170,7 @@ mod tests {
             branch: "main".to_string(),
         };
 
-        let artifact = crate::runtime::load_or_create_artifact(&config).unwrap();
+        let artifact = crate::runtime::load_or_create_artifact(&config, None).unwrap();
 
         let workspace_path = base.join("workspace");
         let mut workspace = create_workspace(&artifact, workspace_path);
