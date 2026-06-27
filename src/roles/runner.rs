@@ -6,7 +6,7 @@
 
 use serde::Deserialize;
 
-use crate::artifacts::{ArtifactRead, ArtifactUpdate};
+use crate::artifacts::{ArtifactError, ArtifactRead, ArtifactUpdate};
 #[cfg(doc)]
 use crate::artifacts::{ArtifactView, StagedArtifactView};
 use crate::machines::deliberation::event::RoleResult;
@@ -139,10 +139,36 @@ const MAX_TOOL_STEPS: usize = 5;
 /// decision pressure activates and further tool calls are prohibited.
 const MAX_READ_ONLY_TOOL_STEPS: usize = 2;
 
+/// Maximum text bytes included per target-state entry in the prompt view.
+///
+/// This is intentionally separate from tool access. Tools retain their own
+/// read/write limits; the target-state view is just prompt context.
+const MAX_TARGET_STATE_TEXT_BYTES: usize = 16 * 1024;
+
 /// Minimum number of non-whitespace characters required in accepted content or
 /// a rejection reason. Responses shorter than this are degenerate (e.g. `{`,
 /// `ok`) and are treated as protocol failures so the retry loop can recover.
 const MIN_CONTENT_LENGTH: usize = 8;
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+struct TargetStateView {
+    entries: Vec<TargetStateEntry>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+struct TargetStateEntry {
+    target: String,
+    exists: bool,
+    representation: TargetStateRepresentation,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+enum TargetStateRepresentation {
+    Text { content: String },
+    Absent,
+    TooLarge { bytes: usize, limit: usize },
+    Error { summary: String },
+}
 
 /// Encapsulates all mutable protocol counters and pressure flags for one role invocation.
 ///
@@ -319,6 +345,10 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
         let has_tools = request.tool_context.is_some();
 
         let policy = file_tool_policy_for_request(&request);
+        let target_state = request
+            .tool_context
+            .as_ref()
+            .and_then(|ctx| build_target_state_view(&*ctx.artifact_view, &request.target_files));
 
         let system = match (&request.node_kind, &request.role) {
             (NodeKind::Plan, DeliberationRole::Producer) => &self.policy.planner_producer_system,
@@ -336,6 +366,7 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
             request.producer_content.as_deref(),
             request.critic_content.as_deref(),
             &request.feedback,
+            target_state.as_ref(),
         );
         let base_prompt = if has_tools {
             format!("{core_prompt}\n\n{}", render_tool_section(&policy))
@@ -810,6 +841,74 @@ fn file_tool_policy_for_request(request: &RoleRequest) -> FileToolPolicy {
     policy
 }
 
+fn build_target_state_view(
+    artifact_view: &dyn ArtifactRead,
+    target_files: &[String],
+) -> Option<TargetStateView> {
+    if target_files.is_empty() {
+        return None;
+    }
+
+    let listed_paths = artifact_view.list_files().ok();
+    let entries = target_files
+        .iter()
+        .map(|target| build_target_state_entry(artifact_view, listed_paths.as_deref(), target))
+        .collect();
+    Some(TargetStateView { entries })
+}
+
+fn build_target_state_entry(
+    artifact_view: &dyn ArtifactRead,
+    listed_paths: Option<&[std::path::PathBuf]>,
+    target: &str,
+) -> TargetStateEntry {
+    match artifact_view.read_file(target) {
+        Ok(content) if content.len() <= MAX_TARGET_STATE_TEXT_BYTES => TargetStateEntry {
+            target: target.to_string(),
+            exists: true,
+            representation: TargetStateRepresentation::Text { content },
+        },
+        Ok(content) => TargetStateEntry {
+            target: target.to_string(),
+            exists: true,
+            representation: TargetStateRepresentation::TooLarge {
+                bytes: content.len(),
+                limit: MAX_TARGET_STATE_TEXT_BYTES,
+            },
+        },
+        Err(ArtifactError::FileNotFound) => TargetStateEntry {
+            target: target.to_string(),
+            exists: false,
+            representation: TargetStateRepresentation::Absent,
+        },
+        Err(error) => {
+            let exists = listed_paths
+                .map(|paths| {
+                    paths
+                        .iter()
+                        .any(|path| path.to_string_lossy().as_ref() == target)
+                })
+                .unwrap_or(false);
+            TargetStateEntry {
+                target: target.to_string(),
+                exists,
+                representation: TargetStateRepresentation::Error {
+                    summary: safe_target_state_error(error),
+                },
+            }
+        }
+    }
+}
+
+fn safe_target_state_error(error: ArtifactError) -> String {
+    let message = error.to_string();
+    if message.contains("utf-8") || message.contains("utf8") {
+        "binary or non-UTF-8 file cannot be represented as text".to_string()
+    } else {
+        message
+    }
+}
+
 fn render_objective_for_prompt(objective: &str, target_files: &[String]) -> String {
     if target_files.is_empty() {
         objective.to_string()
@@ -1086,10 +1185,14 @@ fn render_role_prompt(
     producer_content: Option<&str>,
     critic_content: Option<&str>,
     feedback: &[RevisionFeedback],
+    target_state: Option<&TargetStateView>,
 ) -> String {
     let mut parts = Vec::new();
     parts.push(format!("Objective: {objective}"));
     parts.push(format!("Role: {role:?}"));
+    if let Some(view) = target_state {
+        parts.push(render_target_state_view(view));
+    }
     if let Some(pc) = producer_content {
         parts.push(format!("Producer content: {pc}"));
     }
@@ -1102,6 +1205,51 @@ fn render_role_prompt(
     }
     parts.push(system.to_string());
     parts.join("\n")
+}
+
+fn render_target_state_view(view: &TargetStateView) -> String {
+    let mut lines = vec![
+        "Target state view (built from structured target_files):".to_string(),
+        "This view is prompt context only; file tools remain the source of operational access."
+            .to_string(),
+    ];
+    for entry in &view.entries {
+        lines.push(format!("- target: {}", entry.target));
+        lines.push(format!("  exists: {}", entry.exists));
+        match &entry.representation {
+            TargetStateRepresentation::Text { content } => {
+                lines.push(format!(
+                    "  representation: file text ({} bytes)",
+                    content.len()
+                ));
+                lines.push("  content:".to_string());
+                lines.push(indent_target_state_content(content));
+            }
+            TargetStateRepresentation::Absent => {
+                lines.push("  representation: absent".to_string());
+            }
+            TargetStateRepresentation::TooLarge { bytes, limit } => {
+                lines.push(format!(
+                    "  representation: too large to include safely ({bytes} bytes; limit {limit} bytes)"
+                ));
+            }
+            TargetStateRepresentation::Error { summary } => {
+                lines.push(format!("  representation: error: {summary}"));
+            }
+        }
+    }
+    lines.join("\n")
+}
+
+fn indent_target_state_content(content: &str) -> String {
+    if content.is_empty() {
+        return "    ".to_string();
+    }
+    content
+        .lines()
+        .map(|line| format!("    {line}"))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Internal serde type for JSON role responses from the provider.
@@ -1977,6 +2125,7 @@ mod tests {
             None,
             None,
             &feedback,
+            None,
         );
         assert!(
             prompt.contains("too vague"),
@@ -2250,14 +2399,24 @@ mod tests {
     }
 
     fn make_view(label: &str) -> (TempDir, ArtifactView) {
+        make_view_with_entries(label, &[("hello.txt", b"hello world\n".as_slice())])
+    }
+
+    fn make_view_with_entries(label: &str, entries: &[(&str, &[u8])]) -> (TempDir, ArtifactView) {
         let temp = TempDir::new(label);
         let seed = temp.0.join("seed");
         std::fs::create_dir_all(&seed).unwrap();
         git(&seed, &["init", "--quiet", "--initial-branch=main"]);
         git(&seed, &["config", "user.name", "Test"]);
         git(&seed, &["config", "user.email", "test@example.invalid"]);
-        std::fs::write(seed.join("hello.txt"), "hello world\n").unwrap();
-        git(&seed, &["add", "hello.txt"]);
+        for (path, content) in entries {
+            let full_path = seed.join(path);
+            if let Some(parent) = full_path.parent() {
+                std::fs::create_dir_all(parent).unwrap();
+            }
+            std::fs::write(full_path, content).unwrap();
+        }
+        git(&seed, &["add", "."]);
         git(&seed, &["commit", "--quiet", "-m", "init"]);
         let bare = temp.0.join("bare.git");
         Command::new("git")
@@ -2274,6 +2433,177 @@ mod tests {
                 commit_sha: sha,
             },
         )
+    }
+
+    fn producer_prompt_for_targets(
+        view: ArtifactView,
+        objective: &str,
+        target_files: Vec<String>,
+    ) -> String {
+        let provider =
+            ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"completed safely"}"#]);
+        let runner = ProviderRoleRunner::new(&provider);
+        runner.run_role(
+            RoleRequest {
+                role: DeliberationRole::Producer,
+                objective: objective.to_string(),
+                target_files,
+                producer_content: None,
+                critic_content: None,
+                feedback: vec![],
+                node_kind: NodeKind::Work,
+                tool_context: Some(RoleToolContext {
+                    artifact_view: Box::new(view),
+                }),
+            },
+            &crate::telemetry::NoopTelemetry,
+        );
+        provider.requests.borrow()[0].prompt.clone()
+    }
+
+    fn target_state_section(prompt: &str) -> &str {
+        let start = prompt
+            .find("Target state view")
+            .expect("prompt must include a target-state view");
+        let end = prompt[start..]
+            .find("\nProducer returns")
+            .or_else(|| prompt[start..].find("\nCritic accepts"))
+            .or_else(|| prompt[start..].find("\nReferee accepts"))
+            .or_else(|| prompt[start..].find("\nAvailable file tools:"))
+            .map(|offset| start + offset)
+            .unwrap_or(prompt.len());
+        &prompt[start..end]
+    }
+
+    #[test]
+    fn existing_target_file_content_appears_in_producer_prompt() {
+        let (_temp, view) = make_view("target-state-existing");
+
+        let prompt =
+            producer_prompt_for_targets(view, "update the greeting", vec!["hello.txt".to_string()]);
+        let section = target_state_section(&prompt);
+
+        assert!(
+            section.contains("- target: hello.txt"),
+            "target state must name the structured target; got:\n{section}"
+        );
+        assert!(
+            section.contains("exists: true"),
+            "existing target must be marked exists:true; got:\n{section}"
+        );
+        assert!(
+            section.contains("hello world"),
+            "existing target text must appear in Producer prompt; got:\n{section}"
+        );
+    }
+
+    #[test]
+    fn missing_target_is_explicitly_marked_absent() {
+        let (_temp, view) = make_view("target-state-missing");
+
+        let prompt = producer_prompt_for_targets(
+            view,
+            "create the missing target",
+            vec!["missing.txt".to_string()],
+        );
+        let section = target_state_section(&prompt);
+
+        assert!(
+            section.contains("- target: missing.txt"),
+            "target state must name the missing target; got:\n{section}"
+        );
+        assert!(
+            section.contains("exists: false"),
+            "missing target must be marked exists:false; got:\n{section}"
+        );
+        assert!(
+            section.contains("representation: absent"),
+            "missing target must use absent representation; got:\n{section}"
+        );
+    }
+
+    #[test]
+    fn target_state_uses_structured_target_files_not_prompt_text() {
+        let (_temp, view) = make_view_with_entries(
+            "target-state-structured",
+            &[
+                ("structured.txt", b"structured content\n".as_slice()),
+                ("mentioned-only.txt", b"prompt-only content\n".as_slice()),
+            ],
+        );
+
+        let prompt = producer_prompt_for_targets(
+            view,
+            "Update mentioned-only.txt, but the structured target is authoritative.",
+            vec!["structured.txt".to_string()],
+        );
+        let section = target_state_section(&prompt);
+
+        assert!(
+            section.contains("- target: structured.txt"),
+            "target state must include structured target; got:\n{section}"
+        );
+        assert!(
+            section.contains("structured content"),
+            "target state must include structured target content; got:\n{section}"
+        );
+        assert!(
+            !section.contains("mentioned-only.txt") && !section.contains("prompt-only content"),
+            "target state must not be inferred from objective wording; got:\n{section}"
+        );
+    }
+
+    #[test]
+    fn prompt_wording_changes_do_not_affect_target_state() {
+        let (_temp, view) = make_view("target-state-wording");
+        let target_files = vec!["hello.txt".to_string()];
+
+        let first = producer_prompt_for_targets(
+            view.clone(),
+            "Please edit hello.txt with concise wording.",
+            target_files.clone(),
+        );
+        let second = producer_prompt_for_targets(
+            view,
+            "Completely different phrasing that still uses the same target.",
+            target_files,
+        );
+
+        assert_eq!(
+            target_state_section(&first),
+            target_state_section(&second),
+            "target state must depend on structured target_files, not objective wording"
+        );
+    }
+
+    #[test]
+    fn large_and_unreadable_targets_are_represented_safely() {
+        let large = vec![b'x'; MAX_TARGET_STATE_TEXT_BYTES + 1];
+        let binary = [0xff, 0xfe, 0xfd, b'\n'];
+        let (_temp, view) = make_view_with_entries(
+            "target-state-safe-errors",
+            &[
+                ("large.txt", large.as_slice()),
+                ("binary.dat", binary.as_slice()),
+            ],
+        );
+
+        let prompt = producer_prompt_for_targets(
+            view,
+            "inspect target state safely",
+            vec!["large.txt".to_string(), "binary.dat".to_string()],
+        );
+        let section = target_state_section(&prompt);
+
+        assert!(
+            section.contains("- target: large.txt") && section.contains("too large"),
+            "large target must be summarized without full content; got:\n{section}"
+        );
+        assert!(
+            section.contains("- target: binary.dat")
+                && section.contains("binary or non-UTF-8 file cannot be represented as text"),
+            "unreadable/binary target must be represented as a safe error; got:\n{section}"
+        );
     }
 
     fn dummy_view() -> ArtifactView {
@@ -3444,7 +3774,8 @@ mod tests {
                 Some("looks good"),
             ),
         ] {
-            let prompt = render_role_prompt(system, &role, "write a haiku about Rust", pc, cc, &[]);
+            let prompt =
+                render_role_prompt(system, &role, "write a haiku about Rust", pc, cc, &[], None);
             no_dot(&format!("{role:?} role prompt"), &prompt);
         }
 
@@ -3468,6 +3799,7 @@ mod tests {
             None,
             None,
             &[],
+            None,
         );
         let retry = render_retry_prompt(&base, "no JSON object found in role response");
         no_dot("retry prompt", &retry);
@@ -3530,7 +3862,7 @@ mod tests {
                 Some("looks good"),
             ),
         ] {
-            let prompt = render_role_prompt(system, &role, "test objective", pc, cc, &[]);
+            let prompt = render_role_prompt(system, &role, "test objective", pc, cc, &[], None);
             assert!(
                 !prompt.contains("\"content\":\"...\""),
                 "{role:?} prompt must not use '...' for accepted content; got:\n{prompt}"
@@ -3548,6 +3880,7 @@ mod tests {
             None,
             None,
             &[],
+            None,
         );
         let retry = render_retry_prompt(&base, "parse error");
         assert!(
@@ -3572,6 +3905,7 @@ mod tests {
             None,
             None,
             &[],
+            None,
         );
         assert!(
             base.contains("Do not copy example values"),
@@ -3802,6 +4136,7 @@ mod tests {
             None,
             None,
             &[],
+            None,
         );
         assert!(
             prompt.contains("\"status\""),
@@ -3842,6 +4177,7 @@ mod tests {
             None,
             None,
             &[],
+            None,
         );
         assert!(
             prompt.contains("PLANNER_MARKER_XYZ"),
@@ -3866,6 +4202,7 @@ mod tests {
             None,
             None,
             &[],
+            None,
         );
         assert!(
             prompt.contains("WORKER_MARKER_XYZ"),
@@ -3886,6 +4223,7 @@ mod tests {
             Some("producer draft"),
             None,
             &[],
+            None,
         );
         assert!(
             prompt.contains("CRITIC_MARKER_XYZ"),
@@ -3906,6 +4244,7 @@ mod tests {
             Some("producer draft"),
             Some("critic review"),
             &[],
+            None,
         );
         assert!(
             prompt.contains("REFEREE_MARKER_XYZ"),
@@ -3922,8 +4261,15 @@ mod tests {
             ("critic", policy.worker_critic_system.as_str()),
             ("referee", policy.worker_referee_system.as_str()),
         ] {
-            let prompt =
-                render_role_prompt(system, &DeliberationRole::Producer, "test", None, None, &[]);
+            let prompt = render_role_prompt(
+                system,
+                &DeliberationRole::Producer,
+                "test",
+                None,
+                None,
+                &[],
+                None,
+            );
             assert!(
                 prompt.contains("Return exactly one JSON object"),
                 "{label} default policy must include JSON-only instruction; got:\n{prompt}"
@@ -3945,6 +4291,7 @@ mod tests {
             None,
             None,
             &[],
+            None,
         );
         assert!(
             planner_prompt.contains("Return exactly one JSON object"),
