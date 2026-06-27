@@ -142,6 +142,158 @@ const MAX_READ_ONLY_TOOL_STEPS: usize = 2;
 /// `ok`) and are treated as protocol failures so the retry loop can recover.
 const MIN_CONTENT_LENGTH: usize = 8;
 
+/// Encapsulates all mutable protocol counters and pressure flags for one role invocation.
+///
+/// The runner initialises one instance per `run_role` call and delegates every
+/// state mutation to methods on this struct instead of manipulating the variables
+/// directly. This is a pure data-extraction refactor to prepare for a future
+/// explicit protocol state machine.
+struct ProtocolState {
+    /// Current protocol attempt number (1-based; starts at 1).
+    protocol_attempt: usize,
+    /// Total tool steps executed so far in this invocation.
+    tool_steps: usize,
+    /// Read-only tool steps (Critic/Referee only; drives decision pressure).
+    read_only_tool_steps: usize,
+    /// True once decision pressure has been activated.
+    decision_pressure_active: bool,
+    /// True when any pressure mode (completion, decision, or repeated-observation
+    /// coercion) is active; gates further tool calls and selects prompt style.
+    final_response_only: bool,
+    /// `(tool, observation)` fingerprints seen in this invocation.
+    seen_tool_fingerprints: std::collections::HashSet<String>,
+    /// True once repeated-observation coercion has been activated.
+    repeated_observation_coercion_active: bool,
+    /// True once a `read_file` call has returned `FileContents`.
+    read_file_executed: bool,
+    /// Number of `read_file` calls attempted via the executor (failed or successful).
+    read_file_attempted: usize,
+    /// Whether this invocation is Work+Producer (eligible for completion pressure).
+    is_work_producer: bool,
+    /// Whether this invocation is Critic or Referee (eligible for decision pressure).
+    is_read_only_reviewer: bool,
+}
+
+impl ProtocolState {
+    fn new(is_work_producer: bool, is_read_only_reviewer: bool) -> Self {
+        Self {
+            protocol_attempt: 1,
+            tool_steps: 0,
+            read_only_tool_steps: 0,
+            decision_pressure_active: false,
+            final_response_only: false,
+            seen_tool_fingerprints: std::collections::HashSet::new(),
+            repeated_observation_coercion_active: false,
+            read_file_executed: false,
+            read_file_attempted: 0,
+            is_work_producer,
+            is_read_only_reviewer,
+        }
+    }
+
+    /// Returns `true` when tool calls are currently permitted (not in any pressure mode).
+    fn allow_tool_call(&self) -> bool {
+        !self.final_response_only
+    }
+
+    /// Returns `true` when another provider call (protocol retry) is permitted.
+    fn allow_model_call(&self) -> bool {
+        self.protocol_attempt <= MAX_PROTOCOL_RETRIES
+    }
+
+    /// Records the start of a tool call; increments the absolute tool-step counter.
+    fn record_tool_call(&mut self) {
+        self.tool_steps += 1;
+    }
+
+    /// Records a `read_file` attempt via the executor.
+    ///
+    /// Must only be called from inside the `Some(exec)` branch so that the count
+    /// matches the original invariant: `read_file_attempted` only counts
+    /// executor-backed calls.
+    fn record_read_file_attempt(&mut self) {
+        self.read_file_attempted += 1;
+    }
+
+    /// Returns `true` when the absolute tool-step limit has been reached.
+    fn tool_loop_limit_reached(&self) -> bool {
+        self.tool_steps > MAX_TOOL_STEPS
+    }
+
+    /// Records the result of a completed tool call and updates all pressure flags.
+    ///
+    /// `fingerprint` is `"{tool_name}\n{observation}"`. `mutation_recorded` is
+    /// `true` when the tool produced `FileToolResponse::UpdateRecorded`.
+    /// `read_file_succeeded` is `true` when a `read_file` returned `FileContents`.
+    ///
+    /// Also resets `protocol_attempt` to 1 since a successful tool step restarts
+    /// the protocol-retry counter for the next model call.
+    fn record_tool_result(
+        &mut self,
+        fingerprint: String,
+        mutation_recorded: bool,
+        read_file_succeeded: bool,
+    ) {
+        if read_file_succeeded {
+            self.read_file_executed = true;
+        }
+        if self.is_work_producer && mutation_recorded {
+            self.enter_completion_pressure();
+        }
+        if self.is_read_only_reviewer {
+            self.read_only_tool_steps += 1;
+            if self.read_only_tool_steps >= MAX_READ_ONLY_TOOL_STEPS {
+                self.enter_decision_pressure();
+            }
+        }
+        if !self.seen_tool_fingerprints.insert(fingerprint) && !self.final_response_only {
+            self.repeated_observation_coercion_active = true;
+            self.final_response_only = true;
+        }
+        self.protocol_attempt = 1;
+    }
+
+    /// Activates completion pressure: Work+Producer has recorded a successful mutation.
+    fn enter_completion_pressure(&mut self) {
+        self.final_response_only = true;
+    }
+
+    /// Activates decision pressure: Critic/Referee has exhausted the read-only tool budget.
+    fn enter_decision_pressure(&mut self) {
+        self.final_response_only = true;
+        self.decision_pressure_active = true;
+    }
+
+    /// Advances the protocol-attempt counter after a parse or validation failure.
+    fn record_protocol_failure(&mut self) {
+        self.protocol_attempt += 1;
+    }
+
+    fn is_final_response_only(&self) -> bool {
+        self.final_response_only
+    }
+
+    fn is_decision_pressure_active(&self) -> bool {
+        self.decision_pressure_active
+    }
+
+    fn is_repeated_observation_coercion_active(&self) -> bool {
+        self.repeated_observation_coercion_active
+    }
+
+    fn read_file_executed(&self) -> bool {
+        self.read_file_executed
+    }
+
+    fn read_file_attempted(&self) -> usize {
+        self.read_file_attempted
+    }
+
+    fn current_attempt(&self) -> usize {
+        self.protocol_attempt
+    }
+}
+
 impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
     fn run_role(&self, request: RoleRequest, telemetry: &dyn TelemetrySink) -> RoleRunOutput {
         let subsource = role_subsource(&request.role);
@@ -180,8 +332,7 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
         // Accumulated observation sections, tracked separately so the prompt can be
         // rebuilt without the tool section when completion pressure is active.
         let mut observation_suffix = String::new();
-        let mut protocol_attempt: usize = 1;
-        let mut tool_steps: usize = 0;
+
         // Completion pressure applies only to Work+Producer after a successful mutation.
         let is_work_producer = request.node_kind == NodeKind::Work
             && matches!(request.role, DeliberationRole::Producer);
@@ -190,23 +341,14 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
             request.role,
             DeliberationRole::Critic | DeliberationRole::Referee
         );
-        let mut read_only_tool_steps: usize = 0;
-        let mut decision_pressure_active = false;
-        let mut final_response_only = false;
-        let mut seen_tool_fingerprints: std::collections::HashSet<String> =
-            std::collections::HashSet::new();
-        let mut repeated_observation_coercion_active = false;
         // Work-node Critic and Referee must call read_file at least once before
         // accepting. list_files alone is insufficient — the model must inspect
         // actual file contents. This enforcement only applies when tools are
         // available; plan-node reviewers judge structure, not file contents.
         let requires_file_read =
             request.node_kind == NodeKind::Work && is_read_only_reviewer && has_tools;
-        let mut read_file_executed = false;
-        // Count of read_file calls made by this role (failed or successful).
-        // Used to distinguish "never attempted" from "attempted but all failed"
-        // in the enforcement error message.
-        let mut read_file_attempted: usize = 0;
+
+        let mut proto = ProtocolState::new(is_work_producer, is_read_only_reviewer);
 
         loop {
             telemetry.record(TelemetryRecord::new_with_subsource(
@@ -214,7 +356,7 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                 subsource,
                 TelemetryEvent::RolePromptRendered {
                     prompt: current_prompt.clone(),
-                    attempt_count: protocol_attempt,
+                    attempt_count: proto.current_attempt(),
                 },
             ));
 
@@ -246,7 +388,7 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                 subsource,
                 TelemetryEvent::ProviderResponseReceived {
                     raw_response: response.content.clone(),
-                    attempt_count: protocol_attempt,
+                    attempt_count: proto.current_attempt(),
                 },
             ));
 
@@ -256,8 +398,8 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                 && let Ok(tool_req) = parse_tool_request(json_str)
             {
                 // In completion-pressure mode, all tool requests are protocol violations.
-                if final_response_only {
-                    let parse_error = if repeated_observation_coercion_active {
+                if !proto.allow_tool_call() {
+                    let parse_error = if proto.is_repeated_observation_coercion_active() {
                         "protocol error: repeated identical tool observations; model continued calling tools after coercion".to_string()
                     } else {
                         "tool request received while no tools are available".to_string()
@@ -268,11 +410,10 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                         TelemetryEvent::ParseFailed {
                             raw_response: response.content.clone(),
                             parse_error: parse_error.clone(),
-                            attempt_count: protocol_attempt,
+                            attempt_count: proto.current_attempt(),
                         },
                     ));
-                    if repeated_observation_coercion_active
-                        || protocol_attempt > MAX_PROTOCOL_RETRIES
+                    if proto.is_repeated_observation_coercion_active() || !proto.allow_model_call()
                     {
                         return RoleRunOutput {
                             result: RoleResult::Failed {
@@ -282,27 +423,26 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                             artifact_update: extract_update(&mut executor),
                         };
                     }
-                    let next_attempt = protocol_attempt + 1;
+                    proto.record_protocol_failure();
                     telemetry.record(TelemetryRecord::new_with_subsource(
                         "RoleMachine",
                         subsource,
                         TelemetryEvent::ProtocolRetry {
                             parse_error: parse_error.clone(),
-                            attempt_count: next_attempt,
+                            attempt_count: proto.current_attempt(),
                         },
                     ));
-                    let violation_note = if decision_pressure_active {
+                    let violation_note = if proto.is_decision_pressure_active() {
                         render_decision_pressure_violation_note()
                     } else {
                         render_completion_pressure_violation_note()
                     };
                     observation_suffix = format!("{observation_suffix}\n\n{violation_note}");
                     current_prompt = format!("{core_prompt}{observation_suffix}");
-                    protocol_attempt = next_attempt;
                     continue;
                 }
 
-                tool_steps += 1;
+                proto.record_tool_call();
                 let tool_name = tool_name_of(&tool_req);
                 telemetry.record(TelemetryRecord::new_with_subsource(
                     "RoleMachine",
@@ -312,7 +452,7 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                     },
                 ));
 
-                if tool_steps > MAX_TOOL_STEPS {
+                if proto.tool_loop_limit_reached() {
                     telemetry.record(TelemetryRecord::new_with_subsource(
                         "RoleMachine",
                         subsource,
@@ -328,17 +468,18 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                 }
 
                 let is_read_file_req = matches!(&tool_req, FileToolRequest::ReadFile { .. });
+                let mut read_file_succeeded = false;
                 let (observation, mutation_recorded) = match &mut executor {
                     Some(exec) => {
                         if is_read_file_req {
-                            read_file_attempted += 1;
+                            proto.record_read_file_attempt();
                         }
                         let max_obs = exec.policy().max_observation_bytes;
                         let response = exec.execute(tool_req);
                         if is_read_file_req
                             && matches!(response, FileToolResponse::FileContents { .. })
                         {
-                            read_file_executed = true;
+                            read_file_succeeded = true;
                         }
                         let recorded = matches!(response, FileToolResponse::UpdateRecorded { .. });
                         (format_tool_observation(&response, max_obs), recorded)
@@ -361,31 +502,12 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                     },
                 ));
 
-                // Enter completion-pressure mode after a successful mutation on Work+Producer.
-                if is_work_producer && mutation_recorded {
-                    final_response_only = true;
-                }
+                proto.record_tool_result(fingerprint, mutation_recorded, read_file_succeeded);
 
-                // Enter decision-pressure mode after bounded read-only observations on Critic/Referee.
-                if is_read_only_reviewer {
-                    read_only_tool_steps += 1;
-                    if read_only_tool_steps >= MAX_READ_ONLY_TOOL_STEPS {
-                        final_response_only = true;
-                        decision_pressure_active = true;
-                    }
-                }
-
-                // Detect repeated identical (tool, observation) pairs and activate coercion.
-                // Only activates if no other pressure mode is already active.
-                if !seen_tool_fingerprints.insert(fingerprint) && !final_response_only {
-                    repeated_observation_coercion_active = true;
-                    final_response_only = true;
-                }
-
-                let obs_section = if final_response_only {
-                    if repeated_observation_coercion_active {
+                let obs_section = if !proto.allow_tool_call() {
+                    if proto.is_repeated_observation_coercion_active() {
                         format_repeated_observation_coercion_section(&observation)
-                    } else if decision_pressure_active {
+                    } else if proto.is_decision_pressure_active() {
                         format_decision_pressure_section(&observation)
                     } else {
                         format_completion_pressure_section(&observation)
@@ -395,12 +517,11 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                 };
 
                 observation_suffix = format!("{observation_suffix}\n\n{obs_section}");
-                current_prompt = if final_response_only {
+                current_prompt = if !proto.allow_tool_call() {
                     format!("{core_prompt}{observation_suffix}")
                 } else {
                     format!("{current_prompt}\n\n{obs_section}")
                 };
-                protocol_attempt = 1;
                 continue;
             }
 
@@ -416,7 +537,7 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                                 "RoleMachine",
                                 subsource,
                                 TelemetryEvent::ParseSucceeded {
-                                    attempt_count: protocol_attempt,
+                                    attempt_count: proto.current_attempt(),
                                 },
                             ));
                             let canonical = serde_json::to_string(&planner_out)
@@ -434,10 +555,10 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                                 TelemetryEvent::ParseFailed {
                                     raw_response: response.content.clone(),
                                     parse_error: err.clone(),
-                                    attempt_count: protocol_attempt,
+                                    attempt_count: proto.current_attempt(),
                                 },
                             ));
-                            if protocol_attempt > MAX_PROTOCOL_RETRIES {
+                            if !proto.allow_model_call() {
                                 return RoleRunOutput {
                                     result: RoleResult::Failed {
                                         kind: FailureKind::PlannerValidationFailure,
@@ -446,17 +567,16 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                                     artifact_update: extract_update(&mut executor),
                                 };
                             }
-                            let next_attempt = protocol_attempt + 1;
+                            proto.record_protocol_failure();
                             telemetry.record(TelemetryRecord::new_with_subsource(
                                 "RoleMachine",
                                 subsource,
                                 TelemetryEvent::ProtocolRetry {
                                     parse_error: err.clone(),
-                                    attempt_count: next_attempt,
+                                    attempt_count: proto.current_attempt(),
                                 },
                             ));
                             current_prompt = render_planner_retry_prompt(&base_prompt, &err);
-                            protocol_attempt = next_attempt;
                         }
                     },
                     Err(parse_error) => {
@@ -466,10 +586,10 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                             TelemetryEvent::ParseFailed {
                                 raw_response: response.content.clone(),
                                 parse_error: parse_error.clone(),
-                                attempt_count: protocol_attempt,
+                                attempt_count: proto.current_attempt(),
                             },
                         ));
-                        if protocol_attempt > MAX_PROTOCOL_RETRIES {
+                        if !proto.allow_model_call() {
                             return RoleRunOutput {
                                 result: RoleResult::Failed {
                                     kind: FailureKind::ProtocolFailure,
@@ -478,17 +598,16 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                                 artifact_update: extract_update(&mut executor),
                             };
                         }
-                        let next_attempt = protocol_attempt + 1;
+                        proto.record_protocol_failure();
                         telemetry.record(TelemetryRecord::new_with_subsource(
                             "RoleMachine",
                             subsource,
                             TelemetryEvent::ProtocolRetry {
                                 parse_error: parse_error.clone(),
-                                attempt_count: next_attempt,
+                                attempt_count: proto.current_attempt(),
                             },
                         ));
                         current_prompt = render_planner_retry_prompt(&base_prompt, &parse_error);
-                        protocol_attempt = next_attempt;
                     }
                 }
             } else {
@@ -499,15 +618,15 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                         // accepting. list_files alone is not sufficient — the reviewer
                         // must inspect actual file contents to verify the objective.
                         if requires_file_read
-                            && !read_file_executed
+                            && !proto.read_file_executed()
                             && matches!(result, RoleResult::Accepted { .. })
                         {
-                            let attempt_note = if read_file_attempted == 0 {
+                            let attempt_note = if proto.read_file_attempted() == 0 {
                                 "no read_file was attempted".to_string()
                             } else {
                                 format!(
                                     "{} read_file attempt(s) were made but all failed",
-                                    read_file_attempted
+                                    proto.read_file_attempted()
                                 )
                             };
                             let parse_error = format!(
@@ -521,14 +640,14 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                                 TelemetryEvent::ParseFailed {
                                     raw_response: response.content.clone(),
                                     parse_error: parse_error.clone(),
-                                    attempt_count: protocol_attempt,
+                                    attempt_count: proto.current_attempt(),
                                 },
                             ));
                             // When tools are blocked (decision or completion pressure active)
                             // there is no point issuing a must-read retry prompt — the model
                             // cannot call tools and would only generate further protocol errors.
                             // Fail directly with a clear reason in that case.
-                            if final_response_only || protocol_attempt > MAX_PROTOCOL_RETRIES {
+                            if !proto.allow_tool_call() || !proto.allow_model_call() {
                                 return RoleRunOutput {
                                     result: RoleResult::Failed {
                                         kind: FailureKind::ProtocolFailure,
@@ -537,25 +656,24 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                                     artifact_update: extract_update(&mut executor),
                                 };
                             }
-                            let next_attempt = protocol_attempt + 1;
+                            proto.record_protocol_failure();
                             telemetry.record(TelemetryRecord::new_with_subsource(
                                 "RoleMachine",
                                 subsource,
                                 TelemetryEvent::ProtocolRetry {
                                     parse_error: parse_error.clone(),
-                                    attempt_count: next_attempt,
+                                    attempt_count: proto.current_attempt(),
                                 },
                             ));
                             current_prompt =
                                 render_reviewer_must_read_prompt(&base_prompt, &parse_error);
-                            protocol_attempt = next_attempt;
                             continue;
                         }
                         telemetry.record(TelemetryRecord::new_with_subsource(
                             "RoleMachine",
                             subsource,
                             TelemetryEvent::ParseSucceeded {
-                                attempt_count: protocol_attempt,
+                                attempt_count: proto.current_attempt(),
                             },
                         ));
                         return RoleRunOutput {
@@ -578,15 +696,15 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                             TelemetryEvent::ParseFailed {
                                 raw_response: response.content.clone(),
                                 parse_error: effective_error.clone(),
-                                attempt_count: protocol_attempt,
+                                attempt_count: proto.current_attempt(),
                             },
                         ));
-                        if protocol_attempt > MAX_PROTOCOL_RETRIES {
+                        if !proto.allow_model_call() {
                             // A parse failure after completion pressure means the
                             // write was already recorded but the model could not
                             // confirm it. Label the reason so the node-runner
                             // classifier can treat it as Retry rather than Terminal.
-                            let terminal_reason = if final_response_only {
+                            let terminal_reason = if proto.is_final_response_only() {
                                 format!("protocol failure after write: {effective_error}")
                             } else {
                                 effective_error
@@ -599,16 +717,16 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                                 artifact_update: extract_update(&mut executor),
                             };
                         }
-                        let next_attempt = protocol_attempt + 1;
+                        proto.record_protocol_failure();
                         telemetry.record(TelemetryRecord::new_with_subsource(
                             "RoleMachine",
                             subsource,
                             TelemetryEvent::ProtocolRetry {
                                 parse_error: effective_error.clone(),
-                                attempt_count: next_attempt,
+                                attempt_count: proto.current_attempt(),
                             },
                         ));
-                        current_prompt = if final_response_only {
+                        current_prompt = if proto.is_final_response_only() {
                             render_completion_pressure_retry_prompt(
                                 &core_prompt,
                                 &observation_suffix,
@@ -617,7 +735,6 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                         } else {
                             render_retry_prompt(&base_prompt, &effective_error)
                         };
-                        protocol_attempt = next_attempt;
                     }
                 }
             }
