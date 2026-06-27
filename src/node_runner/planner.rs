@@ -389,6 +389,75 @@ fn sorted_targets(targets: &HashSet<String>) -> Vec<String> {
     sorted
 }
 
+/// Attempt to build a deterministic [`PlanOutput`] from `objective` without
+/// calling the LLM planner.
+///
+/// Returns `Some(PlanOutput)` when the objective explicitly names exactly one
+/// source code file that is not itself a test file. Returns `None` when the
+/// fast path does not apply — the caller should fall back to the LLM planner.
+///
+/// When `requires_tests` is true and the fast path applies, a second work
+/// task targeting the conventionally-derived test file is appended with a
+/// dependency on the source work task.
+pub fn try_fast_plan(objective: &str, requires_tests: bool) -> Option<PlanOutput> {
+    let all_targets = explicit_objective_targets(objective);
+    let mut source_targets: Vec<String> = all_targets
+        .into_iter()
+        .filter(|t| target_is_code_like(t) && !target_is_test_related(t))
+        .collect();
+    source_targets.sort();
+
+    if source_targets.len() != 1 {
+        return None;
+    }
+
+    let source = source_targets.into_iter().next().unwrap();
+    let work = NodeRequest {
+        id: NodeId("work".to_string()),
+        kind: NodeKind::Work,
+        objective: format!("{objective}\n\nTarget files: {source}"),
+        dependencies: vec![],
+    };
+    let mut children = vec![work];
+
+    if requires_tests {
+        let test_target = derive_test_target(&source);
+        let tests = NodeRequest {
+            id: NodeId("tests".to_string()),
+            kind: NodeKind::Work,
+            objective: format!(
+                "Write tests that verify the work described by the following objective:\n\n\
+                 {objective}\n\nTarget files: {test_target}"
+            ),
+            dependencies: vec![NodeId("work".to_string())],
+        };
+        children.push(tests);
+    }
+
+    Some(PlanOutput { children })
+}
+
+/// Derive a conventional test file path for a given source file.
+///
+/// Uses extension-based conventions; does not consult any language runtime.
+/// Falls back to `test_{filename}` for extensions not explicitly listed.
+fn derive_test_target(source: &str) -> String {
+    let path = source.replace('\\', "/");
+    let (prefix, filename) = path
+        .rsplit_once('/')
+        .map(|(dir, f)| (format!("{dir}/"), f))
+        .unwrap_or(("".into(), path.as_str()));
+    let Some((stem, ext)) = filename.rsplit_once('.') else {
+        return format!("{prefix}test_{filename}");
+    };
+    let lower = ext.to_ascii_lowercase();
+    match lower.as_str() {
+        "go" | "rs" => format!("{prefix}{stem}_test.{ext}"),
+        "js" | "ts" | "jsx" | "tsx" => format!("{prefix}{stem}.test.{ext}"),
+        _ => format!("{prefix}test_{stem}.{ext}"),
+    }
+}
+
 /// Convert a validated [`PlannerOutput`] into a scheduler [`PlanOutput`].
 ///
 /// Each task becomes a [`NodeRequest`] of kind `Work`. The planner-assigned
@@ -912,6 +981,113 @@ mod tests {
         assert_eq!(
             plan.children[1].dependencies,
             vec![NodeId("tests".to_string())]
+        );
+    }
+
+    // ── try_fast_plan ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn explicit_single_file_objective_produces_direct_plan() {
+        let objective = "Create a simple Python program in main.py that prints a haiku.";
+        let plan =
+            try_fast_plan(objective, false).expect("must return Some for explicit single file");
+        assert_eq!(plan.children.len(), 1, "no tests required → one work task");
+        let child = &plan.children[0];
+        assert_eq!(child.id, NodeId("work".to_string()));
+        assert_eq!(child.kind, NodeKind::Work);
+        assert!(
+            child.objective.contains("main.py"),
+            "work task objective must mention the target file; got: {}",
+            child.objective
+        );
+        assert!(
+            child.objective.contains("Target files: main.py"),
+            "objective must include Target files line; got: {}",
+            child.objective
+        );
+        assert!(
+            child.dependencies.is_empty(),
+            "work task must have no dependencies"
+        );
+    }
+
+    #[test]
+    fn explicit_single_file_with_tests_required_adds_test_target() {
+        let objective = "Create a simple Python program in main.py that prints a haiku.";
+        let plan = try_fast_plan(objective, true).expect("must return Some");
+        assert_eq!(plan.children.len(), 2, "tests required → two work tasks");
+
+        let work = &plan.children[0];
+        assert_eq!(work.id, NodeId("work".to_string()));
+        assert!(work.objective.contains("Target files: main.py"));
+
+        let tests = &plan.children[1];
+        assert_eq!(tests.id, NodeId("tests".to_string()));
+        assert!(
+            tests.objective.contains("test_main.py"),
+            "test task must target test_main.py; got: {}",
+            tests.objective
+        );
+        assert_eq!(
+            tests.dependencies,
+            vec![NodeId("work".to_string())],
+            "test task must depend on work task"
+        );
+    }
+
+    #[test]
+    fn objective_without_explicit_file_falls_back_to_planner() {
+        let plan = try_fast_plan("Refactor the error handling in the codebase.", false);
+        assert!(
+            plan.is_none(),
+            "objective without a named file must return None"
+        );
+    }
+
+    #[test]
+    fn objective_with_multiple_explicit_files_falls_back_to_planner() {
+        let plan = try_fast_plan("Modify main.py and utils.py to add logging.", false);
+        assert!(
+            plan.is_none(),
+            "objective naming two source files must return None, not a fast plan"
+        );
+    }
+
+    #[test]
+    fn fast_plan_derives_correct_test_targets_by_extension() {
+        let cases = [
+            ("main.py", "test_main.py"),
+            ("server.go", "server_test.go"),
+            ("lib.rs", "lib_test.rs"),
+            ("util.js", "util.test.js"),
+            ("component.ts", "component.test.ts"),
+            ("widget.tsx", "widget.test.tsx"),
+            ("app.jsx", "app.test.jsx"),
+            ("helper.rb", "test_helper.rb"),
+        ];
+        for (source, expected_test) in cases {
+            assert_eq!(
+                derive_test_target(source),
+                expected_test,
+                "wrong test target for {source}"
+            );
+        }
+    }
+
+    #[test]
+    fn fast_plan_preserves_directory_prefix_in_test_target() {
+        assert_eq!(derive_test_target("src/main.py"), "src/test_main.py");
+        assert_eq!(derive_test_target("pkg/server.go"), "pkg/server_test.go");
+        assert_eq!(derive_test_target("lib/util.rs"), "lib/util_test.rs");
+    }
+
+    #[test]
+    fn explicit_test_file_in_objective_does_not_trigger_fast_plan() {
+        // If the only explicitly named file is a test file, it is not a source target.
+        let plan = try_fast_plan("Add assertions to test_main.py.", false);
+        assert!(
+            plan.is_none(),
+            "a test-file-only objective must not trigger the fast path"
         );
     }
 }
