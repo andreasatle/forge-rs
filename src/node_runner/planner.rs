@@ -60,6 +60,8 @@ pub enum PlannerValidationError {
         /// The filename that already exists and is not an objective target.
         filename: String,
     },
+    /// Test validation is configured, but a code-changing plan has no test target.
+    MissingTestsForCodeChange,
 }
 
 impl std::fmt::Display for PlannerValidationError {
@@ -85,6 +87,12 @@ impl std::fmt::Display for PlannerValidationError {
                     f,
                     "task {task_id} targets existing file '{filename}' \
                      which is not mentioned in the run objective"
+                )
+            }
+            PlannerValidationError::MissingTestsForCodeChange => {
+                write!(
+                    f,
+                    "planner output changes code but does not include a test-related target"
                 )
             }
         }
@@ -184,6 +192,85 @@ pub fn validate_planner_no_recreate(
         }
     }
     Ok(())
+}
+
+/// Check that a code-changing plan includes at least one test-related target
+/// when project validation includes a test command.
+///
+/// This is intentionally based on structured `targets`, not objective prose.
+/// A target is considered code-like when it has a common source-file extension.
+/// A target is considered test-related when its path or filename clearly names
+/// tests. The language-specific reason tests are required comes from the
+/// configured validation commands; this helper does not inspect language IDs.
+pub fn validate_planner_tests_required(
+    output: &PlannerOutput,
+) -> Result<(), PlannerValidationError> {
+    let has_code_target = output
+        .tasks
+        .iter()
+        .flat_map(|task| task.targets.iter())
+        .any(|target| target_is_code_like(target) && !target_is_test_related(target));
+    if !has_code_target {
+        return Ok(());
+    }
+
+    let has_test_target = output
+        .tasks
+        .iter()
+        .flat_map(|task| task.targets.iter())
+        .any(|target| target_is_test_related(target));
+    if has_test_target {
+        Ok(())
+    } else {
+        Err(PlannerValidationError::MissingTestsForCodeChange)
+    }
+}
+
+fn target_is_test_related(target: &str) -> bool {
+    let path = target.replace('\\', "/").to_ascii_lowercase();
+    let filename = path.rsplit('/').next().unwrap_or(path.as_str());
+    path.contains("/test/")
+        || path.contains("/tests/")
+        || path.starts_with("test/")
+        || path.starts_with("tests/")
+        || filename.starts_with("test_")
+        || filename.starts_with("test-")
+        || filename.ends_with("_test.rs")
+        || filename.ends_with("_tests.rs")
+        || filename.contains("_test.")
+        || filename.contains("-test.")
+        || filename.contains(".test.")
+        || filename.contains("_tests.")
+        || filename.contains("-tests.")
+        || filename.contains(".spec.")
+}
+
+fn target_is_code_like(target: &str) -> bool {
+    let extension = target
+        .rsplit_once('.')
+        .map(|(_, ext)| ext.to_ascii_lowercase())
+        .unwrap_or_default();
+    matches!(
+        extension.as_str(),
+        "c" | "cc"
+            | "cpp"
+            | "cs"
+            | "go"
+            | "java"
+            | "js"
+            | "jsx"
+            | "kt"
+            | "m"
+            | "mm"
+            | "php"
+            | "py"
+            | "rb"
+            | "rs"
+            | "scala"
+            | "swift"
+            | "ts"
+            | "tsx"
+    )
 }
 
 /// Convert a validated [`PlannerOutput`] into a scheduler [`PlanOutput`].
@@ -496,6 +583,46 @@ mod tests {
         assert!(
             validate_planner_no_recreate(&output, top_objective, PYTHON_INIT_FILES).is_ok(),
             "task targeting only main.py (which is in the objective) must pass"
+        );
+    }
+
+    #[test]
+    fn code_target_without_test_target_rejected_when_tests_required() {
+        let output = PlannerOutput {
+            tasks: vec![PlannerTask {
+                id: "main".to_string(),
+                objective: "Modify main.py.".to_string(),
+                targets: vec!["main.py".to_string()],
+                depends_on: vec![],
+            }],
+        };
+        assert_eq!(
+            validate_planner_tests_required(&output),
+            Err(PlannerValidationError::MissingTestsForCodeChange)
+        );
+    }
+
+    #[test]
+    fn code_target_with_test_target_passes_when_tests_required() {
+        let output = PlannerOutput {
+            tasks: vec![
+                PlannerTask {
+                    id: "main".to_string(),
+                    objective: "Modify main.py.".to_string(),
+                    targets: vec!["main.py".to_string()],
+                    depends_on: vec![],
+                },
+                PlannerTask {
+                    id: "tests".to_string(),
+                    objective: "Add tests for main.py.".to_string(),
+                    targets: vec!["test_main.py".to_string()],
+                    depends_on: vec!["main".to_string()],
+                },
+            ],
+        };
+        assert!(
+            validate_planner_tests_required(&output).is_ok(),
+            "main.py plus test_main.py must satisfy test-required planning"
         );
     }
 

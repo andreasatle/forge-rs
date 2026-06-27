@@ -13,7 +13,9 @@ use crate::artifacts::{
 use crate::machines::deliberation::event::RoleResult;
 use crate::machines::deliberation::state::{DeliberationRole, RevisionFeedback};
 use crate::machines::scheduler::NodeKind;
-use crate::node_runner::planner::{parse_planner_content, validate_planner_no_recreate};
+use crate::node_runner::planner::{
+    parse_planner_content, validate_planner_no_recreate, validate_planner_tests_required,
+};
 use crate::roles::policy::RolePolicy;
 use crate::roles::runner::{ProviderRoleRunner, RoleRequest, RoleRunner, RoleToolContext};
 use crate::telemetry::{NoopTelemetry, TelemetrySink};
@@ -21,9 +23,9 @@ use crate::telemetry::{NoopTelemetry, TelemetrySink};
 use super::effect::DeliberationEffect;
 use super::event::DeliberationEvent;
 
-/// Maximum no-recreate retry attempts after the first accepted plan that
-/// violates the no-recreate constraint.
-const MAX_NO_RECREATE_RETRIES: usize = 2;
+/// Maximum retry attempts after the first accepted plan violates structured
+/// planner validation.
+const MAX_PLAN_VALIDATION_RETRIES: usize = 2;
 
 /// Executes `DeliberationEffect` values by delegating role execution to a
 /// [`RoleRunner`].
@@ -41,11 +43,16 @@ pub struct DeliberationHandler<R> {
     node_kind: NodeKind,
     /// File changes accumulated across all tool loops run so far.
     accumulated_update: RefCell<Vec<FileChange>>,
-    /// For plan nodes: the top-level run objective and list of files that
-    /// already exist in the project. When set, the handler rejects planner
-    /// output that targets existing files not mentioned in the objective
-    /// and retries with structured feedback before propagating the result.
-    no_recreate_context: Option<(String, Vec<String>)>,
+    /// For plan nodes: optional structured validation applied to planner
+    /// output before the plan is accepted.
+    plan_validation_context: Option<PlanValidationContext>,
+}
+
+#[derive(Clone)]
+struct PlanValidationContext {
+    top_objective: String,
+    existing_files: Vec<String>,
+    requires_tests: bool,
 }
 
 /// Compatibility alias: a [`DeliberationHandler`] backed by a
@@ -61,22 +68,22 @@ impl<P> DeliberationHandler<ProviderRoleRunner<P>> {
             artifact_view: None,
             node_kind: NodeKind::Work,
             accumulated_update: RefCell::new(Vec::new()),
-            no_recreate_context: None,
+            plan_validation_context: None,
         }
     }
 
     /// Wrap a provider in a handler with an optional artifact view, an
     /// explicit token budget forwarded to the role runner, the node kind
     /// used to select the matching plan/work system prompt from the policy,
-    /// the role policy to inject into the runner, and an optional no-recreate
-    /// context used to reject planner tasks that target pre-existing files.
+    /// the role policy to inject into the runner, and an optional context used
+    /// to reject planner tasks that violate structured plan rules.
     pub fn new_with_view(
         provider: P,
         artifact_view: Option<ArtifactView>,
         max_tokens: u32,
         node_kind: NodeKind,
         policy: RolePolicy,
-        no_recreate_context: Option<(String, Vec<String>)>,
+        plan_validation_context: Option<(String, Vec<String>, bool)>,
     ) -> Self {
         Self {
             runner: ProviderRoleRunner::new_with_max_tokens(provider, max_tokens)
@@ -84,7 +91,13 @@ impl<P> DeliberationHandler<ProviderRoleRunner<P>> {
             artifact_view,
             node_kind,
             accumulated_update: RefCell::new(Vec::new()),
-            no_recreate_context,
+            plan_validation_context: plan_validation_context.map(
+                |(top_objective, existing_files, requires_tests)| PlanValidationContext {
+                    top_objective,
+                    existing_files,
+                    requires_tests,
+                },
+            ),
         }
     }
 }
@@ -141,13 +154,13 @@ impl<R: RoleRunner> DeliberationHandler<R> {
                     }
                 };
 
-                // For Plan+Producer with no-recreate context, run a retry loop that
-                // sends structured feedback when the planner targets existing files.
+                // For Plan+Producer with structured validation context, run a retry
+                // loop that sends feedback when the planner violates hard rules.
                 if self.node_kind == NodeKind::Plan
                     && matches!(role, DeliberationRole::Producer)
-                    && self.no_recreate_context.is_some()
+                    && self.plan_validation_context.is_some()
                 {
-                    return self.run_plan_producer_with_no_recreate(
+                    return self.run_plan_producer_with_validation(
                         role,
                         objective,
                         producer_content,
@@ -190,13 +203,14 @@ impl<R: RoleRunner> DeliberationHandler<R> {
         }
     }
 
-    /// Run a Plan+Producer role invocation with no-recreate validation and retry.
+    /// Run a Plan+Producer role invocation with structured validation and retry.
     ///
     /// After each accepted planner output, validates that no task targets an
-    /// existing project file not mentioned in the run objective. On violation,
-    /// sends structured revision feedback telling the planner to remove the
-    /// offending tasks, up to `MAX_NO_RECREATE_RETRIES` additional attempts.
-    fn run_plan_producer_with_no_recreate(
+    /// existing project file not mentioned in the run objective and that
+    /// test-required code plans include test targets. On violation, sends
+    /// structured revision feedback, up to `MAX_NO_RECREATE_RETRIES` additional
+    /// attempts.
+    fn run_plan_producer_with_validation(
         &self,
         role: DeliberationRole,
         objective: String,
@@ -205,14 +219,14 @@ impl<R: RoleRunner> DeliberationHandler<R> {
         initial_feedback: Vec<RevisionFeedback>,
         telemetry: &dyn TelemetrySink,
     ) -> DeliberationEvent {
-        let (top_obj, files) = self
-            .no_recreate_context
+        let context = self
+            .plan_validation_context
             .as_ref()
-            .expect("no_recreate_context must be Some when this method is called");
+            .expect("plan_validation_context must be Some when this method is called");
 
         let mut feedback = initial_feedback;
 
-        for attempt in 0..=MAX_NO_RECREATE_RETRIES {
+        for attempt in 0..=MAX_PLAN_VALIDATION_RETRIES {
             let request = RoleRequest {
                 role: role.clone(),
                 objective: objective.clone(),
@@ -228,7 +242,7 @@ impl<R: RoleRunner> DeliberationHandler<R> {
             match output.result {
                 RoleResult::Accepted { ref content } => {
                     if let Some(planner_out) = parse_planner_content(content) {
-                        match validate_planner_no_recreate(&planner_out, top_obj, files) {
+                        match validate_plan_output_for_context(&planner_out, context) {
                             Ok(()) => {
                                 return DeliberationEvent::RoleReturned {
                                     role,
@@ -236,22 +250,16 @@ impl<R: RoleRunner> DeliberationHandler<R> {
                                 };
                             }
                             Err(e) => {
-                                if attempt >= MAX_NO_RECREATE_RETRIES {
+                                if attempt >= MAX_PLAN_VALIDATION_RETRIES {
                                     return DeliberationEvent::RoleReturned {
                                         role,
                                         result: RoleResult::Failed {
-                                            reason: format!(
-                                                "planner no-recreate validation failed: {e}"
-                                            ),
+                                            reason: format!("planner validation failed: {e}"),
                                         },
                                     };
                                 }
                                 feedback = vec![RevisionFeedback {
-                                    reason: format!(
-                                        "{e}. Remove tasks for existing project files not \
-                                         mentioned in the objective. Only include tasks for \
-                                         files explicitly named in the run objective."
-                                    ),
+                                    reason: planner_validation_feedback(&e.to_string()),
                                 }];
                             }
                         }
@@ -286,6 +294,31 @@ impl<R: RoleRunner> DeliberationHandler<R> {
         } else {
             Some(ArtifactUpdate { changes })
         }
+    }
+}
+
+fn validate_plan_output_for_context(
+    planner_out: &crate::node_runner::planner::PlannerOutput,
+    context: &PlanValidationContext,
+) -> Result<(), crate::node_runner::planner::PlannerValidationError> {
+    validate_planner_no_recreate(planner_out, &context.top_objective, &context.existing_files)?;
+    if context.requires_tests {
+        validate_planner_tests_required(planner_out)?;
+    }
+    Ok(())
+}
+
+fn planner_validation_feedback(error: &str) -> String {
+    if error.contains("does not include a test-related target") {
+        format!(
+            "{error}. Project validation includes a test command, so code changes must include \
+             at least one test-related task and target such as a test file."
+        )
+    } else {
+        format!(
+            "{error}. Remove tasks for existing project files not mentioned in the objective. \
+             Only include tasks for files explicitly named in the run objective."
+        )
     }
 }
 
@@ -440,7 +473,7 @@ mod tests {
             artifact_view: None,
             node_kind: NodeKind::Work,
             accumulated_update: RefCell::new(Vec::new()),
-            no_recreate_context: None,
+            plan_validation_context: None,
         };
 
         let effect = run_role_effect(
@@ -532,7 +565,7 @@ mod tests {
             artifact_view: Some(dummy_view()),
             node_kind: NodeKind::Plan,
             accumulated_update: RefCell::new(Vec::new()),
-            no_recreate_context: None,
+            plan_validation_context: None,
         };
 
         let effect = run_role_effect(
@@ -561,7 +594,7 @@ mod tests {
             artifact_view: Some(dummy_view()),
             node_kind: NodeKind::Work,
             accumulated_update: RefCell::new(Vec::new()),
-            no_recreate_context: None,
+            plan_validation_context: None,
         };
 
         let effect = run_role_effect(
@@ -590,7 +623,7 @@ mod tests {
             artifact_view: None,
             node_kind: NodeKind::Plan,
             accumulated_update: RefCell::new(Vec::new()),
-            no_recreate_context: None,
+            plan_validation_context: None,
         };
 
         let effect = run_role_effect(

@@ -37,6 +37,7 @@ pub struct DeliberatingNodeRunner<C, S> {
     cheap_max_tokens: u32,
     strong_max_tokens: u32,
     role_policy: RolePolicy,
+    requires_tests: bool,
 }
 
 impl<C, S> DeliberatingNodeRunner<C, S> {
@@ -52,6 +53,7 @@ impl<C, S> DeliberatingNodeRunner<C, S> {
             cheap_max_tokens: 1024,
             strong_max_tokens: 1024,
             role_policy: RolePolicy::default(),
+            requires_tests: false,
         }
     }
 
@@ -74,6 +76,12 @@ impl<C, S> DeliberatingNodeRunner<C, S> {
     /// hardcoded behaviour.
     pub fn with_role_policy(mut self, policy: RolePolicy) -> Self {
         self.role_policy = policy;
+        self
+    }
+
+    /// Require planner output for code changes to include test-related targets.
+    pub fn with_requires_tests(mut self, requires_tests: bool) -> Self {
+        self.requires_tests = requires_tests;
         self
     }
 }
@@ -131,6 +139,7 @@ impl<C: ProviderClient, S: ProviderClient> NodeRunner for DeliberatingNodeRunner
                 request,
                 self.cheap_max_tokens,
                 &self.role_policy,
+                self.requires_tests,
                 telemetry,
             ),
             ModelTier::Strong => run_with_provider(
@@ -138,6 +147,7 @@ impl<C: ProviderClient, S: ProviderClient> NodeRunner for DeliberatingNodeRunner
                 request,
                 self.strong_max_tokens,
                 &self.role_policy,
+                self.requires_tests,
                 telemetry,
             ),
         }
@@ -149,6 +159,7 @@ fn run_with_provider<P: ProviderClient>(
     request: NodeRunRequest,
     max_tokens: u32,
     policy: &RolePolicy,
+    requires_tests: bool,
     telemetry: &dyn TelemetrySink,
 ) -> NodeRunResult {
     let top_objective = request.objective.clone();
@@ -160,13 +171,13 @@ fn run_with_provider<P: ProviderClient>(
         .into_iter()
         .map(|p| p.to_string_lossy().into_owned())
         .collect();
-    let no_recreate_context = if existing_files.is_empty() {
+    let plan_validation_context = if existing_files.is_empty() && !requires_tests {
         None
     } else {
-        Some((top_objective, existing_files))
+        Some((top_objective, existing_files, requires_tests))
     };
 
-    let objective = enrich_objective(&request);
+    let objective = enrich_objective(&request, requires_tests);
     let delib_request = DeliberationRequest {
         objective,
         max_revisions: 1,
@@ -181,7 +192,7 @@ fn run_with_provider<P: ProviderClient>(
             max_tokens,
             request.kind.clone(),
             policy.clone(),
-            no_recreate_context,
+            plan_validation_context,
         ),
         telemetry,
     };
@@ -191,15 +202,38 @@ fn run_with_provider<P: ProviderClient>(
 }
 
 /// Returns the objective string, optionally prefixed with artifact file context.
-fn enrich_objective(request: &NodeRunRequest) -> String {
+fn enrich_objective(request: &NodeRunRequest, requires_tests: bool) -> String {
+    let testing_context = if requires_tests {
+        Some(
+            "Testing requirement: project validation includes a test command. Code changes require corresponding tests, and plans for code changes must include at least one test-related target.".to_string(),
+        )
+    } else {
+        None
+    };
     let Some(view) = &request.artifact_view else {
-        return request.objective.clone();
+        return match testing_context {
+            Some(context) => format!("{context}\n\nObjective: {}", request.objective),
+            None => request.objective.clone(),
+        };
     };
     let context = build_artifact_context(view);
     if context.is_empty() {
-        return request.objective.clone();
+        return match testing_context {
+            Some(testing_context) => {
+                format!("{testing_context}\n\nObjective: {}", request.objective)
+            }
+            None => request.objective.clone(),
+        };
     }
-    format!("{context}\n\nObjective: {}", request.objective)
+    match testing_context {
+        Some(testing_context) => {
+            format!(
+                "{context}\n\n{testing_context}\n\nObjective: {}",
+                request.objective
+            )
+        }
+        None => format!("{context}\n\nObjective: {}", request.objective),
+    }
 }
 
 /// Builds a short context string from a read-only artifact view.
@@ -1328,6 +1362,39 @@ mod tests {
         assert_eq!(
             plan.children[0].objective, "Write main.py with the haiku.\n\nTarget files: main.py",
             "task objective must match the revised plan"
+        );
+    }
+
+    #[test]
+    fn planner_missing_test_target_sends_revision_feedback_and_retries() {
+        let bad_plan = r#"{"tasks":[{"id":"task-1","objective":"Modify main.py to return the haiku.","targets":["main.py"],"depends_on":[]}]}"#;
+        let good_plan = r#"{"tasks":[{"id":"task-1","objective":"Modify main.py to return the haiku.","targets":["main.py"],"depends_on":[]},{"id":"task-2","objective":"Add tests for the main.py haiku behavior.","targets":["test_main.py"],"depends_on":["task-1"]}]}"#;
+
+        let provider = ScriptedProvider::from_strs(&[
+            bad_plan,  // Plan+Producer attempt 1 — fails test-target validation
+            good_plan, // Plan+Producer attempt 2 (with feedback) — passes
+            r#"{"status":"accepted","content":"plan looks good"}"#, // Plan+Critic
+            r#"{"status":"accepted","content":"plan approved"}"#, // Plan+Referee
+        ]);
+        let runner = DeliberatingNodeRunner::new(&provider, &provider).with_requires_tests(true);
+        let request = NodeRunRequest {
+            kind: NodeKind::Plan,
+            objective: "Modify main.py to print a short haiku.".to_string(),
+            model_tier: ModelTier::Cheap,
+            attempt: 0,
+            artifact_view: None,
+        };
+        let result = runner.run_node(request, &NoopTelemetry);
+
+        let NodeRunResult::PlanAccepted(plan) = result else {
+            panic!("expected PlanAccepted after planner adds test target");
+        };
+        assert_eq!(plan.children.len(), 2);
+        assert!(
+            plan.children
+                .iter()
+                .any(|child| child.objective.contains("Target files: test_main.py")),
+            "revised plan must include a test_main.py target"
         );
     }
 

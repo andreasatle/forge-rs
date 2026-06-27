@@ -14,7 +14,7 @@ use crate::config::{ArtifactConfig, ForgeConfig, ValidationConfig};
 use crate::config::{ProjectConfig, ProjectKind};
 use crate::engine::run_machine_with_telemetry;
 use crate::language::registry::language_spec;
-use crate::language::spec::LanguageInitSpec;
+use crate::language::spec::{LanguageInitSpec, command_is_test_like};
 use crate::machines::scheduler::state::SchedulerState;
 use crate::machines::scheduler::{RunRequest, SchedulerHandler, SchedulerMachine, SchedulerOutput};
 use crate::node_runner::DeliberatingNodeRunner;
@@ -77,10 +77,15 @@ impl ForgeRuntime {
             .unwrap_or(config.provider.n_predict) as u32;
 
         let role_policy = make_role_policy(&config.project);
+        let requires_tests = project_requires_tests(
+            config.project.language.as_deref(),
+            config.validation.as_ref(),
+        );
         let runner = DeliberatingNodeRunner::new(cheap, strong)
             .with_cheap_max_tokens(cheap_tokens)
             .with_strong_max_tokens(strong_tokens)
-            .with_role_policy(role_policy);
+            .with_role_policy(role_policy)
+            .with_requires_tests(requires_tests);
         let validator = make_validator(
             config.project.language.as_deref(),
             config.validation.as_ref(),
@@ -181,10 +186,15 @@ impl ForgeRuntime {
             .unwrap_or(config.provider.n_predict) as u32;
 
         let role_policy = make_role_policy(&config.project);
+        let requires_tests = project_requires_tests(
+            config.project.language.as_deref(),
+            config.validation.as_ref(),
+        );
         let runner = DeliberatingNodeRunner::new(cheap, strong)
             .with_cheap_max_tokens(cheap_tokens)
             .with_strong_max_tokens(strong_tokens)
-            .with_role_policy(role_policy);
+            .with_role_policy(role_policy)
+            .with_requires_tests(requires_tests);
         let validator = make_validator(
             config.project.language.as_deref(),
             config.validation.as_ref(),
@@ -252,6 +262,28 @@ fn make_role_policy(project: &ProjectConfig) -> RolePolicy {
         ProjectKind::Default => DefaultProjectAdapter.role_policy(),
         ProjectKind::Coding => CodingProjectAdapter.role_policy(),
     }
+}
+
+fn project_requires_tests(
+    language: Option<&str>,
+    validation_config: Option<&ValidationConfig>,
+) -> bool {
+    if let Some(lang) = language
+        && let Some(spec) = language_spec(lang)
+    {
+        return spec.validation_includes_test_command();
+    }
+
+    validation_config
+        .map(|config| {
+            config.commands.iter().any(|cmd| {
+                command_is_test_like(&CommandSpec {
+                    program: "sh".to_string(),
+                    args: vec!["-c".to_string(), cmd.clone()],
+                })
+            })
+        })
+        .unwrap_or(false)
 }
 
 fn make_validator(
@@ -565,6 +597,30 @@ mod tests {
         assert_eq!(
             policy.worker_producer_system, expected.worker_producer_system,
             "default adapter must produce unchanged worker prompt"
+        );
+    }
+
+    #[test]
+    fn runtime_requires_tests_when_validation_command_runs_tests() {
+        let config = ValidationConfig {
+            commands: vec!["custom-tool test".to_string()],
+            timeout_seconds: None,
+        };
+        assert!(
+            project_requires_tests(None, Some(&config)),
+            "validation commands containing a test subcommand must require tests"
+        );
+    }
+
+    #[test]
+    fn runtime_does_not_require_tests_without_test_validation() {
+        let config = ValidationConfig {
+            commands: vec!["custom-tool lint .".to_string()],
+            timeout_seconds: None,
+        };
+        assert!(
+            !project_requires_tests(None, Some(&config)),
+            "non-test validation commands must not require test targets"
         );
     }
 

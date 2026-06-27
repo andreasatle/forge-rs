@@ -18,7 +18,9 @@ Files shown in the project context under 'Existing project files' already exist 
 by the project infrastructure. \
 Do not put those existing files in a task's `targets` unless the objective explicitly names them as targets. \
 Only create tasks for files that the objective names as targets or that must be newly created \
-to satisfy it.\n\
+to satisfy it. \
+When project validation includes a test command, code-change plans must include at least one \
+test-related task with an explicit test target.\n\
 Return exactly one JSON object. No markdown. No code fence. \
 No explanation. No text before or after the JSON.\n\
 {\"tasks\":[{\"id\":\"task-id\",\"objective\":\"Task objective.\",\"targets\":[\"path/to/file\"],\"depends_on\":[]}]}\n\
@@ -28,6 +30,7 @@ const CODING_WORKER_SYSTEM: &str = "You are a software implementation agent. \
 Implement the requested change precisely. \
 Use available file tools to read, modify, and write artifact files. \
 Use tools before making assumptions about file contents — inspect files before editing them. \
+Code changes require corresponding tests; create or update test files that verify the changed behavior. \
 Produce concrete, complete artifact changes — do not leave placeholders or stubs.\n\
 Return exactly one JSON object. No markdown. No code fence. \
 No explanation. No text before or after the JSON.\n\
@@ -60,6 +63,7 @@ const CODING_WORKER_CRITIC_SYSTEM: &str = "You are a software review agent. \
 Evaluate the producer output for correctness and completeness. \
 Identify missing work, unsupported claims, and incomplete implementation. \
 Check for missed edge cases and unnecessary complexity. \
+For code changes, verify corresponding tests were created or updated. \
 Use read_file to inspect the specific files the producer was expected to modify. \
 Do not accept based only on the producer summary or on file existence from list_files. \
 Verify actual file contents satisfy the objective. \
@@ -95,6 +99,7 @@ const CODING_WORKER_REFEREE_SYSTEM: &str = "You are a software acceptance agent.
 Decide whether the work satisfies the objective and acceptance criteria. \
 Perform a final completeness check: every requirement must be addressed, not just the last task. \
 Before accepting, use read_file to inspect the specific files the producer was expected to modify. \
+Reject code changes that do not include corresponding tests. \
 Do not rely on list_files to verify completion — file existence is not evidence of correct content. \
 Reject if the artifact contents do not satisfy the objective, even if the producer or critic claims they do. \
 Accept only when the work is complete and correct. \
@@ -263,6 +268,18 @@ mod tests {
                 .worker_producer_system
                 .contains("Use tools before making assumptions"),
             "worker_producer_system must instruct to use tools before making assumptions; got:\n{}",
+            policy.worker_producer_system
+        );
+    }
+
+    #[test]
+    fn coding_worker_requires_tests_for_code_changes() {
+        let policy = CodingProjectAdapter.role_policy();
+        assert!(
+            policy
+                .worker_producer_system
+                .contains("Code changes require corresponding tests"),
+            "worker_producer_system must require tests for code changes; got:\n{}",
             policy.worker_producer_system
         );
     }
@@ -521,6 +538,18 @@ mod tests {
     }
 
     #[test]
+    fn coding_planner_mentions_test_targets_when_validation_tests() {
+        let policy = CodingProjectAdapter.role_policy();
+        assert!(
+            policy
+                .planner_producer_system
+                .contains("validation includes a test command"),
+            "planner_producer_system must require test targets when validation runs tests; got:\n{}",
+            policy.planner_producer_system
+        );
+    }
+
+    #[test]
     fn coding_planner_critic_rejects_pure_reasoning_tasks() {
         let policy = CodingProjectAdapter.role_policy();
         assert!(
@@ -565,6 +594,18 @@ mod tests {
                 .contains("cannot be verified through file changes"),
             "planner_referee_system must reject tasks not verifiable through file changes; got:\n{}",
             policy.planner_referee_system
+        );
+    }
+
+    #[test]
+    fn coding_worker_referee_rejects_code_changes_without_tests() {
+        let policy = CodingProjectAdapter.role_policy();
+        assert!(
+            policy
+                .worker_referee_system
+                .contains("Reject code changes that do not include corresponding tests"),
+            "worker_referee_system must reject code changes without tests; got:\n{}",
+            policy.worker_referee_system
         );
     }
 

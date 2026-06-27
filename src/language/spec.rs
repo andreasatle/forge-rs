@@ -15,6 +15,28 @@ pub struct LanguageSpec {
     pub validation: LanguageValidationSpec,
 }
 
+impl LanguageSpec {
+    /// Return true when the validation command list appears to run tests.
+    ///
+    /// The registry stays tool-agnostic: this checks command tokens for common
+    /// test-command names rather than recognizing a specific language tool.
+    pub fn validation_includes_test_command(&self) -> bool {
+        self.validation.commands.iter().any(command_is_test_like)
+    }
+}
+
+/// Return true when a command token looks like a test runner or test subcommand.
+pub fn command_is_test_like(command: &CommandSpec) -> bool {
+    std::iter::once(command.program.as_str())
+        .chain(command.args.iter().map(String::as_str))
+        .any(token_is_test_like)
+}
+
+fn token_is_test_like(token: &str) -> bool {
+    let lower = token.to_ascii_lowercase();
+    lower == "test" || lower.ends_with("test") || lower.ends_with("tests")
+}
+
 /// Init-phase command list for a language.
 #[derive(Debug, Clone, Deserialize)]
 pub struct LanguageInitSpec {
