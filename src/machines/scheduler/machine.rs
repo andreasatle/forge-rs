@@ -122,10 +122,16 @@ pub enum SchedulerOutput {
 
 /// The scheduler state machine.
 ///
-/// `SchedulerMachine` is a zero-sized marker struct; all of its data travels
-/// inside `SchedulerState`. This follows the project pattern where machines do
-/// not own mutable fields — they are pure transition logic carriers.
-pub struct SchedulerMachine;
+/// All durable data travels inside `SchedulerState`. This type carries only
+/// static policy that is fixed for the lifetime of a run.
+pub struct SchedulerMachine {
+    /// Whether a distinct strong-tier model is configured.
+    ///
+    /// When `false`, `ElevateModel` recovery cannot produce a meaningfully
+    /// different result and is demoted to a `Retry` instead (or `Terminal` when
+    /// attempts are exhausted).
+    pub has_strong_tier: bool,
+}
 
 impl SchedulerMachine {
     /// Build the initial scheduler state from an external run request.
@@ -670,6 +676,7 @@ impl SchedulerMachine {
     ///
     /// The caller is responsible for ensuring `node_id` is present in `graph`.
     fn route_recovery(
+        &self,
         graph: RunGraph,
         node_id: &NodeId,
         failure_reason: String,
@@ -736,8 +743,41 @@ impl SchedulerMachine {
             }
 
             RecoveryAction::ElevateModel { .. } => {
-                let exhausted = Self::attempts_exhausted(Self::get_node(&graph, node_id));
-                if exhausted {
+                let (can_elevate, exhausted) = {
+                    let node = Self::get_node(&graph, node_id);
+                    // Elevation is only meaningful when a distinct strong-tier model
+                    // is configured AND the node is not already at the highest tier.
+                    let can = self.has_strong_tier && node.model_tier == ModelTier::Cheap;
+                    (can, Self::attempts_exhausted(node))
+                };
+
+                if !can_elevate {
+                    // No higher model tier available — fall back to Retry when
+                    // attempts remain, otherwise Terminal.
+                    if exhausted {
+                        let reason = format!(
+                            "node {} exhausted all {} attempts; no higher model tier available",
+                            node_id.0, MAX_ATTEMPTS
+                        );
+                        let graph = Self::mark_node(graph, node_id, NodeStatus::Failed);
+                        Transition {
+                            state: SchedulerState::Failed {
+                                graph: graph.clone(),
+                                reason: reason.clone(),
+                            },
+                            effects: vec![SchedulerEffect::ReturnFailed { graph, reason }],
+                        }
+                    } else if !Self::graph_has_capacity(&graph, 1) {
+                        let graph = Self::mark_node(graph, node_id, NodeStatus::Failed);
+                        Self::failed_transition(graph, Self::graph_size_limit_reason(1))
+                    } else {
+                        let graph = Self::apply_retry(graph, node_id);
+                        Transition {
+                            state: SchedulerState::Running { graph },
+                            effects: vec![],
+                        }
+                    }
+                } else if exhausted {
                     let reason = format!(
                         "node {} exhausted all {} attempts (ElevateModel)",
                         node_id.0, MAX_ATTEMPTS
@@ -1140,7 +1180,7 @@ impl SchedulerMachine {
 
                     Failed(NodeFailure {
                         message, recovery, ..
-                    }) => Self::route_recovery(graph, &node_id, message, recovery),
+                    }) => self.route_recovery(graph, &node_id, message, recovery),
                 }
             }
 
@@ -1188,7 +1228,7 @@ impl SchedulerMachine {
                     }
                     IntegrationOutcome::Failed(IntegrationFailure {
                         message, recovery, ..
-                    }) => Self::route_recovery(graph, &node_id, message, recovery),
+                    }) => self.route_recovery(graph, &node_id, message, recovery),
                 }
             }
 
@@ -1328,7 +1368,10 @@ mod tests {
         state: SchedulerState,
         event: SchedulerEvent,
     ) -> Transition<SchedulerState, SchedulerEffect> {
-        SchedulerMachine.transition(state, event)
+        SchedulerMachine {
+            has_strong_tier: true,
+        }
+        .transition(state, event)
     }
 
     // ── RunRequest / initial_state tests ──────────────────────────────────────
@@ -2846,9 +2889,11 @@ mod tests {
             next_id: 1,
         };
         let state = SchedulerState::Complete { graph };
-        let output = SchedulerMachine
-            .output(&state)
-            .expect("Complete is a terminal state");
+        let output = SchedulerMachine {
+            has_strong_tier: true,
+        }
+        .output(&state)
+        .expect("Complete is a terminal state");
         let SchedulerOutput::Complete {
             recovery_summary, ..
         } = output
@@ -4219,6 +4264,187 @@ mod tests {
             t.effects.as_slice(),
             [SchedulerEffect::ReturnFailed { .. }]
         ));
+    }
+
+    // ── Model-tier policy tests ───────────────────────────────────────────────
+
+    #[test]
+    fn single_tier_elevate_falls_back_to_retry() {
+        // has_strong_tier: false → ElevateModel must not create a Strong replacement;
+        // it must fall back to Retry, preserving the original model tier.
+        let graph = RunGraph {
+            nodes: vec![work_node("W", "do elevate", &[])],
+            next_id: 0,
+        };
+        let t = SchedulerMachine {
+            has_strong_tier: false,
+        }
+        .transition(
+            SchedulerState::Waiting {
+                graph: running(graph, "W"),
+                running: NodeId("W".to_string()),
+            },
+            SchedulerEvent::NodeReturned {
+                node_id: NodeId("W".to_string()),
+                outcome: NodeOutcome::Failed(NodeFailure {
+                    kind: FailureKind::DeliberationFailure,
+                    message: "needs stronger model".to_string(),
+                    recovery: RecoveryAction::ElevateModel {
+                        message: "use strong".to_string(),
+                    },
+                }),
+            },
+        );
+
+        let SchedulerState::Running { graph } = t.state else {
+            panic!("expected Running, got {:#?}", t.state);
+        };
+        assert_eq!(graph.nodes.len(), 2, "must create a replacement node");
+        assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
+        let replacement = &graph.nodes[1];
+        assert!(
+            matches!(replacement.origin, NodeOrigin::Retry { .. }),
+            "single-tier ElevateModel must fall back to Retry, got origin: {:?}",
+            replacement.origin
+        );
+        assert_eq!(
+            replacement.model_tier,
+            ModelTier::Cheap,
+            "fallback Retry must preserve the original Cheap tier"
+        );
+        assert!(t.effects.is_empty());
+    }
+
+    #[test]
+    fn multi_tier_elevate_creates_strong_replacement() {
+        // has_strong_tier: true → ElevateModel on a Cheap-tier node must produce a
+        // Strong-tier replacement.
+        let graph = RunGraph {
+            nodes: vec![work_node("W", "do elevate", &[])],
+            next_id: 0,
+        };
+        let t = SchedulerMachine {
+            has_strong_tier: true,
+        }
+        .transition(
+            SchedulerState::Waiting {
+                graph: running(graph, "W"),
+                running: NodeId("W".to_string()),
+            },
+            SchedulerEvent::NodeReturned {
+                node_id: NodeId("W".to_string()),
+                outcome: NodeOutcome::Failed(NodeFailure {
+                    kind: FailureKind::DeliberationFailure,
+                    message: "needs stronger model".to_string(),
+                    recovery: RecoveryAction::ElevateModel {
+                        message: "use strong".to_string(),
+                    },
+                }),
+            },
+        );
+
+        let SchedulerState::Running { graph } = t.state else {
+            panic!("expected Running, got {:#?}", t.state);
+        };
+        assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
+        assert_eq!(graph.nodes.len(), 2);
+        let replacement = &graph.nodes[1];
+        assert_eq!(replacement.model_tier, ModelTier::Strong);
+        assert!(
+            matches!(replacement.origin, NodeOrigin::ElevateModel { .. }),
+            "multi-tier must produce ElevateModel replacement"
+        );
+    }
+
+    #[test]
+    fn single_tier_elevate_exhausted_gives_clear_terminal_failure() {
+        // has_strong_tier: false + MAX_ATTEMPTS → Terminal with "no higher model tier available"
+        // in the reason string.
+        let mut node = work_node("W", "hard task", &[]);
+        node.attempt = MAX_ATTEMPTS;
+        let graph = RunGraph {
+            nodes: vec![node],
+            next_id: 0,
+        };
+        let t = SchedulerMachine {
+            has_strong_tier: false,
+        }
+        .transition(
+            SchedulerState::Waiting {
+                graph: running(graph, "W"),
+                running: NodeId("W".to_string()),
+            },
+            SchedulerEvent::NodeReturned {
+                node_id: NodeId("W".to_string()),
+                outcome: NodeOutcome::Failed(NodeFailure {
+                    kind: FailureKind::DeliberationFailure,
+                    message: "capability ceiling".to_string(),
+                    recovery: RecoveryAction::ElevateModel {
+                        message: "escalate model".to_string(),
+                    },
+                }),
+            },
+        );
+
+        let SchedulerState::Failed { graph, reason } = t.state else {
+            panic!("expected Failed, got {:#?}", t.state);
+        };
+        assert_eq!(graph.nodes.len(), 1, "no replacement should be created");
+        assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
+        assert!(
+            reason.contains("no higher model tier available"),
+            "reason must mention no higher model tier, got: {reason:?}"
+        );
+        assert!(
+            reason.contains("exhausted") || reason.contains(&MAX_ATTEMPTS.to_string()),
+            "reason must mention attempt exhaustion, got: {reason:?}"
+        );
+        assert!(matches!(
+            t.effects.as_slice(),
+            [SchedulerEffect::ReturnFailed { .. }]
+        ));
+    }
+
+    #[test]
+    fn elevate_at_strong_tier_falls_back_to_retry() {
+        // A node already running at ModelTier::Strong has no higher tier to go to
+        // even with has_strong_tier: true. Must fall back to Retry.
+        let mut node = work_node("W", "hard task at strong", &[]);
+        node.model_tier = ModelTier::Strong;
+        let graph = RunGraph {
+            nodes: vec![node],
+            next_id: 0,
+        };
+        let t = SchedulerMachine {
+            has_strong_tier: true,
+        }
+        .transition(
+            SchedulerState::Waiting {
+                graph: running(graph, "W"),
+                running: NodeId("W".to_string()),
+            },
+            SchedulerEvent::NodeReturned {
+                node_id: NodeId("W".to_string()),
+                outcome: NodeOutcome::Failed(NodeFailure {
+                    kind: FailureKind::DeliberationFailure,
+                    message: "still failing at strong tier".to_string(),
+                    recovery: RecoveryAction::ElevateModel {
+                        message: "use even stronger".to_string(),
+                    },
+                }),
+            },
+        );
+
+        let SchedulerState::Running { graph } = t.state else {
+            panic!("expected Running, got {:#?}", t.state);
+        };
+        assert_eq!(graph.nodes.len(), 2, "must create a Retry replacement");
+        assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
+        let replacement = &graph.nodes[1];
+        assert!(
+            matches!(replacement.origin, NodeOrigin::Retry { .. }),
+            "Strong-tier node with ElevateModel must fall back to Retry"
+        );
     }
 
     #[test]
