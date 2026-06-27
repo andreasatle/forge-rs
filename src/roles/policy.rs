@@ -28,7 +28,8 @@ Execution failures are handled by the framework, not the model.";
 /// wrapper. This avoids double-encoding and works correctly under JSON grammar.
 const PLANNER_SYSTEM: &str = "Return exactly one JSON object. No markdown. No code fence. \
 No explanation. No text before or after the JSON.\n\
-{\"tasks\":[{\"id\":\"task-id\",\"objective\":\"Task objective.\",\"depends_on\":[]}]}\n\
+Every task must include non-empty `targets` listing the exact files the task may create, modify, or delete.\n\
+{\"tasks\":[{\"id\":\"task-id\",\"objective\":\"Task objective.\",\"targets\":[\"path/to/file\"],\"depends_on\":[]}]}\n\
 Do not copy example values. Replace them with actual task IDs and objectives.";
 
 /// Per-role system prompt policy.
@@ -134,6 +135,18 @@ mod tests {
         assert!(
             policy.planner_producer_system.contains("\"depends_on\""),
             "planner_producer_system must show the 'depends_on' field in the example; got:\n{}",
+            policy.planner_producer_system
+        );
+        assert!(
+            policy.planner_producer_system.contains("\"targets\""),
+            "planner_producer_system must show the 'targets' field in the example; got:\n{}",
+            policy.planner_producer_system
+        );
+        assert!(
+            policy
+                .planner_producer_system
+                .contains("non-empty `targets`"),
+            "planner_producer_system must require non-empty targets; got:\n{}",
             policy.planner_producer_system
         );
     }

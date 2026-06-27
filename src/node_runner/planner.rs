@@ -17,6 +17,8 @@ pub struct PlannerTask {
     pub id: String,
     /// Natural-language description of what this task should accomplish.
     pub objective: String,
+    /// Explicit artifact files this task is allowed and expected to touch.
+    pub targets: Vec<String>,
     /// Ids of other tasks in the same output that must complete before this one.
     pub depends_on: Vec<String>,
 }
@@ -38,6 +40,8 @@ pub enum PlannerValidationError {
     DuplicateId(String),
     /// A task has an empty (or whitespace-only) objective.
     EmptyObjective(String),
+    /// A work task does not declare any concrete target files.
+    EmptyTargets(String),
     /// A task lists its own id in `depends_on`.
     SelfDependency(String),
     /// A task's `depends_on` references an id not present in the output.
@@ -47,11 +51,11 @@ pub enum PlannerValidationError {
         /// The unknown dependency id that was referenced.
         dep_id: String,
     },
-    /// A task's objective references an existing project file that is not
+    /// A task's target list contains an existing project file that is not
     /// mentioned in the top-level run objective, indicating the planner is
     /// trying to recreate an infrastructure file it should leave alone.
     TaskRecreatesExistingFile {
-        /// The task id whose objective contains the pre-existing filename.
+        /// The task id whose targets contain the pre-existing filename.
         task_id: String,
         /// The filename that already exists and is not an objective target.
         filename: String,
@@ -66,6 +70,9 @@ impl std::fmt::Display for PlannerValidationError {
             }
             PlannerValidationError::EmptyObjective(id) => {
                 write!(f, "empty objective for task: {id}")
+            }
+            PlannerValidationError::EmptyTargets(id) => {
+                write!(f, "empty targets for task: {id}")
             }
             PlannerValidationError::SelfDependency(id) => {
                 write!(f, "self-dependency in task: {id}")
@@ -114,6 +121,7 @@ pub fn try_parse_planner_response(raw: &str) -> Result<PlannerOutput, String> {
 /// Checked invariants:
 /// - Task ids are unique within the output.
 /// - Every objective is non-empty (after trimming).
+/// - Every work task declares at least one non-empty target file.
 /// - No task lists itself in `depends_on`.
 /// - Every `depends_on` entry names another task in the same output.
 ///
@@ -126,6 +134,9 @@ pub fn validate_planner_output(output: &PlannerOutput) -> Result<(), PlannerVali
         }
         if task.objective.trim().is_empty() {
             return Err(PlannerValidationError::EmptyObjective(task.id.clone()));
+        }
+        if task.targets.is_empty() || task.targets.iter().any(|t| t.trim().is_empty()) {
+            return Err(PlannerValidationError::EmptyTargets(task.id.clone()));
         }
         if task.depends_on.iter().any(|d| d == &task.id) {
             return Err(PlannerValidationError::SelfDependency(task.id.clone()));
@@ -148,11 +159,10 @@ pub fn validate_planner_output(output: &PlannerOutput) -> Result<(), PlannerVali
 /// Check that no task in `output` targets an existing project file that is not
 /// mentioned in `top_objective`.
 ///
-/// A task is considered to target an existing file when its objective string
-/// contains a filename from `existing_files` AND that filename does not appear
-/// in `top_objective`. This catches planners that recreate infrastructure files
-/// (e.g. `.python-version`, `pyproject.toml`) when the objective only targets
-/// `main.py`.
+/// A task is considered to target an existing file when its structured
+/// `targets` list contains a filename from `existing_files` AND that filename
+/// does not appear in `top_objective`. Objective prose is intentionally ignored
+/// because it is not a reliable file-targeting contract.
 ///
 /// Returns `Err` on the first violation found.
 pub fn validate_planner_no_recreate(
@@ -163,7 +173,9 @@ pub fn validate_planner_no_recreate(
     for task in &output.tasks {
         for filename in existing_files {
             let filename = filename.as_ref();
-            if task.objective.contains(filename) && !top_objective.contains(filename) {
+            if task.targets.iter().any(|target| target == filename)
+                && !top_objective.contains(filename)
+            {
                 return Err(PlannerValidationError::TaskRecreatesExistingFile {
                     task_id: task.id.clone(),
                     filename: filename.to_string(),
@@ -190,7 +202,11 @@ pub fn planner_output_to_plan_output(output: PlannerOutput) -> PlanOutput {
             .map(|task| NodeRequest {
                 id: NodeId(task.id),
                 kind: NodeKind::Work,
-                objective: task.objective,
+                objective: format!(
+                    "{}\n\nTarget files: {}",
+                    task.objective,
+                    task.targets.join(", ")
+                ),
                 dependencies: task.depends_on.into_iter().map(NodeId).collect(),
             })
             .collect(),
@@ -205,7 +221,7 @@ mod tests {
 
     #[test]
     fn direct_planner_output_parses_successfully() {
-        let json = r#"{"tasks":[{"id":"a","objective":"do alpha","depends_on":[]}]}"#;
+        let json = r#"{"tasks":[{"id":"a","objective":"do alpha","targets":["alpha.txt"],"depends_on":[]}]}"#;
         let result = try_parse_planner_response(json);
         assert!(
             result.is_ok(),
@@ -220,7 +236,7 @@ mod tests {
     fn planner_output_does_not_require_nested_json_string() {
         // The planner schema is {"tasks":[...]} directly, not wrapped in
         // {"status":"accepted","content":"<escaped-json>"}.
-        let direct = r#"{"tasks":[{"id":"t1","objective":"do the work","depends_on":[]}]}"#;
+        let direct = r#"{"tasks":[{"id":"t1","objective":"do the work","targets":["work.txt"],"depends_on":[]}]}"#;
         assert!(
             try_parse_planner_response(direct).is_ok(),
             "direct PlannerOutput must parse without a status/content wrapper"
@@ -272,14 +288,15 @@ mod tests {
     fn parses_multiple_tasks() {
         let json = r#"{
             "tasks": [
-                {"id": "a", "objective": "do alpha", "depends_on": []},
-                {"id": "b", "objective": "do beta",  "depends_on": []}
+                {"id": "a", "objective": "do alpha", "targets": ["alpha.txt"], "depends_on": []},
+                {"id": "b", "objective": "do beta",  "targets": ["beta.txt"], "depends_on": []}
             ]
         }"#;
         let output = parse_planner_content(json).expect("parse must return Some");
         assert_eq!(output.tasks.len(), 2);
         assert_eq!(output.tasks[0].id, "a");
         assert_eq!(output.tasks[0].objective, "do alpha");
+        assert_eq!(output.tasks[0].targets, vec!["alpha.txt"]);
         assert!(output.tasks[0].depends_on.is_empty());
         assert_eq!(output.tasks[1].id, "b");
     }
@@ -288,8 +305,8 @@ mod tests {
     fn parses_dependencies() {
         let json = r#"{
             "tasks": [
-                {"id": "first",  "objective": "write tests",  "depends_on": []},
-                {"id": "second", "objective": "implement it", "depends_on": ["first"]}
+                {"id": "first",  "objective": "write tests",  "targets": ["test.txt"], "depends_on": []},
+                {"id": "second", "objective": "implement it", "targets": ["impl.txt"], "depends_on": ["first"]}
             ]
         }"#;
         let output = parse_planner_content(json).expect("parse must return Some");
@@ -311,11 +328,13 @@ mod tests {
                 PlannerTask {
                     id: "x".to_string(),
                     objective: "first".to_string(),
+                    targets: vec!["first.txt".to_string()],
                     depends_on: vec![],
                 },
                 PlannerTask {
                     id: "x".to_string(),
                     objective: "second".to_string(),
+                    targets: vec!["second.txt".to_string()],
                     depends_on: vec![],
                 },
             ],
@@ -330,6 +349,7 @@ mod tests {
             tasks: vec![PlannerTask {
                 id: "task".to_string(),
                 objective: "   ".to_string(),
+                targets: vec!["task.txt".to_string()],
                 depends_on: vec![],
             }],
         };
@@ -341,11 +361,29 @@ mod tests {
     }
 
     #[test]
+    fn empty_targets_rejected() {
+        let output = PlannerOutput {
+            tasks: vec![PlannerTask {
+                id: "task".to_string(),
+                objective: "do something".to_string(),
+                targets: vec![],
+                depends_on: vec![],
+            }],
+        };
+        let err = validate_planner_output(&output).unwrap_err();
+        assert_eq!(
+            err,
+            PlannerValidationError::EmptyTargets("task".to_string())
+        );
+    }
+
+    #[test]
     fn self_dependency_rejected() {
         let output = PlannerOutput {
             tasks: vec![PlannerTask {
                 id: "loop".to_string(),
                 objective: "do something".to_string(),
+                targets: vec!["loop.txt".to_string()],
                 depends_on: vec!["loop".to_string()],
             }],
         };
@@ -362,6 +400,7 @@ mod tests {
             tasks: vec![PlannerTask {
                 id: "task".to_string(),
                 objective: "do something".to_string(),
+                targets: vec!["task.txt".to_string()],
                 depends_on: vec!["nonexistent".to_string()],
             }],
         };
@@ -394,11 +433,13 @@ mod tests {
                 PlannerTask {
                     id: "py-version".to_string(),
                     objective: "Create .python-version file for Python project.".to_string(),
+                    targets: vec![".python-version".to_string()],
                     depends_on: vec![],
                 },
                 PlannerTask {
                     id: "main".to_string(),
                     objective: "Create main.py with haiku about Python state machines.".to_string(),
+                    targets: vec!["main.py".to_string()],
                     depends_on: vec![],
                 },
             ],
@@ -419,12 +460,35 @@ mod tests {
     }
 
     #[test]
+    fn task_targeting_readme_for_main_objective_is_rejected() {
+        let output = PlannerOutput {
+            tasks: vec![PlannerTask {
+                id: "readme".to_string(),
+                objective: "Document the haiku program setup.".to_string(),
+                targets: vec!["README.md".to_string()],
+                depends_on: vec![],
+            }],
+        };
+        let top_objective = "Create a simple Python program in main.py that prints a short haiku about Python state machines.";
+        let err = validate_planner_no_recreate(&output, top_objective, PYTHON_INIT_FILES)
+            .expect_err("README.md target must be rejected when only main.py is requested");
+        assert_eq!(
+            err,
+            PlannerValidationError::TaskRecreatesExistingFile {
+                task_id: "readme".to_string(),
+                filename: "README.md".to_string(),
+            }
+        );
+    }
+
+    #[test]
     fn task_for_objective_target_only_passes_no_recreate_validation() {
         // Only a main.py task — no infrastructure files touched.
         let output = PlannerOutput {
             tasks: vec![PlannerTask {
                 id: "main".to_string(),
                 objective: "Write a haiku about Python state machines in main.py.".to_string(),
+                targets: vec!["main.py".to_string()],
                 depends_on: vec![],
             }],
         };
@@ -442,6 +506,7 @@ mod tests {
             tasks: vec![PlannerTask {
                 id: "config".to_string(),
                 objective: "Update pyproject.toml to add a new dependency.".to_string(),
+                targets: vec!["pyproject.toml".to_string()],
                 depends_on: vec![],
             }],
         };
@@ -458,6 +523,7 @@ mod tests {
             tasks: vec![PlannerTask {
                 id: "any".to_string(),
                 objective: "Create anything at all.".to_string(),
+                targets: vec!["anything.txt".to_string()],
                 depends_on: vec![],
             }],
         };
@@ -476,11 +542,13 @@ mod tests {
                 PlannerTask {
                     id: "step-one".to_string(),
                     objective: "do step one".to_string(),
+                    targets: vec!["one.txt".to_string()],
                     depends_on: vec![],
                 },
                 PlannerTask {
                     id: "step-two".to_string(),
                     objective: "do step two".to_string(),
+                    targets: vec!["two.txt".to_string()],
                     depends_on: vec![],
                 },
             ],
@@ -489,7 +557,10 @@ mod tests {
         assert_eq!(plan.children.len(), 2);
         assert_eq!(plan.children[0].id, NodeId("step-one".to_string()));
         assert_eq!(plan.children[0].kind, NodeKind::Work);
-        assert_eq!(plan.children[0].objective, "do step one");
+        assert_eq!(
+            plan.children[0].objective,
+            "do step one\n\nTarget files: one.txt"
+        );
         assert_eq!(plan.children[1].id, NodeId("step-two".to_string()));
     }
 
@@ -500,11 +571,13 @@ mod tests {
                 PlannerTask {
                     id: "tests".to_string(),
                     objective: "write tests".to_string(),
+                    targets: vec!["tests.txt".to_string()],
                     depends_on: vec![],
                 },
                 PlannerTask {
                     id: "impl".to_string(),
                     objective: "implement".to_string(),
+                    targets: vec!["impl.txt".to_string()],
                     depends_on: vec!["tests".to_string()],
                 },
             ],

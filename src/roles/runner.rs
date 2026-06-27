@@ -3365,7 +3365,7 @@ mod tests {
             planner_producer_system: "PLANNER_MARKER".to_string(),
             ..RolePolicy::default()
         };
-        let tasks_json = r#"{"tasks":[{"id":"t1","objective":"do the work","depends_on":[]}]}"#;
+        let tasks_json = r#"{"tasks":[{"id":"t1","objective":"do the work","targets":["work.txt"],"depends_on":[]}]}"#;
         let provider = ScriptedProvider::from_strs(&[tasks_json]);
         let runner = ProviderRoleRunner::new_with_policy(&provider, policy);
 
@@ -3572,7 +3572,7 @@ mod tests {
     #[test]
     fn default_policy_preserves_existing_behavior() {
         let policy = RolePolicy::default();
-        let tasks_json = r#"{"tasks":[{"id":"t1","objective":"do the work","depends_on":[]}]}"#;
+        let tasks_json = r#"{"tasks":[{"id":"t1","objective":"do the work","targets":["work.txt"],"depends_on":[]}]}"#;
         let provider = ScriptedProvider::from_strs(&[
             tasks_json,
             r#"{"status":"accepted","content":"work done"}"#,
@@ -3619,7 +3619,7 @@ mod tests {
     #[test]
     fn planner_prompt_omits_tool_section() {
         // When node_kind is Plan and tool_context is None, no tool section appears.
-        let tasks_json = r#"{"tasks":[{"id":"t1","objective":"do the work","depends_on":[]}]}"#;
+        let tasks_json = r#"{"tasks":[{"id":"t1","objective":"do the work","targets":["work.txt"],"depends_on":[]}]}"#;
         let provider = ScriptedProvider::from_strs(&[tasks_json]);
         let runner = ProviderRoleRunner::new(&provider);
 
@@ -3652,7 +3652,7 @@ mod tests {
     fn planner_tool_request_produces_error_observation() {
         // Even if a plan-node model emits a tool request, it gets "no file tools available"
         // rather than actual execution, because tool_context is None for plan nodes.
-        let tasks_json = r#"{"tasks":[{"id":"t1","objective":"do the thing","depends_on":[]}]}"#;
+        let tasks_json = r#"{"tasks":[{"id":"t1","objective":"do the thing","targets":["thing.txt"],"depends_on":[]}]}"#;
         let provider = ScriptedProvider::from_strs(&[
             r#"{"tool":"read_file","path":"hello.txt"}"#,
             tasks_json,
@@ -3722,7 +3722,7 @@ mod tests {
 
     #[test]
     fn planner_accepts_valid_planner_output() {
-        let tasks_json = r#"{"tasks":[{"id":"t1","objective":"do the thing","depends_on":[]}]}"#;
+        let tasks_json = r#"{"tasks":[{"id":"t1","objective":"do the thing","targets":["thing.txt"],"depends_on":[]}]}"#;
         let provider = ScriptedProvider::from_strs(&[tasks_json]);
         let runner = ProviderRoleRunner::new(&provider);
 
@@ -3753,7 +3753,7 @@ mod tests {
 
     #[test]
     fn planner_retries_invalid_planner_output() {
-        let tasks_json = r#"{"tasks":[{"id":"t1","objective":"do the thing","depends_on":[]}]}"#;
+        let tasks_json = r#"{"tasks":[{"id":"t1","objective":"do the thing","targets":["thing.txt"],"depends_on":[]}]}"#;
         let provider = ScriptedProvider::from_strs(&[
             r#"{"status":"accepted","content":"Here is my plan: do things step by step."}"#,
             tasks_json,
@@ -3948,7 +3948,7 @@ mod tests {
     #[test]
     fn planner_prompt_shows_direct_planner_output_schema() {
         let provider = ScriptedProvider::from_strs(&[
-            r#"{"tasks":[{"id":"t1","objective":"do the work","depends_on":[]}]}"#,
+            r#"{"tasks":[{"id":"t1","objective":"do the work","targets":["work.txt"],"depends_on":[]}]}"#,
         ]);
         let runner = ProviderRoleRunner::new(&provider);
 
@@ -3980,6 +3980,10 @@ mod tests {
             "planner prompt must show objective field; got:\n{prompt}"
         );
         assert!(
+            prompt.contains("\"targets\""),
+            "planner prompt must show targets field; got:\n{prompt}"
+        );
+        assert!(
             prompt.contains("\"depends_on\""),
             "planner prompt must show depends_on field; got:\n{prompt}"
         );
@@ -3988,7 +3992,7 @@ mod tests {
     #[test]
     fn planner_prompt_does_not_show_status_content_schema() {
         let provider = ScriptedProvider::from_strs(&[
-            r#"{"tasks":[{"id":"t1","objective":"do the work","depends_on":[]}]}"#,
+            r#"{"tasks":[{"id":"t1","objective":"do the work","targets":["work.txt"],"depends_on":[]}]}"#,
         ]);
         let runner = ProviderRoleRunner::new(&provider);
 
@@ -4020,9 +4024,8 @@ mod tests {
     #[test]
     fn invalid_direct_planner_output_retries() {
         // Parses as PlannerOutput but has a self-dependency — validation must retry.
-        let invalid_json =
-            r#"{"tasks":[{"id":"loop","objective":"do loop","depends_on":["loop"]}]}"#;
-        let valid_json = r#"{"tasks":[{"id":"t1","objective":"do the work","depends_on":[]}]}"#;
+        let invalid_json = r#"{"tasks":[{"id":"loop","objective":"do loop","targets":["loop.txt"],"depends_on":["loop"]}]}"#;
+        let valid_json = r#"{"tasks":[{"id":"t1","objective":"do the work","targets":["work.txt"],"depends_on":[]}]}"#;
         let provider = ScriptedProvider::from_strs(&[invalid_json, valid_json]);
         let runner = ProviderRoleRunner::new(&provider);
 
@@ -4696,7 +4699,7 @@ mod tests {
         // (which it shouldn't, since tool_context is None), completion pressure
         // must never activate. Here we verify that the Planner takes the direct
         // PlannerOutput path without any CP interference.
-        let tasks_json = r#"{"tasks":[{"id":"t1","objective":"do the work","depends_on":[]}]}"#;
+        let tasks_json = r#"{"tasks":[{"id":"t1","objective":"do the work","targets":["work.txt"],"depends_on":[]}]}"#;
         let provider = ScriptedProvider::from_strs(&[tasks_json]);
         let runner = ProviderRoleRunner::new(&provider);
 

@@ -10,18 +10,18 @@ Express dependencies explicitly. \
 Do not include implementation details in plan nodes — describe what to achieve, not how. \
 Output a structured task list that the execution framework can schedule.\n\
 Every task must target a concrete artifact operation: create, modify, or delete named files. \
+Every task must include a non-empty `targets` array listing the exact files that task may create, modify, or delete. \
 Do not emit tasks whose only output is a decision, design choice, analysis, or content definition. \
 Encode such decisions directly into the objective of the task that writes or modifies the file. \
 Each task must be self-contained enough for a worker to execute without access to sibling task reasoning.\n\
 Files shown in the project context under 'Existing project files' already exist and are managed \
 by the project infrastructure. \
-Do not create tasks to create, recreate, or reinitialize those files unless the objective \
-explicitly names them as targets. \
+Do not put those existing files in a task's `targets` unless the objective explicitly names them as targets. \
 Only create tasks for files that the objective names as targets or that must be newly created \
 to satisfy it.\n\
 Return exactly one JSON object. No markdown. No code fence. \
 No explanation. No text before or after the JSON.\n\
-{\"tasks\":[{\"id\":\"task-id\",\"objective\":\"Task objective.\",\"depends_on\":[]}]}\n\
+{\"tasks\":[{\"id\":\"task-id\",\"objective\":\"Task objective.\",\"targets\":[\"path/to/file\"],\"depends_on\":[]}]}\n\
 Do not copy example values. Replace them with actual task IDs and objectives.";
 
 const CODING_WORKER_SYSTEM: &str = "You are a software implementation agent. \
@@ -478,6 +478,13 @@ mod tests {
         assert!(
             policy.planner_producer_system.contains("named files"),
             "planner_producer_system must mention named files as artifact targets; got:\n{}",
+            policy.planner_producer_system
+        );
+        assert!(
+            policy
+                .planner_producer_system
+                .contains("non-empty `targets` array"),
+            "planner_producer_system must require non-empty targets; got:\n{}",
             policy.planner_producer_system
         );
     }

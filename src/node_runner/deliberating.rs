@@ -551,8 +551,7 @@ mod tests {
 
     #[test]
     fn deliberating_runner_plan_returns_plan_output() {
-        let tasks_json =
-            r#"{"tasks":[{"id":"task-1","objective":"the actual work","depends_on":[]}]}"#;
+        let tasks_json = r#"{"tasks":[{"id":"task-1","objective":"the actual work","targets":["work.txt"],"depends_on":[]}]}"#;
         let provider = ScriptedProvider::from_strs(&[
             tasks_json,
             r#"{"status":"accepted","content":"looks good"}"#,
@@ -565,7 +564,10 @@ mod tests {
         };
         assert_eq!(plan.children.len(), 1);
         assert_eq!(plan.children[0].kind, NodeKind::Work);
-        assert_eq!(plan.children[0].objective, "the actual work");
+        assert_eq!(
+            plan.children[0].objective,
+            "the actual work\n\nTarget files: work.txt"
+        );
     }
 
     #[test]
@@ -1009,7 +1011,7 @@ mod tests {
 
     #[test]
     fn structured_planner_output_creates_multiple_work_nodes() {
-        let tasks_json = r#"{"tasks":[{"id":"alpha","objective":"do alpha","depends_on":[]},{"id":"beta","objective":"do beta","depends_on":["alpha"]}]}"#;
+        let tasks_json = r#"{"tasks":[{"id":"alpha","objective":"do alpha","targets":["alpha.txt"],"depends_on":[]},{"id":"beta","objective":"do beta","targets":["beta.txt"],"depends_on":["alpha"]}]}"#;
         let provider = ScriptedProvider::from_strs(&[
             tasks_json,
             r#"{"status":"accepted","content":"looks good"}"#,
@@ -1024,10 +1026,16 @@ mod tests {
         };
         assert_eq!(plan.children.len(), 2, "must produce two work nodes");
         assert_eq!(plan.children[0].id, NodeId("alpha".to_string()));
-        assert_eq!(plan.children[0].objective, "do alpha");
+        assert_eq!(
+            plan.children[0].objective,
+            "do alpha\n\nTarget files: alpha.txt"
+        );
         assert!(plan.children[0].dependencies.is_empty());
         assert_eq!(plan.children[1].id, NodeId("beta".to_string()));
-        assert_eq!(plan.children[1].objective, "do beta");
+        assert_eq!(
+            plan.children[1].objective,
+            "do beta\n\nTarget files: beta.txt"
+        );
         assert_eq!(
             plan.children[1].dependencies,
             vec![NodeId("alpha".to_string())]
@@ -1059,7 +1067,8 @@ mod tests {
     fn invalid_structured_plan_returns_failed() {
         // Parses as PlannerOutput but has a self-dependency — validation must fail loudly.
         // All three producer attempts return the same invalid plan, exhausting retries.
-        let tasks_json = r#"{"tasks":[{"id":"x","objective":"do x","depends_on":["x"]}]}"#;
+        let tasks_json =
+            r#"{"tasks":[{"id":"x","objective":"do x","targets":["x.txt"],"depends_on":["x"]}]}"#;
         let provider = ScriptedProvider::from_strs(&[
             tasks_json, // Producer attempt 1
             tasks_json, // Producer attempt 2 (retry)
@@ -1288,9 +1297,9 @@ mod tests {
         let view = make_artifact_view(&temp, ".gitignore", "*.pyc\n__pycache__/\n");
 
         // First planner response: includes .gitignore task (violates no-recreate).
-        let bad_plan = r#"{"tasks":[{"id":"task-1","objective":"Create .gitignore file for the project.","depends_on":[]},{"id":"task-2","objective":"Write main.py with the haiku.","depends_on":[]}]}"#;
+        let bad_plan = r#"{"tasks":[{"id":"task-1","objective":"Create .gitignore file for the project.","targets":[".gitignore"],"depends_on":[]},{"id":"task-2","objective":"Write main.py with the haiku.","targets":["main.py"],"depends_on":[]}]}"#;
         // Second planner response (after revision feedback): only the main.py task.
-        let good_plan = r#"{"tasks":[{"id":"task-1","objective":"Write main.py with the haiku.","depends_on":[]}]}"#;
+        let good_plan = r#"{"tasks":[{"id":"task-1","objective":"Write main.py with the haiku.","targets":["main.py"],"depends_on":[]}]}"#;
 
         let provider = ScriptedProvider::from_strs(&[
             bad_plan,  // Plan+Producer attempt 1 — fails no-recreate, handler retries
@@ -1317,7 +1326,7 @@ mod tests {
             "revised plan must contain only the main.py task"
         );
         assert_eq!(
-            plan.children[0].objective, "Write main.py with the haiku.",
+            plan.children[0].objective, "Write main.py with the haiku.\n\nTarget files: main.py",
             "task objective must match the revised plan"
         );
     }
@@ -1330,8 +1339,7 @@ mod tests {
         let view = make_artifact_view(&temp, ".gitignore", "*.pyc\n");
 
         // All three producer responses include the .gitignore task.
-        let bad_plan =
-            r#"{"tasks":[{"id":"task-1","objective":"Create .gitignore file.","depends_on":[]}]}"#;
+        let bad_plan = r#"{"tasks":[{"id":"task-1","objective":"Create .gitignore file.","targets":[".gitignore"],"depends_on":[]}]}"#;
 
         let provider = ScriptedProvider::from_strs(&[
             bad_plan, // attempt 1
