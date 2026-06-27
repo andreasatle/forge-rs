@@ -172,10 +172,18 @@ struct ProtocolState {
     is_work_producer: bool,
     /// Whether this invocation is Critic or Referee (eligible for decision pressure).
     is_read_only_reviewer: bool,
+    /// Whether this invocation must read at least one file before accepting.
+    ///
+    /// True for Work-node Critic and Referee when a tool executor is available.
+    requires_read_enforcement: bool,
 }
 
 impl ProtocolState {
-    fn new(is_work_producer: bool, is_read_only_reviewer: bool) -> Self {
+    fn new(
+        is_work_producer: bool,
+        is_read_only_reviewer: bool,
+        requires_read_enforcement: bool,
+    ) -> Self {
         Self {
             protocol_attempt: 1,
             tool_steps: 0,
@@ -188,6 +196,7 @@ impl ProtocolState {
             read_file_attempted: 0,
             is_work_producer,
             is_read_only_reviewer,
+            requires_read_enforcement,
         }
     }
 
@@ -269,10 +278,6 @@ impl ProtocolState {
         self.protocol_attempt += 1;
     }
 
-    fn is_final_response_only(&self) -> bool {
-        self.final_response_only
-    }
-
     fn is_decision_pressure_active(&self) -> bool {
         self.decision_pressure_active
     }
@@ -281,16 +286,28 @@ impl ProtocolState {
         self.repeated_observation_coercion_active
     }
 
-    fn read_file_executed(&self) -> bool {
-        self.read_file_executed
-    }
-
     fn read_file_attempted(&self) -> usize {
         self.read_file_attempted
     }
 
     fn current_attempt(&self) -> usize {
         self.protocol_attempt
+    }
+
+    /// Returns `true` when reviewer read enforcement is active and the reviewer
+    /// has not yet successfully read any file. The caller must additionally check
+    /// that the parsed result is `Accepted` before treating this as a violation.
+    fn reviewer_accepted_without_reading(&self) -> bool {
+        self.requires_read_enforcement && !self.read_file_executed
+    }
+
+    /// Returns `true` when a reviewer-must-read violation should fail immediately
+    /// rather than issuing a retry prompt.
+    ///
+    /// This fires when tools are blocked (no retry would help) or the protocol
+    /// retry budget is already exhausted.
+    fn reviewer_accept_must_fail_immediately(&self) -> bool {
+        !self.allow_tool_call() || !self.allow_model_call()
     }
 }
 
@@ -345,10 +362,14 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
         // accepting. list_files alone is insufficient — the model must inspect
         // actual file contents. This enforcement only applies when tools are
         // available; plan-node reviewers judge structure, not file contents.
-        let requires_file_read =
+        let requires_read_enforcement =
             request.node_kind == NodeKind::Work && is_read_only_reviewer && has_tools;
 
-        let mut proto = ProtocolState::new(is_work_producer, is_read_only_reviewer);
+        let mut proto = ProtocolState::new(
+            is_work_producer,
+            is_read_only_reviewer,
+            requires_read_enforcement,
+        );
 
         loop {
             telemetry.record(TelemetryRecord::new_with_subsource(
@@ -617,8 +638,7 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                         // Enforce that Work-node reviewers read at least one file before
                         // accepting. list_files alone is not sufficient — the reviewer
                         // must inspect actual file contents to verify the objective.
-                        if requires_file_read
-                            && !proto.read_file_executed()
+                        if proto.reviewer_accepted_without_reading()
                             && matches!(result, RoleResult::Accepted { .. })
                         {
                             let attempt_note = if proto.read_file_attempted() == 0 {
@@ -647,7 +667,7 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                             // there is no point issuing a must-read retry prompt — the model
                             // cannot call tools and would only generate further protocol errors.
                             // Fail directly with a clear reason in that case.
-                            if !proto.allow_tool_call() || !proto.allow_model_call() {
+                            if proto.reviewer_accept_must_fail_immediately() {
                                 return RoleRunOutput {
                                     result: RoleResult::Failed {
                                         kind: FailureKind::ProtocolFailure,
@@ -704,7 +724,7 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                             // write was already recorded but the model could not
                             // confirm it. Label the reason so the node-runner
                             // classifier can treat it as Retry rather than Terminal.
-                            let terminal_reason = if proto.is_final_response_only() {
+                            let terminal_reason = if !proto.allow_tool_call() {
                                 format!("protocol failure after write: {effective_error}")
                             } else {
                                 effective_error
@@ -726,7 +746,7 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                                 attempt_count: proto.current_attempt(),
                             },
                         ));
-                        current_prompt = if proto.is_final_response_only() {
+                        current_prompt = if !proto.allow_tool_call() {
                             render_completion_pressure_retry_prompt(
                                 &core_prompt,
                                 &observation_suffix,
@@ -1155,6 +1175,281 @@ fn parse_role_response(raw_response: &str) -> RoleResult {
         kind: FailureKind::ProtocolFailure,
         reason,
     })
+}
+
+#[cfg(test)]
+impl ProtocolState {
+    fn read_file_executed(&self) -> bool {
+        self.read_file_executed
+    }
+}
+
+#[cfg(test)]
+mod protocol_state_tests {
+    use super::*;
+
+    fn work_producer() -> ProtocolState {
+        ProtocolState::new(true, false, false)
+    }
+
+    fn work_reviewer() -> ProtocolState {
+        ProtocolState::new(false, true, true)
+    }
+
+    fn plain_producer() -> ProtocolState {
+        ProtocolState::new(false, false, false)
+    }
+
+    #[test]
+    fn tool_budget_exhaustion() {
+        let mut proto = work_producer();
+        for _ in 0..=MAX_TOOL_STEPS {
+            proto.record_tool_call();
+        }
+        assert!(
+            proto.tool_loop_limit_reached(),
+            "tool_loop_limit_reached must be true after MAX_TOOL_STEPS+1 calls"
+        );
+        assert!(
+            !proto.tool_loop_limit_reached() || {
+                let mut p2 = work_producer();
+                for _ in 0..MAX_TOOL_STEPS {
+                    p2.record_tool_call();
+                }
+                !p2.tool_loop_limit_reached()
+            },
+            "tool_loop_limit_reached must be false before the limit is crossed"
+        );
+    }
+
+    #[test]
+    fn tool_budget_not_reached_before_limit() {
+        let mut proto = work_producer();
+        for _ in 0..MAX_TOOL_STEPS {
+            proto.record_tool_call();
+        }
+        assert!(
+            !proto.tool_loop_limit_reached(),
+            "tool_loop_limit_reached must be false at exactly MAX_TOOL_STEPS calls"
+        );
+    }
+
+    #[test]
+    fn protocol_retry_budget_exhaustion() {
+        let mut proto = plain_producer();
+        assert!(proto.allow_model_call(), "model call allowed initially");
+        for _ in 0..MAX_PROTOCOL_RETRIES {
+            proto.record_protocol_failure();
+        }
+        assert!(
+            !proto.allow_model_call(),
+            "allow_model_call must be false after MAX_PROTOCOL_RETRIES failures"
+        );
+    }
+
+    #[test]
+    fn protocol_retry_budget_not_exhausted_before_limit() {
+        let mut proto = plain_producer();
+        for _ in 0..MAX_PROTOCOL_RETRIES - 1 {
+            proto.record_protocol_failure();
+        }
+        assert!(
+            proto.allow_model_call(),
+            "allow_model_call must be true before MAX_PROTOCOL_RETRIES failures"
+        );
+    }
+
+    #[test]
+    fn completion_pressure_fires_after_write() {
+        let mut proto = work_producer();
+        assert!(proto.allow_tool_call(), "tools allowed initially");
+        proto.record_tool_result("write_file\n{ok}".to_string(), true, false);
+        assert!(
+            !proto.allow_tool_call(),
+            "tools must be blocked after a successful mutation (completion pressure)"
+        );
+    }
+
+    #[test]
+    fn completion_pressure_does_not_fire_for_reviewer() {
+        // Reviewers cannot mutate, so completion pressure must not fire even if
+        // mutation_recorded is somehow passed as true.
+        let mut proto = work_reviewer();
+        proto.record_tool_result("write_file\n{ok}".to_string(), true, false);
+        // Decision pressure fires instead (read_only_tool_steps reaches 1, still < MAX).
+        // But completion pressure specifically must not be set.
+        // The easiest check: tool calls are blocked iff decision pressure fired.
+        // With MAX_READ_ONLY_TOOL_STEPS = 2, one step is not yet enough for decision pressure.
+        assert!(
+            proto.allow_tool_call(),
+            "reviewer must not enter completion pressure after one step; got blocked early"
+        );
+    }
+
+    #[test]
+    fn decision_pressure_fires_after_read_budget() {
+        let mut proto = work_reviewer();
+        for i in 0..MAX_READ_ONLY_TOOL_STEPS {
+            proto.record_tool_result(format!("read_file\nobs{i}"), false, true);
+        }
+        assert!(
+            !proto.allow_tool_call(),
+            "tools must be blocked after MAX_READ_ONLY_TOOL_STEPS (decision pressure)"
+        );
+        assert!(
+            proto.is_decision_pressure_active(),
+            "decision_pressure_active must be set"
+        );
+    }
+
+    #[test]
+    fn decision_pressure_not_active_before_budget() {
+        let mut proto = work_reviewer();
+        for i in 0..MAX_READ_ONLY_TOOL_STEPS - 1 {
+            proto.record_tool_result(format!("read_file\nobs{i}"), false, true);
+        }
+        assert!(
+            proto.allow_tool_call(),
+            "tools must still be allowed before the read budget is exhausted"
+        );
+        assert!(
+            !proto.is_decision_pressure_active(),
+            "decision pressure must not be active before the budget is exhausted"
+        );
+    }
+
+    #[test]
+    fn repeated_identical_observation_triggers_coercion() {
+        let mut proto = plain_producer();
+        proto.record_tool_result("list_files\n{files:[]}".to_string(), false, false);
+        assert!(
+            proto.allow_tool_call(),
+            "tools allowed after first observation"
+        );
+        assert!(
+            !proto.is_repeated_observation_coercion_active(),
+            "coercion must not be active after unique observation"
+        );
+        // Second identical fingerprint triggers coercion.
+        proto.record_tool_result("list_files\n{files:[]}".to_string(), false, false);
+        assert!(
+            !proto.allow_tool_call(),
+            "tools must be blocked after repeated observation"
+        );
+        assert!(
+            proto.is_repeated_observation_coercion_active(),
+            "repeated_observation_coercion_active must be set"
+        );
+    }
+
+    #[test]
+    fn distinct_observations_do_not_trigger_coercion() {
+        let mut proto = plain_producer();
+        proto.record_tool_result("read_file\ncontent-a".to_string(), false, true);
+        proto.record_tool_result("read_file\ncontent-b".to_string(), false, true);
+        assert!(
+            !proto.is_repeated_observation_coercion_active(),
+            "distinct observations must not trigger coercion"
+        );
+    }
+
+    #[test]
+    fn failed_read_file_does_not_satisfy_evidence_requirement() {
+        let mut proto = work_reviewer();
+        // Simulate a failed read_file: record attempt but not success.
+        proto.record_read_file_attempt();
+        proto.record_tool_result(
+            "read_file\n{ok:false,error:not found}".to_string(),
+            false,
+            false,
+        );
+        assert!(
+            !proto.read_file_executed(),
+            "read_file_executed must remain false when read_file failed"
+        );
+        assert!(
+            proto.reviewer_accepted_without_reading(),
+            "reviewer_accepted_without_reading must be true when no successful read occurred"
+        );
+    }
+
+    #[test]
+    fn successful_read_file_satisfies_evidence_requirement() {
+        let mut proto = work_reviewer();
+        proto.record_read_file_attempt();
+        proto.record_tool_result(
+            "read_file\n{ok:true,content:hello}".to_string(),
+            false,
+            true,
+        );
+        assert!(
+            proto.read_file_executed(),
+            "read_file_executed must be true after a successful read"
+        );
+        assert!(
+            !proto.reviewer_accepted_without_reading(),
+            "reviewer_accepted_without_reading must be false after a successful read"
+        );
+    }
+
+    #[test]
+    fn reviewer_accept_must_fail_immediately_when_tools_blocked() {
+        let mut proto = work_reviewer();
+        for i in 0..MAX_READ_ONLY_TOOL_STEPS {
+            proto.record_tool_result(format!("read_file\nobs{i}"), false, false);
+        }
+        // Decision pressure active; tools blocked.
+        assert!(
+            proto.reviewer_accept_must_fail_immediately(),
+            "must fail immediately when tools are blocked"
+        );
+    }
+
+    #[test]
+    fn reviewer_accept_must_fail_immediately_when_retries_exhausted() {
+        let mut proto = work_reviewer();
+        for _ in 0..MAX_PROTOCOL_RETRIES {
+            proto.record_protocol_failure();
+        }
+        assert!(
+            proto.reviewer_accept_must_fail_immediately(),
+            "must fail immediately when protocol retry budget is exhausted"
+        );
+    }
+
+    #[test]
+    fn reviewer_accept_must_not_fail_immediately_when_healthy() {
+        let proto = work_reviewer();
+        assert!(
+            !proto.reviewer_accept_must_fail_immediately(),
+            "must not fail immediately on a fresh reviewer state"
+        );
+    }
+
+    #[test]
+    fn requires_read_enforcement_false_skips_reviewer_check() {
+        // is_read_only_reviewer=true but requires_read_enforcement=false (plan-node reviewer).
+        let proto = ProtocolState::new(false, true, false);
+        assert!(
+            !proto.reviewer_accepted_without_reading(),
+            "reviewer_accepted_without_reading must be false when enforcement is disabled"
+        );
+    }
+
+    #[test]
+    fn protocol_attempt_resets_after_tool_result() {
+        let mut proto = plain_producer();
+        proto.record_protocol_failure();
+        proto.record_protocol_failure();
+        assert_eq!(proto.current_attempt(), 3);
+        // A successful tool step resets the counter.
+        proto.record_tool_result("list_files\n{files:[]}".to_string(), false, false);
+        assert_eq!(
+            proto.current_attempt(),
+            1,
+            "protocol_attempt must reset to 1 after a successful tool step"
+        );
+    }
 }
 
 #[cfg(test)]
