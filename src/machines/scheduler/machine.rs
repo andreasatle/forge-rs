@@ -1138,9 +1138,9 @@ impl SchedulerMachine {
                         }
                     }
 
-                    Failed(NodeFailure { reason, recovery }) => {
-                        Self::route_recovery(graph, &node_id, reason, recovery)
-                    }
+                    Failed(NodeFailure {
+                        message, recovery, ..
+                    }) => Self::route_recovery(graph, &node_id, message, recovery),
                 }
             }
 
@@ -1186,9 +1186,9 @@ impl SchedulerMachine {
                             effects: vec![],
                         }
                     }
-                    IntegrationOutcome::Failed(IntegrationFailure { reason, recovery }) => {
-                        Self::route_recovery(graph, &node_id, reason, recovery)
-                    }
+                    IntegrationOutcome::Failed(IntegrationFailure {
+                        message, recovery, ..
+                    }) => Self::route_recovery(graph, &node_id, message, recovery),
                 }
             }
 
@@ -1244,6 +1244,7 @@ impl SchedulerMachine {
 mod tests {
     use super::*;
     use crate::engine::run_machine;
+    use crate::machines::scheduler::FailureKind;
     use crate::machines::scheduler::event::{
         IntegrationFailure, IntegrationOutcome, IntegrationOutput, NodeFailure, NodeOutcome,
         NodeRequest, PlanOutput, RecoveryAction, WorkOutput,
@@ -1570,7 +1571,8 @@ mod tests {
             SchedulerEvent::NodeReturned {
                 node_id: NodeId("W".to_string()),
                 outcome: NodeOutcome::Failed(NodeFailure {
-                    reason: "first try failed".to_string(),
+                    kind: FailureKind::DeliberationFailure,
+                    message: "first try failed".to_string(),
                     recovery: RecoveryAction::Retry {
                         message: "try again".to_string(),
                     },
@@ -1606,7 +1608,8 @@ mod tests {
             SchedulerEvent::NodeReturned {
                 node_id: NodeId("W".to_string()),
                 outcome: NodeOutcome::Failed(NodeFailure {
-                    reason: "first try failed".to_string(),
+                    kind: FailureKind::DeliberationFailure,
+                    message: "first try failed".to_string(),
                     recovery: RecoveryAction::Retry {
                         message: "try again".to_string(),
                     },
@@ -1636,7 +1639,8 @@ mod tests {
             SchedulerEvent::NodeReturned {
                 node_id: NodeId("W".to_string()),
                 outcome: NodeOutcome::Failed(NodeFailure {
-                    reason: "needs stronger model".to_string(),
+                    kind: FailureKind::DeliberationFailure,
+                    message: "needs stronger model".to_string(),
                     recovery: RecoveryAction::ElevateModel {
                         message: "use strong".to_string(),
                     },
@@ -1672,7 +1676,8 @@ mod tests {
             SchedulerEvent::NodeReturned {
                 node_id: NodeId("W".to_string()),
                 outcome: NodeOutcome::Failed(NodeFailure {
-                    reason: "needs stronger model".to_string(),
+                    kind: FailureKind::DeliberationFailure,
+                    message: "needs stronger model".to_string(),
                     recovery: RecoveryAction::ElevateModel {
                         message: "use strong".to_string(),
                     },
@@ -1735,7 +1740,8 @@ mod tests {
             SchedulerEvent::NodeReturned {
                 node_id: NodeId("T".to_string()),
                 outcome: NodeOutcome::Failed(NodeFailure {
-                    reason: "provider error (Retryable): connection refused".to_string(),
+                    kind: FailureKind::DeliberationFailure,
+                    message: "provider error (Retryable): connection refused".to_string(),
                     recovery: RecoveryAction::Terminal {
                         message: "deliberation failed".to_string(),
                     },
@@ -1776,7 +1782,8 @@ mod tests {
             SchedulerEvent::IntegrationReturned {
                 node_id: NodeId("W".to_string()),
                 outcome: IntegrationOutcome::Failed(IntegrationFailure {
-                    reason: "validation failed: cargo test failed".to_string(),
+                    kind: FailureKind::IntegrationFailure,
+                    message: "validation failed: cargo test failed".to_string(),
                     recovery: RecoveryAction::Terminal {
                         message: "integration failed".to_string(),
                     },
@@ -1903,7 +1910,8 @@ mod tests {
             SchedulerEvent::NodeReturned {
                 node_id: NodeId("B".to_string()),
                 outcome: NodeOutcome::Failed(NodeFailure {
-                    reason: "task too complex".to_string(),
+                    kind: FailureKind::DeliberationFailure,
+                    message: "task too complex".to_string(),
                     recovery: RecoveryAction::Split {
                         message: "decompose the work".to_string(),
                     },
@@ -2056,7 +2064,8 @@ mod tests {
             SchedulerEvent::NodeReturned {
                 node_id: NodeId("W".to_string()),
                 outcome: NodeOutcome::Failed(NodeFailure {
-                    reason: "transient error".to_string(),
+                    kind: FailureKind::DeliberationFailure,
+                    message: "transient error".to_string(),
                     recovery: RecoveryAction::Retry {
                         message: "try again".to_string(),
                     },
@@ -2519,7 +2528,8 @@ mod tests {
             SchedulerEvent::NodeReturned {
                 node_id: NodeId("W".to_string()),
                 outcome: NodeOutcome::Failed(NodeFailure {
-                    reason: "capability ceiling".to_string(),
+                    kind: FailureKind::DeliberationFailure,
+                    message: "capability ceiling".to_string(),
                     recovery: RecoveryAction::ElevateModel {
                         message: "escalate model".to_string(),
                     },
@@ -2574,7 +2584,8 @@ mod tests {
             SchedulerEvent::NodeReturned {
                 node_id: NodeId("B".to_string()),
                 outcome: NodeOutcome::Failed(NodeFailure {
-                    reason: "unrecoverable".to_string(),
+                    kind: FailureKind::DeliberationFailure,
+                    message: "unrecoverable".to_string(),
                     recovery: RecoveryAction::Terminal {
                         message: "fatal error".to_string(),
                     },
@@ -2623,7 +2634,8 @@ mod tests {
             SchedulerEvent::NodeReturned {
                 node_id: NodeId("W".to_string()),
                 outcome: NodeOutcome::Failed(NodeFailure {
-                    reason: "task too complex".to_string(),
+                    kind: FailureKind::DeliberationFailure,
+                    message: "task too complex".to_string(),
                     recovery: RecoveryAction::Split {
                         message: "decompose the work".to_string(),
                     },
@@ -2662,7 +2674,8 @@ mod tests {
             SchedulerEvent::NodeReturned {
                 node_id: NodeId("W".to_string()),
                 outcome: NodeOutcome::Failed(NodeFailure {
-                    reason: "transient error".to_string(),
+                    kind: FailureKind::DeliberationFailure,
+                    message: "transient error".to_string(),
                     recovery: RecoveryAction::Retry {
                         message: "try again".to_string(),
                     },
@@ -2702,7 +2715,8 @@ mod tests {
             SchedulerEvent::NodeReturned {
                 node_id: NodeId("W".to_string()),
                 outcome: NodeOutcome::Failed(NodeFailure {
-                    reason: "task too complex".to_string(),
+                    kind: FailureKind::DeliberationFailure,
+                    message: "task too complex".to_string(),
                     recovery: RecoveryAction::Split {
                         message: "decompose the work".to_string(),
                     },
@@ -2742,7 +2756,8 @@ mod tests {
             SchedulerEvent::NodeReturned {
                 node_id: NodeId("W".to_string()),
                 outcome: NodeOutcome::Failed(NodeFailure {
-                    reason: "capability ceiling".to_string(),
+                    kind: FailureKind::DeliberationFailure,
+                    message: "capability ceiling".to_string(),
                     recovery: RecoveryAction::ElevateModel {
                         message: "use stronger model".to_string(),
                     },
@@ -2868,7 +2883,8 @@ mod tests {
             SchedulerEvent::NodeReturned {
                 node_id: NodeId("W".to_string()),
                 outcome: NodeOutcome::Failed(NodeFailure {
-                    reason: "task too complex".to_string(),
+                    kind: FailureKind::DeliberationFailure,
+                    message: "task too complex".to_string(),
                     recovery: RecoveryAction::Split {
                         message: "decompose the work".to_string(),
                     },
@@ -2923,7 +2939,8 @@ mod tests {
             SchedulerEvent::NodeReturned {
                 node_id: NodeId("W".to_string()),
                 outcome: NodeOutcome::Failed(NodeFailure {
-                    reason: "task too complex".to_string(),
+                    kind: FailureKind::DeliberationFailure,
+                    message: "task too complex".to_string(),
                     recovery: RecoveryAction::Split {
                         message: "decompose the work".to_string(),
                     },
@@ -2977,7 +2994,8 @@ mod tests {
             SchedulerEvent::IntegrationReturned {
                 node_id: NodeId("B".to_string()),
                 outcome: IntegrationOutcome::Failed(IntegrationFailure {
-                    reason: "integration error".to_string(),
+                    kind: FailureKind::IntegrationFailure,
+                    message: "integration error".to_string(),
                     recovery: RecoveryAction::Retry {
                         message: "retry after integration failure".to_string(),
                     },
@@ -3039,7 +3057,8 @@ mod tests {
             SchedulerEvent::IntegrationReturned {
                 node_id: NodeId("B".to_string()),
                 outcome: IntegrationOutcome::Failed(IntegrationFailure {
-                    reason: "integration error".to_string(),
+                    kind: FailureKind::IntegrationFailure,
+                    message: "integration error".to_string(),
                     recovery: RecoveryAction::ElevateModel {
                         message: "use stronger model".to_string(),
                     },
@@ -3097,7 +3116,8 @@ mod tests {
             SchedulerEvent::IntegrationReturned {
                 node_id: NodeId("B".to_string()),
                 outcome: IntegrationOutcome::Failed(IntegrationFailure {
-                    reason: "integration error".to_string(),
+                    kind: FailureKind::IntegrationFailure,
+                    message: "integration error".to_string(),
                     recovery: RecoveryAction::Split {
                         message: "decompose step B".to_string(),
                     },
@@ -3159,7 +3179,8 @@ mod tests {
             SchedulerEvent::IntegrationReturned {
                 node_id: NodeId("B".to_string()),
                 outcome: IntegrationOutcome::Failed(IntegrationFailure {
-                    reason: "integration error".to_string(),
+                    kind: FailureKind::IntegrationFailure,
+                    message: "integration error".to_string(),
                     recovery: RecoveryAction::Terminal {
                         message: "integration cannot be recovered".to_string(),
                     },
@@ -3208,7 +3229,8 @@ mod tests {
             SchedulerEvent::IntegrationReturned {
                 node_id: NodeId("B".to_string()),
                 outcome: IntegrationOutcome::Failed(IntegrationFailure {
-                    reason: "integration error".to_string(),
+                    kind: FailureKind::IntegrationFailure,
+                    message: "integration error".to_string(),
                     recovery: RecoveryAction::Retry {
                         message: "retry integration".to_string(),
                     },
@@ -3249,7 +3271,8 @@ mod tests {
             SchedulerEvent::IntegrationReturned {
                 node_id: NodeId("B".to_string()),
                 outcome: IntegrationOutcome::Failed(IntegrationFailure {
-                    reason: "integration error".to_string(),
+                    kind: FailureKind::IntegrationFailure,
+                    message: "integration error".to_string(),
                     recovery: RecoveryAction::ElevateModel {
                         message: "use stronger model".to_string(),
                     },
@@ -3290,7 +3313,8 @@ mod tests {
             SchedulerEvent::IntegrationReturned {
                 node_id: NodeId("B".to_string()),
                 outcome: IntegrationOutcome::Failed(IntegrationFailure {
-                    reason: "integration error".to_string(),
+                    kind: FailureKind::IntegrationFailure,
+                    message: "integration error".to_string(),
                     recovery: RecoveryAction::Split {
                         message: "decompose step B".to_string(),
                     },
@@ -4220,7 +4244,8 @@ mod tests {
             SchedulerEvent::NodeReturned {
                 node_id: NodeId("B".to_string()),
                 outcome: NodeOutcome::Failed(NodeFailure {
-                    reason: "unrecoverable".to_string(),
+                    kind: FailureKind::DeliberationFailure,
+                    message: "unrecoverable".to_string(),
                     recovery: RecoveryAction::Terminal {
                         message: "fatal error".to_string(),
                     },

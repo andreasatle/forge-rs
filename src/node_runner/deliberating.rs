@@ -6,7 +6,9 @@ use crate::machines::deliberation::{
     DeliberationEffect, DeliberationEvent, DeliberationMachine, DeliberationRequest,
     DeliberationState, DeliberationTerminalOutput, ProviderBackedDeliberationHandler,
 };
-use crate::machines::scheduler::{ModelTier, NodeFailure, NodeKind, RecoveryAction, WorkOutput};
+use crate::machines::scheduler::{
+    FailureKind, ModelTier, NodeFailure, NodeKind, RecoveryAction, WorkOutput,
+};
 use crate::providers::ProviderClient;
 use crate::roles::RolePolicy;
 use crate::telemetry::{TelemetryEvent, TelemetryRecord, TelemetrySink};
@@ -279,8 +281,8 @@ fn map_output(
                 artifact_update: tool_artifact_update,
             }),
         },
-        DeliberationTerminalOutput::Failed { reason } => {
-            let recovery = classify_deliberation_failure(&reason);
+        DeliberationTerminalOutput::Failed { kind, reason } => {
+            let recovery = classify_deliberation_failure(kind, &reason);
             telemetry.record(TelemetryRecord::new(
                 "DeliberatingNodeRunner",
                 TelemetryEvent::FailureClassified {
@@ -288,7 +290,11 @@ fn map_output(
                     recovery: recovery_label(&recovery).to_string(),
                 },
             ));
-            NodeRunResult::Failed(NodeFailure { reason, recovery })
+            NodeRunResult::Failed(NodeFailure {
+                kind,
+                message: reason,
+                recovery,
+            })
         }
     }
 }
@@ -335,7 +341,8 @@ fn map_plan_output(content: String, telemetry: &dyn TelemetrySink) -> NodeRunRes
                     },
                 ));
                 NodeRunResult::Failed(NodeFailure {
-                    reason: reason.clone(),
+                    kind: FailureKind::PlannerValidationFailure,
+                    message: reason.clone(),
                     recovery: RecoveryAction::Terminal {
                         message: format!("planner output validation failed: {reason}"),
                     },
@@ -353,7 +360,8 @@ fn map_plan_output(content: String, telemetry: &dyn TelemetrySink) -> NodeRunRes
                 TelemetryEvent::PlannerOutputFallback,
             ));
             NodeRunResult::Failed(NodeFailure {
-                reason: reason.clone(),
+                kind: FailureKind::PlannerValidationFailure,
+                message: reason.clone(),
                 recovery: RecoveryAction::Terminal {
                     message: format!("planner output invalid: {reason}"),
                 },
@@ -634,7 +642,7 @@ mod tests {
         };
         assert!(
             failure
-                .reason
+                .message
                 .contains("provider error (Retryable): connection refused")
         );
         assert!(matches!(failure.recovery, RecoveryAction::Retry { .. }));
@@ -653,7 +661,7 @@ mod tests {
         };
         assert!(
             failure
-                .reason
+                .message
                 .contains("provider error (Retryable): connection refused")
         );
         let RecoveryAction::Retry { message } = failure.recovery else {
@@ -695,7 +703,7 @@ mod tests {
         let NodeRunResult::Failed(failure) = result else {
             panic!("expected Failed");
         };
-        assert!(matches!(failure.recovery, RecoveryAction::Terminal { .. }));
+        assert!(matches!(failure.recovery, RecoveryAction::Retry { .. }));
     }
 
     // --- new tests ---
@@ -963,7 +971,7 @@ mod tests {
     }
 
     #[test]
-    fn split_failure_produces_split_action() {
+    fn deliberation_failure_produces_elevate_action_independent_of_message_text() {
         // Referee rejects with "task too large" twice, exhausting the revision budget.
         // The failure reason is "revision limit exhausted: task too large".
         // The classifier checks task-shape signals (Split) before revision-exhaustion
@@ -985,8 +993,8 @@ mod tests {
             panic!("expected Failed");
         };
         assert!(
-            matches!(failure.recovery, RecoveryAction::Split { .. }),
-            "task-shape failure must produce Split recovery; got {:?}",
+            matches!(failure.recovery, RecoveryAction::ElevateModel { .. }),
+            "typed deliberation failure must produce ElevateModel recovery; got {:?}",
             failure.recovery
         );
         let records = telemetry.into_records();
@@ -1003,7 +1011,7 @@ mod tests {
         if let Some(r) = classified {
             match &r.event {
                 crate::telemetry::TelemetryEvent::FailureClassified { recovery, .. } => {
-                    assert_eq!(recovery, "Split");
+                    assert_eq!(recovery, "ElevateModel");
                 }
                 _ => unreachable!(),
             }
@@ -1117,9 +1125,9 @@ mod tests {
             panic!("expected Failed for invalid structured plan");
         };
         assert!(
-            failure.reason.contains("self-dependency"),
+            failure.message.contains("self-dependency"),
             "failure reason must describe the validation error; got: {}",
-            failure.reason
+            failure.message
         );
         assert!(matches!(failure.recovery, RecoveryAction::Terminal { .. }));
 
@@ -1483,9 +1491,9 @@ mod tests {
         );
         if let NodeRunResult::Failed(failure) = result {
             assert!(
-                failure.reason.contains(".gitignore") || failure.reason.contains("no-recreate"),
+                failure.message.contains(".gitignore") || failure.message.contains("no-recreate"),
                 "failure reason must mention the offending file or constraint; got: {}",
-                failure.reason
+                failure.message
             );
         }
     }

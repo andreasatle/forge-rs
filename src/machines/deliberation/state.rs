@@ -5,6 +5,8 @@
 //! feedback, up to `max_revisions` times. Final output is always the producer
 //! content; critic and referee do not replace it.
 
+use crate::machines::scheduler::FailureKind;
+
 /// Feedback recorded when the Referee rejects a producer draft.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RevisionFeedback {
@@ -37,6 +39,8 @@ pub enum DeliberationTerminalOutput {
     Complete(DeliberationOutput),
     /// The pipeline failed before producing accepted content.
     Failed {
+        /// Machine-readable failure cause.
+        kind: FailureKind,
         /// Human-readable description of why the pipeline failed.
         reason: String,
     },
@@ -90,6 +94,8 @@ pub enum DeliberationState {
 
     /// The pipeline failed. Terminal state.
     Failed {
+        /// Machine-readable failure cause.
+        kind: FailureKind,
         /// Human-readable description of why the pipeline failed.
         reason: String,
     },

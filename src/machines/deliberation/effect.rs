@@ -4,6 +4,7 @@
 //! converts the external result back into a `DeliberationEvent`.
 
 use super::state::{DeliberationOutput, DeliberationRole, RevisionFeedback};
+use crate::machines::scheduler::FailureKind;
 
 /// Commands emitted by the deliberation machine.
 #[derive(Clone, Debug, PartialEq)]
@@ -34,6 +35,8 @@ pub enum DeliberationEffect {
     },
     /// Signal failure to the caller.
     ReturnFailed {
+        /// Machine-readable failure cause.
+        kind: FailureKind,
         /// Human-readable description of the failure.
         reason: String,
     },

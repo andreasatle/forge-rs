@@ -11,9 +11,9 @@ use crate::artifacts::{ArtifactRead, ArtifactUpdate};
 use crate::artifacts::{ArtifactView, StagedArtifactView};
 use crate::machines::deliberation::event::RoleResult;
 use crate::machines::deliberation::state::{DeliberationRole, RevisionFeedback};
-use crate::machines::scheduler::NodeKind;
+use crate::machines::scheduler::{FailureKind, NodeKind};
 use crate::node_runner::planner::{try_parse_planner_response, validate_planner_output};
-use crate::providers::{ProviderClient, ProviderRequest, StructuredOutput};
+use crate::providers::{ProviderClient, ProviderErrorKind, ProviderRequest, StructuredOutput};
 use crate::roles::policy::RolePolicy;
 use crate::services::extract_json_object;
 use crate::telemetry::{TelemetryEvent, TelemetryRecord, TelemetrySink};
@@ -225,8 +225,15 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
             }) {
                 Ok(r) => r,
                 Err(err) => {
+                    let kind = match err.kind {
+                        ProviderErrorKind::Retryable | ProviderErrorKind::Timeout => {
+                            FailureKind::ProviderFailure
+                        }
+                        ProviderErrorKind::Terminal => FailureKind::ProviderTerminalFailure,
+                    };
                     return RoleRunOutput {
                         result: RoleResult::Failed {
+                            kind,
                             reason: format!("provider error ({:?}): {}", err.kind, err.message),
                         },
                         artifact_update: extract_update(&mut executor),
@@ -269,6 +276,7 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                     {
                         return RoleRunOutput {
                             result: RoleResult::Failed {
+                                kind: FailureKind::ProtocolFailure,
                                 reason: parse_error,
                             },
                             artifact_update: extract_update(&mut executor),
@@ -312,6 +320,7 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                     ));
                     return RoleRunOutput {
                         result: RoleResult::Failed {
+                            kind: FailureKind::ToolFailure,
                             reason: "tool loop limit reached".to_string(),
                         },
                         artifact_update: extract_update(&mut executor),
@@ -430,7 +439,10 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                             ));
                             if protocol_attempt > MAX_PROTOCOL_RETRIES {
                                 return RoleRunOutput {
-                                    result: RoleResult::Failed { reason: err },
+                                    result: RoleResult::Failed {
+                                        kind: FailureKind::PlannerValidationFailure,
+                                        reason: err,
+                                    },
                                     artifact_update: extract_update(&mut executor),
                                 };
                             }
@@ -460,6 +472,7 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                         if protocol_attempt > MAX_PROTOCOL_RETRIES {
                             return RoleRunOutput {
                                 result: RoleResult::Failed {
+                                    kind: FailureKind::ProtocolFailure,
                                     reason: parse_error,
                                 },
                                 artifact_update: extract_update(&mut executor),
@@ -518,6 +531,7 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                             if final_response_only || protocol_attempt > MAX_PROTOCOL_RETRIES {
                                 return RoleRunOutput {
                                     result: RoleResult::Failed {
+                                        kind: FailureKind::ProtocolFailure,
                                         reason: parse_error,
                                     },
                                     artifact_update: extract_update(&mut executor),
@@ -579,6 +593,7 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                             };
                             return RoleRunOutput {
                                 result: RoleResult::Failed {
+                                    kind: FailureKind::ProtocolFailure,
                                     reason: terminal_reason,
                                 },
                                 artifact_update: extract_update(&mut executor),
@@ -1019,7 +1034,10 @@ fn strip_code_fence(s: &str) -> &str {
 
 #[cfg(test)]
 fn parse_role_response(raw_response: &str) -> RoleResult {
-    try_parse_role_response(raw_response).unwrap_or_else(|reason| RoleResult::Failed { reason })
+    try_parse_role_response(raw_response).unwrap_or_else(|reason| RoleResult::Failed {
+        kind: FailureKind::ProtocolFailure,
+        reason,
+    })
 }
 
 #[cfg(test)]
@@ -1112,7 +1130,7 @@ mod tests {
     #[test]
     fn json_accepted_placeholder_content_fails_without_including_raw() {
         let result = parse_role_response(r#"{"status":"accepted","content":"..."}"#);
-        let RoleResult::Failed { reason } = result else {
+        let RoleResult::Failed { reason, .. } = result else {
             panic!("placeholder '...' content must produce Failed, got {result:?}");
         };
         assert!(
@@ -1134,7 +1152,7 @@ mod tests {
     #[test]
     fn json_rejected_placeholder_reason_fails_without_including_raw() {
         let result = parse_role_response(r#"{"status":"rejected","reason":"..."}"#);
-        let RoleResult::Failed { reason } = result else {
+        let RoleResult::Failed { reason, .. } = result else {
             panic!("placeholder '...' reason must produce Failed, got {result:?}");
         };
         assert!(
@@ -1147,7 +1165,7 @@ mod tests {
     #[test]
     fn placeholder_summary_is_rejected() {
         let result = parse_role_response(r#"{"status":"accepted","content":"$RESPONSE_SUMMARY"}"#);
-        let RoleResult::Failed { reason } = result else {
+        let RoleResult::Failed { reason, .. } = result else {
             panic!("framework placeholder content must produce Failed, got {result:?}");
         };
         assert!(
@@ -1160,7 +1178,7 @@ mod tests {
     fn placeholder_reason_is_rejected() {
         let result =
             parse_role_response(r#"{"status":"rejected","reason":"$REASON_FOR_REJECTION"}"#);
-        let RoleResult::Failed { reason } = result else {
+        let RoleResult::Failed { reason, .. } = result else {
             panic!("framework placeholder reason must produce Failed, got {result:?}");
         };
         assert!(
@@ -1174,7 +1192,7 @@ mod tests {
         // "$REASON" is exactly MIN_CONTENT_LENGTH chars so it slips past the
         // length guard; it must be caught by is_framework_placeholder.
         let result = parse_role_response(r#"{"status":"rejected","reason":"$REASON"}"#);
-        let RoleResult::Failed { reason } = result else {
+        let RoleResult::Failed { reason, .. } = result else {
             panic!(
                 r#"placeholder {{"status":"rejected","reason":"$REASON"}} must produce Failed, got {result:?}"#
             );
@@ -1188,7 +1206,7 @@ mod tests {
     #[test]
     fn dollar_response_summary_placeholder_is_rejected() {
         let result = parse_role_response(r#"{"status":"accepted","content":"$RESPONSE_SUMMARY"}"#);
-        let RoleResult::Failed { reason } = result else {
+        let RoleResult::Failed { reason, .. } = result else {
             panic!("$RESPONSE_SUMMARY placeholder must produce Failed, got {result:?}");
         };
         assert!(
@@ -1201,7 +1219,7 @@ mod tests {
     fn dollar_reason_for_rejection_placeholder_is_rejected() {
         let result =
             parse_role_response(r#"{"status":"rejected","reason":"$REASON_FOR_REJECTION"}"#);
-        let RoleResult::Failed { reason } = result else {
+        let RoleResult::Failed { reason, .. } = result else {
             panic!("$REASON_FOR_REJECTION placeholder must produce Failed, got {result:?}");
         };
         assert!(
@@ -1215,7 +1233,7 @@ mod tests {
     #[test]
     fn single_brace_accepted_content_fails() {
         let result = parse_role_response(r#"{"status":"accepted","content":"{"}"#);
-        let RoleResult::Failed { reason } = result else {
+        let RoleResult::Failed { reason, .. } = result else {
             panic!("single-char content must produce Failed, got {result:?}");
         };
         assert!(
@@ -1227,7 +1245,7 @@ mod tests {
     #[test]
     fn two_char_accepted_content_fails() {
         let result = parse_role_response(r#"{"status":"accepted","content":"ok"}"#);
-        let RoleResult::Failed { reason } = result else {
+        let RoleResult::Failed { reason, .. } = result else {
             panic!("two-char content must produce Failed, got {result:?}");
         };
         assert!(
@@ -1250,7 +1268,7 @@ mod tests {
     #[test]
     fn single_brace_rejection_reason_fails() {
         let result = parse_role_response(r#"{"status":"rejected","reason":"{"}"#);
-        let RoleResult::Failed { reason } = result else {
+        let RoleResult::Failed { reason, .. } = result else {
             panic!("single-char reason must produce Failed, got {result:?}");
         };
         assert!(
@@ -1262,7 +1280,7 @@ mod tests {
     #[test]
     fn two_char_rejection_reason_fails() {
         let result = parse_role_response(r#"{"status":"rejected","reason":"ok"}"#);
-        let RoleResult::Failed { reason } = result else {
+        let RoleResult::Failed { reason, .. } = result else {
             panic!("two-char reason must produce Failed, got {result:?}");
         };
         assert!(
@@ -1963,7 +1981,7 @@ mod tests {
         );
 
         assert!(
-            matches!(output.result, RoleResult::Failed { ref reason } if reason.contains("repeated")),
+            matches!(output.result, RoleResult::Failed { ref reason, .. } if reason.contains("repeated")),
             "must fail with repeated-observation error before the generic limit; got {:?}",
             output.result
         );
@@ -2033,7 +2051,7 @@ mod tests {
         );
 
         assert!(
-            matches!(output.result, RoleResult::Failed { ref reason } if reason.contains("tool loop limit")),
+            matches!(output.result, RoleResult::Failed { ref reason, .. } if reason.contains("tool loop limit")),
             "must fail with generic tool loop limit when observations are distinct; got {:?}",
             output.result
         );
@@ -2197,7 +2215,7 @@ mod tests {
         );
 
         let reason = match &output.result {
-            RoleResult::Failed { reason } => reason.clone(),
+            RoleResult::Failed { reason, .. } => reason.clone(),
             other => panic!("expected Failed, got {other:?}"),
         };
         assert!(
@@ -2326,7 +2344,7 @@ mod tests {
         );
 
         let reason = match &output.result {
-            RoleResult::Failed { reason } => reason.clone(),
+            RoleResult::Failed { reason, .. } => reason.clone(),
             other => panic!("expected Failed; got {other:?}"),
         };
         assert!(
@@ -5204,7 +5222,7 @@ mod tests {
             "reviewer that never reads must fail after exhausting retries; got {:?}",
             output.result
         );
-        if let RoleResult::Failed { reason } = &output.result {
+        if let RoleResult::Failed { reason, .. } = &output.result {
             assert!(
                 reason.contains("reading"),
                 "failure reason must mention reading; got: {reason}"
@@ -5371,7 +5389,7 @@ mod tests {
             &crate::telemetry::NoopTelemetry,
         );
 
-        let RoleResult::Failed { reason } = &output.result else {
+        let RoleResult::Failed { reason, .. } = &output.result else {
             panic!(
                 "Critic must fail when all reads failed and tool budget exhausted; got {:?}",
                 output.result

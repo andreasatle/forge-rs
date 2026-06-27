@@ -1,6 +1,7 @@
 //! Events received by the deliberation machine.
 
 use super::state::DeliberationRole;
+use crate::machines::scheduler::FailureKind;
 
 /// The outcome returned by a role after it has run.
 #[derive(Clone, Debug, PartialEq)]
@@ -28,6 +29,8 @@ pub enum RoleResult {
     /// Unlike `Rejected`, this is always a terminal failure for every role.
     /// A `Failed` Referee result must not enter the revision loop.
     Failed {
+        /// Machine-readable failure cause.
+        kind: FailureKind,
         /// Human-readable description of the execution failure.
         reason: String,
     },

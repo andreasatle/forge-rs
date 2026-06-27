@@ -1,7 +1,8 @@
 //! The NodeRunner trait and the static fake implementation.
 
 use crate::machines::scheduler::{
-    NodeFailure, NodeId, NodeKind, NodeOutcome, NodeRequest, PlanOutput, RecoveryAction, WorkOutput,
+    FailureKind, NodeFailure, NodeId, NodeKind, NodeOutcome, NodeRequest, PlanOutput,
+    RecoveryAction, WorkOutput,
 };
 use crate::telemetry::TelemetrySink;
 
@@ -31,7 +32,8 @@ impl NodeRunner for StaticNodeRunner {
     fn run_node(&self, request: NodeRunRequest, _telemetry: &dyn TelemetrySink) -> NodeRunResult {
         if request.objective.contains("fail") {
             return NodeRunResult::Failed(NodeFailure {
-                reason: "objective contains 'fail'".to_string(),
+                kind: FailureKind::UserTaskRejection,
+                message: "objective contains 'fail'".to_string(),
                 recovery: RecoveryAction::Terminal {
                     message: "static runner: terminal failure".to_string(),
                 },
@@ -190,7 +192,8 @@ mod tests {
         ));
 
         let fail_result = NodeRunResult::Failed(NodeFailure {
-            reason: "bad".to_string(),
+            kind: FailureKind::DeliberationFailure,
+            message: "bad".to_string(),
             recovery: RecoveryAction::Terminal {
                 message: "stop".to_string(),
             },

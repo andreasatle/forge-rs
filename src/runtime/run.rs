@@ -1366,9 +1366,10 @@ mod tests {
                 _request: NodeRunRequest,
                 _telemetry: &dyn crate::telemetry::TelemetrySink,
             ) -> NodeRunResult {
-                use crate::machines::scheduler::event::{NodeFailure, RecoveryAction};
+                use crate::machines::scheduler::event::{FailureKind, NodeFailure, RecoveryAction};
                 NodeRunResult::Failed(NodeFailure {
-                    reason: "provider error (Retryable): connection refused".to_string(),
+                    kind: FailureKind::DeliberationFailure,
+                    message: "provider error (Retryable): connection refused".to_string(),
                     recovery: RecoveryAction::Terminal {
                         message: "deliberation failed".to_string(),
                     },

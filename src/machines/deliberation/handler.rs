@@ -12,7 +12,7 @@ use crate::artifacts::{
 };
 use crate::machines::deliberation::event::RoleResult;
 use crate::machines::deliberation::state::{DeliberationRole, RevisionFeedback};
-use crate::machines::scheduler::NodeKind;
+use crate::machines::scheduler::{FailureKind, NodeKind};
 use crate::node_runner::planner::{
     PlannerValidationError, parse_planner_content, validate_planner_explicit_targets,
     validate_planner_no_recreate, validate_planner_tests_required,
@@ -255,6 +255,7 @@ impl<R: RoleRunner> DeliberationHandler<R> {
                                     return DeliberationEvent::RoleReturned {
                                         role,
                                         result: RoleResult::Failed {
+                                            kind: FailureKind::PlannerValidationFailure,
                                             reason: format!("planner validation failed: {e}"),
                                         },
                                     };

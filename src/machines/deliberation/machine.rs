@@ -59,6 +59,7 @@
 //! ```
 
 use crate::engine::{Machine, Transition};
+use crate::machines::scheduler::FailureKind;
 
 use super::effect::DeliberationEffect;
 use super::event::{DeliberationEvent, RoleResult};
@@ -69,6 +70,21 @@ use super::state::{
 
 /// The deliberation machine. All durable data travels in `DeliberationState`.
 pub struct DeliberationMachine;
+
+impl DeliberationMachine {
+    fn failed_transition(
+        kind: FailureKind,
+        reason: String,
+    ) -> Transition<DeliberationState, DeliberationEffect> {
+        Transition {
+            effects: vec![DeliberationEffect::ReturnFailed {
+                kind,
+                reason: reason.clone(),
+            }],
+            state: DeliberationState::Failed { kind, reason },
+        }
+    }
+}
 
 impl Machine for DeliberationMachine {
     type State = DeliberationState;
@@ -146,12 +162,7 @@ impl Machine for DeliberationMachine {
                     role: DeliberationRole::Producer,
                     result: RoleResult::Rejected { reason },
                 },
-            ) => Transition {
-                effects: vec![DeliberationEffect::ReturnFailed {
-                    reason: reason.clone(),
-                }],
-                state: DeliberationState::Failed { reason },
-            },
+            ) => Self::failed_transition(FailureKind::UserTaskRejection, reason),
 
             // Producer execution failure → terminal.
             (
@@ -161,14 +172,9 @@ impl Machine for DeliberationMachine {
                 },
                 DeliberationEvent::RoleReturned {
                     role: DeliberationRole::Producer,
-                    result: RoleResult::Failed { reason },
+                    result: RoleResult::Failed { kind, reason },
                 },
-            ) => Transition {
-                effects: vec![DeliberationEffect::ReturnFailed {
-                    reason: reason.clone(),
-                }],
-                state: DeliberationState::Failed { reason },
-            },
+            ) => Self::failed_transition(kind, reason),
 
             // Role mismatch while waiting for Producer → protocol violation.
             (
@@ -182,12 +188,7 @@ impl Machine for DeliberationMachine {
                     "protocol violation: expected Producer result but received {:?}",
                     role
                 );
-                Transition {
-                    effects: vec![DeliberationEffect::ReturnFailed {
-                        reason: reason.clone(),
-                    }],
-                    state: DeliberationState::Failed { reason },
-                }
+                Self::failed_transition(FailureKind::ProtocolFailure, reason)
             }
 
             // Critic returned but producer content is missing — invalid state.
@@ -202,12 +203,7 @@ impl Machine for DeliberationMachine {
                 let reason =
                     "invalid deliberation state: Critic returned but producer_content is missing"
                         .to_string();
-                Transition {
-                    effects: vec![DeliberationEffect::ReturnFailed {
-                        reason: reason.clone(),
-                    }],
-                    state: DeliberationState::Failed { reason },
-                }
+                Self::failed_transition(FailureKind::DeliberationFailure, reason)
             }
 
             // Critic accepted → hand off to Referee.
@@ -290,14 +286,9 @@ impl Machine for DeliberationMachine {
                 },
                 DeliberationEvent::RoleReturned {
                     role: DeliberationRole::Critic,
-                    result: RoleResult::Failed { reason },
+                    result: RoleResult::Failed { kind, reason },
                 },
-            ) => Transition {
-                effects: vec![DeliberationEffect::ReturnFailed {
-                    reason: reason.clone(),
-                }],
-                state: DeliberationState::Failed { reason },
-            },
+            ) => Self::failed_transition(kind, reason),
 
             // Role mismatch while waiting for Critic → protocol violation.
             (
@@ -311,12 +302,7 @@ impl Machine for DeliberationMachine {
                     "protocol violation: expected Critic result but received {:?}",
                     role
                 );
-                Transition {
-                    effects: vec![DeliberationEffect::ReturnFailed {
-                        reason: reason.clone(),
-                    }],
-                    state: DeliberationState::Failed { reason },
-                }
+                Self::failed_transition(FailureKind::ProtocolFailure, reason)
             }
 
             // Referee returned but producer_content or critic_content is missing — invalid state.
@@ -332,12 +318,7 @@ impl Machine for DeliberationMachine {
                 let reason =
                     "invalid deliberation state: Referee returned but producer_content or critic_content is missing"
                         .to_string();
-                Transition {
-                    effects: vec![DeliberationEffect::ReturnFailed {
-                        reason: reason.clone(),
-                    }],
-                    state: DeliberationState::Failed { reason },
-                }
+                Self::failed_transition(FailureKind::DeliberationFailure, reason)
             }
 
             // Referee accepted → complete with producer content (not referee content).
@@ -403,14 +384,7 @@ impl Machine for DeliberationMachine {
                     }
                 } else {
                     let fail_reason = format!("revision limit exhausted: {reason}");
-                    Transition {
-                        effects: vec![DeliberationEffect::ReturnFailed {
-                            reason: fail_reason.clone(),
-                        }],
-                        state: DeliberationState::Failed {
-                            reason: fail_reason,
-                        },
-                    }
+                    Self::failed_transition(FailureKind::DeliberationFailure, fail_reason)
                 }
             }
 
@@ -424,14 +398,9 @@ impl Machine for DeliberationMachine {
                 },
                 DeliberationEvent::RoleReturned {
                     role: DeliberationRole::Referee,
-                    result: RoleResult::Failed { reason },
+                    result: RoleResult::Failed { kind, reason },
                 },
-            ) => Transition {
-                effects: vec![DeliberationEffect::ReturnFailed {
-                    reason: reason.clone(),
-                }],
-                state: DeliberationState::Failed { reason },
-            },
+            ) => Self::failed_transition(kind, reason),
 
             // Role mismatch while waiting for Referee → protocol violation.
             (
@@ -445,22 +414,12 @@ impl Machine for DeliberationMachine {
                     "protocol violation: expected Referee result but received {:?}",
                     role
                 );
-                Transition {
-                    effects: vec![DeliberationEffect::ReturnFailed {
-                        reason: reason.clone(),
-                    }],
-                    state: DeliberationState::Failed { reason },
-                }
+                Self::failed_transition(FailureKind::ProtocolFailure, reason)
             }
 
             (state, event) => {
                 let reason = format!("invalid transition: state={state:?}, event={event:?}");
-                Transition {
-                    effects: vec![DeliberationEffect::ReturnFailed {
-                        reason: reason.clone(),
-                    }],
-                    state: DeliberationState::Failed { reason },
-                }
+                Self::failed_transition(FailureKind::ProtocolFailure, reason)
             }
         }
     }
@@ -474,9 +433,12 @@ impl Machine for DeliberationMachine {
             DeliberationState::Complete { output } => {
                 Some(DeliberationTerminalOutput::Complete(output.clone()))
             }
-            DeliberationState::Failed { reason } => Some(DeliberationTerminalOutput::Failed {
-                reason: reason.clone(),
-            }),
+            DeliberationState::Failed { kind, reason } => {
+                Some(DeliberationTerminalOutput::Failed {
+                    kind: *kind,
+                    reason: reason.clone(),
+                })
+            }
             _ => None,
         }
     }
@@ -603,14 +565,14 @@ mod tests {
         );
 
         assert!(
-            matches!(&t.state, DeliberationState::Failed { reason } if reason == "out of ideas"),
+            matches!(&t.state, DeliberationState::Failed { reason, .. } if reason == "out of ideas"),
             "expected Failed, got {:?}",
             t.state
         );
 
         assert_eq!(t.effects.len(), 1);
         assert!(
-            matches!(&t.effects[0], DeliberationEffect::ReturnFailed { reason } if reason == "out of ideas"),
+            matches!(&t.effects[0], DeliberationEffect::ReturnFailed { reason, .. } if reason == "out of ideas"),
             "expected ReturnFailed, got {:?}",
             t.effects[0]
         );
@@ -637,7 +599,7 @@ mod tests {
         );
 
         let reason = match &t.effects[0] {
-            DeliberationEffect::ReturnFailed { reason } => reason,
+            DeliberationEffect::ReturnFailed { reason, .. } => reason,
             other => panic!("expected ReturnFailed, got {:?}", other),
         };
         assert!(
@@ -933,13 +895,13 @@ mod tests {
         );
 
         assert!(
-            matches!(&t.state, DeliberationState::Failed { reason } if reason.contains("revision limit exhausted")),
+            matches!(&t.state, DeliberationState::Failed { reason, .. } if reason.contains("revision limit exhausted")),
             "expected Failed with 'revision limit exhausted', got {:?}",
             t.state
         );
         assert_eq!(t.effects.len(), 1);
         assert!(
-            matches!(&t.effects[0], DeliberationEffect::ReturnFailed { reason } if reason.contains("revision limit exhausted")),
+            matches!(&t.effects[0], DeliberationEffect::ReturnFailed { reason, .. } if reason.contains("revision limit exhausted")),
             "expected ReturnFailed with 'revision limit exhausted', got {:?}",
             t.effects[0]
         );
@@ -976,7 +938,7 @@ mod tests {
         );
 
         let reason = match &t.effects[0] {
-            DeliberationEffect::ReturnFailed { reason } => reason,
+            DeliberationEffect::ReturnFailed { reason, .. } => reason,
             other => panic!("expected ReturnFailed, got {:?}", other),
         };
         assert!(
@@ -1015,7 +977,7 @@ mod tests {
         );
 
         let reason = match &t.effects[0] {
-            DeliberationEffect::ReturnFailed { reason } => reason,
+            DeliberationEffect::ReturnFailed { reason, .. } => reason,
             other => panic!("expected ReturnFailed, got {:?}", other),
         };
         assert!(
@@ -1109,14 +1071,14 @@ mod tests {
         );
 
         assert!(
-            matches!(&t.state, DeliberationState::Failed { reason } if reason.contains("revision limit exhausted")),
+            matches!(&t.state, DeliberationState::Failed { reason, .. } if reason.contains("revision limit exhausted")),
             "expected Failed with 'revision limit exhausted', got {:?}",
             t.state
         );
 
         assert_eq!(t.effects.len(), 1);
         assert!(
-            matches!(&t.effects[0], DeliberationEffect::ReturnFailed { reason } if reason.contains("revision limit exhausted")),
+            matches!(&t.effects[0], DeliberationEffect::ReturnFailed { reason, .. } if reason.contains("revision limit exhausted")),
             "expected ReturnFailed with 'revision limit exhausted', got {:?}",
             t.effects[0]
         );
@@ -1153,7 +1115,7 @@ mod tests {
         );
 
         let reason = match &t.effects[0] {
-            DeliberationEffect::ReturnFailed { reason } => reason,
+            DeliberationEffect::ReturnFailed { reason, .. } => reason,
             other => panic!("expected ReturnFailed, got {:?}", other),
         };
         assert!(
@@ -1194,7 +1156,7 @@ mod tests {
             );
 
             let reason = match &t.effects[0] {
-                DeliberationEffect::ReturnFailed { reason } => reason,
+                DeliberationEffect::ReturnFailed { reason, .. } => reason,
                 other => panic!("expected ReturnFailed, got {:?}", other),
             };
             assert!(
@@ -1299,14 +1261,14 @@ mod tests {
         );
 
         assert!(
-            matches!(&t.state, DeliberationState::Failed { reason } if reason.contains("revision limit exhausted")),
+            matches!(&t.state, DeliberationState::Failed { reason, .. } if reason.contains("revision limit exhausted")),
             "expected Failed with 'revision limit exhausted', got {:?}",
             t.state
         );
 
         assert_eq!(t.effects.len(), 1);
         assert!(
-            matches!(&t.effects[0], DeliberationEffect::ReturnFailed { reason } if reason.contains("revision limit exhausted")),
+            matches!(&t.effects[0], DeliberationEffect::ReturnFailed { reason, .. } if reason.contains("revision limit exhausted")),
             "expected ReturnFailed with 'revision limit exhausted', got {:?}",
             t.effects[0]
         );
@@ -1337,14 +1299,14 @@ mod tests {
         );
 
         assert!(
-            matches!(&t.state, DeliberationState::Failed { reason } if reason.contains("revision limit exhausted")),
+            matches!(&t.state, DeliberationState::Failed { reason, .. } if reason.contains("revision limit exhausted")),
             "expected Failed with 'revision limit exhausted', got {:?}",
             t.state
         );
 
         assert_eq!(t.effects.len(), 1);
         assert!(
-            matches!(&t.effects[0], DeliberationEffect::ReturnFailed { reason } if reason.contains("revision limit exhausted")),
+            matches!(&t.effects[0], DeliberationEffect::ReturnFailed { reason, .. } if reason.contains("revision limit exhausted")),
             "expected ReturnFailed, got {:?}",
             t.effects[0]
         );
@@ -1539,11 +1501,12 @@ mod tests {
     #[test]
     fn output_returns_failed_for_failed_state() {
         let failed_state = DeliberationState::Failed {
+            kind: FailureKind::DeliberationFailure,
             reason: "something went wrong".to_string(),
         };
         let output = machine().output(&failed_state);
         match output {
-            Some(DeliberationTerminalOutput::Failed { reason }) => {
+            Some(DeliberationTerminalOutput::Failed { reason, .. }) => {
                 assert_eq!(reason, "something went wrong");
             }
             other => panic!("expected Some(Failed), got {:?}", other),
@@ -1559,20 +1522,21 @@ mod tests {
             DeliberationEvent::RoleReturned {
                 role: DeliberationRole::Producer,
                 result: RoleResult::Failed {
+                    kind: FailureKind::ProviderFailure,
                     reason: "timeout".to_string(),
                 },
             },
         );
 
         assert!(
-            matches!(&t.state, DeliberationState::Failed { reason } if reason == "timeout"),
+            matches!(&t.state, DeliberationState::Failed { reason, .. } if reason == "timeout"),
             "expected Failed, got {:?}",
             t.state
         );
 
         assert_eq!(t.effects.len(), 1);
         assert!(
-            matches!(&t.effects[0], DeliberationEffect::ReturnFailed { reason } if reason == "timeout"),
+            matches!(&t.effects[0], DeliberationEffect::ReturnFailed { reason, .. } if reason == "timeout"),
             "expected ReturnFailed, got {:?}",
             t.effects[0]
         );
@@ -1596,20 +1560,21 @@ mod tests {
             DeliberationEvent::RoleReturned {
                 role: DeliberationRole::Critic,
                 result: RoleResult::Failed {
+                    kind: FailureKind::ProviderFailure,
                     reason: "provider unavailable".to_string(),
                 },
             },
         );
 
         assert!(
-            matches!(&t.state, DeliberationState::Failed { reason } if reason == "provider unavailable"),
+            matches!(&t.state, DeliberationState::Failed { reason, .. } if reason == "provider unavailable"),
             "expected Failed, got {:?}",
             t.state
         );
 
         assert_eq!(t.effects.len(), 1);
         assert!(
-            matches!(&t.effects[0], DeliberationEffect::ReturnFailed { reason } if reason == "provider unavailable"),
+            matches!(&t.effects[0], DeliberationEffect::ReturnFailed { reason, .. } if reason == "provider unavailable"),
             "expected ReturnFailed, got {:?}",
             t.effects[0]
         );
@@ -1636,20 +1601,21 @@ mod tests {
             DeliberationEvent::RoleReturned {
                 role: DeliberationRole::Referee,
                 result: RoleResult::Failed {
+                    kind: FailureKind::ProviderTerminalFailure,
                     reason: "authentication error".to_string(),
                 },
             },
         );
 
         assert!(
-            matches!(&t.state, DeliberationState::Failed { reason } if reason == "authentication error"),
+            matches!(&t.state, DeliberationState::Failed { reason, .. } if reason == "authentication error"),
             "expected Failed (not a revision loop), got {:?}",
             t.state
         );
 
         assert_eq!(t.effects.len(), 1);
         assert!(
-            matches!(&t.effects[0], DeliberationEffect::ReturnFailed { reason } if reason == "authentication error"),
+            matches!(&t.effects[0], DeliberationEffect::ReturnFailed { reason, .. } if reason == "authentication error"),
             "expected ReturnFailed, got {:?}",
             t.effects[0]
         );
@@ -1724,6 +1690,7 @@ mod tests {
                     } => DeliberationEvent::RoleReturned {
                         role: DeliberationRole::Producer,
                         result: RoleResult::Failed {
+                            kind: FailureKind::ProviderFailure,
                             reason: "timeout".into(),
                         },
                     },
@@ -1745,7 +1712,7 @@ mod tests {
 
         let output = run_machine(FakeMachine, initial);
         match &output {
-            DeliberationTerminalOutput::Failed { reason } => {
+            DeliberationTerminalOutput::Failed { reason, .. } => {
                 assert!(
                     reason.contains("timeout"),
                     "expected reason to contain 'timeout', got: {reason}"
@@ -1806,7 +1773,7 @@ mod tests {
 
         let output = run_machine(FakeMachine, initial);
         match &output {
-            DeliberationTerminalOutput::Failed { reason } => {
+            DeliberationTerminalOutput::Failed { reason, .. } => {
                 assert!(
                     reason.contains("bad draft"),
                     "expected reason to contain 'bad draft', got: {reason}"

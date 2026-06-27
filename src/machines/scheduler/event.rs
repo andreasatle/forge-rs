@@ -14,6 +14,32 @@
 
 use super::state::{NodeId, NodeKind};
 
+/// Machine-readable cause of a node or integration failure.
+///
+/// `message` fields on failure payloads remain human-readable diagnostics only;
+/// recovery policy must switch on this kind instead of parsing message text.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FailureKind {
+    /// Provider transport, timeout, rate-limit, or other retryable provider failure.
+    ProviderFailure,
+    /// Provider failure known not to benefit from retrying, such as bad auth/config.
+    ProviderTerminalFailure,
+    /// Role or planner response violated the expected JSON/protocol contract.
+    ProtocolFailure,
+    /// File/tool loop failure.
+    ToolFailure,
+    /// Project validation command failed.
+    ValidationFailure,
+    /// Planner output violated structured planner validation.
+    PlannerValidationFailure,
+    /// Deliberation reached a semantic quality limit, such as exhausted revisions.
+    DeliberationFailure,
+    /// Artifact integration failed.
+    IntegrationFailure,
+    /// The user task was semantically rejected by the producing role.
+    UserTaskRejection,
+}
+
 /// The structured output of a plan node that succeeded.
 ///
 /// A `PlanOutput` tells the scheduler which new nodes to add to the graph.
@@ -64,13 +90,16 @@ pub struct NodeRequest {
 
 /// The failure report returned when a node cannot complete successfully.
 ///
-/// A `NodeFailure` always carries a human-readable `reason` (for logging and
-/// audit) and a `recovery` that tells the scheduler exactly what to do next.
-/// The scheduler does not interpret `reason`; it acts solely on `recovery`.
+/// A `NodeFailure` always carries a typed `kind`, a human-readable `message`
+/// (for logging and audit), and a `recovery` that tells the scheduler exactly
+/// what to do next. The scheduler does not interpret `message`; it acts solely
+/// on `recovery`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct NodeFailure {
+    /// Machine-readable failure cause.
+    pub kind: FailureKind,
     /// Why the node failed. Preserved in logs; not parsed by the scheduler.
-    pub reason: String,
+    pub message: String,
     /// The scheduler's next action. Determines how the graph evolves after
     /// this failure.
     pub recovery: RecoveryAction,
@@ -145,8 +174,10 @@ pub struct IntegrationOutput {
 /// The failure report returned when integration cannot complete.
 #[derive(Clone, Debug, PartialEq)]
 pub struct IntegrationFailure {
+    /// Machine-readable failure cause.
+    pub kind: FailureKind,
     /// Why integration failed.
-    pub reason: String,
+    pub message: String,
     /// The scheduler's next action after integration failure.
     pub recovery: RecoveryAction,
 }

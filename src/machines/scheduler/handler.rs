@@ -19,8 +19,8 @@ use crate::artifacts::{
 use crate::engine::{Machine, Transition};
 use crate::machines::scheduler::effect::SchedulerEffect;
 use crate::machines::scheduler::event::{
-    IntegrationFailure, IntegrationOutcome, IntegrationOutput, NodeOutcome, RecoveryAction,
-    SchedulerEvent,
+    FailureKind, IntegrationFailure, IntegrationOutcome, IntegrationOutput, NodeOutcome,
+    RecoveryAction, SchedulerEvent,
 };
 use crate::machines::scheduler::machine::{SchedulerMachine, SchedulerOutput};
 use crate::machines::scheduler::state::{NodeId, NodeKind, SchedulerState};
@@ -256,7 +256,8 @@ impl<R: NodeRunner> Machine for SchedulerHandler<R> {
                             return SchedulerEvent::IntegrationReturned {
                                 node_id,
                                 outcome: IntegrationOutcome::Failed(IntegrationFailure {
-                                    reason: format!("workspace creation failed: {err}"),
+                                    kind: FailureKind::IntegrationFailure,
+                                    message: format!("workspace creation failed: {err}"),
                                     recovery: RecoveryAction::Terminal {
                                         message: format!("workspace creation failed: {err}"),
                                     },
@@ -270,7 +271,8 @@ impl<R: NodeRunner> Machine for SchedulerHandler<R> {
                             return SchedulerEvent::IntegrationReturned {
                                 node_id,
                                 outcome: IntegrationOutcome::Failed(IntegrationFailure {
-                                    reason: format!("artifact update apply error: {err}"),
+                                    kind: FailureKind::IntegrationFailure,
+                                    message: format!("artifact update apply error: {err}"),
                                     recovery: RecoveryAction::Terminal {
                                         message: format!("artifact update apply error: {err}"),
                                     },
@@ -300,7 +302,8 @@ impl<R: NodeRunner> Machine for SchedulerHandler<R> {
                                             node_id,
                                             outcome: IntegrationOutcome::Failed(
                                                 IntegrationFailure {
-                                                    reason: err.to_string(),
+                                                    kind: FailureKind::IntegrationFailure,
+                                                    message: err.to_string(),
                                                     recovery: RecoveryAction::Terminal {
                                                         message: err.to_string(),
                                                     },
@@ -320,7 +323,8 @@ impl<R: NodeRunner> Machine for SchedulerHandler<R> {
                                 return SchedulerEvent::IntegrationReturned {
                                     node_id,
                                     outcome: IntegrationOutcome::Failed(IntegrationFailure {
-                                        reason: format!("validation failed: {}", result.summary),
+                                        kind: FailureKind::ValidationFailure,
+                                        message: format!("validation failed: {}", result.summary),
                                         recovery: RecoveryAction::Terminal {
                                             message: format!(
                                                 "validation failed: {}",
@@ -394,7 +398,7 @@ mod tests {
     use crate::engine::{Machine, run_machine};
     use crate::machines::scheduler::effect::SchedulerEffect;
     use crate::machines::scheduler::event::{
-        IntegrationOutcome, IntegrationOutput, NodeOutcome, SchedulerEvent, WorkOutput,
+        IntegrationOutcome, NodeOutcome, SchedulerEvent, WorkOutput,
     };
     use crate::machines::scheduler::machine::{SchedulerMachine, SchedulerOutput};
     use crate::machines::scheduler::state::{
@@ -1136,9 +1140,9 @@ mod tests {
         };
 
         assert!(
-            failure.reason.contains(&original_sha) || failure.reason.contains(&advanced_sha),
+            failure.message.contains(&original_sha) || failure.message.contains(&advanced_sha),
             "failure reason must mention expected or actual commit SHA; got: {}",
-            failure.reason
+            failure.message
         );
 
         // Branch must remain at the externally advanced commit.
@@ -1751,7 +1755,8 @@ mod tests {
         ) -> NodeRunResult {
             use crate::machines::scheduler::event::{NodeFailure, RecoveryAction};
             NodeRunResult::Failed(NodeFailure {
-                reason: self.reason.clone(),
+                kind: FailureKind::DeliberationFailure,
+                message: self.reason.clone(),
                 recovery: RecoveryAction::Terminal {
                     message: "terminal".to_string(),
                 },
@@ -1941,10 +1946,10 @@ mod tests {
 
         // Plan node + work node, each requiring 3 provider calls (producer, critic, referee).
         let provider = ScriptedProvider::from_strs(&[
-            r#"{"status":"accepted","content":"implement it"}"#,
+            r#"{"tasks":[{"id":"implement","objective":"implement it","operation":"create","targets":["output.txt"],"depends_on":[]}]}"#,
             r#"{"status":"accepted","content":"looks good"}"#,
             r#"{"status":"accepted","content":"approved"}"#,
-            r#"{"status":"accepted","content":"done"}"#,
+            r#"{"status":"accepted","content":"work completed"}"#,
             r#"{"status":"accepted","content":"looks good"}"#,
             r#"{"status":"accepted","content":"approved"}"#,
         ]);
@@ -1986,10 +1991,10 @@ mod tests {
 
         // Plan node + work node, each requiring 3 provider calls (producer, critic, referee).
         let provider = ScriptedProvider::from_strs(&[
-            r#"{"status":"accepted","content":"implement it"}"#,
+            r#"{"tasks":[{"id":"implement","objective":"implement it","operation":"create","targets":["output.txt"],"depends_on":[]}]}"#,
             r#"{"status":"accepted","content":"looks good"}"#,
             r#"{"status":"accepted","content":"approved"}"#,
-            r#"{"status":"accepted","content":"done"}"#,
+            r#"{"status":"accepted","content":"work completed"}"#,
             r#"{"status":"accepted","content":"looks good"}"#,
             r#"{"status":"accepted","content":"approved"}"#,
         ]);
@@ -2071,10 +2076,10 @@ mod tests {
 
         // Plan node + work node, each requiring 3 provider calls (producer, critic, referee).
         let provider = ScriptedProvider::from_strs(&[
-            r#"{"status":"accepted","content":"implement it"}"#,
+            r#"{"tasks":[{"id":"implement","objective":"implement it","operation":"create","targets":["output.txt"],"depends_on":[]}]}"#,
             r#"{"status":"accepted","content":"looks good"}"#,
             r#"{"status":"accepted","content":"approved"}"#,
-            r#"{"status":"accepted","content":"done"}"#,
+            r#"{"status":"accepted","content":"work completed"}"#,
             r#"{"status":"accepted","content":"looks good"}"#,
             r#"{"status":"accepted","content":"approved"}"#,
         ]);

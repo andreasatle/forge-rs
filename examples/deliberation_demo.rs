@@ -78,7 +78,7 @@ fn main() {
             println!("COMPLETE");
             println!("{}", out.content);
         }
-        DeliberationTerminalOutput::Failed { reason } => {
+        DeliberationTerminalOutput::Failed { reason, .. } => {
             println!("FAILED: {reason}");
         }
     }
