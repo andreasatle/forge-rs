@@ -188,6 +188,9 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
         let mut read_only_tool_steps: usize = 0;
         let mut decision_pressure_active = false;
         let mut final_response_only = false;
+        let mut seen_tool_fingerprints: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
+        let mut repeated_observation_coercion_active = false;
 
         loop {
             telemetry.record(TelemetryRecord::new_with_subsource(
@@ -231,8 +234,11 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
             {
                 // In completion-pressure mode, all tool requests are protocol violations.
                 if final_response_only {
-                    let parse_error =
-                        "tool request received while no tools are available".to_string();
+                    let parse_error = if repeated_observation_coercion_active {
+                        "protocol error: repeated identical tool observations; model continued calling tools after coercion".to_string()
+                    } else {
+                        "tool request received while no tools are available".to_string()
+                    };
                     telemetry.record(TelemetryRecord::new_with_subsource(
                         "RoleMachine",
                         subsource,
@@ -242,7 +248,9 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                             attempt_count: protocol_attempt,
                         },
                     ));
-                    if protocol_attempt > MAX_PROTOCOL_RETRIES {
+                    if repeated_observation_coercion_active
+                        || protocol_attempt > MAX_PROTOCOL_RETRIES
+                    {
                         return RoleRunOutput {
                             result: RoleResult::Failed {
                                 reason: parse_error,
@@ -307,6 +315,9 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                     ),
                 };
 
+                // Compute fingerprint before tool_name is moved into the telemetry record.
+                let fingerprint = format!("{tool_name}\n{observation}");
+
                 telemetry.record(TelemetryRecord::new_with_subsource(
                     "RoleMachine",
                     subsource,
@@ -330,8 +341,17 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                     }
                 }
 
+                // Detect repeated identical (tool, observation) pairs and activate coercion.
+                // Only activates if no other pressure mode is already active.
+                if !seen_tool_fingerprints.insert(fingerprint) && !final_response_only {
+                    repeated_observation_coercion_active = true;
+                    final_response_only = true;
+                }
+
                 let obs_section = if final_response_only {
-                    if decision_pressure_active {
+                    if repeated_observation_coercion_active {
+                        format_repeated_observation_coercion_section(&observation)
+                    } else if decision_pressure_active {
                         format_decision_pressure_section(&observation)
                     } else {
                         format_completion_pressure_section(&observation)
@@ -712,6 +732,23 @@ fn render_decision_pressure_violation_note() -> String {
      {\"status\":\"rejected\",\"reason\":\"$REASON_FOR_REJECTION\"}\n\
      Do not copy example values. Replace them with task-specific content."
         .to_string()
+}
+
+/// Formats the observation section that signals repeated-observation coercion.
+///
+/// Called when the same (tool, observation) pair is seen for the second time
+/// within a single role invocation. After this section is appended, any further
+/// tool request is an immediate protocol error.
+fn format_repeated_observation_coercion_section(observation: &str) -> String {
+    format!(
+        "Framework tool observation:\n{observation}\n\
+         You have already inspected this information. Do not call more tools.\n\
+         Return accepted or rejected JSON now.\n\
+         Return exactly one of:\n\
+         {{\"status\":\"accepted\",\"content\":\"$RESPONSE_SUMMARY\"}}\n\
+         {{\"status\":\"rejected\",\"reason\":\"$REASON_FOR_REJECTION\"}}\n\
+         Do not copy example values. Replace them with task-specific content."
+    )
 }
 
 /// Builds a protocol-retry prompt for use in completion-pressure mode.
@@ -1768,9 +1805,10 @@ mod tests {
 
     #[test]
     fn role_runner_stops_at_tool_loop_limit() {
-        // Each call returns a list_files request (non-mutating, so no completion
-        // pressure). The (MAX_TOOL_STEPS+1)-th triggers the tool loop limit.
-        let responses: Vec<&str> = vec![r#"{"tool":"list_files"}"#; MAX_TOOL_STEPS + 1];
+        // Repeated identical list_files calls produce repeated identical observations,
+        // so repeated-observation coercion fires after 2 calls and the 3rd call
+        // (while coercion is active) immediately fails with a specific protocol error.
+        let responses: Vec<&str> = vec![r#"{"tool":"list_files"}"#; 3];
         let provider = ScriptedProvider::from_strs(&responses);
         let runner = ProviderRoleRunner::new(&provider);
 
@@ -1790,14 +1828,294 @@ mod tests {
         );
 
         assert!(
+            matches!(output.result, RoleResult::Failed { ref reason } if reason.contains("repeated")),
+            "must fail with repeated-observation error before the generic limit; got {:?}",
+            output.result
+        );
+        assert_eq!(
+            provider.requests.borrow().len(),
+            3,
+            "provider must be called exactly 3 times (2 duplicate observations + 1 post-coercion tool call)"
+        );
+    }
+
+    // Helper: build a bare repo containing `n` distinct files named file0.txt .. file{n-1}.txt.
+    fn make_view_with_n_files(label: &str, n: usize) -> (TempDir, ArtifactView) {
+        let temp = TempDir::new(label);
+        let seed = temp.0.join("seed");
+        std::fs::create_dir_all(&seed).unwrap();
+        git(&seed, &["init", "--quiet", "--initial-branch=main"]);
+        git(&seed, &["config", "user.name", "Test"]);
+        git(&seed, &["config", "user.email", "test@example.invalid"]);
+        for i in 0..n {
+            std::fs::write(seed.join(format!("file{i}.txt")), format!("content-{i}\n")).unwrap();
+        }
+        git(&seed, &["add", "."]);
+        git(&seed, &["commit", "--quiet", "-m", "init"]);
+        let bare = temp.0.join("bare.git");
+        Command::new("git")
+            .args(["clone", "--quiet", "--bare"])
+            .arg(&seed)
+            .arg(&bare)
+            .status()
+            .expect("git clone --bare failed");
+        let sha = git_rev(&bare);
+        (
+            temp,
+            ArtifactView {
+                repo_path: bare,
+                commit_sha: sha,
+            },
+        )
+    }
+
+    #[test]
+    fn role_runner_generic_tool_loop_limit_applies_without_repetition() {
+        // MAX_TOOL_STEPS distinct read_file requests each produce unique content;
+        // no repeated observation fires. The (MAX_TOOL_STEPS+1)-th call hits the
+        // generic loop limit.
+        let (_temp, view) = make_view_with_n_files("generic-limit", MAX_TOOL_STEPS);
+        let responses: Vec<String> = (0..=MAX_TOOL_STEPS)
+            .map(|i| format!(r#"{{"tool":"read_file","path":"file{i}.txt"}}"#))
+            .collect();
+        let response_strs: Vec<&str> = responses.iter().map(|s| s.as_str()).collect();
+        let provider = ScriptedProvider::from_strs(&response_strs);
+        let runner = ProviderRoleRunner::new(&provider);
+
+        let output = runner.run_role(
+            RoleRequest {
+                role: DeliberationRole::Producer,
+                objective: "loop with distinct files".to_string(),
+                producer_content: None,
+                critic_content: None,
+                feedback: vec![],
+                node_kind: NodeKind::Work,
+                tool_context: Some(RoleToolContext {
+                    artifact_view: Box::new(view),
+                }),
+            },
+            &crate::telemetry::NoopTelemetry,
+        );
+
+        assert!(
             matches!(output.result, RoleResult::Failed { ref reason } if reason.contains("tool loop limit")),
-            "must fail after tool loop limit; got {:?}",
+            "must fail with generic tool loop limit when observations are distinct; got {:?}",
             output.result
         );
         assert_eq!(
             provider.requests.borrow().len(),
             MAX_TOOL_STEPS + 1,
             "provider must be called exactly MAX_TOOL_STEPS + 1 times"
+        );
+    }
+
+    // ── repeated-observation coercion tests ──────────────────────────────────
+
+    #[test]
+    fn producer_completion_pressure_fires_after_write_file() {
+        let provider = ScriptedProvider::from_strs(&[
+            r#"{"tool":"write_file","path":"output.txt","content":"hello"}"#,
+            r#"{"status":"accepted","content":"wrote the file successfully"}"#,
+        ]);
+        let runner = ProviderRoleRunner::new(&provider);
+
+        let output = runner.run_role(
+            RoleRequest {
+                role: DeliberationRole::Producer,
+                objective: "write a file".to_string(),
+                producer_content: None,
+                critic_content: None,
+                feedback: vec![],
+                node_kind: NodeKind::Work,
+                tool_context: Some(RoleToolContext {
+                    artifact_view: Box::new(dummy_view()),
+                }),
+            },
+            &crate::telemetry::NoopTelemetry,
+        );
+
+        assert!(
+            matches!(output.result, RoleResult::Accepted { .. }),
+            "producer must finalize after write_file; got {:?}",
+            output.result
+        );
+        let requests = provider.requests.borrow();
+        assert_eq!(requests.len(), 2, "provider must be called twice");
+        let second_prompt = &requests[1].prompt;
+        assert!(
+            second_prompt.contains("The requested change has already been recorded"),
+            "second prompt must contain completion-pressure hint; got:\n{second_prompt}"
+        );
+        assert!(
+            !second_prompt.contains("Available file tools:"),
+            "second prompt must not advertise tools after completion pressure; got:\n{second_prompt}"
+        );
+    }
+
+    #[test]
+    fn critic_decision_pressure_fires_after_max_read_steps() {
+        let (_temp, view) = make_view("critic-decision-pressure");
+        let provider = ScriptedProvider::from_strs(&[
+            r#"{"tool":"read_file","path":"hello.txt"}"#,
+            r#"{"tool":"read_file","path":"hello.txt"}"#,
+            r#"{"status":"accepted","content":"the file looks good"}"#,
+        ]);
+        let runner = ProviderRoleRunner::new(&provider);
+
+        let output = runner.run_role(
+            RoleRequest {
+                role: DeliberationRole::Critic,
+                objective: "review hello.txt".to_string(),
+                producer_content: Some("draft".to_string()),
+                critic_content: None,
+                feedback: vec![],
+                node_kind: NodeKind::Work,
+                tool_context: Some(RoleToolContext {
+                    artifact_view: Box::new(view),
+                }),
+            },
+            &crate::telemetry::NoopTelemetry,
+        );
+
+        assert!(
+            matches!(output.result, RoleResult::Accepted { .. }),
+            "critic must finalize after read_file steps; got {:?}",
+            output.result
+        );
+        let requests = provider.requests.borrow();
+        assert_eq!(requests.len(), 3, "provider must be called three times");
+        let third_prompt = &requests[2].prompt;
+        assert!(
+            third_prompt.contains("sufficient evidence"),
+            "third prompt must contain decision-pressure text; got:\n{third_prompt}"
+        );
+    }
+
+    #[test]
+    fn producer_repeated_identical_read_file_triggers_coercion() {
+        let (_temp, view) = make_view("repeated-read-coercion");
+        let provider = ScriptedProvider::from_strs(&[
+            r#"{"tool":"read_file","path":"hello.txt"}"#,
+            r#"{"tool":"read_file","path":"hello.txt"}"#,
+            r#"{"status":"accepted","content":"read the same file twice"}"#,
+        ]);
+        let runner = ProviderRoleRunner::new(&provider);
+
+        let output = runner.run_role(
+            RoleRequest {
+                role: DeliberationRole::Producer,
+                objective: "inspect hello.txt".to_string(),
+                producer_content: None,
+                critic_content: None,
+                feedback: vec![],
+                node_kind: NodeKind::Work,
+                tool_context: Some(RoleToolContext {
+                    artifact_view: Box::new(view),
+                }),
+            },
+            &crate::telemetry::NoopTelemetry,
+        );
+
+        assert!(
+            matches!(output.result, RoleResult::Accepted { .. }),
+            "producer must accept after coercion forces final response; got {:?}",
+            output.result
+        );
+        let requests = provider.requests.borrow();
+        assert_eq!(requests.len(), 3, "provider must be called three times");
+        let third_prompt = &requests[2].prompt;
+        assert!(
+            third_prompt.contains("You have already inspected this information"),
+            "third prompt must contain repeated-observation coercion text; got:\n{third_prompt}"
+        );
+        assert!(
+            !third_prompt.contains("Available file tools:"),
+            "third prompt must not advertise tools after coercion; got:\n{third_prompt}"
+        );
+    }
+
+    #[test]
+    fn repeated_identical_tool_calls_fail_before_generic_limit() {
+        // The producer keeps calling list_files with identical results. The second
+        // identical observation triggers coercion. A third tool call (after coercion)
+        // fails immediately with a specific protocol error — not the generic limit.
+        let provider = ScriptedProvider::from_strs(&[
+            r#"{"tool":"list_files"}"#,
+            r#"{"tool":"list_files"}"#,
+            r#"{"tool":"list_files"}"#,
+        ]);
+        let runner = ProviderRoleRunner::new(&provider);
+
+        let output = runner.run_role(
+            RoleRequest {
+                role: DeliberationRole::Producer,
+                objective: "loop on list_files".to_string(),
+                producer_content: None,
+                critic_content: None,
+                feedback: vec![],
+                node_kind: NodeKind::Work,
+                tool_context: Some(RoleToolContext {
+                    artifact_view: Box::new(dummy_view()),
+                }),
+            },
+            &crate::telemetry::NoopTelemetry,
+        );
+
+        let reason = match &output.result {
+            RoleResult::Failed { reason } => reason.clone(),
+            other => panic!("expected Failed, got {other:?}"),
+        };
+        assert!(
+            reason.contains("repeated"),
+            "failure reason must mention 'repeated'; got: {reason}"
+        );
+        assert!(
+            !reason.contains("tool loop limit"),
+            "failure must not use generic tool loop limit message; got: {reason}"
+        );
+        assert_eq!(
+            provider.requests.borrow().len(),
+            3,
+            "only 3 provider calls: duplicate observation fires at call 2, coercion violation at call 3"
+        );
+    }
+
+    #[test]
+    fn existing_valid_tool_use_still_works() {
+        // list_files then write_file then accepted — no repeated observations,
+        // no coercion, normal completion pressure after the write.
+        let (_temp, view) = make_view("valid-tool-use");
+        let provider = ScriptedProvider::from_strs(&[
+            r#"{"tool":"list_files"}"#,
+            r#"{"tool":"write_file","path":"result.txt","content":"done"}"#,
+            r#"{"status":"accepted","content":"listed files and wrote result"}"#,
+        ]);
+        let runner = ProviderRoleRunner::new(&provider);
+
+        let output = runner.run_role(
+            RoleRequest {
+                role: DeliberationRole::Producer,
+                objective: "list then write".to_string(),
+                producer_content: None,
+                critic_content: None,
+                feedback: vec![],
+                node_kind: NodeKind::Work,
+                tool_context: Some(RoleToolContext {
+                    artifact_view: Box::new(view),
+                }),
+            },
+            &crate::telemetry::NoopTelemetry,
+        );
+
+        assert!(
+            matches!(output.result, RoleResult::Accepted { ref content } if content == "listed files and wrote result"),
+            "valid tool sequence must succeed; got {:?}",
+            output.result
+        );
+        assert_eq!(
+            provider.requests.borrow().len(),
+            3,
+            "all 3 provider calls must be made"
         );
     }
 
@@ -4475,24 +4793,31 @@ mod tests {
 
     #[test]
     fn producer_not_affected_by_decision_pressure() {
-        // Producer may use more than MAX_READ_ONLY_TOOL_STEPS read-only tool calls
-        // without entering decision pressure.
-        let list_count = MAX_READ_ONLY_TOOL_STEPS + 1;
-        let mut responses: Vec<&str> = vec![r#"{"tool":"list_files"}"#; list_count];
-        responses.push(r#"{"status":"accepted","content":"produced the required output"}"#);
-        let provider = ScriptedProvider::from_strs(&responses);
+        // Producer may use more than MAX_READ_ONLY_TOOL_STEPS distinct read-only
+        // tool calls without entering decision pressure (which only applies to
+        // Critic and Referee). Each read targets a different file so no repeated-
+        // observation coercion fires either.
+        let read_count = MAX_READ_ONLY_TOOL_STEPS + 1;
+        let (_temp, view) = make_view_with_n_files("producer-no-dp", read_count);
+        let mut responses: Vec<String> = (0..read_count)
+            .map(|i| format!(r#"{{"tool":"read_file","path":"file{i}.txt"}}"#))
+            .collect();
+        responses
+            .push(r#"{"status":"accepted","content":"produced the required output"}"#.to_string());
+        let response_strs: Vec<&str> = responses.iter().map(|s| s.as_str()).collect();
+        let provider = ScriptedProvider::from_strs(&response_strs);
         let runner = ProviderRoleRunner::new(&provider);
 
         let output = runner.run_role(
             RoleRequest {
                 role: DeliberationRole::Producer,
-                objective: "list files and produce output".to_string(),
+                objective: "read files and produce output".to_string(),
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
                 node_kind: NodeKind::Work,
                 tool_context: Some(RoleToolContext {
-                    artifact_view: Box::new(dummy_view()),
+                    artifact_view: Box::new(view),
                 }),
             },
             &crate::telemetry::NoopTelemetry,
@@ -4500,13 +4825,13 @@ mod tests {
 
         assert!(
             matches!(output.result, RoleResult::Accepted { .. }),
-            "producer must succeed with more than MAX_READ_ONLY_TOOL_STEPS reads; got {:?}",
+            "producer must succeed with more than MAX_READ_ONLY_TOOL_STEPS distinct reads; got {:?}",
             output.result
         );
         assert_eq!(
             provider.requests.borrow().len(),
-            list_count + 1,
-            "producer must be allowed {list_count} tool calls"
+            read_count + 1,
+            "producer must be allowed {read_count} distinct tool calls"
         );
         // None of the prompts must contain decision-pressure text.
         for (i, req) in provider.requests.borrow().iter().enumerate() {
