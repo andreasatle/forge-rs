@@ -1,0 +1,16 @@
+prompt_guidance: |
+  Write idiomatic Python. Keep code simple, typed where useful, and covered by tests.
+init:
+  commands:
+    - program: uv
+      args: ["init", "--vcs", "none"]
+    - program: uv
+      args: ["add", "--dev", "pytest", "ruff", "pyright"]
+validation:
+  commands:
+    - program: uv
+      args: ["run", "ruff", "check", "."]
+    - program: uv
+      args: ["run", "pyright"]
+    - program: uv
+      args: ["run", "pytest"]

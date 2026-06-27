@@ -504,6 +504,31 @@ project:
         );
     }
 
+    const PYTHON_LANGUAGE_YAML: &str = r#"
+objective: "implement a CLI tool"
+artifact:
+  repo_path: ".forge/artifacts/main.git"
+  branch: "main"
+provider:
+  base_url: "http://localhost:8080"
+  n_predict: 512
+telemetry:
+  directory: "runs"
+project:
+  language: python
+"#;
+
+    #[test]
+    fn config_parses_project_language_python() {
+        let tmp = TempYaml::new(PYTHON_LANGUAGE_YAML);
+        let config = ForgeConfig::from_file(tmp.path()).unwrap();
+        assert_eq!(
+            config.project.language.as_deref(),
+            Some("python"),
+            "project.language: python must parse as Some(\"python\")"
+        );
+    }
+
     const UNKNOWN_LANGUAGE_YAML: &str = r#"
 objective: "test"
 artifact:
