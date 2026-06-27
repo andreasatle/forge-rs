@@ -374,6 +374,7 @@ mod tests {
     use std::collections::VecDeque;
 
     use super::*;
+    use crate::artifacts::{ArtifactUpdate, FileChange};
     use crate::engine::{Machine, Transition, run_machine};
     use crate::machines::deliberation::effect::DeliberationEffect;
     use crate::machines::deliberation::event::{DeliberationEvent, RoleResult};
@@ -912,6 +913,207 @@ mod tests {
                 }
             ),
             "run must fail with PlannerValidationFailure; got {output:?}"
+        );
+    }
+
+    // --- staged read view: reviewer visibility of producer writes ---
+
+    /// A [`RoleRunner`] variant that can return per-invocation artifact updates.
+    struct ScriptedRoleRunnerWithUpdates {
+        responses: RefCell<VecDeque<(RoleResult, Option<ArtifactUpdate>)>>,
+        requests: RefCell<Vec<RoleRequest>>,
+    }
+
+    impl ScriptedRoleRunnerWithUpdates {
+        fn new(responses: Vec<(RoleResult, Option<ArtifactUpdate>)>) -> Self {
+            Self {
+                responses: RefCell::new(responses.into()),
+                requests: RefCell::new(Vec::new()),
+            }
+        }
+    }
+
+    impl RoleRunner for ScriptedRoleRunnerWithUpdates {
+        fn run_role(&self, request: RoleRequest, _telemetry: &dyn TelemetrySink) -> RoleRunOutput {
+            self.requests.borrow_mut().push(request);
+            let (result, artifact_update) = self
+                .responses
+                .borrow_mut()
+                .pop_front()
+                .expect("ScriptedRoleRunnerWithUpdates: responses exhausted");
+            RoleRunOutput {
+                result,
+                artifact_update,
+            }
+        }
+    }
+
+    fn staged_handler(
+        responses: Vec<(RoleResult, Option<ArtifactUpdate>)>,
+    ) -> DeliberationHandler<ScriptedRoleRunnerWithUpdates> {
+        DeliberationHandler {
+            runner: ScriptedRoleRunnerWithUpdates::new(responses),
+            artifact_view: Some(dummy_view()),
+            node_kind: NodeKind::Work,
+            accumulated_update: RefCell::new(Vec::new()),
+            plan_validation_context: None,
+        }
+    }
+
+    #[test]
+    fn critic_sees_producer_staged_write_before_integration() {
+        let producer_update = ArtifactUpdate {
+            changes: vec![FileChange::Write {
+                path: "main.py".to_owned(),
+                content: "def main():\n    pass\n".to_owned(),
+            }],
+        };
+        let handler = staged_handler(vec![
+            (
+                RoleResult::Accepted {
+                    content: "wrote main.py".to_owned(),
+                },
+                Some(producer_update),
+            ),
+            (
+                RoleResult::Accepted {
+                    content: "looks good".to_owned(),
+                },
+                None,
+            ),
+        ]);
+
+        handler.handle_effect(run_role_effect(
+            DeliberationRole::Producer,
+            "create main.py",
+            None,
+            None,
+            vec![],
+        ));
+        handler.handle_effect(run_role_effect(
+            DeliberationRole::Critic,
+            "create main.py",
+            Some("wrote main.py"),
+            None,
+            vec![],
+        ));
+
+        let requests = handler.runner.requests.borrow();
+        let critic_ctx = requests[1]
+            .tool_context
+            .as_ref()
+            .expect("Critic must receive tool context");
+        assert_eq!(
+            critic_ctx.artifact_view.read_file("main.py").unwrap(),
+            "def main():\n    pass\n",
+            "Critic must see the Producer's staged write for main.py"
+        );
+    }
+
+    #[test]
+    fn referee_sees_producer_staged_write_before_integration() {
+        let producer_update = ArtifactUpdate {
+            changes: vec![FileChange::Write {
+                path: "main.py".to_owned(),
+                content: "def main():\n    pass\n".to_owned(),
+            }],
+        };
+        let handler = staged_handler(vec![
+            (
+                RoleResult::Accepted {
+                    content: "wrote main.py".to_owned(),
+                },
+                Some(producer_update),
+            ),
+            (
+                RoleResult::Accepted {
+                    content: "looks good".to_owned(),
+                },
+                None,
+            ),
+            (
+                RoleResult::Accepted {
+                    content: "approved".to_owned(),
+                },
+                None,
+            ),
+        ]);
+
+        handler.handle_effect(run_role_effect(
+            DeliberationRole::Producer,
+            "create main.py",
+            None,
+            None,
+            vec![],
+        ));
+        handler.handle_effect(run_role_effect(
+            DeliberationRole::Critic,
+            "create main.py",
+            Some("wrote main.py"),
+            None,
+            vec![],
+        ));
+        handler.handle_effect(run_role_effect(
+            DeliberationRole::Referee,
+            "create main.py",
+            Some("wrote main.py"),
+            Some("looks good"),
+            vec![],
+        ));
+
+        let requests = handler.runner.requests.borrow();
+        let referee_ctx = requests[2]
+            .tool_context
+            .as_ref()
+            .expect("Referee must receive tool context");
+        assert_eq!(
+            referee_ctx.artifact_view.read_file("main.py").unwrap(),
+            "def main():\n    pass\n",
+            "Referee must see the Producer's staged write for main.py"
+        );
+    }
+
+    #[test]
+    fn reviewer_staged_view_does_not_see_new_file_without_producer_write() {
+        // Sanity check: without a Producer write, a new file is not visible.
+        let handler = staged_handler(vec![
+            (
+                RoleResult::Accepted {
+                    content: "done".to_owned(),
+                },
+                None,
+            ),
+            (
+                RoleResult::Accepted {
+                    content: "ok".to_owned(),
+                },
+                None,
+            ),
+        ]);
+
+        handler.handle_effect(run_role_effect(
+            DeliberationRole::Producer,
+            "create main.py",
+            None,
+            None,
+            vec![],
+        ));
+        handler.handle_effect(run_role_effect(
+            DeliberationRole::Critic,
+            "create main.py",
+            Some("done"),
+            None,
+            vec![],
+        ));
+
+        let requests = handler.runner.requests.borrow();
+        let critic_ctx = requests[1]
+            .tool_context
+            .as_ref()
+            .expect("Critic must receive tool context");
+        assert!(
+            critic_ctx.artifact_view.read_file("main.py").is_err(),
+            "Critic must not see main.py when Producer did not write it"
         );
     }
 
