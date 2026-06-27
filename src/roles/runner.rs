@@ -7,6 +7,8 @@
 use serde::Deserialize;
 
 use crate::artifacts::{ArtifactRead, ArtifactUpdate};
+#[cfg(doc)]
+use crate::artifacts::{ArtifactView, StagedArtifactView};
 use crate::machines::deliberation::event::RoleResult;
 use crate::machines::deliberation::state::{DeliberationRole, RevisionFeedback};
 use crate::machines::scheduler::NodeKind;
