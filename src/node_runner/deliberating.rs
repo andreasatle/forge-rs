@@ -169,9 +169,25 @@ fn run_with_provider<P: ProviderClient>(
         ),
         telemetry,
     };
+    let top_objective = request.objective.clone();
+    let existing_files: Vec<String> = request
+        .artifact_view
+        .as_ref()
+        .and_then(|v| v.list_files().ok())
+        .unwrap_or_default()
+        .into_iter()
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect();
     let (output, machine) = run_machine_with_telemetry(machine, initial_state, telemetry);
     let tool_artifact_update = machine.take_artifact_update();
-    map_output(output, request.kind, tool_artifact_update, telemetry)
+    map_output(
+        output,
+        request.kind,
+        tool_artifact_update,
+        telemetry,
+        &top_objective,
+        &existing_files,
+    )
 }
 
 /// Returns the objective string, optionally prefixed with artifact file context.
@@ -188,7 +204,10 @@ fn enrich_objective(request: &NodeRunRequest) -> String {
 
 /// Builds a short context string from a read-only artifact view.
 ///
-/// Lists all files and, if `README.md` is present, includes its content.
+/// Lists all files under a heading that signals they already exist and must
+/// not be recreated unless the objective explicitly names them. If `README.md`
+/// is present its content is included after the listing.
+///
 /// Returns an empty string when the view has no files or when git fails.
 fn build_artifact_context(view: &ArtifactView) -> String {
     let files = match view.list_files() {
@@ -197,7 +216,11 @@ fn build_artifact_context(view: &ArtifactView) -> String {
     };
     let mut parts = Vec::new();
     let listing: Vec<String> = files.iter().map(|p| format!("  {}", p.display())).collect();
-    parts.push(format!("Files:\n{}", listing.join("\n")));
+    parts.push(format!(
+        "Existing project files (already initialized — do not create tasks to recreate \
+         or reinitialize these files unless the objective explicitly names them as targets):\n{}",
+        listing.join("\n")
+    ));
     if let Ok(readme) = view.read_file("README.md") {
         parts.push(format!("README.md:\n{readme}"));
     }
@@ -209,10 +232,14 @@ fn map_output(
     kind: NodeKind,
     tool_artifact_update: Option<ArtifactUpdate>,
     telemetry: &dyn TelemetrySink,
+    top_objective: &str,
+    existing_files: &[String],
 ) -> NodeRunResult {
     match output {
         DeliberationTerminalOutput::Complete(out) => match kind {
-            NodeKind::Plan => map_plan_output(out.content, telemetry),
+            NodeKind::Plan => {
+                map_plan_output(out.content, telemetry, top_objective, existing_files)
+            }
             NodeKind::Work => NodeRunResult::WorkAccepted(NodeRunWorkResult {
                 work: WorkOutput {
                     summary: out.content,
@@ -248,13 +275,21 @@ fn map_output(
 ///   `PlannerOutputFallback` and returns `PlanAccepted` with a single work
 ///   node whose objective is the raw content. This preserves backward
 ///   compatibility while the planner prompt is being migrated.
-fn map_plan_output(content: String, telemetry: &dyn TelemetrySink) -> NodeRunResult {
+fn map_plan_output(
+    content: String,
+    telemetry: &dyn TelemetrySink,
+    top_objective: &str,
+    existing_files: &[String],
+) -> NodeRunResult {
     use crate::node_runner::planner::{
-        parse_planner_content, planner_output_to_plan_output, validate_planner_output,
+        parse_planner_content, planner_output_to_plan_output, validate_planner_no_recreate,
+        validate_planner_output,
     };
 
     match parse_planner_content(&content) {
-        Some(planner_out) => match validate_planner_output(&planner_out) {
+        Some(planner_out) => match validate_planner_output(&planner_out).and_then(|()| {
+            validate_planner_no_recreate(&planner_out, top_objective, existing_files)
+        }) {
             Ok(()) => {
                 let task_count = planner_out.tasks.len();
                 let dependency_count: usize =

@@ -13,6 +13,12 @@ Every task must target a concrete artifact operation: create, modify, or delete 
 Do not emit tasks whose only output is a decision, design choice, analysis, or content definition. \
 Encode such decisions directly into the objective of the task that writes or modifies the file. \
 Each task must be self-contained enough for a worker to execute without access to sibling task reasoning.\n\
+Files shown in the project context under 'Existing project files' already exist and are managed \
+by the project infrastructure. \
+Do not create tasks to create, recreate, or reinitialize those files unless the objective \
+explicitly names them as targets. \
+Only create tasks for files that the objective names as targets or that must be newly created \
+to satisfy it.\n\
 Return exactly one JSON object. No markdown. No code fence. \
 No explanation. No text before or after the JSON.\n\
 {\"tasks\":[{\"id\":\"task-id\",\"objective\":\"Task objective.\",\"depends_on\":[]}]}\n\
@@ -484,6 +490,25 @@ mod tests {
                 .planner_producer_system
                 .contains("Do not emit tasks whose only output is a decision"),
             "planner_producer_system must prohibit pure-reasoning tasks; got:\n{}",
+            policy.planner_producer_system
+        );
+    }
+
+    #[test]
+    fn coding_planner_does_not_recreate_existing_project_files() {
+        let policy = CodingProjectAdapter.role_policy();
+        assert!(
+            policy
+                .planner_producer_system
+                .contains("already exist and are managed by the project infrastructure"),
+            "planner_producer_system must warn against recreating existing project files; got:\n{}",
+            policy.planner_producer_system
+        );
+        assert!(
+            policy
+                .planner_producer_system
+                .contains("explicitly names them as targets"),
+            "planner_producer_system must say existing files are only targeted when objective names them; got:\n{}",
             policy.planner_producer_system
         );
     }

@@ -47,6 +47,15 @@ pub enum PlannerValidationError {
         /// The unknown dependency id that was referenced.
         dep_id: String,
     },
+    /// A task's objective references an existing project file that is not
+    /// mentioned in the top-level run objective, indicating the planner is
+    /// trying to recreate an infrastructure file it should leave alone.
+    TaskRecreatesExistingFile {
+        /// The task id whose objective contains the pre-existing filename.
+        task_id: String,
+        /// The filename that already exists and is not an objective target.
+        filename: String,
+    },
 }
 
 impl std::fmt::Display for PlannerValidationError {
@@ -63,6 +72,13 @@ impl std::fmt::Display for PlannerValidationError {
             }
             PlannerValidationError::UnknownDependency { task_id, dep_id } => {
                 write!(f, "task {task_id} depends on unknown id: {dep_id}")
+            }
+            PlannerValidationError::TaskRecreatesExistingFile { task_id, filename } => {
+                write!(
+                    f,
+                    "task {task_id} targets existing file '{filename}' \
+                     which is not mentioned in the run objective"
+                )
             }
         }
     }
@@ -122,6 +138,35 @@ pub fn validate_planner_output(output: &PlannerOutput) -> Result<(), PlannerVali
                 return Err(PlannerValidationError::UnknownDependency {
                     task_id: task.id.clone(),
                     dep_id: dep.clone(),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Check that no task in `output` targets an existing project file that is not
+/// mentioned in `top_objective`.
+///
+/// A task is considered to target an existing file when its objective string
+/// contains a filename from `existing_files` AND that filename does not appear
+/// in `top_objective`. This catches planners that recreate infrastructure files
+/// (e.g. `.python-version`, `pyproject.toml`) when the objective only targets
+/// `main.py`.
+///
+/// Returns `Err` on the first violation found.
+pub fn validate_planner_no_recreate(
+    output: &PlannerOutput,
+    top_objective: &str,
+    existing_files: &[impl AsRef<str>],
+) -> Result<(), PlannerValidationError> {
+    for task in &output.tasks {
+        for filename in existing_files {
+            let filename = filename.as_ref();
+            if task.objective.contains(filename) && !top_objective.contains(filename) {
+                return Err(PlannerValidationError::TaskRecreatesExistingFile {
+                    task_id: task.id.clone(),
+                    filename: filename.to_string(),
                 });
             }
         }
@@ -327,6 +372,98 @@ mod tests {
                 task_id: "task".to_string(),
                 dep_id: "nonexistent".to_string(),
             }
+        );
+    }
+
+    // ── No-recreate validation ───────────────────────────────────────────────────
+
+    const PYTHON_INIT_FILES: &[&str] = &[
+        ".gitignore",
+        ".python-version",
+        "README.md",
+        "main.py",
+        "pyproject.toml",
+        "uv.lock",
+    ];
+
+    #[test]
+    fn task_targeting_existing_file_not_in_objective_is_rejected() {
+        // Regression: planner created ".python-version" task for objective that only mentions main.py.
+        let output = PlannerOutput {
+            tasks: vec![
+                PlannerTask {
+                    id: "py-version".to_string(),
+                    objective: "Create .python-version file for Python project.".to_string(),
+                    depends_on: vec![],
+                },
+                PlannerTask {
+                    id: "main".to_string(),
+                    objective: "Create main.py with haiku about Python state machines.".to_string(),
+                    depends_on: vec![],
+                },
+            ],
+        };
+        let top_objective = "Create a simple Python program in main.py that prints a short haiku about Python state machines.";
+        let result = validate_planner_no_recreate(&output, top_objective, PYTHON_INIT_FILES);
+        let err = result.expect_err("must reject task targeting .python-version not in objective");
+        assert!(
+            matches!(
+                err,
+                PlannerValidationError::TaskRecreatesExistingFile {
+                    ref task_id,
+                    ref filename,
+                } if task_id == "py-version" && filename == ".python-version"
+            ),
+            "expected TaskRecreatesExistingFile for .python-version; got {err:?}"
+        );
+    }
+
+    #[test]
+    fn task_for_objective_target_only_passes_no_recreate_validation() {
+        // Only a main.py task — no infrastructure files touched.
+        let output = PlannerOutput {
+            tasks: vec![PlannerTask {
+                id: "main".to_string(),
+                objective: "Write a haiku about Python state machines in main.py.".to_string(),
+                depends_on: vec![],
+            }],
+        };
+        let top_objective = "Create a simple Python program in main.py that prints a short haiku about Python state machines.";
+        assert!(
+            validate_planner_no_recreate(&output, top_objective, PYTHON_INIT_FILES).is_ok(),
+            "task targeting only main.py (which is in the objective) must pass"
+        );
+    }
+
+    #[test]
+    fn no_recreate_allows_existing_file_when_objective_names_it() {
+        // Objective explicitly targets pyproject.toml — planner task is allowed.
+        let output = PlannerOutput {
+            tasks: vec![PlannerTask {
+                id: "config".to_string(),
+                objective: "Update pyproject.toml to add a new dependency.".to_string(),
+                depends_on: vec![],
+            }],
+        };
+        let top_objective = "Add ruff to pyproject.toml as a dev dependency.";
+        assert!(
+            validate_planner_no_recreate(&output, top_objective, PYTHON_INIT_FILES).is_ok(),
+            "task for pyproject.toml must pass when objective explicitly names it"
+        );
+    }
+
+    #[test]
+    fn no_recreate_empty_existing_files_always_passes() {
+        let output = PlannerOutput {
+            tasks: vec![PlannerTask {
+                id: "any".to_string(),
+                objective: "Create anything at all.".to_string(),
+                depends_on: vec![],
+            }],
+        };
+        assert!(
+            validate_planner_no_recreate(&output, "do something", &[] as &[&str]).is_ok(),
+            "empty existing_files must always pass"
         );
     }
 
