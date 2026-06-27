@@ -65,6 +65,7 @@ fn main() {
     let initial = DeliberationState::Ready {
         request: DeliberationRequest {
             objective: objective.to_string(),
+            target_files: vec![],
             max_revisions,
         },
     };

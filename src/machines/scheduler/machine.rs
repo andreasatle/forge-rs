@@ -144,6 +144,7 @@ impl SchedulerMachine {
             id: NodeId("root".to_string()),
             kind: NodeKind::Plan,
             objective: request.objective,
+            target_files: vec![],
             dependencies: vec![],
             status: NodeStatus::Pending,
             attempt: 0,
@@ -313,6 +314,7 @@ impl SchedulerMachine {
                 id,
                 kind: req.kind,
                 objective: req.objective,
+                target_files: req.target_files,
                 dependencies,
                 status: NodeStatus::Pending,
                 attempt: 0,
@@ -603,11 +605,12 @@ impl SchedulerMachine {
     /// referenced `node_id` are remapped to reference `replacement_id` so that
     /// the graph does not deadlock waiting for a `Failed` node to complete.
     fn apply_retry(graph: RunGraph, node_id: &NodeId) -> RunGraph {
-        let (kind, objective, deps, attempt, plan_depth, model_tier) = {
+        let (kind, objective, target_files, deps, attempt, plan_depth, model_tier) = {
             let n = Self::get_node(&graph, node_id);
             (
                 n.kind.clone(),
                 n.objective.clone(),
+                n.target_files.clone(),
                 n.dependencies.clone(),
                 n.attempt,
                 n.plan_depth,
@@ -619,6 +622,7 @@ impl SchedulerMachine {
             id: replacement_id.clone(),
             kind,
             objective,
+            target_files,
             dependencies: deps,
             status: NodeStatus::Pending,
             attempt: attempt + 1,
@@ -644,15 +648,21 @@ impl SchedulerMachine {
     /// The original node is marked `Failed` (not `Cancelled`) so the audit trail
     /// is unambiguous: it attempted its objective and could not complete it.
     fn apply_split(graph: RunGraph, node_id: &NodeId, message: String) -> RunGraph {
-        let (deps, attempt, plan_depth) = {
+        let (target_files, deps, attempt, plan_depth) = {
             let n = Self::get_node(&graph, node_id);
-            (n.dependencies.clone(), n.attempt, n.plan_depth + 1)
+            (
+                n.target_files.clone(),
+                n.dependencies.clone(),
+                n.attempt,
+                n.plan_depth + 1,
+            )
         };
         let split_id = NodeId(format!("{}-split-{}", node_id.0, graph.next_id));
         let split_node = Node {
             id: split_id.clone(),
             kind: NodeKind::Plan,
             objective: message,
+            target_files,
             dependencies: deps,
             status: NodeStatus::Pending,
             attempt: attempt + 1,
@@ -966,11 +976,12 @@ impl SchedulerMachine {
     }
 
     fn apply_elevate(graph: RunGraph, node_id: &NodeId) -> RunGraph {
-        let (kind, objective, deps, attempt, plan_depth) = {
+        let (kind, objective, target_files, deps, attempt, plan_depth) = {
             let n = Self::get_node(&graph, node_id);
             (
                 n.kind.clone(),
                 n.objective.clone(),
+                n.target_files.clone(),
                 n.dependencies.clone(),
                 n.attempt,
                 n.plan_depth,
@@ -981,6 +992,7 @@ impl SchedulerMachine {
             id: elevated_id.clone(),
             kind,
             objective,
+            target_files,
             dependencies: deps,
             status: NodeStatus::Pending,
             attempt: attempt + 1,
@@ -1055,14 +1067,21 @@ impl SchedulerMachine {
                         }
                     } else {
                         let node_id = ready[0].clone();
-                        let (kind, objective, model_tier, attempt) = {
+                        let (kind, objective, target_files, model_tier, attempt) = {
                             let n = Self::get_node(&graph, &node_id);
-                            (n.kind.clone(), n.objective.clone(), n.model_tier, n.attempt)
+                            (
+                                n.kind.clone(),
+                                n.objective.clone(),
+                                n.target_files.clone(),
+                                n.model_tier,
+                                n.attempt,
+                            )
                         };
                         let effect = SchedulerEffect::RunNode {
                             node_id: node_id.clone(),
                             kind,
                             objective,
+                            target_files,
                             model_tier,
                             attempt,
                         };
@@ -1302,6 +1321,7 @@ mod tests {
             id: NodeId(id.to_string()),
             kind: NodeKind::Work,
             objective: objective.to_string(),
+            target_files: vec![],
             dependencies: deps.iter().map(|d| NodeId(d.to_string())).collect(),
             status: NodeStatus::Pending,
             attempt: 0,
@@ -1317,6 +1337,7 @@ mod tests {
             id: NodeId(id.to_string()),
             kind: NodeKind::Plan,
             objective: objective.to_string(),
+            target_files: vec![],
             dependencies: deps.iter().map(|d| NodeId(d.to_string())).collect(),
             status: NodeStatus::Pending,
             attempt: 0,
@@ -1474,6 +1495,7 @@ mod tests {
                         id: NodeId("child-1".to_string()),
                         kind: NodeKind::Work,
                         objective: "child work".to_string(),
+                        target_files: vec![],
                         dependencies: vec![NodeId("P".to_string())],
                     }],
                 }),
@@ -1510,6 +1532,7 @@ mod tests {
                         id: NodeId("nested-plan".to_string()),
                         kind: NodeKind::Plan,
                         objective: "nested plan".to_string(),
+                        target_files: vec![],
                         dependencies: vec![NodeId("P".to_string())],
                     }],
                 }),
@@ -1743,6 +1766,7 @@ mod tests {
                 id: NodeId("T".to_string()),
                 kind: NodeKind::Work,
                 objective: "fail this step".to_string(),
+                target_files: vec![],
                 dependencies: vec![],
                 status: NodeStatus::Pending,
                 attempt: 0,
@@ -1764,6 +1788,7 @@ mod tests {
                 id: NodeId("T".to_string()),
                 kind: NodeKind::Work,
                 objective: "fail this step".to_string(),
+                target_files: vec![],
                 dependencies: vec![],
                 status: NodeStatus::Running,
                 attempt: 0,
@@ -1806,6 +1831,7 @@ mod tests {
                 id: NodeId("W".to_string()),
                 kind: NodeKind::Work,
                 objective: "integrate this step".to_string(),
+                target_files: vec![],
                 dependencies: vec![],
                 status: NodeStatus::Integrating,
                 attempt: 0,
@@ -2158,6 +2184,7 @@ mod tests {
                         id: NodeId("child-1".to_string()),
                         kind: NodeKind::Work,
                         objective: "child work".to_string(),
+                        target_files: vec![],
                         dependencies: vec![NodeId("missing".to_string())],
                     }],
                 }),
@@ -2202,6 +2229,7 @@ mod tests {
                         id: NodeId("child-1".to_string()),
                         kind: NodeKind::Work,
                         objective: "child work".to_string(),
+                        target_files: vec![],
                         dependencies: vec![NodeId("P".to_string())],
                     }],
                 }),
@@ -2238,12 +2266,14 @@ mod tests {
                             id: NodeId("A".to_string()),
                             kind: NodeKind::Work,
                             objective: "step A".to_string(),
+                            target_files: vec![],
                             dependencies: vec![],
                         },
                         NodeRequest {
                             id: NodeId("B".to_string()),
                             kind: NodeKind::Work,
                             objective: "step B".to_string(),
+                            target_files: vec![],
                             dependencies: vec![NodeId("A".to_string())],
                         },
                     ],
@@ -2313,12 +2343,14 @@ mod tests {
                             id: NodeId("write-tests".to_string()),
                             kind: NodeKind::Work,
                             objective: "write tests".to_string(),
+                            target_files: vec![],
                             dependencies: vec![],
                         },
                         NodeRequest {
                             id: NodeId("implement".to_string()),
                             kind: NodeKind::Work,
                             objective: "implement feature".to_string(),
+                            target_files: vec![],
                             dependencies: vec![NodeId("write-tests".to_string())],
                         },
                     ],
@@ -2473,6 +2505,7 @@ mod tests {
                         id: NodeId("child-1".to_string()),
                         kind: NodeKind::Work,
                         objective: "step".to_string(),
+                        target_files: vec![],
                         dependencies: vec![NodeId("ghost".to_string())],
                     }],
                 }),
@@ -2516,12 +2549,14 @@ mod tests {
                             id: NodeId("child-1".to_string()),
                             kind: NodeKind::Work,
                             objective: "child one".to_string(),
+                            target_files: vec![],
                             dependencies: vec![NodeId("P".to_string())],
                         },
                         NodeRequest {
                             id: NodeId("child-2".to_string()),
                             kind: NodeKind::Work,
                             objective: "child two".to_string(),
+                            target_files: vec![],
                             dependencies: vec![NodeId("P".to_string())],
                         },
                     ],
@@ -2865,6 +2900,7 @@ mod tests {
                     id: source_id.clone(),
                     kind: NodeKind::Work,
                     objective: "complex task".to_string(),
+                    target_files: vec![],
                     dependencies: vec![],
                     status: NodeStatus::Failed,
                     attempt: 0,
@@ -2877,6 +2913,7 @@ mod tests {
                     id: split_id,
                     kind: NodeKind::Plan,
                     objective: "decompose complex task".to_string(),
+                    target_files: vec![],
                     dependencies: vec![],
                     status: NodeStatus::Completed,
                     attempt: 1,

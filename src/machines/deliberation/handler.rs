@@ -67,6 +67,7 @@ struct PlanValidationContext {
 struct ProducerSemanticValidationConfig {
     role: DeliberationRole,
     objective: String,
+    target_files: Vec<String>,
     producer_content: Option<String>,
     critic_content: Option<String>,
     initial_feedback: Vec<RevisionFeedback>,
@@ -179,6 +180,7 @@ impl<R: RoleRunner> DeliberationHandler<R> {
             DeliberationEffect::RunRole {
                 role,
                 objective,
+                target_files,
                 producer_content,
                 critic_content,
                 feedback,
@@ -218,11 +220,16 @@ impl<R: RoleRunner> DeliberationHandler<R> {
                     && self.plan_validation_context.is_some()
                 {
                     return self.run_plan_producer_with_validation(
-                        role,
-                        objective,
-                        producer_content,
-                        critic_content,
-                        feedback,
+                        ProducerSemanticValidationConfig {
+                            role,
+                            objective,
+                            target_files,
+                            producer_content,
+                            critic_content,
+                            initial_feedback: feedback,
+                            max_retries: MAX_PLAN_VALIDATION_RETRIES,
+                            accumulate_artifact_update_on_pass: false,
+                        },
                         telemetry,
                     );
                 }
@@ -235,11 +242,16 @@ impl<R: RoleRunner> DeliberationHandler<R> {
                     && matches!(role, DeliberationRole::Producer)
                 {
                     return self.run_work_producer_with_validation(
-                        role,
-                        objective,
-                        producer_content,
-                        critic_content,
-                        feedback,
+                        ProducerSemanticValidationConfig {
+                            role,
+                            objective,
+                            target_files,
+                            producer_content,
+                            critic_content,
+                            initial_feedback: feedback,
+                            max_retries: MAX_WORK_SEMANTIC_VALIDATION_RETRIES,
+                            accumulate_artifact_update_on_pass: true,
+                        },
                         telemetry,
                     );
                 }
@@ -247,6 +259,7 @@ impl<R: RoleRunner> DeliberationHandler<R> {
                 let request = RoleRequest {
                     role: role.clone(),
                     objective,
+                    target_files,
                     producer_content,
                     critic_content,
                     feedback,
@@ -286,11 +299,7 @@ impl<R: RoleRunner> DeliberationHandler<R> {
     /// attempts.
     fn run_plan_producer_with_validation(
         &self,
-        role: DeliberationRole,
-        objective: String,
-        producer_content: Option<String>,
-        critic_content: Option<String>,
-        initial_feedback: Vec<RevisionFeedback>,
+        config: ProducerSemanticValidationConfig,
         telemetry: &dyn TelemetrySink,
     ) -> DeliberationEvent {
         let context = self
@@ -299,15 +308,7 @@ impl<R: RoleRunner> DeliberationHandler<R> {
             .expect("plan_validation_context must be Some when this method is called");
 
         self.run_producer_semantic_validation_loop(
-            ProducerSemanticValidationConfig {
-                role,
-                objective,
-                producer_content,
-                critic_content,
-                initial_feedback,
-                max_retries: MAX_PLAN_VALIDATION_RETRIES,
-                accumulate_artifact_update_on_pass: false,
-            },
+            config,
             telemetry,
             || None,
             |output| {
@@ -343,23 +344,11 @@ impl<R: RoleRunner> DeliberationHandler<R> {
     /// Referee are never invoked until validation succeeds.
     fn run_work_producer_with_validation(
         &self,
-        role: DeliberationRole,
-        objective: String,
-        producer_content: Option<String>,
-        critic_content: Option<String>,
-        initial_feedback: Vec<RevisionFeedback>,
+        config: ProducerSemanticValidationConfig,
         telemetry: &dyn TelemetrySink,
     ) -> DeliberationEvent {
         self.run_producer_semantic_validation_loop(
-            ProducerSemanticValidationConfig {
-                role,
-                objective,
-                producer_content,
-                critic_content,
-                initial_feedback,
-                max_retries: MAX_WORK_SEMANTIC_VALIDATION_RETRIES,
-                accumulate_artifact_update_on_pass: true,
-            },
+            config,
             telemetry,
             || {
                 // Recreate tool context each iteration; Producer always sees the
@@ -392,6 +381,7 @@ impl<R: RoleRunner> DeliberationHandler<R> {
             let request = RoleRequest {
                 role: config.role.clone(),
                 objective: config.objective.clone(),
+                target_files: config.target_files.clone(),
                 producer_content: config.producer_content.clone(),
                 critic_content: config.critic_content.clone(),
                 feedback: feedback.clone(),
@@ -704,6 +694,7 @@ mod tests {
         DeliberationEffect::RunRole {
             role,
             objective: objective.to_string(),
+            target_files: vec![],
             producer_content: producer_content.map(|s| s.to_string()),
             critic_content: critic_content.map(|s| s.to_string()),
             feedback,
@@ -714,6 +705,7 @@ mod tests {
         DeliberationState::Ready {
             request: DeliberationRequest {
                 objective: objective.to_string(),
+                target_files: vec![],
                 max_revisions,
             },
         }
@@ -791,6 +783,39 @@ mod tests {
             ),
             "expected RoleReturned with Accepted result, got {event:?}"
         );
+    }
+
+    #[test]
+    fn structured_targets_flow_to_worker_role_request() {
+        let runner = ScriptedRoleRunner::with_outputs(vec![accepted_output("generated", None)]);
+        let handler = DeliberationHandler {
+            runner,
+            artifact_view: None,
+            node_kind: NodeKind::Work,
+            work_requires_artifact_update: false,
+            accumulated_update: RefCell::new(Vec::new()),
+            plan_validation_context: None,
+        };
+
+        let event = handler.handle_effect(DeliberationEffect::RunRole {
+            role: DeliberationRole::Producer,
+            objective: "write the implementation".to_string(),
+            target_files: vec!["src/main.rs".to_string()],
+            producer_content: None,
+            critic_content: None,
+            feedback: vec![],
+        });
+
+        assert!(matches!(
+            event,
+            DeliberationEvent::RoleReturned {
+                result: RoleResult::Accepted { .. },
+                ..
+            }
+        ));
+        let req = &handler.runner.requests.borrow()[0];
+        assert_eq!(req.objective, "write the implementation");
+        assert_eq!(req.target_files, vec!["src/main.rs".to_string()]);
     }
 
     // --- run_machine integration tests ---

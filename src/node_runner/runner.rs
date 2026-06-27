@@ -45,6 +45,7 @@ impl NodeRunner for StaticNodeRunner {
                     id: NodeId("child-work".to_string()),
                     kind: NodeKind::Work,
                     objective: format!("work for: {}", request.objective),
+                    target_files: vec![],
                     dependencies: vec![],
                 }],
             }),
@@ -82,6 +83,7 @@ mod tests {
         NodeRunRequest {
             kind: NodeKind::Plan,
             objective: objective.to_string(),
+            target_files: vec![],
             model_tier: ModelTier::Cheap,
             attempt: 0,
             artifact_view: None,
@@ -92,6 +94,7 @@ mod tests {
         NodeRunRequest {
             kind: NodeKind::Work,
             objective: objective.to_string(),
+            target_files: vec![],
             model_tier: ModelTier::Cheap,
             attempt: 0,
             artifact_view: None,
@@ -103,6 +106,7 @@ mod tests {
         let req = NodeRunRequest {
             kind: NodeKind::Work,
             objective: "test objective".to_string(),
+            target_files: vec![],
             model_tier: ModelTier::Strong,
             attempt: 2,
             artifact_view: None,
@@ -122,6 +126,7 @@ mod tests {
         let req = NodeRunRequest {
             kind: NodeKind::Work,
             objective: "test".to_string(),
+            target_files: vec![],
             model_tier: ModelTier::Cheap,
             attempt: 0,
             artifact_view: Some(view),

@@ -31,6 +31,8 @@ pub enum SchedulerEffect {
         kind: NodeKind,
         /// Natural-language description of what the node should accomplish.
         objective: String,
+        /// Structured target files this node is expected and allowed to touch.
+        target_files: Vec<String>,
         /// The model capability level the runner should use.
         model_tier: ModelTier,
         /// Zero-based retry count; 0 on the first attempt.

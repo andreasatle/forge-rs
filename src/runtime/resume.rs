@@ -179,6 +179,7 @@ mod tests {
             id: NodeId(id.to_string()),
             kind: NodeKind::Work,
             objective: format!("do {id}"),
+            target_files: vec![],
             dependencies: vec![],
             status,
             attempt: 0,

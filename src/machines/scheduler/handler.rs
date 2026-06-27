@@ -218,6 +218,7 @@ impl<R: NodeRunner> Machine for SchedulerHandler<R> {
                 node_id,
                 kind,
                 objective,
+                target_files,
                 model_tier,
                 attempt,
             } => {
@@ -239,6 +240,7 @@ impl<R: NodeRunner> Machine for SchedulerHandler<R> {
                 let request = NodeRunRequest {
                     kind,
                     objective,
+                    target_files,
                     model_tier,
                     attempt,
                     artifact_view,
@@ -531,6 +533,7 @@ mod tests {
             id: NodeId(id.to_string()),
             kind: NodeKind::Work,
             objective: objective.to_string(),
+            target_files: vec![],
             dependencies: vec![],
             status: NodeStatus::Pending,
             attempt: 0,
@@ -546,6 +549,7 @@ mod tests {
             id: NodeId(id.to_string()),
             kind: NodeKind::Work,
             objective: objective.to_string(),
+            target_files: vec![],
             dependencies: deps.iter().map(|d| NodeId(d.to_string())).collect(),
             status: NodeStatus::Pending,
             attempt: 0,
@@ -565,6 +569,7 @@ mod tests {
             node_id: NodeId("n1".to_string()),
             kind: NodeKind::Work,
             objective: "write some code".to_string(),
+            target_files: vec![],
             model_tier: ModelTier::Cheap,
             attempt: 0,
         };
@@ -749,6 +754,7 @@ mod tests {
             node_id: NodeId("n1".to_string()),
             kind: NodeKind::Work,
             objective: "do something".to_string(),
+            target_files: vec![],
             model_tier: ModelTier::Cheap,
             attempt: 0,
         });
@@ -865,6 +871,7 @@ mod tests {
             node_id: NodeId("W".to_string()),
             kind: NodeKind::Work,
             objective: "write a file".to_string(),
+            target_files: vec![],
             model_tier: ModelTier::Cheap,
             attempt: 0,
         });
@@ -892,6 +899,7 @@ mod tests {
             node_id: NodeId("W".to_string()),
             kind: NodeKind::Work,
             objective: "write a file".to_string(),
+            target_files: vec![],
             model_tier: ModelTier::Cheap,
             attempt: 0,
         });
@@ -936,6 +944,7 @@ mod tests {
             node_id: NodeId("W".to_string()),
             kind: NodeKind::Work,
             objective: "do work".to_string(),
+            target_files: vec![],
             model_tier: ModelTier::Cheap,
             attempt: 0,
         });
@@ -1010,6 +1019,7 @@ mod tests {
             node_id: NodeId("W".to_string()),
             kind: NodeKind::Work,
             objective: "write a file".to_string(),
+            target_files: vec![],
             model_tier: ModelTier::Cheap,
             attempt: 0,
         });
@@ -1060,6 +1070,7 @@ mod tests {
             node_id: NodeId("A".to_string()),
             kind: NodeKind::Work,
             objective: "write the file".to_string(),
+            target_files: vec![],
             model_tier: ModelTier::Cheap,
             attempt: 0,
         });
@@ -1141,6 +1152,7 @@ mod tests {
             node_id: NodeId("W".to_string()),
             kind: NodeKind::Work,
             objective: "write a file".to_string(),
+            target_files: vec![],
             model_tier: ModelTier::Cheap,
             attempt: 0,
         });
@@ -1189,6 +1201,7 @@ mod tests {
             node_id: NodeId("W".to_string()),
             kind: NodeKind::Work,
             objective: "do some work".to_string(),
+            target_files: vec![],
             model_tier: ModelTier::Cheap,
             attempt: 0,
         });
@@ -1275,6 +1288,7 @@ mod tests {
             node_id: NodeId("W".to_string()),
             kind: NodeKind::Work,
             objective: "write a file".to_string(),
+            target_files: vec![],
             model_tier: ModelTier::Cheap,
             attempt: 0,
         });
@@ -1321,6 +1335,7 @@ mod tests {
             node_id: NodeId("W".to_string()),
             kind: NodeKind::Work,
             objective: "write a file".to_string(),
+            target_files: vec![],
             model_tier: ModelTier::Cheap,
             attempt: 0,
         });
@@ -1372,6 +1387,7 @@ mod tests {
             node_id: NodeId("W".to_string()),
             kind: NodeKind::Work,
             objective: "write a file".to_string(),
+            target_files: vec![],
             model_tier: ModelTier::Cheap,
             attempt: 0,
         });
@@ -1400,6 +1416,7 @@ mod tests {
             node_id: NodeId("W".to_string()),
             kind: NodeKind::Work,
             objective: "do some work".to_string(),
+            target_files: vec![],
             model_tier: ModelTier::Cheap,
             attempt: 0,
         });
@@ -1438,6 +1455,7 @@ mod tests {
             node_id: NodeId("W".to_string()),
             kind: NodeKind::Work,
             objective: "write a file".to_string(),
+            target_files: vec![],
             model_tier: ModelTier::Cheap,
             attempt: 0,
         });
@@ -1476,6 +1494,7 @@ mod tests {
             node_id: NodeId("W".to_string()),
             kind: NodeKind::Work,
             objective: "write a file".to_string(),
+            target_files: vec![],
             model_tier: ModelTier::Cheap,
             attempt: 0,
         });
@@ -1504,6 +1523,7 @@ mod tests {
             node_id: NodeId("W".to_string()),
             kind: NodeKind::Work,
             objective: "do some work".to_string(),
+            target_files: vec![],
             model_tier: ModelTier::Cheap,
             attempt: 0,
         });
@@ -1537,6 +1557,7 @@ mod tests {
             node_id: NodeId("W".to_string()),
             kind: NodeKind::Work,
             objective: "write a file".to_string(),
+            target_files: vec![],
             model_tier: ModelTier::Cheap,
             attempt: 0,
         });
@@ -1585,6 +1606,7 @@ mod tests {
             node_id: NodeId("W".to_string()),
             kind: NodeKind::Work,
             objective: "write a file".to_string(),
+            target_files: vec![],
             model_tier: ModelTier::Cheap,
             attempt: 0,
         });
@@ -1637,6 +1659,7 @@ mod tests {
             node_id: NodeId("W".to_string()),
             kind: NodeKind::Work,
             objective: "write a file".to_string(),
+            target_files: vec![],
             model_tier: ModelTier::Cheap,
             attempt: 0,
         });
@@ -1703,6 +1726,7 @@ mod tests {
             node_id: NodeId("W".to_string()),
             kind: NodeKind::Work,
             objective: "write a file".to_string(),
+            target_files: vec![],
             model_tier: ModelTier::Cheap,
             attempt: 0,
         });
@@ -1743,6 +1767,7 @@ mod tests {
             node_id: NodeId("W".to_string()),
             kind: NodeKind::Work,
             objective: "write a file".to_string(),
+            target_files: vec![],
             model_tier: ModelTier::Cheap,
             attempt: 0,
         });
@@ -2207,6 +2232,7 @@ mod tests {
                         id: NodeId("A".to_string()),
                         kind: NodeKind::Work,
                         objective: "do A".to_string(),
+                        target_files: vec![],
                         dependencies: vec![],
                         status: NodeStatus::Completed,
                         attempt: 0,

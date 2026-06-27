@@ -107,6 +107,7 @@ impl Machine for DeliberationMachine {
                 effects: vec![DeliberationEffect::RunRole {
                     role: DeliberationRole::Producer,
                     objective: request.objective.clone(),
+                    target_files: request.target_files.clone(),
                     producer_content: None,
                     critic_content: None,
                     feedback: vec![],
@@ -138,6 +139,7 @@ impl Machine for DeliberationMachine {
                 effects: vec![DeliberationEffect::RunRole {
                     role: DeliberationRole::Critic,
                     objective: request.objective.clone(),
+                    target_files: request.target_files.clone(),
                     producer_content: Some(content.clone()),
                     critic_content: None,
                     feedback: feedback.clone(),
@@ -227,6 +229,7 @@ impl Machine for DeliberationMachine {
                 effects: vec![DeliberationEffect::RunRole {
                     role: DeliberationRole::Referee,
                     objective: request.objective.clone(),
+                    target_files: request.target_files.clone(),
                     producer_content: Some(producer_content.clone()),
                     critic_content: Some(critic_content.clone()),
                     feedback: feedback.clone(),
@@ -262,6 +265,7 @@ impl Machine for DeliberationMachine {
                     effects: vec![DeliberationEffect::RunRole {
                         role: DeliberationRole::Referee,
                         objective: request.objective.clone(),
+                        target_files: request.target_files.clone(),
                         producer_content: Some(producer_content.clone()),
                         critic_content: Some(critic_content.clone()),
                         feedback: feedback.clone(),
@@ -369,6 +373,7 @@ impl Machine for DeliberationMachine {
                         effects: vec![DeliberationEffect::RunRole {
                             role: DeliberationRole::Producer,
                             objective: request.objective.clone(),
+                            target_files: request.target_files.clone(),
                             producer_content: None,
                             critic_content: None,
                             feedback: new_feedback.clone(),
@@ -454,6 +459,7 @@ mod tests {
         DeliberationState::Ready {
             request: DeliberationRequest {
                 objective: objective.to_string(),
+                target_files: vec![],
                 max_revisions: 0,
             },
         }
@@ -499,6 +505,7 @@ mod tests {
                     producer_content: None,
                     critic_content: None,
                     feedback,
+                    ..
                 } if objective == "write a poem" && feedback.is_empty()
             ),
             "expected RunRole(Producer, feedback=[]), got {:?}",
@@ -793,6 +800,7 @@ mod tests {
                 DeliberationState::Ready {
                     request: crate::machines::deliberation::state::DeliberationRequest {
                         objective: "write a poem".to_string(),
+                        target_files: vec![],
                         max_revisions: 1,
                     },
                 },
@@ -912,6 +920,7 @@ mod tests {
         let invalid_state = DeliberationState::Waiting {
             request: DeliberationRequest {
                 objective: "write a poem".to_string(),
+                target_files: vec![],
                 max_revisions: 0,
             },
             role: DeliberationRole::Critic,
@@ -1089,6 +1098,7 @@ mod tests {
         let invalid_state = DeliberationState::Waiting {
             request: DeliberationRequest {
                 objective: "write a poem".to_string(),
+                target_files: vec![],
                 max_revisions: 0,
             },
             role: DeliberationRole::Referee,
@@ -1129,6 +1139,7 @@ mod tests {
         let waiting_referee = DeliberationState::Waiting {
             request: DeliberationRequest {
                 objective: "write a poem".to_string(),
+                target_files: vec![],
                 max_revisions: 0,
             },
             role: DeliberationRole::Referee,
@@ -1171,6 +1182,7 @@ mod tests {
         let waiting_referee = DeliberationState::Waiting {
             request: DeliberationRequest {
                 objective: "write a poem".to_string(),
+                target_files: vec![],
                 max_revisions: 1,
             },
             role: DeliberationRole::Referee,
@@ -1239,6 +1251,7 @@ mod tests {
         let waiting_referee = DeliberationState::Waiting {
             request: DeliberationRequest {
                 objective: "write a poem".to_string(),
+                target_files: vec![],
                 max_revisions: 1,
             },
             role: DeliberationRole::Referee,
@@ -1279,6 +1292,7 @@ mod tests {
         let waiting_referee = DeliberationState::Waiting {
             request: DeliberationRequest {
                 objective: "write a poem".to_string(),
+                target_files: vec![],
                 max_revisions: 0,
             },
             role: DeliberationRole::Referee,
@@ -1402,6 +1416,7 @@ mod tests {
         let initial = DeliberationState::Ready {
             request: DeliberationRequest {
                 objective: "write a poem".to_string(),
+                target_files: vec![],
                 max_revisions: 1,
             },
         };
@@ -1487,6 +1502,7 @@ mod tests {
         let initial = DeliberationState::Ready {
             request: DeliberationRequest {
                 objective: "smoke test".to_string(),
+                target_files: vec![],
                 max_revisions: 0,
             },
         };
@@ -1587,6 +1603,7 @@ mod tests {
         let waiting_referee = DeliberationState::Waiting {
             request: DeliberationRequest {
                 objective: "write a poem".to_string(),
+                target_files: vec![],
                 max_revisions: 1,
             },
             role: DeliberationRole::Referee,
@@ -1627,6 +1644,7 @@ mod tests {
         let waiting_referee = DeliberationState::Waiting {
             request: DeliberationRequest {
                 objective: "write a poem".to_string(),
+                target_files: vec![],
                 max_revisions: 1,
             },
             role: DeliberationRole::Referee,
@@ -1706,6 +1724,7 @@ mod tests {
         let initial = DeliberationState::Ready {
             request: DeliberationRequest {
                 objective: "write something".to_string(),
+                target_files: vec![],
                 max_revisions: 0,
             },
         };
@@ -1767,6 +1786,7 @@ mod tests {
         let initial = DeliberationState::Ready {
             request: DeliberationRequest {
                 objective: "write something".to_string(),
+                target_files: vec![],
                 max_revisions: 0,
             },
         };

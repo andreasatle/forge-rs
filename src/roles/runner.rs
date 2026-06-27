@@ -44,6 +44,8 @@ pub struct RoleRequest {
     pub role: DeliberationRole,
     /// The objective to pass to the role.
     pub objective: String,
+    /// Structured target files this role should use for target-aware tooling.
+    pub target_files: Vec<String>,
     /// Content produced by the Producer. `None` when dispatching Producer.
     pub producer_content: Option<String>,
     /// Content produced by the Critic. `None` when dispatching Producer or Critic.
@@ -330,7 +332,7 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
         let core_prompt = render_role_prompt(
             system,
             &request.role,
-            &request.objective,
+            &render_objective_for_prompt(&request.objective, &request.target_files),
             request.producer_content.as_deref(),
             request.critic_content.as_deref(),
             &request.feedback,
@@ -802,35 +804,18 @@ fn file_tool_policy_for_role(role: &DeliberationRole) -> FileToolPolicy {
 
 fn file_tool_policy_for_request(request: &RoleRequest) -> FileToolPolicy {
     let mut policy = file_tool_policy_for_role(&request.role);
-    if request.node_kind == NodeKind::Work {
-        let targets = declared_target_files(&request.objective);
-        if !targets.is_empty() {
-            policy.allowed_paths = Some(targets);
-        }
+    if request.node_kind == NodeKind::Work && !request.target_files.is_empty() {
+        policy.allowed_paths = Some(request.target_files.clone());
     }
     policy
 }
 
-fn declared_target_files(objective: &str) -> Vec<String> {
-    let Some(line) = objective
-        .lines()
-        .rev()
-        .find(|line| line.trim_start().starts_with("Target files:"))
-    else {
-        return Vec::new();
-    };
-    let Some((_, targets)) = line.split_once(':') else {
-        return Vec::new();
-    };
-    let mut paths = Vec::new();
-    for raw in targets.split(',') {
-        let target = raw.trim();
-        if target.is_empty() || paths.iter().any(|p| p == target) {
-            continue;
-        }
-        paths.push(target.to_string());
+fn render_objective_for_prompt(objective: &str, target_files: &[String]) -> String {
+    if target_files.is_empty() {
+        objective.to_string()
+    } else {
+        format!("{objective}\n\nTarget files: {}", target_files.join(", "))
     }
-    paths
 }
 
 /// Serialises a [`FileToolResponse`] as a compact JSON observation string,
@@ -1936,6 +1921,7 @@ mod tests {
                 RoleRequest {
                     role: DeliberationRole::Producer,
                     objective: "write a poem".to_string(),
+                    target_files: vec![],
                     producer_content: None,
                     critic_content: None,
                     feedback: vec![],
@@ -1962,6 +1948,7 @@ mod tests {
                 RoleRequest {
                     role: DeliberationRole::Producer,
                     objective: "write a poem".to_string(),
+                    target_files: vec![],
                     producer_content: None,
                     critic_content: None,
                     feedback: vec![],
@@ -2018,6 +2005,7 @@ mod tests {
                 RoleRequest {
                     role: DeliberationRole::Producer,
                     objective: "recover output".to_string(),
+                    target_files: vec![],
                     producer_content: None,
                     critic_content: None,
                     feedback: vec![],
@@ -2044,6 +2032,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Producer,
                 objective: "recover output".to_string(),
+                target_files: vec![],
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
@@ -2074,6 +2063,7 @@ mod tests {
                 RoleRequest {
                     role: DeliberationRole::Producer,
                     objective: "never valid".to_string(),
+                    target_files: vec![],
                     producer_content: None,
                     critic_content: None,
                     feedback: vec![],
@@ -2099,6 +2089,7 @@ mod tests {
                 RoleRequest {
                     role: DeliberationRole::Referee,
                     objective: "review output".to_string(),
+                    target_files: vec![],
                     producer_content: Some("draft".to_string()),
                     critic_content: Some("review".to_string()),
                     feedback: vec![],
@@ -2131,6 +2122,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Producer,
                 objective: "recover output".to_string(),
+                target_files: vec![],
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
@@ -2192,6 +2184,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Producer,
                 objective: "recover output".to_string(),
+                target_files: vec![],
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
@@ -2305,6 +2298,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Producer,
                 objective: "read hello.txt".to_string(),
+                target_files: vec![],
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
@@ -2349,6 +2343,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Producer,
                 objective: "write a file".to_string(),
+                target_files: vec![],
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
@@ -2390,6 +2385,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Producer,
                 objective: "do the thing".to_string(),
+                target_files: vec![],
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
@@ -2425,6 +2421,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Producer,
                 objective: "loop forever".to_string(),
+                target_files: vec![],
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
@@ -2495,6 +2492,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Producer,
                 objective: "loop with distinct files".to_string(),
+                target_files: vec![],
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
@@ -2532,6 +2530,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Producer,
                 objective: "write a file".to_string(),
+                target_files: vec![],
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
@@ -2575,6 +2574,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Critic,
                 objective: "review hello.txt".to_string(),
+                target_files: vec![],
                 producer_content: Some("draft".to_string()),
                 critic_content: None,
                 feedback: vec![],
@@ -2614,6 +2614,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Producer,
                 objective: "inspect hello.txt".to_string(),
+                target_files: vec![],
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
@@ -2659,6 +2660,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Producer,
                 objective: "loop on list_files".to_string(),
+                target_files: vec![],
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
@@ -2705,6 +2707,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Producer,
                 objective: "list then write".to_string(),
+                target_files: vec![],
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
@@ -2745,6 +2748,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Producer,
                 objective: "write a file".to_string(),
+                target_files: vec![],
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
@@ -2788,6 +2792,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Producer,
                 objective: "write and confirm".to_string(),
+                target_files: vec![],
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
@@ -2824,6 +2829,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Producer,
                 objective: "produce something".to_string(),
+                target_files: vec![],
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
@@ -2854,6 +2860,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Critic,
                 objective: "review the work".to_string(),
+                target_files: vec![],
                 producer_content: Some("draft".to_string()),
                 critic_content: None,
                 feedback: vec![],
@@ -2914,6 +2921,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Producer,
                 objective: "test".to_string(),
+                target_files: vec![],
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
@@ -2940,6 +2948,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Producer,
                 objective: "test with tools".to_string(),
+                target_files: vec![],
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
@@ -2973,6 +2982,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Producer,
                 objective: "test".to_string(),
+                target_files: vec![],
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
@@ -3038,6 +3048,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Producer,
                 objective: "read the large file".to_string(),
+                target_files: vec![],
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
@@ -3077,6 +3088,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Producer,
                 objective: "anything".to_string(),
+                target_files: vec![],
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
@@ -3110,6 +3122,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Producer,
                 objective: "write something".to_string(),
+                target_files: vec![],
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
@@ -3139,6 +3152,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Producer,
                 objective: "produce something".to_string(),
+                target_files: vec![],
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
@@ -3176,6 +3190,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Critic,
                 objective: "review the draft".to_string(),
+                target_files: vec![],
                 producer_content: Some("draft".to_string()),
                 critic_content: None,
                 feedback: vec![],
@@ -3224,6 +3239,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Referee,
                 objective: "approve the result".to_string(),
+                target_files: vec![],
                 producer_content: Some("content".to_string()),
                 critic_content: Some("looks good".to_string()),
                 feedback: vec![],
@@ -3273,6 +3289,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Critic,
                 objective: "review".to_string(),
+                target_files: vec![],
                 producer_content: Some("draft".to_string()),
                 critic_content: None,
                 feedback: vec![],
@@ -3322,6 +3339,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Producer,
                 objective: "write a haiku".to_string(),
+                target_files: vec![],
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
@@ -3366,6 +3384,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Producer,
                 objective: "write something".to_string(),
+                target_files: vec![],
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
@@ -3643,7 +3662,7 @@ mod tests {
     }
 
     #[test]
-    fn work_role_prompt_derives_tool_targets_from_objective() {
+    fn work_role_prompt_uses_structured_tool_targets() {
         let provider =
             ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"completed"}"#]);
         let runner = ProviderRoleRunner::new(&provider);
@@ -3651,7 +3670,8 @@ mod tests {
         runner.run_role(
             RoleRequest {
                 role: DeliberationRole::Producer,
-                objective: "Update the program.\n\nTarget files: main.py".to_string(),
+                objective: "Update the program.".to_string(),
+                target_files: vec!["main.py".to_string()],
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
@@ -3675,6 +3695,69 @@ mod tests {
     }
 
     #[test]
+    fn prompt_wording_does_not_control_allowed_paths() {
+        let (_temp, view) = make_view("prompt-wording-targets");
+        let provider = ScriptedProvider::from_strs(&[
+            r#"{"tool":"write_file","path":"prompt.txt","content":"wrong\n"}"#,
+            r#"{"tool":"write_file","path":"main.py","content":"right\n"}"#,
+            r#"{"status":"accepted","content":"completed"}"#,
+        ]);
+        let runner = ProviderRoleRunner::new(&provider);
+
+        let output = runner.run_role(
+            RoleRequest {
+                role: DeliberationRole::Producer,
+                objective: "Update the program.\n\nTarget files: prompt.txt".to_string(),
+                target_files: vec!["main.py".to_string()],
+                producer_content: None,
+                critic_content: None,
+                feedback: vec![],
+                node_kind: NodeKind::Work,
+                tool_context: Some(RoleToolContext {
+                    artifact_view: Box::new(view),
+                }),
+            },
+            &crate::telemetry::NoopTelemetry,
+        );
+
+        let prompt = &provider.requests.borrow()[0].prompt;
+        assert!(
+            prompt.contains("Target files: main.py"),
+            "prompt should render structured targets; got:\n{prompt}"
+        );
+        assert!(
+            prompt.contains("Target files: prompt.txt"),
+            "objective wording is still visible as prompt text; got:\n{prompt}"
+        );
+
+        let update = output
+            .artifact_update
+            .expect("structured target write should be recorded");
+        assert_eq!(
+            update.changes,
+            vec![FileChange::Write {
+                path: "main.py".to_string(),
+                content: "right\n".to_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn production_code_does_not_parse_target_files_prompt_text() {
+        let sources = [
+            include_str!("runner.rs"),
+            include_str!("../node_runner/planner.rs"),
+            include_str!("../node_runner/deliberating.rs"),
+            include_str!("../machines/deliberation/handler.rs"),
+        ]
+        .join("\n");
+
+        assert!(!sources.contains(concat!("declared_target", "_files")));
+        assert!(!sources.contains(concat!("starts_with(\"", "Target files:")));
+        assert!(!sources.contains(concat!("split_once", "(':')")));
+    }
+
+    #[test]
     fn work_reviewer_prompt_guides_read_file_to_declared_target() {
         let provider =
             ScriptedProvider::from_strs(&[r#"{"status":"rejected","reason":"needs work"}"#]);
@@ -3683,7 +3766,8 @@ mod tests {
         runner.run_role(
             RoleRequest {
                 role: DeliberationRole::Critic,
-                objective: "Review the update.\n\nTarget files: main.py".to_string(),
+                objective: "Review the update.".to_string(),
+                target_files: vec!["main.py".to_string()],
                 producer_content: Some("updated main.py".to_string()),
                 critic_content: None,
                 feedback: vec![],
@@ -3893,6 +3977,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Producer,
                 objective: "produce something".to_string(),
+                target_files: vec![],
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
@@ -3932,6 +4017,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Producer,
                 objective: "plan the work".to_string(),
+                target_files: vec![],
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
@@ -3967,6 +4053,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Producer,
                 objective: "do the work".to_string(),
+                target_files: vec![],
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
@@ -3999,6 +4086,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Critic,
                 objective: "review the plan".to_string(),
+                target_files: vec![],
                 producer_content: Some("plan graph".to_string()),
                 critic_content: None,
                 feedback: vec![],
@@ -4035,6 +4123,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Critic,
                 objective: "review the draft".to_string(),
+                target_files: vec![],
                 producer_content: Some("draft".to_string()),
                 critic_content: None,
                 feedback: vec![],
@@ -4071,6 +4160,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Referee,
                 objective: "approve the plan".to_string(),
+                target_files: vec![],
                 producer_content: Some("plan graph".to_string()),
                 critic_content: Some("plan review".to_string()),
                 feedback: vec![],
@@ -4107,6 +4197,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Referee,
                 objective: "approve the result".to_string(),
+                target_files: vec![],
                 producer_content: Some("content".to_string()),
                 critic_content: Some("review".to_string()),
                 feedback: vec![],
@@ -4142,6 +4233,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Producer,
                 objective: "plan the work".to_string(),
+                target_files: vec![],
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
@@ -4154,6 +4246,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Producer,
                 objective: "do the work".to_string(),
+                target_files: vec![],
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
@@ -4186,6 +4279,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Producer,
                 objective: "plan the work".to_string(),
+                target_files: vec![],
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
@@ -4222,6 +4316,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Producer,
                 objective: "plan the work".to_string(),
+                target_files: vec![],
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
@@ -4254,6 +4349,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Producer,
                 objective: "implement the feature".to_string(),
+                target_files: vec![],
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
@@ -4289,6 +4385,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Producer,
                 objective: "plan the work".to_string(),
+                target_files: vec![],
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
@@ -4323,6 +4420,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Producer,
                 objective: "plan the work".to_string(),
+                target_files: vec![],
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
@@ -4357,6 +4455,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Producer,
                 objective: "plan the work".to_string(),
+                target_files: vec![],
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
@@ -4414,6 +4513,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Producer,
                 objective: "test".to_string(),
+                target_files: vec![],
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
@@ -4450,6 +4550,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Producer,
                 objective: "produce output".to_string(),
+                target_files: vec![],
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
@@ -4486,6 +4587,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Producer,
                 objective: "plan the work".to_string(),
+                target_files: vec![],
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
@@ -4515,6 +4617,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Producer,
                 objective: "plan the work".to_string(),
+                target_files: vec![],
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
@@ -4559,6 +4662,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Producer,
                 objective: "plan the work".to_string(),
+                target_files: vec![],
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
@@ -4592,6 +4696,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Producer,
                 objective: "plan the work".to_string(),
+                target_files: vec![],
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
@@ -4628,6 +4733,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Producer,
                 objective: "plan the work".to_string(),
+                target_files: vec![],
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
@@ -4654,6 +4760,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Producer,
                 objective: "write some code".to_string(),
+                target_files: vec![],
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
@@ -4693,6 +4800,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Critic,
                 objective: "review the draft".to_string(),
+                target_files: vec![],
                 producer_content: Some("some draft".to_string()),
                 critic_content: None,
                 feedback: vec![],
@@ -4724,6 +4832,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Referee,
                 objective: "approve the result".to_string(),
+                target_files: vec![],
                 producer_content: Some("content".to_string()),
                 critic_content: Some("review".to_string()),
                 feedback: vec![],
@@ -4760,6 +4869,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Producer,
                 objective: "read hello.txt".to_string(),
+                target_files: vec![],
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
@@ -4797,6 +4907,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Producer,
                 objective: "replace hello with goodbye in hello.txt".to_string(),
+                target_files: vec![],
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
@@ -4837,6 +4948,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Producer,
                 objective: "write result.txt".to_string(),
+                target_files: vec![],
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
@@ -4877,6 +4989,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Producer,
                 objective: "delete old.txt".to_string(),
+                target_files: vec![],
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
@@ -4921,6 +5034,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Producer,
                 objective: "write data.txt".to_string(),
+                target_files: vec![],
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
@@ -4966,6 +5080,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Producer,
                 objective: "write out.txt".to_string(),
+                target_files: vec![],
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
@@ -5022,6 +5137,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Producer,
                 objective: "write out.txt".to_string(),
+                target_files: vec![],
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
@@ -5059,6 +5175,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Producer,
                 objective: "replace text in hello.txt".to_string(),
+                target_files: vec![],
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
@@ -5095,6 +5212,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Producer,
                 objective: "delete old.txt".to_string(),
+                target_files: vec![],
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
@@ -5132,6 +5250,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Producer,
                 objective: "write out.txt".to_string(),
+                target_files: vec![],
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
@@ -5173,6 +5292,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Producer,
                 objective: "write out.txt".to_string(),
+                target_files: vec![],
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
@@ -5229,6 +5349,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Producer,
                 objective: "write result.txt".to_string(),
+                target_files: vec![],
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
@@ -5266,6 +5387,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Producer,
                 objective: "plan the work".to_string(),
+                target_files: vec![],
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
@@ -5303,6 +5425,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Critic,
                 objective: "review the draft".to_string(),
+                target_files: vec![],
                 producer_content: Some("draft".to_string()),
                 critic_content: None,
                 feedback: vec![],
@@ -5342,6 +5465,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Referee,
                 objective: "approve the result".to_string(),
+                target_files: vec![],
                 producer_content: Some("content".to_string()),
                 critic_content: Some("review".to_string()),
                 feedback: vec![],
@@ -5418,6 +5542,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Critic,
                 objective: "review the draft".to_string(),
+                target_files: vec![],
                 producer_content: Some("draft content".to_string()),
                 critic_content: None,
                 feedback: vec![],
@@ -5468,6 +5593,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Referee,
                 objective: "approve the result".to_string(),
+                target_files: vec![],
                 producer_content: Some("content".to_string()),
                 critic_content: Some("review".to_string()),
                 feedback: vec![],
@@ -5510,6 +5636,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Critic,
                 objective: "review the draft".to_string(),
+                target_files: vec![],
                 producer_content: Some("draft".to_string()),
                 critic_content: None,
                 feedback: vec![],
@@ -5550,6 +5677,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Critic,
                 objective: "review the draft".to_string(),
+                target_files: vec![],
                 producer_content: Some("draft".to_string()),
                 critic_content: None,
                 feedback: vec![],
@@ -5607,6 +5735,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Producer,
                 objective: "read files and produce output".to_string(),
+                target_files: vec![],
                 producer_content: None,
                 critic_content: None,
                 feedback: vec![],
@@ -5653,6 +5782,7 @@ mod tests {
                 RoleRequest {
                     role: DeliberationRole::Critic,
                     objective: "review the draft".to_string(),
+                    target_files: vec![],
                     producer_content: Some("draft".to_string()),
                     critic_content: None,
                     feedback: vec![],
@@ -5701,6 +5831,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Critic,
                 objective: "review the work".to_string(),
+                target_files: vec![],
                 producer_content: Some("some content".to_string()),
                 critic_content: None,
                 feedback: vec![],
@@ -5745,6 +5876,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Critic,
                 objective: "review the work".to_string(),
+                target_files: vec![],
                 producer_content: Some("some content".to_string()),
                 critic_content: None,
                 feedback: vec![],
@@ -5781,6 +5913,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Critic,
                 objective: "review the plan".to_string(),
+                target_files: vec![],
                 producer_content: Some("plan output".to_string()),
                 critic_content: None,
                 feedback: vec![],
@@ -5809,6 +5942,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Referee,
                 objective: "approve the result".to_string(),
+                target_files: vec![],
                 producer_content: Some("content".to_string()),
                 critic_content: Some("review".to_string()),
                 feedback: vec![],
@@ -5853,6 +5987,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Critic,
                 objective: "review the work".to_string(),
+                target_files: vec![],
                 producer_content: Some("some content".to_string()),
                 critic_content: None,
                 feedback: vec![],
@@ -5917,6 +6052,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Critic,
                 objective: "review the work".to_string(),
+                target_files: vec![],
                 producer_content: Some("some content".to_string()),
                 critic_content: None,
                 feedback: vec![],
@@ -5969,6 +6105,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Critic,
                 objective: "review the work".to_string(),
+                target_files: vec![],
                 producer_content: Some("some content".to_string()),
                 critic_content: None,
                 feedback: vec![],
@@ -6007,6 +6144,7 @@ mod tests {
             RoleRequest {
                 role: DeliberationRole::Referee,
                 objective: "approve the work".to_string(),
+                target_files: vec![],
                 producer_content: Some("content".to_string()),
                 critic_content: Some("review".to_string()),
                 feedback: vec![],

@@ -197,6 +197,7 @@ fn run_with_provider<P: ProviderClient>(
     let objective = enrich_objective(&request, requires_tests);
     let delib_request = DeliberationRequest {
         objective,
+        target_files: request.target_files.clone(),
         max_revisions: 1,
     };
     let initial_state = DeliberationState::Ready {
@@ -512,6 +513,7 @@ mod tests {
         NodeRunRequest {
             kind: NodeKind::Plan,
             objective: objective.to_string(),
+            target_files: vec![],
             model_tier: ModelTier::Cheap,
             attempt: 0,
             artifact_view: None,
@@ -522,6 +524,7 @@ mod tests {
         NodeRunRequest {
             kind: NodeKind::Work,
             objective: objective.to_string(),
+            target_files: vec![],
             model_tier: ModelTier::Cheap,
             attempt: 0,
             artifact_view: None,
@@ -532,6 +535,7 @@ mod tests {
         NodeRunRequest {
             kind: NodeKind::Work,
             objective: objective.to_string(),
+            target_files: vec![],
             model_tier: ModelTier::Strong,
             attempt: 0,
             artifact_view: None,
@@ -614,6 +618,7 @@ mod tests {
         NodeRunRequest {
             kind: NodeKind::Work,
             objective: objective.to_string(),
+            target_files: vec![],
             model_tier: ModelTier::Cheap,
             attempt: 0,
             artifact_view: Some(make_artifact_view(temp, "hello.txt", "world\n")),
@@ -624,6 +629,7 @@ mod tests {
         NodeRunRequest {
             kind: NodeKind::Work,
             objective: objective.to_string(),
+            target_files: vec![],
             model_tier: ModelTier::Strong,
             attempt: 0,
             artifact_view: Some(make_artifact_view(temp, "hello.txt", "world\n")),
@@ -647,10 +653,8 @@ mod tests {
         };
         assert_eq!(plan.children.len(), 1);
         assert_eq!(plan.children[0].kind, NodeKind::Work);
-        assert_eq!(
-            plan.children[0].objective,
-            "the actual work\n\nTarget files: work.txt"
-        );
+        assert_eq!(plan.children[0].objective, "the actual work");
+        assert_eq!(plan.children[0].target_files, vec!["work.txt".to_string()]);
     }
 
     #[test]
@@ -823,6 +827,7 @@ mod tests {
         let request = NodeRunRequest {
             kind: NodeKind::Work,
             objective: "do the thing".to_string(),
+            target_files: vec![],
             model_tier: ModelTier::Cheap,
             attempt: 0,
             artifact_view: Some(view),
@@ -878,6 +883,7 @@ mod tests {
         let request = NodeRunRequest {
             kind: NodeKind::Work,
             objective: "write a result file".to_string(),
+            target_files: vec![],
             model_tier: ModelTier::Cheap,
             attempt: 0,
             artifact_view: Some(view),
@@ -1148,16 +1154,12 @@ mod tests {
         };
         assert_eq!(plan.children.len(), 2, "must produce two work nodes");
         assert_eq!(plan.children[0].id, NodeId("alpha".to_string()));
-        assert_eq!(
-            plan.children[0].objective,
-            "do alpha\n\nTarget files: alpha.txt"
-        );
+        assert_eq!(plan.children[0].objective, "do alpha");
+        assert_eq!(plan.children[0].target_files, vec!["alpha.txt".to_string()]);
         assert!(plan.children[0].dependencies.is_empty());
         assert_eq!(plan.children[1].id, NodeId("beta".to_string()));
-        assert_eq!(
-            plan.children[1].objective,
-            "do beta\n\nTarget files: beta.txt"
-        );
+        assert_eq!(plan.children[1].objective, "do beta");
+        assert_eq!(plan.children[1].target_files, vec!["beta.txt".to_string()]);
         assert_eq!(
             plan.children[1].dependencies,
             vec![NodeId("alpha".to_string())]
@@ -1369,6 +1371,7 @@ mod tests {
         let request = NodeRunRequest {
             kind: NodeKind::Work,
             objective: "Write a haiku about Python state machines in main.py".to_string(),
+            target_files: vec![],
             model_tier: ModelTier::Cheap,
             attempt: 0,
             artifact_view: Some(view),
@@ -1397,7 +1400,8 @@ mod tests {
         let runner = DeliberatingNodeRunner::new(&provider, &provider);
         let request = NodeRunRequest {
             kind: NodeKind::Work,
-            objective: "Update the program.\n\nTarget files: main.py".to_string(),
+            objective: "Update the program.".to_string(),
+            target_files: vec!["main.py".to_string()],
             model_tier: ModelTier::Cheap,
             attempt: 0,
             artifact_view: Some(view),
@@ -1445,6 +1449,7 @@ mod tests {
         let request = NodeRunRequest {
             kind: NodeKind::Work,
             objective: "write the work".to_string(),
+            target_files: vec![],
             model_tier: ModelTier::Cheap,
             attempt: 0,
             artifact_view: Some(view),
@@ -1485,6 +1490,7 @@ mod tests {
             // Objective does not name a specific file so the fast path does not apply
             // and the LLM planner is called with the scripted responses.
             objective: "Write a haiku about Python state machines.".to_string(),
+            target_files: vec![],
             model_tier: ModelTier::Cheap,
             attempt: 0,
             artifact_view: Some(view),
@@ -1499,10 +1505,8 @@ mod tests {
             1,
             "revised plan must contain only the main.py task"
         );
-        assert_eq!(
-            plan.children[0].objective, "Write main.py with the haiku.\n\nTarget files: main.py",
-            "task objective must match the revised plan"
-        );
+        assert_eq!(plan.children[0].objective, "Write main.py with the haiku.");
+        assert_eq!(plan.children[0].target_files, vec!["main.py".to_string()]);
     }
 
     #[test]
@@ -1522,6 +1526,7 @@ mod tests {
             // Objective does not name a specific file so the fast path does not apply
             // and the LLM planner is called with the scripted responses.
             objective: "Print a short haiku about state machines.".to_string(),
+            target_files: vec![],
             model_tier: ModelTier::Cheap,
             attempt: 0,
             artifact_view: None,
@@ -1535,7 +1540,7 @@ mod tests {
         assert!(
             plan.children
                 .iter()
-                .any(|child| child.objective.contains("Target files: test_main.py")),
+                .any(|child| child.target_files == vec!["test_main.py".to_string()]),
             "revised plan must include a test_main.py target"
         );
     }
@@ -1557,6 +1562,7 @@ mod tests {
             // Two explicit files → fast path does not apply (needs exactly one source file);
             // ExplicitTargetViolation still fires when the planner targets pyproject.toml.
             objective: "Modify main.py and utils.py to print a short haiku.".to_string(),
+            target_files: vec![],
             model_tier: ModelTier::Cheap,
             attempt: 0,
             artifact_view: None,
@@ -1570,13 +1576,13 @@ mod tests {
         assert!(
             plan.children
                 .iter()
-                .any(|child| child.objective.contains("Target files: main.py")),
+                .any(|child| child.target_files == vec!["main.py".to_string()]),
             "revised plan must include main.py"
         );
         assert!(
             plan.children
                 .iter()
-                .any(|child| child.objective.contains("Target files: test_main.py")),
+                .any(|child| child.target_files == vec!["test_main.py".to_string()]),
             "revised plan must include test_main.py"
         );
         assert!(
@@ -1617,6 +1623,7 @@ mod tests {
             // Objective does not name a specific file so the fast path does not apply
             // and the LLM planner is called until retries are exhausted.
             objective: "Write a haiku about Python state machines.".to_string(),
+            target_files: vec![],
             model_tier: ModelTier::Cheap,
             attempt: 0,
             artifact_view: Some(view),
@@ -1651,6 +1658,7 @@ mod tests {
                 kind: NodeKind::Plan,
                 objective: "Create a simple Python program in main.py that prints a greeting."
                     .to_string(),
+                target_files: vec![],
                 model_tier: ModelTier::Cheap,
                 attempt: 0,
                 artifact_view: None,
@@ -1663,7 +1671,7 @@ mod tests {
         };
         assert_eq!(plan.children.len(), 1, "no tests required → one work task");
         assert!(
-            plan.children[0].objective.contains("Target files: main.py"),
+            plan.children[0].target_files == vec!["main.py".to_string()],
             "fast plan work task must target main.py"
         );
 
@@ -1698,6 +1706,7 @@ mod tests {
                 kind: NodeKind::Plan,
                 objective: "Create a simple Python program in main.py that prints a greeting."
                     .to_string(),
+                target_files: vec![],
                 model_tier: ModelTier::Cheap,
                 attempt: 0,
                 artifact_view: None,
@@ -1712,13 +1721,13 @@ mod tests {
         assert!(
             plan.children
                 .iter()
-                .any(|c| c.objective.contains("Target files: main.py")),
+                .any(|c| c.target_files == vec!["main.py".to_string()]),
             "must have a main.py work task"
         );
         assert!(
             plan.children
                 .iter()
-                .any(|c| c.objective.contains("Target files: test_main.py")),
+                .any(|c| c.target_files == vec!["test_main.py".to_string()]),
             "must have a test_main.py task"
         );
 
@@ -1758,6 +1767,7 @@ mod tests {
             NodeRunRequest {
                 kind: NodeKind::Plan,
                 objective: "Modify main.py and utils.py to add logging.".to_string(),
+                target_files: vec![],
                 model_tier: ModelTier::Cheap,
                 attempt: 0,
                 artifact_view: None,

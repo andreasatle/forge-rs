@@ -415,7 +415,8 @@ pub fn try_fast_plan(objective: &str, requires_tests: bool) -> Option<PlanOutput
     let work = NodeRequest {
         id: NodeId("work".to_string()),
         kind: NodeKind::Work,
-        objective: format!("{objective}\n\nTarget files: {source}"),
+        objective: objective.to_string(),
+        target_files: vec![source.clone()],
         dependencies: vec![],
     };
     let mut children = vec![work];
@@ -427,8 +428,9 @@ pub fn try_fast_plan(objective: &str, requires_tests: bool) -> Option<PlanOutput
             kind: NodeKind::Work,
             objective: format!(
                 "Write tests that verify the work described by the following objective:\n\n\
-                 {objective}\n\nTarget files: {test_target}"
+                 {objective}"
             ),
+            target_files: vec![test_target],
             dependencies: vec![NodeId("work".to_string())],
         };
         children.push(tests);
@@ -474,11 +476,8 @@ pub fn planner_output_to_plan_output(output: PlannerOutput) -> PlanOutput {
             .map(|task| NodeRequest {
                 id: NodeId(task.id),
                 kind: NodeKind::Work,
-                objective: format!(
-                    "{}\n\nTarget files: {}",
-                    task.objective,
-                    task.targets.join(", ")
-                ),
+                objective: task.objective,
+                target_files: task.targets,
                 dependencies: task.depends_on.into_iter().map(NodeId).collect(),
             })
             .collect(),
@@ -950,11 +949,11 @@ mod tests {
         assert_eq!(plan.children.len(), 2);
         assert_eq!(plan.children[0].id, NodeId("step-one".to_string()));
         assert_eq!(plan.children[0].kind, NodeKind::Work);
-        assert_eq!(
-            plan.children[0].objective,
-            "do step one\n\nTarget files: one.txt"
-        );
+        assert_eq!(plan.children[0].objective, "do step one");
+        assert_eq!(plan.children[0].target_files, vec!["one.txt".to_string()]);
         assert_eq!(plan.children[1].id, NodeId("step-two".to_string()));
+        assert_eq!(plan.children[1].objective, "do step two");
+        assert_eq!(plan.children[1].target_files, vec!["two.txt".to_string()]);
     }
 
     #[test]
@@ -995,16 +994,8 @@ mod tests {
         let child = &plan.children[0];
         assert_eq!(child.id, NodeId("work".to_string()));
         assert_eq!(child.kind, NodeKind::Work);
-        assert!(
-            child.objective.contains("main.py"),
-            "work task objective must mention the target file; got: {}",
-            child.objective
-        );
-        assert!(
-            child.objective.contains("Target files: main.py"),
-            "objective must include Target files line; got: {}",
-            child.objective
-        );
+        assert!(child.objective.contains("main.py"));
+        assert_eq!(child.target_files, vec!["main.py".to_string()]);
         assert!(
             child.dependencies.is_empty(),
             "work task must have no dependencies"
@@ -1019,15 +1010,11 @@ mod tests {
 
         let work = &plan.children[0];
         assert_eq!(work.id, NodeId("work".to_string()));
-        assert!(work.objective.contains("Target files: main.py"));
+        assert_eq!(work.target_files, vec!["main.py".to_string()]);
 
         let tests = &plan.children[1];
         assert_eq!(tests.id, NodeId("tests".to_string()));
-        assert!(
-            tests.objective.contains("test_main.py"),
-            "test task must target test_main.py; got: {}",
-            tests.objective
-        );
+        assert_eq!(tests.target_files, vec!["test_main.py".to_string()]);
         assert_eq!(
             tests.dependencies,
             vec![NodeId("work".to_string())],

@@ -127,6 +127,11 @@ pub struct Node {
     /// A natural-language description of what this node should accomplish.
     /// Passed verbatim to the runner; preserved across retries and escalations.
     pub objective: String,
+    /// Structured target files this node is expected and allowed to touch.
+    ///
+    /// Prompt text may render these for the model, but tooling must use this
+    /// metadata instead of parsing the objective.
+    pub target_files: Vec<String>,
     /// Nodes that must be `Completed` before this node is eligible to run.
     /// The scheduler will not dispatch a node until all listed dependencies are
     /// in the `Completed` state.

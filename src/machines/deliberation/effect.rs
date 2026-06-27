@@ -21,6 +21,8 @@ pub enum DeliberationEffect {
         role: DeliberationRole,
         /// The objective to pass to the role.
         objective: String,
+        /// Structured target files this role should use for target-aware tooling.
+        target_files: Vec<String>,
         /// Content produced by the Producer. `None` when dispatching Producer.
         producer_content: Option<String>,
         /// Content produced by the Critic. `None` when dispatching Producer or Critic.

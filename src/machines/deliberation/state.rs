@@ -19,6 +19,8 @@ pub struct RevisionFeedback {
 pub struct DeliberationRequest {
     /// The objective the pipeline should address.
     pub objective: String,
+    /// Structured target files the pipeline should use for file-tool policy.
+    pub target_files: Vec<String>,
     /// Maximum number of revision loops allowed.
     ///
     /// `0` means no revisions: the first Referee rejection fails immediately.

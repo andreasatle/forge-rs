@@ -77,6 +77,7 @@ mod tests {
             id: NodeId(id.to_string()),
             kind: NodeKind::Work,
             objective: format!("objective for {id}"),
+            target_files: vec![],
             dependencies: vec![],
             status: NodeStatus::Pending,
             attempt: 0,

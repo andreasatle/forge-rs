@@ -86,6 +86,11 @@ pub struct NodeRequest {
     pub kind: NodeKind,
     /// Natural-language description of what the new node should accomplish.
     pub objective: String,
+    /// Structured target files this node is expected and allowed to touch.
+    ///
+    /// This is planner metadata, not natural-language prompt text. An empty
+    /// list means no target constraint is known.
+    pub target_files: Vec<String>,
     /// Nodes that must complete before this node is eligible to run.
     pub dependencies: Vec<NodeId>,
 }
