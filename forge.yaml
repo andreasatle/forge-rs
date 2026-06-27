@@ -1,4 +1,4 @@
-objective: "Create a simple Rust program in src/main.rs that prints a short haiku about Rust state machines."
+objective: "Create a simple Python program in main.py that prints a short haiku about Python state machines."
 artifact:
   repo_path: ".forge/artifacts/main.git"
   branch: "main"
@@ -9,3 +9,4 @@ telemetry:
   directory: "runs"
 project:
   kind: coding
+  language: python

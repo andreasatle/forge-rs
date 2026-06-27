@@ -55,7 +55,8 @@ pub fn run_reset(config: ForgeConfig) -> Result<(), Box<dyn Error>> {
         std::fs::remove_dir_all(&repo_path)?;
     }
 
-    let artifact = super::load_or_create_artifact(&config.artifact, None)?;
+    let artifact =
+        super::load_or_create_artifact(&config.artifact, config.project.language.as_deref())?;
 
     let short_sha = &artifact.commit_sha[..artifact.commit_sha.len().min(7)];
     println!("Reset complete. Initial commit: {short_sha}");
@@ -117,6 +118,69 @@ mod tests {
             validation: None,
             project: ProjectConfig::default(),
         }
+    }
+
+    fn make_forge_config_with_language(
+        repo_path: &PathBuf,
+        telemetry_path: &PathBuf,
+        language: &str,
+    ) -> ForgeConfig {
+        use crate::config::{ArtifactConfig, ProjectConfig, ProviderConfig, TelemetryConfig};
+        ForgeConfig {
+            objective: "test".to_string(),
+            artifact: ArtifactConfig {
+                repo_path: repo_path.to_str().unwrap().to_string(),
+                branch: "main".to_string(),
+            },
+            provider: ProviderConfig {
+                base_url: "http://localhost:8080".to_string(),
+                n_predict: 512,
+                timeout_seconds: 120,
+                strong_base_url: None,
+                strong_n_predict: None,
+                strong_timeout_seconds: None,
+            },
+            telemetry: TelemetryConfig {
+                directory: telemetry_path.to_str().unwrap().to_string(),
+            },
+            validation: None,
+            project: ProjectConfig {
+                kind: crate::config::ProjectKind::Coding,
+                language: Some(language.to_string()),
+            },
+        }
+    }
+
+    fn uv_available() -> bool {
+        Command::new("uv")
+            .args(["--version"])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+
+    fn git_ls_tree_names(repo_path: &PathBuf, commit: &str) -> Vec<String> {
+        let out = Command::new("git")
+            .args(["ls-tree", "--name-only", "-r", commit])
+            .current_dir(repo_path)
+            .output()
+            .expect("git ls-tree failed");
+        String::from_utf8(out.stdout)
+            .unwrap()
+            .lines()
+            .filter(|l| !l.is_empty())
+            .map(|l| l.to_string())
+            .collect()
+    }
+
+    fn git_show_file(repo_path: &PathBuf, commit: &str, file: &str) -> String {
+        let object = format!("{commit}:{file}");
+        let out = Command::new("git")
+            .args(["show", &object])
+            .current_dir(repo_path)
+            .output()
+            .expect("git show failed");
+        String::from_utf8(out.stdout).unwrap()
     }
 
     #[test]
@@ -294,6 +358,176 @@ mod tests {
             commit_count(&repo_path, "artifact"),
             1,
             "reset must create the configured branch with Initial commit"
+        );
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    // ── language-init reset tests ─────────────────────────────────────────────
+
+    #[test]
+    fn reset_removes_existing_artifact_git_repo() {
+        let base = temp_path("removes-existing");
+        let repo_path = base.join("artifact.git");
+        let telemetry = base.join("telemetry");
+        let _ = std::fs::remove_dir_all(&base);
+
+        // Create a repo with content so we can verify it is fully replaced.
+        let artifact_config = ArtifactConfig {
+            repo_path: repo_path.to_str().unwrap().to_string(),
+            branch: "main".to_string(),
+        };
+        crate::runtime::load_or_create_artifact(&artifact_config, None).unwrap();
+        assert!(repo_path.exists(), "repo must exist before reset");
+
+        let config = make_forge_config(&repo_path, &telemetry);
+        run_reset(config).unwrap();
+
+        assert!(
+            repo_path.exists(),
+            "reset must recreate the repo at the same path"
+        );
+        assert_eq!(
+            commit_count(&repo_path, "main"),
+            1,
+            "reset must produce a fresh repo with exactly one commit"
+        );
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn reset_recreates_bare_artifact_repo() {
+        let base = temp_path("recreates-bare");
+        let repo_path = base.join("artifact.git");
+        let telemetry = base.join("telemetry");
+        let _ = std::fs::remove_dir_all(&base);
+
+        let config = make_forge_config(&repo_path, &telemetry);
+        run_reset(config).unwrap();
+
+        // Verify it is a valid bare git repository.
+        let out = Command::new("git")
+            .args(["rev-parse", "--is-bare-repository"])
+            .current_dir(&repo_path)
+            .output()
+            .expect("git rev-parse failed");
+        assert!(out.status.success(), "reset repo must be a valid git repo");
+        assert_eq!(
+            String::from_utf8(out.stdout).unwrap().trim(),
+            "true",
+            "reset repo must be a bare repository"
+        );
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn python_reset_runs_language_init_before_initial_commit() {
+        if !uv_available() {
+            eprintln!(
+                "skipping python_reset_runs_language_init_before_initial_commit: uv not available"
+            );
+            return;
+        }
+
+        let base = temp_path("python-init-order");
+        let repo_path = base.join("artifact.git");
+        let telemetry = base.join("telemetry");
+        let _ = std::fs::remove_dir_all(&base);
+
+        run_reset(make_forge_config_with_language(
+            &repo_path, &telemetry, "python",
+        ))
+        .unwrap();
+
+        // Language init must produce exactly one commit — language files ARE the
+        // initial commit, not a follow-up "Integrate artifact update" commit.
+        assert_eq!(
+            commit_count(&repo_path, "main"),
+            1,
+            "python reset must produce exactly one initial commit containing language files"
+        );
+
+        let files = git_ls_tree_names(&repo_path, "HEAD");
+        assert!(
+            files.iter().any(|f| f == "pyproject.toml"),
+            "initial commit must contain pyproject.toml; files found: {files:?}"
+        );
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn python_reset_produces_pyproject_toml_with_dev_dependencies() {
+        if !uv_available() {
+            eprintln!(
+                "skipping python_reset_produces_pyproject_toml_with_dev_dependencies: uv not available"
+            );
+            return;
+        }
+
+        let base = temp_path("python-pyproject");
+        let repo_path = base.join("artifact.git");
+        let telemetry = base.join("telemetry");
+        let _ = std::fs::remove_dir_all(&base);
+
+        run_reset(make_forge_config_with_language(
+            &repo_path, &telemetry, "python",
+        ))
+        .unwrap();
+
+        let content = git_show_file(&repo_path, "HEAD", "pyproject.toml");
+        assert!(!content.is_empty(), "pyproject.toml must be non-empty");
+        for pkg in ["pytest", "ruff", "pyright"] {
+            assert!(
+                content.contains(pkg),
+                "pyproject.toml must include {pkg} as a dev dependency; content:\n{content}"
+            );
+        }
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn python_reset_workspace_can_spawn_pyright() {
+        if !uv_available() {
+            eprintln!("skipping python_reset_workspace_can_spawn_pyright: uv not available");
+            return;
+        }
+
+        let base = temp_path("python-pyright-spawn");
+        let repo_path = base.join("artifact.git");
+        let telemetry = base.join("telemetry");
+        let _ = std::fs::remove_dir_all(&base);
+
+        run_reset(make_forge_config_with_language(
+            &repo_path, &telemetry, "python",
+        ))
+        .unwrap();
+
+        // Load the reset artifact and create a workspace from it.
+        let artifact_config = ArtifactConfig {
+            repo_path: repo_path.to_str().unwrap().to_string(),
+            branch: "main".to_string(),
+        };
+        let artifact = crate::runtime::load_or_create_artifact(&artifact_config, None).unwrap();
+
+        let workspace_path = base.join("workspace");
+        let ws = crate::artifacts::create_workspace(&artifact, workspace_path);
+
+        // `uv run pyright --version` must succeed: uv reads pyproject.toml/uv.lock,
+        // installs pyright into .venv, and runs it.  The pre-reset error was
+        // "Failed to spawn: pyright" because no uv.lock existed in the artifact.
+        let status = Command::new("uv")
+            .args(["run", "pyright", "--version"])
+            .current_dir(ws.path())
+            .status()
+            .expect("failed to spawn uv");
+
+        assert!(
+            status.success(),
+            "uv run pyright --version must succeed in artifact workspace after python reset"
         );
 
         let _ = std::fs::remove_dir_all(&base);

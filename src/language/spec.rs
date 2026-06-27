@@ -18,6 +18,12 @@ pub struct LanguageSpec {
 /// Init-phase command list for a language.
 #[derive(Debug, Deserialize)]
 pub struct LanguageInitSpec {
+    /// Patterns appended to `.gitignore` before init commands run.
+    ///
+    /// Prevents generated artifacts (e.g. virtual environments) from being
+    /// staged by `git add --all` after the language initializer runs.
+    #[serde(default)]
+    pub gitignore: Vec<String>,
     /// Ordered commands executed during project initialization.
     pub commands: Vec<CommandSpec>,
 }

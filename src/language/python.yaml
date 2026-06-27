@@ -1,6 +1,8 @@
 prompt_guidance: |
   Write idiomatic Python. Keep code simple, typed where useful, and covered by tests.
 init:
+  gitignore:
+    - .venv
   commands:
     - program: uv
       args: ["init", "--vcs", "none"]

@@ -9,11 +9,12 @@ use std::time::Duration;
 
 static SEED_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-use crate::artifacts::{Artifact, ArtifactView, create_temporary_workspace, integrate};
+use crate::artifacts::{Artifact, ArtifactView, Workspace};
 use crate::config::{ArtifactConfig, ForgeConfig, ValidationConfig};
 use crate::config::{ProjectConfig, ProjectKind};
 use crate::engine::run_machine_with_telemetry;
 use crate::language::registry::language_spec;
+use crate::language::spec::LanguageInitSpec;
 use crate::machines::scheduler::state::SchedulerState;
 use crate::machines::scheduler::{RunRequest, SchedulerHandler, SchedulerMachine, SchedulerOutput};
 use crate::node_runner::DeliberatingNodeRunner;
@@ -287,7 +288,8 @@ fn make_validator(
 ///
 /// When `language` is `Some` and the repo is newly created, the language's
 /// init commands are executed in a temporary workspace and committed as the
-/// first real artifact revision.
+/// sole initial artifact revision.  Language init produces exactly one commit
+/// rather than an empty "Initial" followed by an integration commit.
 pub fn load_or_create_artifact(
     config: &ArtifactConfig,
     language: Option<&str>,
@@ -295,21 +297,16 @@ pub fn load_or_create_artifact(
     let repo_path = PathBuf::from(&config.repo_path);
 
     if !repo_path.exists() {
-        create_bare_repo(&repo_path, &config.branch)?;
-
         if let Some(lang) = language {
             let spec =
                 language_spec(lang).expect("language already validated by ForgeConfig::from_file");
             if !spec.init.commands.is_empty() {
-                let repo_abs = repo_path.canonicalize()?;
-                let seed_sha = git_rev_parse_branch(&repo_abs, &config.branch)?;
-                let seed_artifact = Artifact {
-                    repo_path: repo_abs,
-                    branch: config.branch.clone(),
-                    commit_sha: seed_sha,
-                };
-                run_language_init(&seed_artifact, &spec.init.commands)?;
+                create_bare_repo_with_language_init(&repo_path, &config.branch, &spec.init)?;
+            } else {
+                create_bare_repo(&repo_path, &config.branch)?;
             }
+        } else {
+            create_bare_repo(&repo_path, &config.branch)?;
         }
     }
 
@@ -323,19 +320,85 @@ pub fn load_or_create_artifact(
     })
 }
 
-/// Run language init commands in a temporary workspace and commit the result.
-fn run_language_init(artifact: &Artifact, commands: &[CommandSpec]) -> Result<(), Box<dyn Error>> {
-    let workspace = create_temporary_workspace(artifact)?;
+/// Initialize a bare repo whose first (and only) commit contains the output of
+/// the language init commands.
+///
+/// Sequence:
+/// 1. `git init` a temporary non-bare workspace on the configured branch.
+/// 2. Write `.gitignore` entries from the spec (e.g. `.venv`) so that
+///    generated artifacts are not staged.
+/// 3. Run language init commands inside the workspace.
+/// 4. `git add --all && git commit -m "Initial"` to capture the result.
+/// 5. `git clone --bare workspace path` to produce the canonical bare repo.
+fn create_bare_repo_with_language_init(
+    path: &Path,
+    branch: &str,
+    init_spec: &LanguageInitSpec,
+) -> Result<(), Box<dyn Error>> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
 
+    let seq = SEED_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let workspace =
+        std::env::temp_dir().join(format!("forge-lang-init-{}-{seq}", std::process::id()));
+    std::fs::create_dir_all(&workspace)?;
+
+    let result = init_workspace_and_clone_bare(&workspace, path, branch, init_spec);
+    let _ = std::fs::remove_dir_all(&workspace);
+    result
+}
+
+fn init_workspace_and_clone_bare(
+    workspace: &Path,
+    bare_path: &Path,
+    branch: &str,
+    init_spec: &LanguageInitSpec,
+) -> Result<(), Box<dyn Error>> {
+    run_git(
+        workspace,
+        &["init", "--quiet", &format!("--initial-branch={branch}")],
+    )?;
+
+    if !init_spec.gitignore.is_empty() {
+        let content = init_spec.gitignore.join("\n") + "\n";
+        std::fs::write(workspace.join(".gitignore"), &content)?;
+    }
+
+    let ws = Workspace::at_path(workspace.to_path_buf(), String::new());
     let timeout = Duration::from_secs(300);
-    let validator = CommandValidator::new(commands.to_vec(), timeout);
-    let result = validator.validate(&workspace);
+    let validator = CommandValidator::new(init_spec.commands.to_vec(), timeout);
+    let result = validator.validate(&ws);
 
     if !result.passed {
         return Err(format!("language initialization failed: {}", result.summary).into());
     }
 
-    integrate(artifact, &workspace)?;
+    run_git(workspace, &["add", "--all"])?;
+    run_git(
+        workspace,
+        &[
+            "-c",
+            "user.name=Forge",
+            "-c",
+            "user.email=forge@localhost",
+            "commit",
+            "--quiet",
+            "-m",
+            "Initial",
+        ],
+    )?;
+
+    let clone = Command::new("git")
+        .args(["clone", "--quiet", "--bare"])
+        .arg(workspace)
+        .arg(bare_path)
+        .status()?;
+
+    if !clone.success() {
+        return Err("git clone --bare failed after language init".into());
+    }
+
     Ok(())
 }
 
