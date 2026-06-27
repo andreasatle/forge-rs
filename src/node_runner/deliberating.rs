@@ -151,6 +151,21 @@ fn run_with_provider<P: ProviderClient>(
     policy: &RolePolicy,
     telemetry: &dyn TelemetrySink,
 ) -> NodeRunResult {
+    let top_objective = request.objective.clone();
+    let existing_files: Vec<String> = request
+        .artifact_view
+        .as_ref()
+        .and_then(|v| v.list_files().ok())
+        .unwrap_or_default()
+        .into_iter()
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect();
+    let no_recreate_context = if existing_files.is_empty() {
+        None
+    } else {
+        Some((top_objective, existing_files))
+    };
+
     let objective = enrich_objective(&request);
     let delib_request = DeliberationRequest {
         objective,
@@ -166,28 +181,13 @@ fn run_with_provider<P: ProviderClient>(
             max_tokens,
             request.kind.clone(),
             policy.clone(),
+            no_recreate_context,
         ),
         telemetry,
     };
-    let top_objective = request.objective.clone();
-    let existing_files: Vec<String> = request
-        .artifact_view
-        .as_ref()
-        .and_then(|v| v.list_files().ok())
-        .unwrap_or_default()
-        .into_iter()
-        .map(|p| p.to_string_lossy().into_owned())
-        .collect();
     let (output, machine) = run_machine_with_telemetry(machine, initial_state, telemetry);
     let tool_artifact_update = machine.take_artifact_update();
-    map_output(
-        output,
-        request.kind,
-        tool_artifact_update,
-        telemetry,
-        &top_objective,
-        &existing_files,
-    )
+    map_output(output, request.kind, tool_artifact_update, telemetry)
 }
 
 /// Returns the objective string, optionally prefixed with artifact file context.
@@ -232,14 +232,10 @@ fn map_output(
     kind: NodeKind,
     tool_artifact_update: Option<ArtifactUpdate>,
     telemetry: &dyn TelemetrySink,
-    top_objective: &str,
-    existing_files: &[String],
 ) -> NodeRunResult {
     match output {
         DeliberationTerminalOutput::Complete(out) => match kind {
-            NodeKind::Plan => {
-                map_plan_output(out.content, telemetry, top_objective, existing_files)
-            }
+            NodeKind::Plan => map_plan_output(out.content, telemetry),
             NodeKind::Work => NodeRunResult::WorkAccepted(NodeRunWorkResult {
                 work: WorkOutput {
                     summary: out.content,
@@ -265,31 +261,22 @@ fn map_output(
 ///
 /// Attempts to parse `content` as a structured [`PlannerOutput`] JSON object.
 ///
-/// - If parsing succeeds and the graph is valid: emits `PlannerOutputParsed`
-///   and returns `PlanAccepted` with one `NodeRequest` per task.
-/// - If parsing succeeds but validation fails: emits
+/// - If parsing succeeds and the graph is structurally valid: emits
+///   `PlannerOutputParsed` and returns `PlanAccepted` with one `NodeRequest`
+///   per task. No-recreate validation has already been enforced by the handler
+///   before the content reaches this function.
+/// - If parsing succeeds but structural validation fails: emits
 ///   `PlannerOutputValidationFailed` and returns `Failed` with `Terminal`
-///   recovery. The planner produced unambiguously invalid structured output;
-///   failing loudly is the right response.
+///   recovery.
 /// - If parsing fails (prose or unexpected schema): emits
-///   `PlannerOutputFallback` and returns `PlanAccepted` with a single work
-///   node whose objective is the raw content. This preserves backward
-///   compatibility while the planner prompt is being migrated.
-fn map_plan_output(
-    content: String,
-    telemetry: &dyn TelemetrySink,
-    top_objective: &str,
-    existing_files: &[String],
-) -> NodeRunResult {
+///   `PlannerOutputFallback` and returns `Failed` with `Terminal` recovery.
+fn map_plan_output(content: String, telemetry: &dyn TelemetrySink) -> NodeRunResult {
     use crate::node_runner::planner::{
-        parse_planner_content, planner_output_to_plan_output, validate_planner_no_recreate,
-        validate_planner_output,
+        parse_planner_content, planner_output_to_plan_output, validate_planner_output,
     };
 
     match parse_planner_content(&content) {
-        Some(planner_out) => match validate_planner_output(&planner_out).and_then(|()| {
-            validate_planner_no_recreate(&planner_out, top_objective, existing_files)
-        }) {
+        Some(planner_out) => match validate_planner_output(&planner_out) {
             Ok(()) => {
                 let task_count = planner_out.tasks.len();
                 let dependency_count: usize =
@@ -321,9 +308,9 @@ fn map_plan_output(
         },
         None => {
             // Planner content was not valid PlannerOutput JSON.
-            // This path should be unreachable when Step 2 (runner validation) is
-            // active, but if reached it must fail loudly rather than silently
-            // substituting a single work node.
+            // This path should be unreachable when runner validation is active,
+            // but if reached it must fail loudly rather than silently substituting
+            // a single work node.
             let reason = "planner content is not valid PlannerOutput JSON".to_string();
             telemetry.record(TelemetryRecord::new(
                 "DeliberatingNodeRunner",
@@ -1287,5 +1274,90 @@ mod tests {
             matches!(result, NodeRunResult::Failed(_)),
             "node must fail when Critic never reads, even though Producer did"
         );
+    }
+
+    // ── no-recreate validation recovery regression ────────────────────────────
+
+    #[test]
+    fn planner_no_recreate_violation_sends_revision_feedback_and_retries() {
+        // Regression: planner first outputs a task for '.gitignore' (existing project
+        // file not mentioned in the objective). Validation rejects it and sends structured
+        // feedback. Planner revises to only include the main.py task. Run continues to
+        // PlanAccepted — the run must NOT terminate with a terminal failure.
+        let temp = TempDir::new("no-recreate-retry");
+        let view = make_artifact_view(&temp, ".gitignore", "*.pyc\n__pycache__/\n");
+
+        // First planner response: includes .gitignore task (violates no-recreate).
+        let bad_plan = r#"{"tasks":[{"id":"task-1","objective":"Create .gitignore file for the project.","depends_on":[]},{"id":"task-2","objective":"Write main.py with the haiku.","depends_on":[]}]}"#;
+        // Second planner response (after revision feedback): only the main.py task.
+        let good_plan = r#"{"tasks":[{"id":"task-1","objective":"Write main.py with the haiku.","depends_on":[]}]}"#;
+
+        let provider = ScriptedProvider::from_strs(&[
+            bad_plan,  // Plan+Producer attempt 1 — fails no-recreate, handler retries
+            good_plan, // Plan+Producer attempt 2 (with feedback) — passes
+            r#"{"status":"accepted","content":"plan looks good"}"#, // Plan+Critic
+            r#"{"status":"accepted","content":"plan approved"}"#, // Plan+Referee
+        ]);
+        let runner = DeliberatingNodeRunner::new(&provider, &provider);
+        let request = NodeRunRequest {
+            kind: NodeKind::Plan,
+            objective: "Write main.py with a haiku about Python state machines.".to_string(),
+            model_tier: ModelTier::Cheap,
+            attempt: 0,
+            artifact_view: Some(view),
+        };
+        let result = runner.run_node(request, &NoopTelemetry);
+
+        let NodeRunResult::PlanAccepted(plan) = result else {
+            panic!("expected PlanAccepted after planner revision");
+        };
+        assert_eq!(
+            plan.children.len(),
+            1,
+            "revised plan must contain only the main.py task"
+        );
+        assert_eq!(
+            plan.children[0].objective, "Write main.py with the haiku.",
+            "task objective must match the revised plan"
+        );
+    }
+
+    #[test]
+    fn planner_no_recreate_violation_exhausts_retries_returns_failed() {
+        // When the planner keeps including tasks for existing files after MAX retries,
+        // the run must fail — not silently accept the bad plan.
+        let temp = TempDir::new("no-recreate-exhausted");
+        let view = make_artifact_view(&temp, ".gitignore", "*.pyc\n");
+
+        // All three producer responses include the .gitignore task.
+        let bad_plan =
+            r#"{"tasks":[{"id":"task-1","objective":"Create .gitignore file.","depends_on":[]}]}"#;
+
+        let provider = ScriptedProvider::from_strs(&[
+            bad_plan, // attempt 1
+            bad_plan, // attempt 2 (retry 1)
+            bad_plan, // attempt 3 (retry 2 — MAX_NO_RECREATE_RETRIES)
+        ]);
+        let runner = DeliberatingNodeRunner::new(&provider, &provider);
+        let request = NodeRunRequest {
+            kind: NodeKind::Plan,
+            objective: "Write main.py with a haiku about Python state machines.".to_string(),
+            model_tier: ModelTier::Cheap,
+            attempt: 0,
+            artifact_view: Some(view),
+        };
+        let result = runner.run_node(request, &NoopTelemetry);
+
+        assert!(
+            matches!(result, NodeRunResult::Failed(_)),
+            "plan must fail when no-recreate retries are exhausted"
+        );
+        if let NodeRunResult::Failed(failure) = result {
+            assert!(
+                failure.reason.contains(".gitignore") || failure.reason.contains("no-recreate"),
+                "failure reason must mention the offending file or constraint; got: {}",
+                failure.reason
+            );
+        }
     }
 }
