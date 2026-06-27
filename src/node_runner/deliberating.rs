@@ -604,6 +604,26 @@ mod tests {
         }
     }
 
+    fn work_request_with_artifact(objective: &str, temp: &TempDir) -> NodeRunRequest {
+        NodeRunRequest {
+            kind: NodeKind::Work,
+            objective: objective.to_string(),
+            model_tier: ModelTier::Cheap,
+            attempt: 0,
+            artifact_view: Some(make_artifact_view(temp, "hello.txt", "world\n")),
+        }
+    }
+
+    fn strong_work_request_with_artifact(objective: &str, temp: &TempDir) -> NodeRunRequest {
+        NodeRunRequest {
+            kind: NodeKind::Work,
+            objective: objective.to_string(),
+            model_tier: ModelTier::Strong,
+            attempt: 0,
+            artifact_view: Some(make_artifact_view(temp, "hello.txt", "world\n")),
+        }
+    }
+
     // --- existing tests (updated for new WorkAccepted shape) ---
 
     #[test]
@@ -629,13 +649,20 @@ mod tests {
 
     #[test]
     fn deliberating_runner_work_returns_work_output() {
+        let temp = TempDir::new("work-output");
         let provider = ScriptedProvider::from_strs(&[
+            r#"{"tool":"write_file","path":"output.txt","content":"finished\n"}"#,
             r#"{"status":"accepted","content":"finished the task"}"#,
+            r#"{"tool":"read_file","path":"output.txt"}"#,
             r#"{"status":"accepted","content":"review ok"}"#,
+            r#"{"tool":"read_file","path":"output.txt"}"#,
             r#"{"status":"accepted","content":"approved"}"#,
         ]);
         let runner = DeliberatingNodeRunner::new(&provider, &provider);
-        let result = runner.run_node(work_request("write some code"), &NoopTelemetry);
+        let result = runner.run_node(
+            work_request_with_artifact("write some code", &temp),
+            &NoopTelemetry,
+        );
         let NodeRunResult::WorkAccepted(work_result) = result else {
             panic!("expected WorkAccepted");
         };
@@ -688,16 +715,26 @@ mod tests {
 
     #[test]
     fn deliberating_runner_revision_uses_latest_producer_content() {
+        let temp = TempDir::new("revision-latest");
         let provider = ScriptedProvider::from_strs(&[
+            r#"{"tool":"write_file","path":"output.txt","content":"draft v1\n"}"#,
             r#"{"status":"accepted","content":"draft v1"}"#,
+            r#"{"tool":"read_file","path":"output.txt"}"#,
             r#"{"status":"accepted","content":"review done"}"#,
+            r#"{"tool":"read_file","path":"output.txt"}"#,
             r#"{"status":"rejected","reason":"needs work"}"#,
+            r#"{"tool":"write_file","path":"output.txt","content":"draft v2\n"}"#,
             r#"{"status":"accepted","content":"draft v2"}"#,
+            r#"{"tool":"read_file","path":"output.txt"}"#,
             r#"{"status":"accepted","content":"review ok"}"#,
+            r#"{"tool":"read_file","path":"output.txt"}"#,
             r#"{"status":"accepted","content":"approved"}"#,
         ]);
         let runner = DeliberatingNodeRunner::new(&provider, &provider);
-        let result = runner.run_node(work_request("refine the plan"), &NoopTelemetry);
+        let result = runner.run_node(
+            work_request_with_artifact("refine the plan", &temp),
+            &NoopTelemetry,
+        );
         let NodeRunResult::WorkAccepted(work_result) = result else {
             panic!("expected WorkAccepted");
         };
@@ -725,18 +762,18 @@ mod tests {
     fn worker_without_tool_update_does_not_create_output_txt() {
         let provider = ScriptedProvider::from_strs(&[
             r#"{"status":"accepted","content":"output content"}"#,
-            r#"{"status":"accepted","content":"review ok"}"#,
-            r#"{"status":"accepted","content":"approved"}"#,
+            r#"{"status":"accepted","content":"output content"}"#,
+            r#"{"status":"accepted","content":"output content"}"#,
         ]);
         let runner = DeliberatingNodeRunner::new(&provider, &provider);
         let result = runner.run_node(work_request("produce some output"), &NoopTelemetry);
-        let NodeRunResult::WorkAccepted(work_result) = result else {
-            panic!("expected WorkAccepted");
+        let NodeRunResult::Failed(failure) = result else {
+            panic!("expected Failed");
         };
         assert!(
-            work_result.artifact_update.is_none(),
-            "worker with no tool calls must produce no artifact_update; got {:?}",
-            work_result.artifact_update
+            matches!(failure.kind, FailureKind::WorkSemanticValidationFailure),
+            "worker with no tool calls must fail semantic validation; got {:?}",
+            failure.kind
         );
     }
 
@@ -744,20 +781,18 @@ mod tests {
     fn worker_summary_is_not_converted_to_artifact_update() {
         let provider = ScriptedProvider::from_strs(&[
             r#"{"status":"accepted","content":"summary of the work done"}"#,
-            r#"{"status":"accepted","content":"review ok"}"#,
-            r#"{"status":"accepted","content":"approved"}"#,
+            r#"{"status":"accepted","content":"summary of the work done"}"#,
+            r#"{"status":"accepted","content":"summary of the work done"}"#,
         ]);
         let runner = DeliberatingNodeRunner::new(&provider, &provider);
         let result = runner.run_node(work_request("do some work"), &NoopTelemetry);
-        let NodeRunResult::WorkAccepted(work_result) = result else {
-            panic!("expected WorkAccepted");
+        let NodeRunResult::Failed(failure) = result else {
+            panic!("expected Failed");
         };
-        assert_eq!(work_result.work.summary, "summary of the work done");
-        assert!(
-            work_result.artifact_update.is_none(),
-            "summary must not be converted to an artifact update; got {:?}",
-            work_result.artifact_update
-        );
+        assert!(matches!(
+            failure.kind,
+            FailureKind::WorkSemanticValidationFailure
+        ));
     }
 
     #[test]
@@ -907,19 +942,29 @@ mod tests {
         // Revision limit exhaustion is a semantic failure. The runner allows 1 revision,
         // so both Referee rejections are needed to exhaust the budget and produce
         // "revision limit exhausted: ..." → ElevateModel.
+        let temp = TempDir::new("semantic-elevate");
         let provider = ScriptedProvider::from_strs(&[
             // Round 1: Producer → Critic → Referee rejects → revision loop.
+            r#"{"tool":"write_file","path":"output.txt","content":"draft v1\n"}"#,
             r#"{"status":"accepted","content":"draft v1"}"#,
+            r#"{"tool":"read_file","path":"output.txt"}"#,
             r#"{"status":"accepted","content":"review ok"}"#,
+            r#"{"tool":"read_file","path":"output.txt"}"#,
             r#"{"status":"rejected","reason":"needs improvement"}"#,
             // Round 2: Producer → Critic → Referee rejects → budget exhausted.
+            r#"{"tool":"write_file","path":"output.txt","content":"draft v2\n"}"#,
             r#"{"status":"accepted","content":"draft v2"}"#,
+            r#"{"tool":"read_file","path":"output.txt"}"#,
             r#"{"status":"accepted","content":"review ok"}"#,
+            r#"{"tool":"read_file","path":"output.txt"}"#,
             r#"{"status":"rejected","reason":"still not good enough"}"#,
         ]);
         let runner = DeliberatingNodeRunner::new(&provider, &provider);
         let telemetry = crate::telemetry::VecTelemetry::new();
-        let result = runner.run_node(work_request("do something"), &telemetry);
+        let result = runner.run_node(
+            work_request_with_artifact("do something", &temp),
+            &telemetry,
+        );
         let NodeRunResult::Failed(failure) = result else {
             panic!("expected Failed; got success or plan");
         };
@@ -989,19 +1034,29 @@ mod tests {
         // The failure reason is "revision limit exhausted: task too large".
         // The classifier checks task-shape signals (Split) before revision-exhaustion
         // (ElevateModel), so "task too large" wins and maps to Split.
+        let temp = TempDir::new("deliberation-elevate");
         let provider = ScriptedProvider::from_strs(&[
             // Round 1: Producer → Critic → Referee rejects "task too large" → revision loop.
+            r#"{"tool":"write_file","path":"output.txt","content":"draft v1\n"}"#,
             r#"{"status":"accepted","content":"draft v1"}"#,
+            r#"{"tool":"read_file","path":"output.txt"}"#,
             r#"{"status":"accepted","content":"review ok"}"#,
+            r#"{"tool":"read_file","path":"output.txt"}"#,
             r#"{"status":"rejected","reason":"task too large"}"#,
             // Round 2: Producer → Critic → Referee rejects "task too large" → budget exhausted.
+            r#"{"tool":"write_file","path":"output.txt","content":"draft v2\n"}"#,
             r#"{"status":"accepted","content":"draft v2"}"#,
+            r#"{"tool":"read_file","path":"output.txt"}"#,
             r#"{"status":"accepted","content":"review ok"}"#,
+            r#"{"tool":"read_file","path":"output.txt"}"#,
             r#"{"status":"rejected","reason":"task too large"}"#,
         ]);
         let runner = DeliberatingNodeRunner::new(&provider, &provider);
         let telemetry = crate::telemetry::VecTelemetry::new();
-        let result = runner.run_node(work_request("do something"), &telemetry);
+        let result = runner.run_node(
+            work_request_with_artifact("do something", &temp),
+            &telemetry,
+        );
         let NodeRunResult::Failed(failure) = result else {
             panic!("expected Failed");
         };
@@ -1198,14 +1253,21 @@ mod tests {
     #[test]
     fn cheap_tier_uses_cheap_provider() {
         // Strong has no responses; calling it would panic. Proves routing is correct.
+        let temp = TempDir::new("cheap-tier");
         let cheap = ScriptedProvider::from_strs(&[
+            r#"{"tool":"write_file","path":"output.txt","content":"task completed\n"}"#,
             r#"{"status":"accepted","content":"task completed"}"#,
+            r#"{"tool":"read_file","path":"output.txt"}"#,
             r#"{"status":"accepted","content":"review ok"}"#,
+            r#"{"tool":"read_file","path":"output.txt"}"#,
             r#"{"status":"accepted","content":"approved"}"#,
         ]);
         let strong = ScriptedProvider::from_strs(&[]);
         let runner = DeliberatingNodeRunner::new(&cheap, &strong);
-        let result = runner.run_node(work_request("cheap tier test"), &NoopTelemetry);
+        let result = runner.run_node(
+            work_request_with_artifact("cheap tier test", &temp),
+            &NoopTelemetry,
+        );
         assert!(
             matches!(result, NodeRunResult::WorkAccepted(_)),
             "cheap tier must route to cheap provider and succeed"
@@ -1215,14 +1277,21 @@ mod tests {
     #[test]
     fn strong_tier_uses_strong_provider() {
         // Cheap has no responses; calling it would panic. Proves routing is correct.
+        let temp = TempDir::new("strong-tier");
         let cheap = ScriptedProvider::from_strs(&[]);
         let strong = ScriptedProvider::from_strs(&[
+            r#"{"tool":"write_file","path":"output.txt","content":"task completed\n"}"#,
             r#"{"status":"accepted","content":"task completed"}"#,
+            r#"{"tool":"read_file","path":"output.txt"}"#,
             r#"{"status":"accepted","content":"review ok"}"#,
+            r#"{"tool":"read_file","path":"output.txt"}"#,
             r#"{"status":"accepted","content":"approved"}"#,
         ]);
         let runner = DeliberatingNodeRunner::new(&cheap, &strong);
-        let result = runner.run_node(strong_work_request("strong tier test"), &NoopTelemetry);
+        let result = runner.run_node(
+            strong_work_request_with_artifact("strong tier test", &temp),
+            &NoopTelemetry,
+        );
         assert!(
             matches!(result, NodeRunResult::WorkAccepted(_)),
             "strong tier must route to strong provider and succeed"

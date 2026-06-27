@@ -17,6 +17,7 @@ pub fn classify_deliberation_failure(kind: FailureKind, message: &str) -> Recove
         | FailureKind::ToolFailure
         | FailureKind::ValidationFailure
         | FailureKind::PlannerValidationFailure
+        | FailureKind::WorkSemanticValidationFailure
         | FailureKind::IntegrationFailure
         | FailureKind::UserTaskRejection => RecoveryAction::Terminal {
             message: format!("unrecoverable failure: {message}"),
@@ -156,6 +157,7 @@ mod tests {
             FailureKind::ToolFailure,
             FailureKind::ValidationFailure,
             FailureKind::PlannerValidationFailure,
+            FailureKind::WorkSemanticValidationFailure,
             FailureKind::DeliberationFailure,
             FailureKind::IntegrationFailure,
             FailureKind::UserTaskRejection,

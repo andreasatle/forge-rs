@@ -32,6 +32,8 @@ pub enum FailureKind {
     ValidationFailure,
     /// Planner output violated structured planner validation.
     PlannerValidationFailure,
+    /// Work producer accepted a result with no artifact file changes.
+    WorkSemanticValidationFailure,
     /// Deliberation reached a semantic quality limit, such as exhausted revisions.
     DeliberationFailure,
     /// Artifact integration failed.

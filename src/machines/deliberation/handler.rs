@@ -18,7 +18,9 @@ use crate::node_runner::planner::{
     validate_planner_no_recreate, validate_planner_output, validate_planner_tests_required,
 };
 use crate::roles::policy::RolePolicy;
-use crate::roles::runner::{ProviderRoleRunner, RoleRequest, RoleRunner, RoleToolContext};
+use crate::roles::runner::{
+    ProviderRoleRunner, RoleRequest, RoleRunOutput, RoleRunner, RoleToolContext,
+};
 use crate::telemetry::{NoopTelemetry, TelemetrySink};
 
 use super::effect::DeliberationEffect;
@@ -27,6 +29,10 @@ use super::event::DeliberationEvent;
 /// Maximum retry attempts after the first accepted plan violates structured
 /// planner validation.
 const MAX_PLAN_VALIDATION_RETRIES: usize = 2;
+
+/// Maximum retry attempts after the first accepted work result contains no
+/// artifact file changes.
+const MAX_WORK_SEMANTIC_VALIDATION_RETRIES: usize = 2;
 
 /// Executes `DeliberationEffect` values by delegating role execution to a
 /// [`RoleRunner`].
@@ -54,6 +60,27 @@ struct PlanValidationContext {
     top_objective: String,
     existing_files: Vec<String>,
     requires_tests: bool,
+}
+
+struct ProducerSemanticValidationConfig {
+    role: DeliberationRole,
+    objective: String,
+    producer_content: Option<String>,
+    critic_content: Option<String>,
+    initial_feedback: Vec<RevisionFeedback>,
+    max_retries: usize,
+    accumulate_artifact_update_on_pass: bool,
+}
+
+enum ProducerSemanticValidationDecision {
+    Valid,
+    Retry(ValidationRetry),
+}
+
+struct ValidationRetry {
+    feedback_reason: String,
+    failure_kind: FailureKind,
+    failure_reason: String,
 }
 
 /// Compatibility alias: a [`DeliberationHandler`] backed by a
@@ -171,6 +198,20 @@ impl<R: RoleRunner> DeliberationHandler<R> {
                     );
                 }
 
+                // For Work+Producer when file tools are available, enforce the
+                // semantic invariant that accepted output must include at least
+                // one artifact file change before routing to Critic/Referee.
+                if self.node_kind == NodeKind::Work && matches!(role, DeliberationRole::Producer) {
+                    return self.run_work_producer_with_validation(
+                        role,
+                        objective,
+                        producer_content,
+                        critic_content,
+                        feedback,
+                        telemetry,
+                    );
+                }
+
                 let request = RoleRequest {
                     role: role.clone(),
                     objective,
@@ -225,61 +266,137 @@ impl<R: RoleRunner> DeliberationHandler<R> {
             .as_ref()
             .expect("plan_validation_context must be Some when this method is called");
 
-        let mut feedback = initial_feedback;
+        self.run_producer_semantic_validation_loop(
+            ProducerSemanticValidationConfig {
+                role,
+                objective,
+                producer_content,
+                critic_content,
+                initial_feedback,
+                max_retries: MAX_PLAN_VALIDATION_RETRIES,
+                accumulate_artifact_update_on_pass: false,
+            },
+            telemetry,
+            || None,
+            |output| {
+                let RoleResult::Accepted { content } = &output.result else {
+                    return ProducerSemanticValidationDecision::Valid;
+                };
+                let Some(planner_out) = parse_planner_content(content) else {
+                    // Content did not parse as PlannerOutput — pass through as-is;
+                    // map_plan_output will handle the failure downstream.
+                    return ProducerSemanticValidationDecision::Valid;
+                };
+                match validate_plan_output_for_context(&planner_out, context) {
+                    Ok(()) => ProducerSemanticValidationDecision::Valid,
+                    Err(e) => ProducerSemanticValidationDecision::Retry(ValidationRetry {
+                        feedback_reason: planner_validation_feedback(&e),
+                        failure_kind: FailureKind::PlannerValidationFailure,
+                        failure_reason: format!("planner validation failed: {e}"),
+                    }),
+                }
+            },
+        )
+    }
 
-        for attempt in 0..=MAX_PLAN_VALIDATION_RETRIES {
+    /// Run a Work+Producer role invocation with semantic validation and retry.
+    ///
+    /// After each accepted work output, validates that at least one artifact
+    /// file change was produced. On violation, sends revision feedback up to
+    /// `MAX_WORK_SEMANTIC_VALIDATION_RETRIES` additional attempts. Critic and
+    /// Referee are never invoked until validation succeeds.
+    fn run_work_producer_with_validation(
+        &self,
+        role: DeliberationRole,
+        objective: String,
+        producer_content: Option<String>,
+        critic_content: Option<String>,
+        initial_feedback: Vec<RevisionFeedback>,
+        telemetry: &dyn TelemetrySink,
+    ) -> DeliberationEvent {
+        self.run_producer_semantic_validation_loop(
+            ProducerSemanticValidationConfig {
+                role,
+                objective,
+                producer_content,
+                critic_content,
+                initial_feedback,
+                max_retries: MAX_WORK_SEMANTIC_VALIDATION_RETRIES,
+                accumulate_artifact_update_on_pass: true,
+            },
+            telemetry,
+            || {
+                // Recreate tool context each iteration; Producer always sees the
+                // committed base view, not any staged changes.
+                self.artifact_view.as_ref().map(|base| RoleToolContext {
+                    artifact_view: Box::new(base.clone()),
+                })
+            },
+            |output| match validate_work_output(output.artifact_update.as_ref()) {
+                Ok(()) => ProducerSemanticValidationDecision::Valid,
+                Err(e) => ProducerSemanticValidationDecision::Retry(ValidationRetry {
+                    feedback_reason: work_validation_feedback(&e),
+                    failure_kind: FailureKind::WorkSemanticValidationFailure,
+                    failure_reason: format!("work semantic validation failed: {e}"),
+                }),
+            },
+        )
+    }
+
+    fn run_producer_semantic_validation_loop(
+        &self,
+        config: ProducerSemanticValidationConfig,
+        telemetry: &dyn TelemetrySink,
+        mut tool_context_for_attempt: impl FnMut() -> Option<RoleToolContext>,
+        mut validate: impl FnMut(&RoleRunOutput) -> ProducerSemanticValidationDecision,
+    ) -> DeliberationEvent {
+        let mut feedback = config.initial_feedback;
+
+        for attempt in 0..=config.max_retries {
             let request = RoleRequest {
-                role: role.clone(),
-                objective: objective.clone(),
-                producer_content: producer_content.clone(),
-                critic_content: critic_content.clone(),
+                role: config.role.clone(),
+                objective: config.objective.clone(),
+                producer_content: config.producer_content.clone(),
+                critic_content: config.critic_content.clone(),
                 feedback: feedback.clone(),
                 node_kind: self.node_kind.clone(),
-                // Plan nodes never get tool context.
-                tool_context: None,
+                tool_context: tool_context_for_attempt(),
             };
             let output = self.runner.run_role(request, telemetry);
 
-            match output.result {
-                RoleResult::Accepted { ref content } => {
-                    if let Some(planner_out) = parse_planner_content(content) {
-                        match validate_plan_output_for_context(&planner_out, context) {
-                            Ok(()) => {
-                                return DeliberationEvent::RoleReturned {
-                                    role,
-                                    result: output.result,
-                                };
-                            }
-                            Err(e) => {
-                                if attempt >= MAX_PLAN_VALIDATION_RETRIES {
-                                    return DeliberationEvent::RoleReturned {
-                                        role,
-                                        result: RoleResult::Failed {
-                                            kind: FailureKind::PlannerValidationFailure,
-                                            reason: format!("planner validation failed: {e}"),
-                                        },
-                                    };
-                                }
-                                feedback = vec![RevisionFeedback {
-                                    reason: planner_validation_feedback(&e),
-                                }];
-                            }
-                        }
-                    } else {
-                        // Content did not parse as PlannerOutput — pass through as-is;
-                        // map_plan_output will handle the failure downstream.
-                        return DeliberationEvent::RoleReturned {
-                            role,
-                            result: output.result,
-                        };
+            if !matches!(output.result, RoleResult::Accepted { .. }) {
+                // Failed or Rejected — pass through without semantic validation.
+                return DeliberationEvent::RoleReturned {
+                    role: config.role,
+                    result: output.result,
+                };
+            }
+
+            match validate(&output) {
+                ProducerSemanticValidationDecision::Valid => {
+                    if config.accumulate_artifact_update_on_pass
+                        && let Some(update) = output.artifact_update
+                    {
+                        self.accumulated_update.borrow_mut().extend(update.changes);
                     }
-                }
-                _ => {
-                    // Failed or Rejected — pass through without validation.
                     return DeliberationEvent::RoleReturned {
-                        role,
+                        role: config.role,
                         result: output.result,
                     };
+                }
+                ProducerSemanticValidationDecision::Retry(retry) => {
+                    if attempt >= config.max_retries {
+                        return DeliberationEvent::RoleReturned {
+                            role: config.role,
+                            result: RoleResult::Failed {
+                                kind: retry.failure_kind,
+                                reason: retry.failure_reason,
+                            },
+                        };
+                    }
+                    feedback = vec![RevisionFeedback {
+                        reason: retry.feedback_reason,
+                    }];
                 }
             }
         }
@@ -368,6 +485,48 @@ fn planner_validation_feedback(error: &PlannerValidationError) -> String {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+enum WorkSemanticValidationError {
+    MissingArtifactUpdate,
+    EmptyArtifactUpdate,
+}
+
+impl std::fmt::Display for WorkSemanticValidationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            WorkSemanticValidationError::MissingArtifactUpdate => {
+                write!(f, "accepted work did not produce an artifact update")
+            }
+            WorkSemanticValidationError::EmptyArtifactUpdate => {
+                write!(f, "accepted work produced an empty artifact update")
+            }
+        }
+    }
+}
+
+fn validate_work_output(
+    artifact_update: Option<&ArtifactUpdate>,
+) -> Result<(), WorkSemanticValidationError> {
+    match artifact_update {
+        None => Err(WorkSemanticValidationError::MissingArtifactUpdate),
+        Some(update) if update.changes.is_empty() => {
+            Err(WorkSemanticValidationError::EmptyArtifactUpdate)
+        }
+        Some(_) => Ok(()),
+    }
+}
+
+fn work_validation_feedback(error: &WorkSemanticValidationError) -> String {
+    match error {
+        WorkSemanticValidationError::MissingArtifactUpdate => {
+            "Accepted Work results must modify the artifact. Use a file tool such as write_file, replace_text, or delete_file before returning accepted output.".to_string()
+        }
+        WorkSemanticValidationError::EmptyArtifactUpdate => {
+            "Accepted Work results must include at least one file change. Produce a concrete artifact update before returning accepted output.".to_string()
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::cell::RefCell;
@@ -375,7 +534,7 @@ mod tests {
 
     use super::*;
     use crate::artifacts::{ArtifactUpdate, FileChange};
-    use crate::engine::{Machine, Transition, run_machine};
+    use crate::engine::{Machine, Transition, run_machine, run_machine_with_telemetry};
     use crate::machines::deliberation::effect::DeliberationEffect;
     use crate::machines::deliberation::event::{DeliberationEvent, RoleResult};
     use crate::machines::deliberation::machine::DeliberationMachine;
@@ -387,19 +546,34 @@ mod tests {
     use crate::providers::types::{ProviderError, ProviderResponse};
     use crate::providers::{ProviderClient, ProviderRequest};
     use crate::roles::runner::{RoleRequest, RoleRunOutput, RoleRunner};
-    use crate::telemetry::TelemetrySink;
+    use crate::telemetry::{NoopTelemetry, TelemetrySink};
 
     // --- fake RoleRunner for delegation tests ---
 
     struct ScriptedRoleRunner {
-        results: RefCell<VecDeque<RoleResult>>,
+        outputs: RefCell<VecDeque<RoleRunOutput>>,
         requests: RefCell<Vec<RoleRequest>>,
     }
 
     impl ScriptedRoleRunner {
         fn new(results: Vec<RoleResult>) -> Self {
             Self {
-                results: RefCell::new(results.into()),
+                outputs: RefCell::new(
+                    results
+                        .into_iter()
+                        .map(|result| RoleRunOutput {
+                            result,
+                            artifact_update: None,
+                        })
+                        .collect(),
+                ),
+                requests: RefCell::new(Vec::new()),
+            }
+        }
+
+        fn with_outputs(outputs: Vec<RoleRunOutput>) -> Self {
+            Self {
+                outputs: RefCell::new(outputs.into()),
                 requests: RefCell::new(Vec::new()),
             }
         }
@@ -408,15 +582,10 @@ mod tests {
     impl RoleRunner for ScriptedRoleRunner {
         fn run_role(&self, request: RoleRequest, _telemetry: &dyn TelemetrySink) -> RoleRunOutput {
             self.requests.borrow_mut().push(request);
-            let result = self
-                .results
+            self.outputs
                 .borrow_mut()
                 .pop_front()
-                .expect("ScriptedRoleRunner: results exhausted");
-            RoleRunOutput {
-                result,
-                artifact_update: None,
-            }
+                .expect("ScriptedRoleRunner: outputs exhausted")
         }
     }
 
@@ -508,13 +677,43 @@ mod tests {
         }
     }
 
+    fn role_output(result: RoleResult, artifact_update: Option<ArtifactUpdate>) -> RoleRunOutput {
+        RoleRunOutput {
+            result,
+            artifact_update,
+        }
+    }
+
+    fn accepted_output(content: &str, artifact_update: Option<ArtifactUpdate>) -> RoleRunOutput {
+        role_output(
+            RoleResult::Accepted {
+                content: content.to_string(),
+            },
+            artifact_update,
+        )
+    }
+
+    fn write_update(path: &str) -> ArtifactUpdate {
+        ArtifactUpdate {
+            changes: vec![FileChange::Write {
+                path: path.to_string(),
+                content: "changed\n".to_string(),
+            }],
+        }
+    }
+
+    fn empty_update() -> ArtifactUpdate {
+        ArtifactUpdate { changes: vec![] }
+    }
+
     // --- delegation test ---
 
     #[test]
     fn deliberation_handler_delegates_run_role_to_role_runner() {
-        let runner = ScriptedRoleRunner::new(vec![RoleResult::Accepted {
-            content: "generated".to_string(),
-        }]);
+        let runner = ScriptedRoleRunner::with_outputs(vec![accepted_output(
+            "generated",
+            Some(write_update("generated.txt")),
+        )]);
         let handler = DeliberationHandler {
             runner,
             artifact_view: None,
@@ -556,11 +755,21 @@ mod tests {
     #[test]
     fn run_machine_with_provider_handler_success() {
         let machine = ProvidedMachine {
-            handler: ProviderBackedDeliberationHandler::new(ScriptedProvider::from_strs(&[
-                r#"{"status":"accepted","content":"draft output"}"#,
-                r#"{"status":"accepted","content":"review done"}"#,
-                r#"{"status":"accepted","content":"approved"}"#,
-            ])),
+            handler: ProviderBackedDeliberationHandler::new_with_view(
+                ScriptedProvider::from_strs(&[
+                    r#"{"tool":"write_file","path":"output.txt","content":"draft output\n"}"#,
+                    r#"{"status":"accepted","content":"draft output"}"#,
+                    r#"{"tool":"read_file","path":"output.txt"}"#,
+                    r#"{"status":"accepted","content":"review done"}"#,
+                    r#"{"tool":"read_file","path":"output.txt"}"#,
+                    r#"{"status":"accepted","content":"approved"}"#,
+                ]),
+                Some(dummy_view()),
+                1024,
+                NodeKind::Work,
+                crate::roles::policy::RolePolicy::default(),
+                None,
+            ),
         };
         let output = run_machine(machine, ready("write a poem", 0));
         match output {
@@ -574,14 +783,27 @@ mod tests {
     #[test]
     fn run_machine_with_provider_handler_revision() {
         let machine = ProvidedMachine {
-            handler: ProviderBackedDeliberationHandler::new(ScriptedProvider::from_strs(&[
-                r#"{"status":"accepted","content":"draft v1"}"#,
-                r#"{"status":"accepted","content":"review done"}"#,
-                r#"{"status":"rejected","reason":"needs changes"}"#,
-                r#"{"status":"accepted","content":"draft v2"}"#,
-                r#"{"status":"accepted","content":"review ok"}"#,
-                r#"{"status":"accepted","content":"approved"}"#,
-            ])),
+            handler: ProviderBackedDeliberationHandler::new_with_view(
+                ScriptedProvider::from_strs(&[
+                    r#"{"tool":"write_file","path":"output.txt","content":"draft v1\n"}"#,
+                    r#"{"status":"accepted","content":"draft v1"}"#,
+                    r#"{"tool":"read_file","path":"output.txt"}"#,
+                    r#"{"status":"accepted","content":"review done"}"#,
+                    r#"{"tool":"read_file","path":"output.txt"}"#,
+                    r#"{"status":"rejected","reason":"needs changes"}"#,
+                    r#"{"tool":"write_file","path":"output.txt","content":"draft v2\n"}"#,
+                    r#"{"status":"accepted","content":"draft v2"}"#,
+                    r#"{"tool":"read_file","path":"output.txt"}"#,
+                    r#"{"status":"accepted","content":"review ok"}"#,
+                    r#"{"tool":"read_file","path":"output.txt"}"#,
+                    r#"{"status":"accepted","content":"approved"}"#,
+                ]),
+                Some(dummy_view()),
+                1024,
+                NodeKind::Work,
+                crate::roles::policy::RolePolicy::default(),
+                None,
+            ),
         };
         let output = run_machine(machine, ready("write a poem", 1));
         match output {
@@ -633,9 +855,10 @@ mod tests {
 
     #[test]
     fn worker_handler_passes_tool_context_when_view_available() {
-        let runner = ScriptedRoleRunner::new(vec![RoleResult::Accepted {
-            content: "work done".to_string(),
-        }]);
+        let runner = ScriptedRoleRunner::with_outputs(vec![accepted_output(
+            "work done",
+            Some(write_update("work.txt")),
+        )]);
         let handler = DeliberationHandler {
             runner,
             artifact_view: Some(dummy_view()),
@@ -707,6 +930,18 @@ mod tests {
                 existing_files: vec![],
                 requires_tests: false,
             }),
+        }
+    }
+
+    fn handler_with_work_validation(
+        outputs: Vec<RoleRunOutput>,
+    ) -> DeliberationHandler<ScriptedRoleRunner> {
+        DeliberationHandler {
+            runner: ScriptedRoleRunner::with_outputs(outputs),
+            artifact_view: Some(dummy_view()),
+            node_kind: NodeKind::Work,
+            accumulated_update: RefCell::new(Vec::new()),
+            plan_validation_context: None,
         }
     }
 
@@ -916,6 +1151,202 @@ mod tests {
         );
     }
 
+    #[test]
+    fn accepted_work_with_one_file_change_passes_semantic_validation() {
+        let handler = handler_with_work_validation(vec![accepted_output(
+            "implemented change",
+            Some(write_update("src/lib.rs")),
+        )]);
+        let event = handler.handle_effect(run_role_effect(
+            DeliberationRole::Producer,
+            "implement the change",
+            None,
+            None,
+            vec![],
+        ));
+
+        assert_eq!(
+            handler.runner.requests.borrow().len(),
+            1,
+            "valid work must not trigger retry"
+        );
+        assert!(
+            matches!(
+                event,
+                DeliberationEvent::RoleReturned {
+                    result: RoleResult::Accepted { .. },
+                    ..
+                }
+            ),
+            "valid work must produce Accepted; got {event:?}"
+        );
+        assert_eq!(
+            handler
+                .take_artifact_update()
+                .expect("valid work update must be retained")
+                .changes
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn accepted_work_with_no_artifact_update_triggers_revision_feedback() {
+        let handler = handler_with_work_validation(vec![
+            accepted_output("summary without changes", None),
+            accepted_output("implemented change", Some(write_update("src/lib.rs"))),
+        ]);
+        let event = handler.handle_effect(run_role_effect(
+            DeliberationRole::Producer,
+            "implement the change",
+            None,
+            None,
+            vec![],
+        ));
+
+        assert_eq!(
+            handler.runner.requests.borrow().len(),
+            2,
+            "missing artifact update must trigger one retry"
+        );
+        let second_feedback = &handler.runner.requests.borrow()[1].feedback;
+        assert!(
+            !second_feedback.is_empty(),
+            "retry request must carry revision feedback"
+        );
+        assert!(
+            second_feedback[0]
+                .reason
+                .contains("must modify the artifact"),
+            "feedback must explain the semantic invariant; got: {}",
+            second_feedback[0].reason
+        );
+        assert!(
+            matches!(
+                event,
+                DeliberationEvent::RoleReturned {
+                    result: RoleResult::Accepted { .. },
+                    ..
+                }
+            ),
+            "valid retry must succeed; got {event:?}"
+        );
+    }
+
+    #[test]
+    fn repeated_empty_work_exhausts_semantic_validation_retries() {
+        let handler = handler_with_work_validation(vec![
+            accepted_output("empty work 1", Some(empty_update())),
+            accepted_output("empty work 2", Some(empty_update())),
+            accepted_output("empty work 3", Some(empty_update())),
+        ]);
+        let event = handler.handle_effect(run_role_effect(
+            DeliberationRole::Producer,
+            "implement the change",
+            None,
+            None,
+            vec![],
+        ));
+
+        assert_eq!(
+            handler.runner.requests.borrow().len(),
+            MAX_WORK_SEMANTIC_VALIDATION_RETRIES + 1,
+            "must attempt exactly {} producer calls before failing",
+            MAX_WORK_SEMANTIC_VALIDATION_RETRIES + 1
+        );
+        assert!(
+            matches!(
+                event,
+                DeliberationEvent::RoleReturned {
+                    result: RoleResult::Failed {
+                        kind: FailureKind::WorkSemanticValidationFailure,
+                        ..
+                    },
+                    ..
+                }
+            ),
+            "exhausted retries must produce WorkSemanticValidationFailure; got {event:?}"
+        );
+    }
+
+    #[test]
+    fn critic_and_referee_are_not_invoked_while_work_semantic_validation_fails() {
+        let machine = ScriptedMachine {
+            handler: handler_with_work_validation(vec![
+                accepted_output("empty work 1", Some(empty_update())),
+                accepted_output("empty work 2", Some(empty_update())),
+                accepted_output("empty work 3", Some(empty_update())),
+            ]),
+        };
+        let (output, machine) =
+            run_machine_with_telemetry(machine, ready("implement the change", 1), &NoopTelemetry);
+
+        assert!(
+            matches!(
+                output,
+                DeliberationTerminalOutput::Failed {
+                    kind: FailureKind::WorkSemanticValidationFailure,
+                    ..
+                }
+            ),
+            "semantic validation exhaustion must fail with typed kind; got {output:?}"
+        );
+        let roles: Vec<_> = machine
+            .handler
+            .runner
+            .requests
+            .borrow()
+            .iter()
+            .map(|request| request.role.clone())
+            .collect();
+        assert_eq!(
+            roles,
+            vec![
+                DeliberationRole::Producer,
+                DeliberationRole::Producer,
+                DeliberationRole::Producer,
+            ],
+            "Critic/Referee must not run while Work semantic validation fails"
+        );
+    }
+
+    #[test]
+    fn valid_revised_work_proceeds_to_critic_and_referee() {
+        let machine = ScriptedMachine {
+            handler: handler_with_work_validation(vec![
+                accepted_output("summary without changes", None),
+                accepted_output("implemented change", Some(write_update("src/lib.rs"))),
+                accepted_output("review passed", None),
+                accepted_output("approved", None),
+            ]),
+        };
+        let (output, machine) =
+            run_machine_with_telemetry(machine, ready("implement the change", 1), &NoopTelemetry);
+
+        assert!(
+            matches!(output, DeliberationTerminalOutput::Complete(_)),
+            "valid revised work must complete after Critic and Referee; got {output:?}"
+        );
+        let roles: Vec<_> = machine
+            .handler
+            .runner
+            .requests
+            .borrow()
+            .iter()
+            .map(|request| request.role.clone())
+            .collect();
+        assert_eq!(
+            roles,
+            vec![
+                DeliberationRole::Producer,
+                DeliberationRole::Producer,
+                DeliberationRole::Critic,
+                DeliberationRole::Referee,
+            ],
+            "valid revised work must proceed normally through review roles"
+        );
+    }
+
     // --- staged read view: reviewer visibility of producer writes ---
 
     /// A [`RoleRunner`] variant that can return per-invocation artifact updates.
@@ -1076,28 +1507,13 @@ mod tests {
     #[test]
     fn reviewer_staged_view_does_not_see_new_file_without_producer_write() {
         // Sanity check: without a Producer write, a new file is not visible.
-        let handler = staged_handler(vec![
-            (
-                RoleResult::Accepted {
-                    content: "done".to_owned(),
-                },
-                None,
-            ),
-            (
-                RoleResult::Accepted {
-                    content: "ok".to_owned(),
-                },
-                None,
-            ),
-        ]);
+        let handler = staged_handler(vec![(
+            RoleResult::Accepted {
+                content: "ok".to_owned(),
+            },
+            None,
+        )]);
 
-        handler.handle_effect(run_role_effect(
-            DeliberationRole::Producer,
-            "create main.py",
-            None,
-            None,
-            vec![],
-        ));
         handler.handle_effect(run_role_effect(
             DeliberationRole::Critic,
             "create main.py",
@@ -1107,7 +1523,7 @@ mod tests {
         ));
 
         let requests = handler.runner.requests.borrow();
-        let critic_ctx = requests[1]
+        let critic_ctx = requests[0]
             .tool_context
             .as_ref()
             .expect("Critic must receive tool context");
@@ -1121,9 +1537,17 @@ mod tests {
 
     #[test]
     fn handle_effect_without_telemetry_compiles() {
-        let handler = ProviderBackedDeliberationHandler::new(ScriptedProvider::from_strs(&[
-            r#"{"status":"accepted","content":"completed"}"#,
-        ]));
+        let handler = ProviderBackedDeliberationHandler::new_with_view(
+            ScriptedProvider::from_strs(&[
+                r#"{"tool":"write_file","path":"output.txt","content":"completed\n"}"#,
+                r#"{"status":"accepted","content":"completed"}"#,
+            ]),
+            Some(dummy_view()),
+            1024,
+            NodeKind::Work,
+            crate::roles::policy::RolePolicy::default(),
+            None,
+        );
         let event = handler.handle_effect(run_role_effect(
             DeliberationRole::Producer,
             "test",
