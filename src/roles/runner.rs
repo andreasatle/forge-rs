@@ -13,6 +13,7 @@ use crate::machines::scheduler::NodeKind;
 use crate::node_runner::planner::{try_parse_planner_response, validate_planner_output};
 use crate::providers::{ProviderClient, ProviderRequest, StructuredOutput};
 use crate::roles::policy::RolePolicy;
+use crate::services::extract_json_object;
 use crate::telemetry::{TelemetryEvent, TelemetryRecord, TelemetrySink};
 use crate::tools::{FileToolExecutor, FileToolPolicy, FileToolResponse, parse_tool_request};
 
@@ -927,38 +928,6 @@ fn strip_code_fence(s: &str) -> &str {
     }
 }
 
-/// Extract the first balanced JSON object from `s`.
-fn extract_json_object(s: &str) -> Option<&str> {
-    let start = s.find('{')?;
-    let bytes = s.as_bytes();
-    let mut depth: usize = 0;
-    let mut in_string = false;
-    let mut i = start;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'\\' if in_string => {
-                i += 2;
-                continue;
-            }
-            b'"' => {
-                in_string = !in_string;
-            }
-            b'{' if !in_string => {
-                depth += 1;
-            }
-            b'}' if !in_string => {
-                depth -= 1;
-                if depth == 0 {
-                    return Some(&s[start..=i]);
-                }
-            }
-            _ => {}
-        }
-        i += 1;
-    }
-    None
-}
-
 #[cfg(test)]
 fn parse_role_response(raw_response: &str) -> RoleResult {
     try_parse_role_response(raw_response).unwrap_or_else(|reason| RoleResult::Failed { reason })
@@ -1343,6 +1312,51 @@ mod tests {
         assert!(
             matches!(result, RoleResult::Failed { .. }),
             "unbalanced JSON must produce Failed, got {result:?}"
+        );
+    }
+
+    // --- trailing-whitespace robustness ---
+
+    #[test]
+    fn role_response_with_trailing_newline_parses() {
+        let input =
+            "{\"status\":\"accepted\",\"content\":\"The task was completed successfully.\"}\n";
+        let result = parse_role_response(input);
+        assert!(
+            matches!(result, RoleResult::Accepted { .. }),
+            "trailing newline must not cause role response parse failure, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn role_response_with_trailing_spaces_and_tabs_parses() {
+        let input =
+            "{\"status\":\"accepted\",\"content\":\"The task was completed successfully.\"}  \t  ";
+        let result = parse_role_response(input);
+        assert!(
+            matches!(result, RoleResult::Accepted { .. }),
+            "trailing spaces/tabs must not cause role response parse failure, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn role_response_rejected_with_trailing_whitespace_parses() {
+        let input =
+            "{\"status\":\"rejected\",\"reason\":\"The output does not meet requirements.\"}\n\n";
+        let result = parse_role_response(input);
+        assert!(
+            matches!(result, RoleResult::Rejected { .. }),
+            "rejected response with trailing whitespace must parse, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn role_response_with_leading_and_trailing_whitespace_parses() {
+        let input = "\n  {\"status\":\"accepted\",\"content\":\"The task was completed successfully.\"}  \n";
+        let result = parse_role_response(input);
+        assert!(
+            matches!(result, RoleResult::Accepted { .. }),
+            "leading and trailing whitespace must not prevent parsing, got {result:?}"
         );
     }
 

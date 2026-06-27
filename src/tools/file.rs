@@ -5,6 +5,7 @@ use serde::Deserialize;
 
 use crate::artifacts::file_ops::validate_relative_path;
 use crate::artifacts::{ArtifactError, ArtifactRead, ArtifactUpdate, FileChange};
+use crate::services::extract_json_object;
 
 /// Policy controlling what a [`FileToolExecutor`] may do.
 #[derive(Clone, Debug)]
@@ -334,10 +335,17 @@ fn truncate_to_char_boundary(s: &str, max_bytes: usize) -> &str {
 
 /// Parses a JSON-encoded [`FileToolRequest`].
 ///
+/// Trims leading/trailing whitespace and extracts the first complete JSON object
+/// before parsing, so provider artifacts or trailing newlines after the closing
+/// brace are silently ignored.
+///
 /// Returns `Err` with a human-readable message when the JSON is malformed,
 /// names an unknown tool, or contains placeholder `"..."` values that indicate
 /// the model echoed a prompt example rather than issuing a real request.
 pub fn parse_tool_request(json: &str) -> Result<FileToolRequest, String> {
+    let json = json.trim();
+    let json = extract_json_object(json)
+        .ok_or_else(|| "no JSON object found in tool request".to_string())?;
     let req: FileToolRequest = serde_json::from_str(json).map_err(|e| e.to_string())?;
     if has_placeholder_fields(&req) {
         return Err("tool request contains placeholder values".to_string());
@@ -1019,6 +1027,55 @@ mod tests {
         assert!(
             result.is_ok(),
             "replace_text with real values must parse successfully; got {result:?}"
+        );
+    }
+
+    // ── trailing-whitespace robustness ───────────────────────────────────────
+
+    #[test]
+    fn parse_tool_request_with_trailing_newline() {
+        let result = parse_tool_request("{\"tool\":\"list_files\"}\n");
+        assert!(
+            result.is_ok(),
+            "trailing newline must not cause parse failure; got {result:?}"
+        );
+        assert_eq!(result.unwrap(), FileToolRequest::ListFiles);
+    }
+
+    #[test]
+    fn parse_tool_request_with_trailing_spaces_and_tabs() {
+        let result = parse_tool_request("{\"tool\":\"list_files\"}  \t  ");
+        assert!(
+            result.is_ok(),
+            "trailing spaces/tabs must not cause parse failure; got {result:?}"
+        );
+        assert_eq!(result.unwrap(), FileToolRequest::ListFiles);
+    }
+
+    #[test]
+    fn parse_tool_request_with_trailing_newlines_write_file() {
+        let result = parse_tool_request(
+            "{\"tool\":\"write_file\",\"path\":\".gitignore\",\"content\":\"*.log\\n\"}\n\n",
+        );
+        assert!(
+            result.is_ok(),
+            "write_file with trailing newlines must parse; got {result:?}"
+        );
+        assert_eq!(
+            result.unwrap(),
+            FileToolRequest::WriteFile {
+                path: ".gitignore".to_owned(),
+                content: "*.log\n".to_owned(),
+            }
+        );
+    }
+
+    #[test]
+    fn parse_tool_request_with_leading_whitespace() {
+        let result = parse_tool_request("  \n{\"tool\":\"list_files\"}");
+        assert!(
+            result.is_ok(),
+            "leading whitespace must not cause parse failure; got {result:?}"
         );
     }
 
