@@ -5,11 +5,36 @@ use super::spec::LanguageSpec;
 const RUST_SPEC: &str = include_str!("rust.yaml");
 const PYTHON_SPEC: &str = include_str!("python.yaml");
 
+#[cfg(test)]
+static TEST_LANGUAGE_SPECS: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashMap<String, LanguageSpec>>,
+> = std::sync::OnceLock::new();
+
+#[cfg(test)]
+pub(crate) fn register_test_language_spec(id: impl Into<String>, spec: LanguageSpec) {
+    TEST_LANGUAGE_SPECS
+        .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+        .lock()
+        .expect("test language registry mutex poisoned")
+        .insert(id.into(), spec);
+}
+
 /// Return the [`LanguageSpec`] for `id`, or `None` if the language is unknown.
 ///
 /// Bundled specs are parsed from YAML at call time. Panics if a bundled spec
 /// fails to parse — that is a compile-time authoring error, not a runtime one.
 pub fn language_spec(id: &str) -> Option<LanguageSpec> {
+    #[cfg(test)]
+    if let Some(spec) = TEST_LANGUAGE_SPECS
+        .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+        .lock()
+        .expect("test language registry mutex poisoned")
+        .get(id)
+        .cloned()
+    {
+        return Some(spec);
+    }
+
     match id {
         "rust" => {
             Some(serde_yaml::from_str(RUST_SPEC).expect("bundled rust.yaml must be valid YAML"))

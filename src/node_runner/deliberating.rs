@@ -1204,7 +1204,7 @@ mod tests {
     #[test]
     fn referee_reads_file_and_rejects_default_content_causes_node_failure() {
         // Regression for: Referee accepted even though main.py still contained the
-        // default uv init program instead of the required haiku.
+        // default initialized program instead of the required haiku.
         //
         // The Referee must call read_file and inspect file contents before deciding.
         // When the file contents do not satisfy the objective the Referee must reject.

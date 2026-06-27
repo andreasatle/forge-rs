@@ -422,7 +422,7 @@ mod tests {
         "README.md",
         "main.py",
         "pyproject.toml",
-        "uv.lock",
+        "language.lock",
     ];
 
     #[test]

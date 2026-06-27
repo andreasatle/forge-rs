@@ -5,7 +5,7 @@ use serde::Deserialize;
 use crate::validation::CommandSpec;
 
 /// Complete specification for a language plugin.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct LanguageSpec {
     /// Short guidance injected into coding prompts for this language.
     pub prompt_guidance: String,
@@ -16,7 +16,7 @@ pub struct LanguageSpec {
 }
 
 /// Init-phase command list for a language.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct LanguageInitSpec {
     /// Patterns appended to `.gitignore` before init commands run.
     ///
@@ -29,7 +29,7 @@ pub struct LanguageInitSpec {
 }
 
 /// Validation-phase command list for a language.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct LanguageValidationSpec {
     /// Ordered commands executed to validate the workspace.
     pub commands: Vec<CommandSpec>,

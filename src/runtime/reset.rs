@@ -69,6 +69,8 @@ mod tests {
     use super::*;
     use crate::artifacts::{ArtifactUpdate, FileChange, create_workspace, integrate};
     use crate::config::ArtifactConfig;
+    use crate::language::{LanguageInitSpec, LanguageSpec, LanguageValidationSpec};
+    use crate::validation::CommandSpec;
     use std::process::Command;
     use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -151,14 +153,6 @@ mod tests {
         }
     }
 
-    fn uv_available() -> bool {
-        Command::new("uv")
-            .args(["--version"])
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false)
-    }
-
     fn git_ls_tree_names(repo_path: &PathBuf, commit: &str) -> Vec<String> {
         let out = Command::new("git")
             .args(["ls-tree", "--name-only", "-r", commit])
@@ -181,6 +175,47 @@ mod tests {
             .output()
             .expect("git show failed");
         String::from_utf8(out.stdout).unwrap()
+    }
+
+    fn register_fake_language(label: &str) -> String {
+        let id = format!(
+            "fake-reset-{label}-{}",
+            NEXT_ID.fetch_add(1, Ordering::Relaxed)
+        );
+        crate::language::registry::register_test_language_spec(
+            id.clone(),
+            LanguageSpec {
+                prompt_guidance: "fake language guidance".to_string(),
+                init: LanguageInitSpec {
+                    gitignore: vec!["ignored-build/".to_string()],
+                    commands: vec![
+                        CommandSpec {
+                            program: "sh".to_string(),
+                            args: vec![
+                                "-c".to_string(),
+                                "printf 'configured artifact\\n' > generated.txt".to_string(),
+                            ],
+                        },
+                        CommandSpec {
+                            program: "sh".to_string(),
+                            args: vec![
+                                "-c".to_string(),
+                                concat!(
+                                    "mkdir -p bin ignored-build && ",
+                                    "printf 'fake dependency\\n' > manifest.txt && ",
+                                    "printf 'ignored\\n' > ignored-build/cache.txt && ",
+                                    "printf '#!/bin/sh\\necho fake tool\\n' > bin/fake-tool && ",
+                                    "chmod +x bin/fake-tool"
+                                )
+                                .to_string(),
+                            ],
+                        },
+                    ],
+                },
+                validation: LanguageValidationSpec { commands: vec![] },
+            },
+        );
+        id
     }
 
     #[test]
@@ -423,21 +458,15 @@ mod tests {
     }
 
     #[test]
-    fn python_reset_runs_language_init_before_initial_commit() {
-        if !uv_available() {
-            eprintln!(
-                "skipping python_reset_runs_language_init_before_initial_commit: uv not available"
-            );
-            return;
-        }
-
-        let base = temp_path("python-init-order");
+    fn language_reset_runs_init_before_initial_commit() {
+        let language = register_fake_language("init-order");
+        let base = temp_path("language-init-order");
         let repo_path = base.join("artifact.git");
         let telemetry = base.join("telemetry");
         let _ = std::fs::remove_dir_all(&base);
 
         run_reset(make_forge_config_with_language(
-            &repo_path, &telemetry, "python",
+            &repo_path, &telemetry, &language,
         ))
         .unwrap();
 
@@ -446,63 +475,56 @@ mod tests {
         assert_eq!(
             commit_count(&repo_path, "main"),
             1,
-            "python reset must produce exactly one initial commit containing language files"
+            "language reset must produce exactly one initial commit containing language files"
         );
 
         let files = git_ls_tree_names(&repo_path, "HEAD");
         assert!(
-            files.iter().any(|f| f == "pyproject.toml"),
-            "initial commit must contain pyproject.toml; files found: {files:?}"
+            files.iter().any(|f| f == "generated.txt"),
+            "initial commit must contain configured generated file; files found: {files:?}"
         );
 
         let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]
-    fn python_reset_produces_pyproject_toml_with_dev_dependencies() {
-        if !uv_available() {
-            eprintln!(
-                "skipping python_reset_produces_pyproject_toml_with_dev_dependencies: uv not available"
-            );
-            return;
-        }
-
-        let base = temp_path("python-pyproject");
+    fn language_reset_commits_configured_init_outputs() {
+        let language = register_fake_language("init-outputs");
+        let base = temp_path("language-init-outputs");
         let repo_path = base.join("artifact.git");
         let telemetry = base.join("telemetry");
         let _ = std::fs::remove_dir_all(&base);
 
         run_reset(make_forge_config_with_language(
-            &repo_path, &telemetry, "python",
+            &repo_path, &telemetry, &language,
         ))
         .unwrap();
 
-        let content = git_show_file(&repo_path, "HEAD", "pyproject.toml");
-        assert!(!content.is_empty(), "pyproject.toml must be non-empty");
-        for pkg in ["pytest", "ruff", "pyright"] {
-            assert!(
-                content.contains(pkg),
-                "pyproject.toml must include {pkg} as a dev dependency; content:\n{content}"
-            );
-        }
+        let generated = git_show_file(&repo_path, "HEAD", "generated.txt");
+        assert_eq!(generated, "configured artifact\n");
+
+        let manifest = git_show_file(&repo_path, "HEAD", "manifest.txt");
+        assert_eq!(manifest, "fake dependency\n");
+
+        let files = git_ls_tree_names(&repo_path, "HEAD");
+        assert!(
+            !files.iter().any(|f| f == "ignored-build/cache.txt"),
+            "gitignore entries from the language spec must exclude generated cache files; files found: {files:?}"
+        );
 
         let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]
-    fn python_reset_workspace_can_spawn_pyright() {
-        if !uv_available() {
-            eprintln!("skipping python_reset_workspace_can_spawn_pyright: uv not available");
-            return;
-        }
-
-        let base = temp_path("python-pyright-spawn");
+    fn language_reset_workspace_contains_configured_tool_outputs() {
+        let language = register_fake_language("tool-output");
+        let base = temp_path("language-tool-output");
         let repo_path = base.join("artifact.git");
         let telemetry = base.join("telemetry");
         let _ = std::fs::remove_dir_all(&base);
 
         run_reset(make_forge_config_with_language(
-            &repo_path, &telemetry, "python",
+            &repo_path, &telemetry, &language,
         ))
         .unwrap();
 
@@ -516,19 +538,16 @@ mod tests {
         let workspace_path = base.join("workspace");
         let ws = crate::artifacts::create_workspace(&artifact, workspace_path);
 
-        // `uv run pyright --version` must succeed: uv reads pyproject.toml/uv.lock,
-        // installs pyright into .venv, and runs it.  The pre-reset error was
-        // "Failed to spawn: pyright" because no uv.lock existed in the artifact.
-        let status = Command::new("uv")
-            .args(["run", "pyright", "--version"])
+        let output = Command::new("./bin/fake-tool")
             .current_dir(ws.path())
-            .status()
-            .expect("failed to spawn uv");
+            .output()
+            .expect("failed to spawn configured fake tool");
 
         assert!(
-            status.success(),
-            "uv run pyright --version must succeed in artifact workspace after python reset"
+            output.status.success(),
+            "configured fake tool must run from artifact workspace"
         );
+        assert_eq!(String::from_utf8(output.stdout).unwrap(), "fake tool\n");
 
         let _ = std::fs::remove_dir_all(&base);
     }
