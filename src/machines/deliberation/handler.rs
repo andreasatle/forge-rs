@@ -48,6 +48,8 @@ pub struct DeliberationHandler<R> {
     /// Whether this deliberation is for a plan node or a work node.
     /// Forwarded to every Producer RoleRequest to select the correct policy field.
     node_kind: NodeKind,
+    /// Whether Work+Producer accepted output must include artifact file changes.
+    work_requires_artifact_update: bool,
     /// File changes accumulated across all tool loops run so far.
     accumulated_update: RefCell<Vec<FileChange>>,
     /// For plan nodes: optional structured validation applied to planner
@@ -88,19 +90,40 @@ struct ValidationRetry {
 pub type ProviderBackedDeliberationHandler<P> = DeliberationHandler<ProviderRoleRunner<P>>;
 
 impl<P> DeliberationHandler<ProviderRoleRunner<P>> {
-    /// Wrap a provider in a handler with no file tool context.
-    /// Defaults to `NodeKind::Work` for policy selection.
-    pub fn new(provider: P) -> Self {
+    /// Wrap a provider for explicit non-artifact Work.
+    ///
+    /// This is intended for demos/tests that want Producer/Critic/Referee
+    /// deliberation without file tools. Accepted Work from this handler is a
+    /// summary only and does not run artifact semantic validation.
+    pub fn new_non_artifact_work(provider: P) -> Self {
         Self {
             runner: ProviderRoleRunner::new(provider),
             artifact_view: None,
             node_kind: NodeKind::Work,
+            work_requires_artifact_update: false,
             accumulated_update: RefCell::new(Vec::new()),
             plan_validation_context: None,
         }
     }
 
-    /// Wrap a provider in a handler with an optional artifact view, an
+    /// Wrap a provider for explicit non-artifact Work with runner options.
+    pub fn new_non_artifact_work_with_policy(
+        provider: P,
+        max_tokens: u32,
+        policy: RolePolicy,
+    ) -> Self {
+        Self {
+            runner: ProviderRoleRunner::new_with_max_tokens(provider, max_tokens)
+                .with_policy(policy),
+            artifact_view: None,
+            node_kind: NodeKind::Work,
+            work_requires_artifact_update: false,
+            accumulated_update: RefCell::new(Vec::new()),
+            plan_validation_context: None,
+        }
+    }
+
+    /// Wrap a provider in a handler with an artifact view for Work nodes, an
     /// explicit token budget forwarded to the role runner, the node kind
     /// used to select the matching plan/work system prompt from the policy,
     /// the role policy to inject into the runner, and an optional context used
@@ -113,10 +136,16 @@ impl<P> DeliberationHandler<ProviderRoleRunner<P>> {
         policy: RolePolicy,
         plan_validation_context: Option<(String, Vec<String>, bool)>,
     ) -> Self {
+        assert!(
+            node_kind != NodeKind::Work || artifact_view.is_some(),
+            "artifact-producing Work handlers require an ArtifactView; use \
+             new_non_artifact_work for explicit summary-only Work"
+        );
         Self {
             runner: ProviderRoleRunner::new_with_max_tokens(provider, max_tokens)
                 .with_policy(policy),
             artifact_view,
+            work_requires_artifact_update: node_kind == NodeKind::Work,
             node_kind,
             accumulated_update: RefCell::new(Vec::new()),
             plan_validation_context: plan_validation_context.map(
@@ -201,7 +230,10 @@ impl<R: RoleRunner> DeliberationHandler<R> {
                 // For Work+Producer when file tools are available, enforce the
                 // semantic invariant that accepted output must include at least
                 // one artifact file change before routing to Critic/Referee.
-                if self.node_kind == NodeKind::Work && matches!(role, DeliberationRole::Producer) {
+                if self.node_kind == NodeKind::Work
+                    && self.work_requires_artifact_update
+                    && matches!(role, DeliberationRole::Producer)
+                {
                     return self.run_work_producer_with_validation(
                         role,
                         objective,
@@ -283,9 +315,13 @@ impl<R: RoleRunner> DeliberationHandler<R> {
                     return ProducerSemanticValidationDecision::Valid;
                 };
                 let Some(planner_out) = parse_planner_content(content) else {
-                    // Content did not parse as PlannerOutput — pass through as-is;
-                    // map_plan_output will handle the failure downstream.
-                    return ProducerSemanticValidationDecision::Valid;
+                    return ProducerSemanticValidationDecision::Retry(ValidationRetry {
+                        feedback_reason: planner_parse_failure_feedback(),
+                        failure_kind: FailureKind::PlannerValidationFailure,
+                        failure_reason:
+                            "planner validation failed: content is not valid PlannerOutput JSON"
+                                .to_string(),
+                    });
                 };
                 match validate_plan_output_for_context(&planner_out, context) {
                     Ok(()) => ProducerSemanticValidationDecision::Valid,
@@ -483,6 +519,12 @@ fn planner_validation_feedback(error: &PlannerValidationError) -> String {
             )
         }
     }
+}
+
+fn planner_parse_failure_feedback() -> String {
+    "Planner output must be valid PlannerOutput JSON with a top-level tasks array. \
+     Return only the structured plan JSON, not prose or markdown."
+        .to_string()
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -718,6 +760,7 @@ mod tests {
             runner,
             artifact_view: None,
             node_kind: NodeKind::Work,
+            work_requires_artifact_update: false,
             accumulated_update: RefCell::new(Vec::new()),
             plan_validation_context: None,
         };
@@ -833,6 +876,7 @@ mod tests {
             runner,
             artifact_view: Some(dummy_view()),
             node_kind: NodeKind::Plan,
+            work_requires_artifact_update: false,
             accumulated_update: RefCell::new(Vec::new()),
             plan_validation_context: None,
         };
@@ -863,6 +907,7 @@ mod tests {
             runner,
             artifact_view: Some(dummy_view()),
             node_kind: NodeKind::Work,
+            work_requires_artifact_update: true,
             accumulated_update: RefCell::new(Vec::new()),
             plan_validation_context: None,
         };
@@ -892,6 +937,7 @@ mod tests {
             runner,
             artifact_view: None,
             node_kind: NodeKind::Plan,
+            work_requires_artifact_update: false,
             accumulated_update: RefCell::new(Vec::new()),
             plan_validation_context: None,
         };
@@ -924,6 +970,7 @@ mod tests {
             runner: ScriptedRoleRunner::new(results),
             artifact_view: None,
             node_kind: NodeKind::Plan,
+            work_requires_artifact_update: false,
             accumulated_update: RefCell::new(Vec::new()),
             plan_validation_context: Some(PlanValidationContext {
                 top_objective: "create foo.rs".to_string(),
@@ -940,6 +987,7 @@ mod tests {
             runner: ScriptedRoleRunner::with_outputs(outputs),
             artifact_view: Some(dummy_view()),
             node_kind: NodeKind::Work,
+            work_requires_artifact_update: true,
             accumulated_update: RefCell::new(Vec::new()),
             plan_validation_context: None,
         }
@@ -1049,6 +1097,95 @@ mod tests {
                 }
             ),
             "valid retry must succeed; got {event:?}"
+        );
+    }
+
+    #[test]
+    fn unparseable_plan_triggers_revision_feedback() {
+        let handler = handler_with_validation(vec![
+            RoleResult::Accepted {
+                content: "Just do the work in one step.".to_string(),
+            },
+            RoleResult::Accepted {
+                content: VALID_SINGLE_TASK.to_string(),
+            },
+        ]);
+        let effect = run_role_effect(
+            DeliberationRole::Producer,
+            "create foo.rs",
+            None,
+            None,
+            vec![],
+        );
+        let event = handler.handle_effect(effect);
+
+        assert_eq!(
+            handler.runner.requests.borrow().len(),
+            2,
+            "unparseable planner content must trigger a producer retry"
+        );
+        let second_feedback = &handler.runner.requests.borrow()[1].feedback;
+        assert!(
+            second_feedback[0].reason.contains("PlannerOutput JSON"),
+            "retry feedback must explain the parse requirement; got: {}",
+            second_feedback[0].reason
+        );
+        assert!(
+            matches!(
+                event,
+                DeliberationEvent::RoleReturned {
+                    result: RoleResult::Accepted { .. },
+                    ..
+                }
+            ),
+            "valid retry must succeed; got {event:?}"
+        );
+    }
+
+    #[test]
+    fn repeated_unparseable_plans_exhaust_retries_before_review() {
+        let machine = ScriptedMachine {
+            handler: handler_with_validation(vec![
+                RoleResult::Accepted {
+                    content: "not json 1".to_string(),
+                },
+                RoleResult::Accepted {
+                    content: "not json 2".to_string(),
+                },
+                RoleResult::Accepted {
+                    content: "not json 3".to_string(),
+                },
+            ]),
+        };
+        let (output, machine) =
+            run_machine_with_telemetry(machine, ready("create foo.rs", 1), &NoopTelemetry);
+
+        assert!(
+            matches!(
+                output,
+                DeliberationTerminalOutput::Failed {
+                    kind: FailureKind::PlannerValidationFailure,
+                    ..
+                }
+            ),
+            "unparseable planner exhaustion must fail with typed kind; got {output:?}"
+        );
+        let roles: Vec<_> = machine
+            .handler
+            .runner
+            .requests
+            .borrow()
+            .iter()
+            .map(|request| request.role.clone())
+            .collect();
+        assert_eq!(
+            roles,
+            vec![
+                DeliberationRole::Producer,
+                DeliberationRole::Producer,
+                DeliberationRole::Producer,
+            ],
+            "Critic/Referee must not run until planner content parses"
         );
     }
 
@@ -1234,6 +1371,48 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "artifact-producing Work handlers require an ArtifactView")]
+    fn artifact_work_constructor_requires_artifact_view() {
+        let _handler = ProviderBackedDeliberationHandler::new_with_view(
+            ScriptedProvider::from_strs(&[]),
+            None,
+            1024,
+            NodeKind::Work,
+            crate::roles::policy::RolePolicy::default(),
+            None,
+        );
+    }
+
+    #[test]
+    fn explicit_non_artifact_work_does_not_use_artifact_semantic_validation() {
+        let handler = ProviderBackedDeliberationHandler::new_non_artifact_work(
+            ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"summary only"}"#]),
+        );
+        let event = handler.handle_effect(run_role_effect(
+            DeliberationRole::Producer,
+            "summarize something",
+            None,
+            None,
+            vec![],
+        ));
+
+        assert!(
+            matches!(
+                event,
+                DeliberationEvent::RoleReturned {
+                    result: RoleResult::Accepted { ref content },
+                    ..
+                } if content == "summary only"
+            ),
+            "non-artifact work must accept summary-only Producer output; got {event:?}"
+        );
+        assert!(
+            handler.take_artifact_update().is_none(),
+            "non-artifact work must not synthesize an artifact update"
+        );
+    }
+
+    #[test]
     fn repeated_empty_work_exhausts_semantic_validation_retries() {
         let handler = handler_with_work_validation(vec![
             accepted_output("empty work 1", Some(empty_update())),
@@ -1386,6 +1565,7 @@ mod tests {
             runner: ScriptedRoleRunnerWithUpdates::new(responses),
             artifact_view: Some(dummy_view()),
             node_kind: NodeKind::Work,
+            work_requires_artifact_update: true,
             accumulated_update: RefCell::new(Vec::new()),
             plan_validation_context: None,
         }

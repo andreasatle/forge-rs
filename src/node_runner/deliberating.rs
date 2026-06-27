@@ -202,17 +202,23 @@ fn run_with_provider<P: ProviderClient>(
     let initial_state = DeliberationState::Ready {
         request: delib_request,
     };
-    let machine = DeliberatingMachine {
-        handler: ProviderBackedDeliberationHandler::new_with_view(
+    let handler = if request.kind == NodeKind::Work && request.artifact_view.is_none() {
+        ProviderBackedDeliberationHandler::new_non_artifact_work_with_policy(
+            provider,
+            max_tokens,
+            policy.clone(),
+        )
+    } else {
+        ProviderBackedDeliberationHandler::new_with_view(
             provider,
             request.artifact_view.clone(),
             max_tokens,
             request.kind.clone(),
             policy.clone(),
             plan_validation_context,
-        ),
-        telemetry,
+        )
     };
+    let machine = DeliberatingMachine { handler, telemetry };
     let (output, machine) = run_machine_with_telemetry(machine, initial_state, telemetry);
     let tool_artifact_update = machine.take_artifact_update();
     map_output(output, request.kind, tool_artifact_update, telemetry)
@@ -759,7 +765,7 @@ mod tests {
     // --- new tests ---
 
     #[test]
-    fn worker_without_tool_update_does_not_create_output_txt() {
+    fn non_artifact_worker_without_tool_update_succeeds_without_artifact_update() {
         let provider = ScriptedProvider::from_strs(&[
             r#"{"status":"accepted","content":"output content"}"#,
             r#"{"status":"accepted","content":"output content"}"#,
@@ -767,25 +773,29 @@ mod tests {
         ]);
         let runner = DeliberatingNodeRunner::new(&provider, &provider);
         let result = runner.run_node(work_request("produce some output"), &NoopTelemetry);
-        let NodeRunResult::Failed(failure) = result else {
-            panic!("expected Failed");
+        let NodeRunResult::WorkAccepted(work_result) = result else {
+            panic!("expected WorkAccepted");
         };
+        assert_eq!(work_result.work.summary, "output content");
         assert!(
-            matches!(failure.kind, FailureKind::WorkSemanticValidationFailure),
-            "worker with no tool calls must fail semantic validation; got {:?}",
-            failure.kind
+            work_result.artifact_update.is_none(),
+            "explicit non-artifact Work must not synthesize an artifact update"
         );
     }
 
     #[test]
-    fn worker_summary_is_not_converted_to_artifact_update() {
+    fn artifact_worker_without_tool_update_fails_semantic_validation() {
+        let temp = TempDir::new("artifact-work-missing-update");
         let provider = ScriptedProvider::from_strs(&[
             r#"{"status":"accepted","content":"summary of the work done"}"#,
             r#"{"status":"accepted","content":"summary of the work done"}"#,
             r#"{"status":"accepted","content":"summary of the work done"}"#,
         ]);
         let runner = DeliberatingNodeRunner::new(&provider, &provider);
-        let result = runner.run_node(work_request("do some work"), &NoopTelemetry);
+        let result = runner.run_node(
+            work_request_with_artifact("do some work", &temp),
+            &NoopTelemetry,
+        );
         let NodeRunResult::Failed(failure) = result else {
             panic!("expected Failed");
         };

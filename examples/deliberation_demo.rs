@@ -59,7 +59,7 @@ fn main() {
 
     let llama = LlamaCppProvider::new("http://localhost:8080", 120);
     let retrying = RetryingProvider::new(llama, 3);
-    let handler = ProviderBackedDeliberationHandler::new(retrying);
+    let handler = ProviderBackedDeliberationHandler::new_non_artifact_work(retrying);
     let machine = LiveMachine { handler };
 
     let initial = DeliberationState::Ready {
