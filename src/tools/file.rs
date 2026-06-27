@@ -12,6 +12,12 @@ use crate::services::extract_json_object;
 pub struct FileToolPolicy {
     /// Whether write operations (`WriteFile`, `ReplaceText`, `DeleteFile`) are allowed.
     pub allow_writes: bool,
+    /// Optional allow-list of paths this executor may read or mutate.
+    ///
+    /// When present, path-bearing file tools must use one of these exact
+    /// relative paths. Path containment validation still runs before this
+    /// allow-list check.
+    pub allowed_paths: Option<Vec<String>>,
     /// Maximum bytes returned by a single `ReadFile` call before content is truncated.
     pub max_read_bytes: usize,
     /// Maximum bytes accepted by a single `WriteFile` or `ReplaceText` call.
@@ -25,6 +31,7 @@ impl Default for FileToolPolicy {
     fn default() -> Self {
         Self {
             allow_writes: true,
+            allowed_paths: None,
             max_read_bytes: 64 * 1024,
             max_write_bytes: 256 * 1024,
             max_observation_bytes: 16 * 1024,
@@ -163,6 +170,21 @@ impl FileToolExecutor {
         &self.policy
     }
 
+    fn validate_path_allowed(&self, path: &str) -> Result<(), String> {
+        validate_relative_path(path).map_err(|e| match (&self.policy.allowed_paths, e) {
+            (Some(allowed), ArtifactError::PathOutsideWorkspace) => {
+                allowed_target_guidance(allowed)
+            }
+            (_, e) => e.to_string(),
+        })?;
+        if let Some(allowed) = &self.policy.allowed_paths
+            && !allowed.iter().any(|target| target == path)
+        {
+            return Err(allowed_target_guidance(allowed));
+        }
+        Ok(())
+    }
+
     /// Executes a tool request and returns the result.
     ///
     /// Read operations (`ListFiles`, `ReadFile`) consult the overlay first and
@@ -180,32 +202,37 @@ impl FileToolExecutor {
                 },
             },
 
-            FileToolRequest::ReadFile { path } => match self.overlay_read_content(&path) {
-                Ok(content) => {
-                    if content.len() > self.policy.max_read_bytes {
-                        let truncated =
-                            truncate_to_char_boundary(&content, self.policy.max_read_bytes);
-                        FileToolResponse::FileContents {
-                            path,
-                            content: format!(
-                                "{}\n[truncated after {} bytes]",
-                                truncated, self.policy.max_read_bytes,
-                            ),
+            FileToolRequest::ReadFile { path } => {
+                if let Err(reason) = self.validate_path_allowed(&path) {
+                    return FileToolResponse::Failed { reason };
+                }
+                match self.overlay_read_content(&path) {
+                    Ok(content) => {
+                        if content.len() > self.policy.max_read_bytes {
+                            let truncated =
+                                truncate_to_char_boundary(&content, self.policy.max_read_bytes);
+                            FileToolResponse::FileContents {
+                                path,
+                                content: format!(
+                                    "{}\n[truncated after {} bytes]",
+                                    truncated, self.policy.max_read_bytes,
+                                ),
+                            }
+                        } else {
+                            FileToolResponse::FileContents { path, content }
                         }
-                    } else {
-                        FileToolResponse::FileContents { path, content }
+                    }
+                    Err(e) => {
+                        let msg = e.to_string();
+                        let reason = if msg.contains("utf-8") || msg.contains("utf8") {
+                            "binary or non-UTF-8 file cannot be read as text".to_string()
+                        } else {
+                            msg
+                        };
+                        FileToolResponse::Failed { reason }
                     }
                 }
-                Err(e) => {
-                    let msg = e.to_string();
-                    let reason = if msg.contains("utf-8") || msg.contains("utf8") {
-                        "binary or non-UTF-8 file cannot be read as text".to_string()
-                    } else {
-                        msg
-                    };
-                    FileToolResponse::Failed { reason }
-                }
-            },
+            }
 
             FileToolRequest::WriteFile { path, content } => {
                 if !self.policy.allow_writes {
@@ -222,10 +249,8 @@ impl FileToolExecutor {
                         ),
                     };
                 }
-                if let Err(e) = validate_relative_path(&path) {
-                    return FileToolResponse::Failed {
-                        reason: e.to_string(),
-                    };
+                if let Err(reason) = self.validate_path_allowed(&path) {
+                    return FileToolResponse::Failed { reason };
                 }
                 let description = format!("write {path}");
                 self.overlay
@@ -251,10 +276,8 @@ impl FileToolExecutor {
                         ),
                     };
                 }
-                if let Err(e) = validate_relative_path(&path) {
-                    return FileToolResponse::Failed {
-                        reason: e.to_string(),
-                    };
+                if let Err(reason) = self.validate_path_allowed(&path) {
+                    return FileToolResponse::Failed { reason };
                 }
                 // Read overlay-aware content to validate and apply the replacement now,
                 // so subsequent reads within this session see the updated state.
@@ -300,10 +323,8 @@ impl FileToolExecutor {
                         reason: "write operations are not permitted for this role".to_string(),
                     };
                 }
-                if let Err(e) = validate_relative_path(&path) {
-                    return FileToolResponse::Failed {
-                        reason: e.to_string(),
-                    };
+                if let Err(reason) = self.validate_path_allowed(&path) {
+                    return FileToolResponse::Failed { reason };
                 }
                 let description = format!("delete {path}");
                 self.overlay
@@ -318,6 +339,13 @@ impl FileToolExecutor {
     pub fn into_update(self) -> ArtifactUpdate {
         self.update
     }
+}
+
+fn allowed_target_guidance(allowed: &[String]) -> String {
+    format!(
+        "Use a relative path from the allowed target list: {}",
+        allowed.join(", ")
+    )
 }
 
 /// Truncates `s` to at most `max_bytes` bytes, staying at a UTF-8 character
@@ -529,6 +557,50 @@ mod tests {
             matches!(&update.changes[0], FileChange::Write { path, .. } if path == "output.txt"),
             "recorded change must be a Write to output.txt"
         );
+    }
+
+    #[test]
+    fn absolute_read_path_with_allowed_targets_returns_target_guidance() {
+        let (_temp, view) = make_view("absolute-read-target-guidance");
+        let policy = FileToolPolicy {
+            allowed_paths: Some(vec!["main.py".to_string()]),
+            ..FileToolPolicy::default()
+        };
+        let mut executor = FileToolExecutor::with_policy(view, policy);
+
+        let response = executor.execute(FileToolRequest::ReadFile {
+            path: "/tmp/main.py".to_string(),
+        });
+
+        assert_eq!(
+            response,
+            FileToolResponse::Failed {
+                reason: "Use a relative path from the allowed target list: main.py".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn producer_cannot_write_untargeted_file() {
+        let policy = FileToolPolicy {
+            allow_writes: true,
+            allowed_paths: Some(vec!["main.py".to_string()]),
+            ..FileToolPolicy::default()
+        };
+        let mut executor = FileToolExecutor::with_policy(dummy_view(), policy);
+
+        let response = executor.execute(FileToolRequest::WriteFile {
+            path: "other.py".to_string(),
+            content: "print('no')\n".to_string(),
+        });
+
+        assert_eq!(
+            response,
+            FileToolResponse::Failed {
+                reason: "Use a relative path from the allowed target list: main.py".to_string(),
+            }
+        );
+        assert!(executor.into_update().changes.is_empty());
     }
 
     // ── policy: critic write is rejected ────────────────────────────────────

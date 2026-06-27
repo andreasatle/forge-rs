@@ -1382,6 +1382,43 @@ mod tests {
     }
 
     #[test]
+    fn reviewer_can_read_staged_target_file_with_relative_path() {
+        let temp = TempDir::new("reviewer-staged-target");
+        let view = make_artifact_view(&temp, "main.py", "print('old')\n");
+
+        let provider = ScriptedProvider::from_strs(&[
+            r#"{"tool":"write_file","path":"main.py","content":"print('new')\n"}"#,
+            r#"{"status":"accepted","content":"updated main.py"}"#,
+            r#"{"tool":"read_file","path":"main.py"}"#,
+            r#"{"status":"accepted","content":"main.py contains the staged update"}"#,
+            r#"{"tool":"read_file","path":"main.py"}"#,
+            r#"{"status":"accepted","content":"approved staged main.py"}"#,
+        ]);
+        let runner = DeliberatingNodeRunner::new(&provider, &provider);
+        let request = NodeRunRequest {
+            kind: NodeKind::Work,
+            objective: "Update the program.\n\nTarget files: main.py".to_string(),
+            model_tier: ModelTier::Cheap,
+            attempt: 0,
+            artifact_view: Some(view),
+        };
+
+        let result = runner.run_node(request, &NoopTelemetry);
+
+        let NodeRunResult::WorkAccepted(work) = result else {
+            panic!("expected WorkAccepted");
+        };
+        let update = work
+            .artifact_update
+            .expect("producer write_file must produce artifact update");
+        assert!(
+            matches!(&update.changes[0], FileChange::Write { path, .. } if path == "main.py"),
+            "staged target write must be preserved; got {:?}",
+            update.changes
+        );
+    }
+
+    #[test]
     fn producer_read_file_does_not_satisfy_critic_read_requirement() {
         // The read_file_executed flag is scoped per role invocation.
         // Even if the Producer successfully read a file, the Critic's own

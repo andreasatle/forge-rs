@@ -316,7 +316,7 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
         let subsource = role_subsource(&request.role);
         let has_tools = request.tool_context.is_some();
 
-        let policy = file_tool_policy_for_role(&request.role);
+        let policy = file_tool_policy_for_request(&request);
 
         let system = match (&request.node_kind, &request.role) {
             (NodeKind::Plan, DeliberationRole::Producer) => &self.policy.planner_producer_system,
@@ -800,6 +800,39 @@ fn file_tool_policy_for_role(role: &DeliberationRole) -> FileToolPolicy {
     }
 }
 
+fn file_tool_policy_for_request(request: &RoleRequest) -> FileToolPolicy {
+    let mut policy = file_tool_policy_for_role(&request.role);
+    if request.node_kind == NodeKind::Work {
+        let targets = declared_target_files(&request.objective);
+        if !targets.is_empty() {
+            policy.allowed_paths = Some(targets);
+        }
+    }
+    policy
+}
+
+fn declared_target_files(objective: &str) -> Vec<String> {
+    let Some(line) = objective
+        .lines()
+        .rev()
+        .find(|line| line.trim_start().starts_with("Target files:"))
+    else {
+        return Vec::new();
+    };
+    let Some((_, targets)) = line.split_once(':') else {
+        return Vec::new();
+    };
+    let mut paths = Vec::new();
+    for raw in targets.split(',') {
+        let target = raw.trim();
+        if target.is_empty() || paths.iter().any(|p| p == target) {
+            continue;
+        }
+        paths.push(target.to_string());
+    }
+    paths
+}
+
 /// Serialises a [`FileToolResponse`] as a compact JSON observation string,
 /// capped to `max_observation_bytes`.
 fn format_tool_observation(response: &FileToolResponse, max_observation_bytes: usize) -> String {
@@ -871,17 +904,28 @@ fn format_observation_section(observation: &str, mutation_recorded: bool) -> Str
 /// when `policy.allow_writes` is true, keeping the advertised schema consistent
 /// with what the executor will actually permit.
 fn render_tool_section(policy: &FileToolPolicy) -> String {
+    let example_path = policy
+        .allowed_paths
+        .as_ref()
+        .and_then(|paths| paths.first())
+        .map(String::as_str)
+        .unwrap_or("path/to/file.txt");
     let mut s = String::from(
         "Available file tools:\n\
-         {\"tool\":\"list_files\"}\n\
-         {\"tool\":\"read_file\",\"path\":\"path/to/file.txt\"}\n",
+         {\"tool\":\"list_files\"}\n",
     );
+    if let Some(allowed) = &policy.allowed_paths {
+        s.push_str(&format!("Allowed target files: {}\n", allowed.join(", ")));
+    }
+    s.push_str(&format!(
+        "{{\"tool\":\"read_file\",\"path\":\"{example_path}\"}}\n"
+    ));
     if policy.allow_writes {
-        s.push_str(
-            "{\"tool\":\"write_file\",\"path\":\"$TARGET_FILE\",\"content\":\"$FILE_CONTENT\"}\n\
-             {\"tool\":\"replace_text\",\"path\":\"output.txt\",\"old\":\"$EXACT_EXISTING_TEXT\",\"new\":\"$REPLACEMENT_TEXT\"}\n\
-             {\"tool\":\"delete_file\",\"path\":\"old.txt\"}\n",
-        );
+        s.push_str(&format!(
+            "{{\"tool\":\"write_file\",\"path\":\"{example_path}\",\"content\":\"$FILE_CONTENT\"}}\n\
+             {{\"tool\":\"replace_text\",\"path\":\"{example_path}\",\"old\":\"$EXACT_EXISTING_TEXT\",\"new\":\"$REPLACEMENT_TEXT\"}}\n\
+             {{\"tool\":\"delete_file\",\"path\":\"{example_path}\"}}\n"
+        ));
     }
     s.push_str(
         "You may return either:\n\
@@ -3576,6 +3620,89 @@ mod tests {
         assert!(
             ro_section.contains("read_file"),
             "allow_writes=false must still render read_file"
+        );
+    }
+
+    #[test]
+    fn tool_prompt_for_target_main_py_shows_exact_read_file_path() {
+        let policy = FileToolPolicy {
+            allowed_paths: Some(vec!["main.py".to_string()]),
+            ..FileToolPolicy::default()
+        };
+
+        let section = super::render_tool_section(&policy);
+
+        assert!(
+            section.contains(r#"{"tool":"read_file","path":"main.py"}"#),
+            "target-aware tool section must show exact read_file path; got:\n{section}"
+        );
+        assert!(
+            !section.contains(r#"{"tool":"read_file","path":"path/to/file.txt"}"#),
+            "target-aware tool section must not show generic read_file placeholder; got:\n{section}"
+        );
+    }
+
+    #[test]
+    fn work_role_prompt_derives_tool_targets_from_objective() {
+        let provider =
+            ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"completed"}"#]);
+        let runner = ProviderRoleRunner::new(&provider);
+
+        runner.run_role(
+            RoleRequest {
+                role: DeliberationRole::Producer,
+                objective: "Update the program.\n\nTarget files: main.py".to_string(),
+                producer_content: None,
+                critic_content: None,
+                feedback: vec![],
+                node_kind: NodeKind::Work,
+                tool_context: Some(RoleToolContext {
+                    artifact_view: Box::new(dummy_view()),
+                }),
+            },
+            &crate::telemetry::NoopTelemetry,
+        );
+
+        let prompt = &provider.requests.borrow()[0].prompt;
+        assert!(
+            prompt.contains(r#"{"tool":"read_file","path":"main.py"}"#),
+            "Work prompt must render declared target in read_file example; got:\n{prompt}"
+        );
+        assert!(
+            prompt.contains(r#"{"tool":"write_file","path":"main.py""#),
+            "Work prompt must render declared target in write_file example; got:\n{prompt}"
+        );
+    }
+
+    #[test]
+    fn work_reviewer_prompt_guides_read_file_to_declared_target() {
+        let provider =
+            ScriptedProvider::from_strs(&[r#"{"status":"rejected","reason":"needs work"}"#]);
+        let runner = ProviderRoleRunner::new(&provider);
+
+        runner.run_role(
+            RoleRequest {
+                role: DeliberationRole::Critic,
+                objective: "Review the update.\n\nTarget files: main.py".to_string(),
+                producer_content: Some("updated main.py".to_string()),
+                critic_content: None,
+                feedback: vec![],
+                node_kind: NodeKind::Work,
+                tool_context: Some(RoleToolContext {
+                    artifact_view: Box::new(dummy_view()),
+                }),
+            },
+            &crate::telemetry::NoopTelemetry,
+        );
+
+        let prompt = &provider.requests.borrow()[0].prompt;
+        assert!(
+            prompt.contains(r#"{"tool":"read_file","path":"main.py"}"#),
+            "Work reviewer prompt must guide read_file to declared target; got:\n{prompt}"
+        );
+        assert!(
+            !prompt.contains("write_file"),
+            "Work reviewer prompt must remain read-only; got:\n{prompt}"
         );
     }
 
