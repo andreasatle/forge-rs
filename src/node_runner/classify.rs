@@ -36,6 +36,7 @@ use crate::machines::scheduler::RecoveryAction;
 /// | temporarily unavailable          | Retry        |
 /// | rate limit / 429                 | Retry        |
 /// | provider error (retryable)       | Retry        |
+/// | protocol failure after write     | Retry        |
 /// | task too large                   | Split        |
 /// | objective too broad              | Split        |
 /// | needs decomposition              | Split        |
@@ -75,6 +76,15 @@ pub fn classify_deliberation_failure(reason: &str) -> RecoveryAction {
     {
         return RecoveryAction::Retry {
             message: format!("transient failure: {reason}"),
+        };
+    }
+
+    // 2a. Protocol failures after a successful file mutation — the write was
+    //     recorded but the model could not return a valid final response.
+    //     Retry the node so the producer can re-execute the write and confirm.
+    if lower.contains("protocol failure after write") {
+        return RecoveryAction::Retry {
+            message: format!("protocol retry after write: {reason}"),
         };
     }
 
@@ -188,6 +198,26 @@ mod tests {
     fn provider_error_retryable_classified_as_retry() {
         assert!(matches!(
             classify_deliberation_failure("provider error (Retryable): upstream timeout"),
+            RecoveryAction::Retry { .. }
+        ));
+    }
+
+    #[test]
+    fn protocol_failure_after_write_classified_as_retry() {
+        assert!(matches!(
+            classify_deliberation_failure(
+                "protocol failure after write: placeholder tool request: path contains placeholder"
+            ),
+            RecoveryAction::Retry { .. }
+        ));
+    }
+
+    #[test]
+    fn protocol_failure_after_write_plain_parse_error_classified_as_retry() {
+        assert!(matches!(
+            classify_deliberation_failure(
+                "protocol failure after write: role response must start with a JSON object"
+            ),
             RecoveryAction::Retry { .. }
         ));
     }

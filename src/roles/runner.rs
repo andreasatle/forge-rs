@@ -470,19 +470,36 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                         };
                     }
                     Err(parse_error) => {
+                        // Replace the generic serde error with a more informative
+                        // message when the model echoed a tool-section placeholder
+                        // (e.g. $TARGET_FILE / $FILE_CONTENT) verbatim.
+                        let placeholder_echo = detect_placeholder_tool_echo(trimmed);
+                        let effective_error: String = match &placeholder_echo {
+                            Some(pe) => format!("placeholder tool request: {pe}"),
+                            None => parse_error,
+                        };
                         telemetry.record(TelemetryRecord::new_with_subsource(
                             "RoleMachine",
                             subsource,
                             TelemetryEvent::ParseFailed {
                                 raw_response: response.content.clone(),
-                                parse_error: parse_error.clone(),
+                                parse_error: effective_error.clone(),
                                 attempt_count: protocol_attempt,
                             },
                         ));
                         if protocol_attempt > MAX_PROTOCOL_RETRIES {
+                            // A parse failure after completion pressure means the
+                            // write was already recorded but the model could not
+                            // confirm it. Label the reason so the node-runner
+                            // classifier can treat it as Retry rather than Terminal.
+                            let terminal_reason = if final_response_only {
+                                format!("protocol failure after write: {effective_error}")
+                            } else {
+                                effective_error
+                            };
                             return RoleRunOutput {
                                 result: RoleResult::Failed {
-                                    reason: parse_error,
+                                    reason: terminal_reason,
                                 },
                                 artifact_update: extract_update(&mut executor),
                             };
@@ -492,7 +509,7 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                             "RoleMachine",
                             subsource,
                             TelemetryEvent::ProtocolRetry {
-                                parse_error: parse_error.clone(),
+                                parse_error: effective_error.clone(),
                                 attempt_count: next_attempt,
                             },
                         ));
@@ -500,10 +517,10 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                             render_completion_pressure_retry_prompt(
                                 &core_prompt,
                                 &observation_suffix,
-                                &parse_error,
+                                &effective_error,
                             )
                         } else {
-                            render_retry_prompt(&base_prompt, &parse_error)
+                            render_retry_prompt(&base_prompt, &effective_error)
                         };
                         protocol_attempt = next_attempt;
                     }
@@ -749,6 +766,21 @@ fn format_repeated_observation_coercion_section(observation: &str) -> String {
          {{\"status\":\"rejected\",\"reason\":\"$REASON_FOR_REJECTION\"}}\n\
          Do not copy example values. Replace them with task-specific content."
     )
+}
+
+/// Returns `Some(err_msg)` when `s` contains a JSON object that `parse_tool_request`
+/// recognises as a tool-request form but rejects because it contains placeholder
+/// values (e.g. `$TARGET_FILE`, `$FILE_CONTENT`).
+///
+/// When `Some` is returned the caller should use the returned message as the
+/// effective parse error, replacing the misleading serde "missing field `status`"
+/// error that would otherwise be shown to the model on retry.
+fn detect_placeholder_tool_echo(s: &str) -> Option<String> {
+    let json = extract_json_object(s)?;
+    match parse_tool_request(json) {
+        Err(e) if e.contains("placeholder") => Some(e),
+        _ => None,
+    }
 }
 
 /// Builds a protocol-retry prompt for use in completion-pressure mode.
@@ -2116,6 +2148,92 @@ mod tests {
             provider.requests.borrow().len(),
             3,
             "all 3 provider calls must be made"
+        );
+    }
+
+    // ── placeholder tool echo tests ─────────────────────────────────────────
+
+    #[test]
+    fn placeholder_tool_echo_produces_informative_error_in_retry_prompt() {
+        // The model echoes the write_file example verbatim with $TARGET_FILE /
+        // $FILE_CONTENT. The retry prompt must mention "placeholder" so the model
+        // understands WHY its response was rejected, not just that it was invalid.
+        let provider = ScriptedProvider::from_strs(&[
+            r#"{"tool":"write_file","path":"$TARGET_FILE","content":"$FILE_CONTENT"}"#,
+            r#"{"status":"accepted","content":"wrote the actual file"}"#,
+        ]);
+        let runner = ProviderRoleRunner::new(&provider);
+
+        let output = runner.run_role(
+            RoleRequest {
+                role: DeliberationRole::Producer,
+                objective: "write a file".to_string(),
+                producer_content: None,
+                critic_content: None,
+                feedback: vec![],
+                node_kind: NodeKind::Work,
+                tool_context: Some(RoleToolContext {
+                    artifact_view: Box::new(dummy_view()),
+                }),
+            },
+            &crate::telemetry::NoopTelemetry,
+        );
+
+        assert!(
+            matches!(output.result, RoleResult::Accepted { .. }),
+            "must recover on retry; got {:?}",
+            output.result
+        );
+        let requests = provider.requests.borrow();
+        assert_eq!(requests.len(), 2, "provider must be called twice");
+        let retry_prompt = &requests[1].prompt;
+        assert!(
+            retry_prompt.contains("placeholder"),
+            "retry prompt must mention 'placeholder' so the model knows why it was rejected; got:\n{retry_prompt}"
+        );
+    }
+
+    #[test]
+    fn protocol_failure_after_write_reason_is_prefixed() {
+        // Producer calls write_file successfully (completion pressure active), then
+        // exhausts all protocol retries returning bad JSON. The terminal failure
+        // reason must start with "protocol failure after write:" so the classifier
+        // can treat it as Retry rather than Terminal.
+        let provider = ScriptedProvider::from_strs(&[
+            r#"{"tool":"write_file","path":"result.txt","content":"done"}"#,
+            "not json at all",
+            "also not json",
+            "still not json",
+        ]);
+        let runner = ProviderRoleRunner::new(&provider);
+
+        let output = runner.run_role(
+            RoleRequest {
+                role: DeliberationRole::Producer,
+                objective: "write and confirm".to_string(),
+                producer_content: None,
+                critic_content: None,
+                feedback: vec![],
+                node_kind: NodeKind::Work,
+                tool_context: Some(RoleToolContext {
+                    artifact_view: Box::new(dummy_view()),
+                }),
+            },
+            &crate::telemetry::NoopTelemetry,
+        );
+
+        let reason = match &output.result {
+            RoleResult::Failed { reason } => reason.clone(),
+            other => panic!("expected Failed; got {other:?}"),
+        };
+        assert!(
+            reason.starts_with("protocol failure after write:"),
+            "terminal reason must start with 'protocol failure after write:'; got: {reason}"
+        );
+        assert_eq!(
+            provider.requests.borrow().len(),
+            4,
+            "write_file + 3 failed final-response attempts"
         );
     }
 
