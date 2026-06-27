@@ -684,9 +684,13 @@ mod tests {
         let temp = TempDir::new("prompt-context");
         let view = make_artifact_view(&temp, "hello.txt", "world\n");
 
+        // Critic and Referee are Work reviewers and must call read_file before
+        // accepting.  Add read_file("hello.txt") calls for each reviewer.
         let provider = RecordingProvider::from_strs(&[
             r#"{"status":"accepted","content":"draft output"}"#,
+            r#"{"tool":"read_file","path":"hello.txt"}"#,
             r#"{"status":"accepted","content":"review ok"}"#,
+            r#"{"tool":"read_file","path":"hello.txt"}"#,
             r#"{"status":"accepted","content":"approved"}"#,
         ]);
         let runner = DeliberatingNodeRunner::new(&provider, &provider);
@@ -735,11 +739,13 @@ mod tests {
         let view = make_artifact_view(&temp, "hello.txt", "world\n");
 
         // Producer: first call returns write_file, second returns accepted.
-        // Critic and Referee return simple accepted.
+        // Critic and Referee must call read_file before accepting (enforcement).
         let provider = ScriptedProvider::from_strs(&[
             r#"{"tool":"write_file","path":"result.txt","content":"done"}"#,
             r#"{"status":"accepted","content":"I wrote result.txt"}"#,
+            r#"{"tool":"read_file","path":"hello.txt"}"#,
             r#"{"status":"accepted","content":"looks good"}"#,
+            r#"{"tool":"read_file","path":"hello.txt"}"#,
             r#"{"status":"accepted","content":"approved"}"#,
         ]);
         let runner = DeliberatingNodeRunner::new(&provider, &provider);
@@ -1159,6 +1165,53 @@ mod tests {
             cheap.captured_max_tokens(),
             None,
             "cheap provider must not be called for a strong-tier request"
+        );
+    }
+
+    // ── read-file enforcement regression test ─────────────────────────────────
+
+    #[test]
+    fn referee_reads_file_and_rejects_default_content_causes_node_failure() {
+        // Regression for: Referee accepted even though main.py still contained the
+        // default uv init program instead of the required haiku.
+        //
+        // The Referee must call read_file and inspect file contents before deciding.
+        // When the file contents do not satisfy the objective the Referee must reject.
+        // Two rounds of rejection (max_revisions = 1) exhaust the revision budget
+        // and the node must fail — WorkAccepted must never be returned.
+        let temp = TempDir::new("referee-default-content");
+        let view = make_artifact_view(&temp, "main.py", r#"print("Hello from forge-lang-init!")"#);
+
+        // Round 1: Producer claims done, Critic reads and accepts, Referee reads
+        // main.py, sees default content, and rejects.
+        // Round 2: same sequence; budget is now exhausted → node fails.
+        let provider = ScriptedProvider::from_strs(&[
+            // Round 1
+            r#"{"status":"accepted","content":"I wrote the haiku"}"#,
+            r#"{"tool":"read_file","path":"main.py"}"#,
+            r#"{"status":"accepted","content":"file is present"}"#,
+            r#"{"tool":"read_file","path":"main.py"}"#,
+            r#"{"status":"rejected","reason":"main.py still has default init content, not a haiku"}"#,
+            // Round 2
+            r#"{"status":"accepted","content":"I wrote the haiku"}"#,
+            r#"{"tool":"read_file","path":"main.py"}"#,
+            r#"{"status":"accepted","content":"file is present"}"#,
+            r#"{"tool":"read_file","path":"main.py"}"#,
+            r#"{"status":"rejected","reason":"main.py still has default init content, not a haiku"}"#,
+        ]);
+        let runner = DeliberatingNodeRunner::new(&provider, &provider);
+        let request = NodeRunRequest {
+            kind: NodeKind::Work,
+            objective: "Write a haiku about Python state machines in main.py".to_string(),
+            model_tier: ModelTier::Cheap,
+            attempt: 0,
+            artifact_view: Some(view),
+        };
+        let result = runner.run_node(request, &NoopTelemetry);
+
+        assert!(
+            matches!(result, NodeRunResult::Failed(_)),
+            "node must fail when Referee rejects incorrect file contents"
         );
     }
 }

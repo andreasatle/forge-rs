@@ -15,7 +15,9 @@ use crate::providers::{ProviderClient, ProviderRequest, StructuredOutput};
 use crate::roles::policy::RolePolicy;
 use crate::services::extract_json_object;
 use crate::telemetry::{TelemetryEvent, TelemetryRecord, TelemetrySink};
-use crate::tools::{FileToolExecutor, FileToolPolicy, FileToolResponse, parse_tool_request};
+use crate::tools::{
+    FileToolExecutor, FileToolPolicy, FileToolRequest, FileToolResponse, parse_tool_request,
+};
 
 /// A read-only view of the artifact made available to role tool loops.
 pub struct RoleToolContext {
@@ -192,6 +194,13 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
         let mut seen_tool_fingerprints: std::collections::HashSet<String> =
             std::collections::HashSet::new();
         let mut repeated_observation_coercion_active = false;
+        // Work-node Critic and Referee must call read_file at least once before
+        // accepting. list_files alone is insufficient — the model must inspect
+        // actual file contents. This enforcement only applies when tools are
+        // available; plan-node reviewers judge structure, not file contents.
+        let requires_file_read =
+            request.node_kind == NodeKind::Work && is_read_only_reviewer && has_tools;
+        let mut read_file_executed = false;
 
         loop {
             telemetry.record(TelemetryRecord::new_with_subsource(
@@ -303,10 +312,16 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                     };
                 }
 
+                let is_read_file_req = matches!(&tool_req, FileToolRequest::ReadFile { .. });
                 let (observation, mutation_recorded) = match &mut executor {
                     Some(exec) => {
                         let max_obs = exec.policy().max_observation_bytes;
                         let response = exec.execute(tool_req);
+                        if is_read_file_req
+                            && matches!(response, FileToolResponse::FileContents { .. })
+                        {
+                            read_file_executed = true;
+                        }
                         let recorded = matches!(response, FileToolResponse::UpdateRecorded { .. });
                         (format_tool_observation(&response, max_obs), recorded)
                     }
@@ -458,6 +473,47 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                 // Standard role result path for Worker, Critic, and Referee.
                 match try_parse_role_response(&response.content) {
                     Ok(result) => {
+                        // Enforce that Work-node reviewers read at least one file before
+                        // accepting. list_files alone is not sufficient — the reviewer
+                        // must inspect actual file contents to verify the objective.
+                        if requires_file_read
+                            && !read_file_executed
+                            && matches!(result, RoleResult::Accepted { .. })
+                        {
+                            let parse_error = "reviewer accepted without reading any file; \
+                                use read_file to inspect the work before deciding"
+                                .to_string();
+                            telemetry.record(TelemetryRecord::new_with_subsource(
+                                "RoleMachine",
+                                subsource,
+                                TelemetryEvent::ParseFailed {
+                                    raw_response: response.content.clone(),
+                                    parse_error: parse_error.clone(),
+                                    attempt_count: protocol_attempt,
+                                },
+                            ));
+                            if protocol_attempt > MAX_PROTOCOL_RETRIES {
+                                return RoleRunOutput {
+                                    result: RoleResult::Failed {
+                                        reason: parse_error,
+                                    },
+                                    artifact_update: extract_update(&mut executor),
+                                };
+                            }
+                            let next_attempt = protocol_attempt + 1;
+                            telemetry.record(TelemetryRecord::new_with_subsource(
+                                "RoleMachine",
+                                subsource,
+                                TelemetryEvent::ProtocolRetry {
+                                    parse_error: parse_error.clone(),
+                                    attempt_count: next_attempt,
+                                },
+                            ));
+                            current_prompt =
+                                render_reviewer_must_read_prompt(&base_prompt, &parse_error);
+                            protocol_attempt = next_attempt;
+                            continue;
+                        }
                         telemetry.record(TelemetryRecord::new_with_subsource(
                             "RoleMachine",
                             subsource,
@@ -643,7 +699,7 @@ fn render_tool_section(policy: &FileToolPolicy) -> String {
     let mut s = String::from(
         "Available file tools:\n\
          {\"tool\":\"list_files\"}\n\
-         {\"tool\":\"read_file\",\"path\":\"README.md\"}\n",
+         {\"tool\":\"read_file\",\"path\":\"path/to/file.txt\"}\n",
     );
     if policy.allow_writes {
         s.push_str(
@@ -678,6 +734,16 @@ fn render_retry_prompt(original_prompt: &str, parse_error: &str) -> String {
          {{\"status\":\"accepted\",\"content\":\"$RESPONSE_SUMMARY\"}}\n\
          {{\"status\":\"rejected\",\"reason\":\"$REASON_FOR_REJECTION\"}}\n\
          Do not copy example values. Replace them with task-specific content."
+    )
+}
+
+fn render_reviewer_must_read_prompt(original_prompt: &str, parse_error: &str) -> String {
+    format!(
+        "{original_prompt}\n\n\
+         Your previous response tried to accept without reading any file: {parse_error}\n\
+         You must use read_file to inspect the relevant file contents before deciding.\n\
+         Read the specific file(s) the producer was expected to modify, then return your decision.\n\
+         Return a tool request to read the relevant file(s)."
     )
 }
 
@@ -2650,8 +2716,11 @@ mod tests {
 
     #[test]
     fn referee_prompt_omits_write_tools() {
-        let provider =
-            ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"approved"}"#]);
+        // Use a rejection response so the read-file enforcement does not fire
+        // (enforcement only applies when the reviewer accepts).
+        let provider = ScriptedProvider::from_strs(&[
+            r#"{"status":"rejected","reason":"content does not meet requirements"}"#,
+        ]);
         let runner = ProviderRoleRunner::new(&provider);
 
         runner.run_role(
@@ -4677,8 +4746,13 @@ mod tests {
     #[test]
     fn referee_not_affected_by_completion_pressure() {
         // Referee role: CP must never activate (Referee is not Producer).
-        let provider =
-            ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"approved"}"#]);
+        // Referee must read a file before accepting (enforcement); use a real
+        // view so read_file("hello.txt") returns FileContents.
+        let (_temp, view) = make_view("referee-no-cp");
+        let provider = ScriptedProvider::from_strs(&[
+            r#"{"tool":"read_file","path":"hello.txt"}"#,
+            r#"{"status":"accepted","content":"approved"}"#,
+        ]);
         let runner = ProviderRoleRunner::new(&provider);
 
         let output = runner.run_role(
@@ -4690,7 +4764,7 @@ mod tests {
                 feedback: vec![],
                 node_kind: NodeKind::Work,
                 tool_context: Some(RoleToolContext {
-                    artifact_view: Box::new(dummy_view()),
+                    artifact_view: Box::new(view),
                 }),
             },
             &crate::telemetry::NoopTelemetry,
@@ -4796,9 +4870,15 @@ mod tests {
 
     #[test]
     fn referee_enters_decision_pressure_after_max_read_only_steps() {
-        let mut responses: Vec<&str> = vec![r#"{"tool":"list_files"}"#; MAX_READ_ONLY_TOOL_STEPS];
-        responses.push(r#"{"status":"accepted","content":"reviewed all evidence and approved"}"#);
-        let provider = ScriptedProvider::from_strs(&responses);
+        // Referee reads a file (step 1) then lists files (step 2 → DP fires),
+        // then accepts.  The read_file call satisfies the file-read enforcement
+        // and the tool-step count still hits MAX_READ_ONLY_TOOL_STEPS.
+        let (_temp, view) = make_view("referee-dp-steps");
+        let provider = ScriptedProvider::from_strs(&[
+            r#"{"tool":"read_file","path":"hello.txt"}"#,
+            r#"{"tool":"list_files"}"#,
+            r#"{"status":"accepted","content":"reviewed all evidence and approved"}"#,
+        ]);
         let runner = ProviderRoleRunner::new(&provider);
 
         let output = runner.run_role(
@@ -4810,7 +4890,7 @@ mod tests {
                 feedback: vec![],
                 node_kind: NodeKind::Work,
                 tool_context: Some(RoleToolContext {
-                    artifact_view: Box::new(dummy_view()),
+                    artifact_view: Box::new(view),
                 }),
             },
             &crate::telemetry::NoopTelemetry,
@@ -5014,5 +5094,151 @@ mod tests {
                 "second prompt must not contain decision-pressure text; got:\n{second_prompt}"
             );
         }
+    }
+
+    // ── read-file enforcement tests ───────────────────────────────────────────
+
+    #[test]
+    fn work_reviewer_must_read_file_before_accepting() {
+        // Reviewer (Critic) first accepts without reading; enforcement fires and
+        // a retry prompt is issued.  On the retry the reviewer calls read_file,
+        // then accepts.  The final result must be Accepted.
+        use crate::telemetry::{TelemetryEvent, VecTelemetry};
+
+        let (_temp, view) = make_view("reviewer-read-enforce");
+        let provider = ScriptedProvider::from_strs(&[
+            r#"{"status":"accepted","content":"looks good"}"#,
+            r#"{"tool":"read_file","path":"hello.txt"}"#,
+            r#"{"status":"accepted","content":"confirmed after reading"}"#,
+        ]);
+        let runner = ProviderRoleRunner::new(&provider);
+        let telemetry = VecTelemetry::new();
+
+        let output = runner.run_role(
+            RoleRequest {
+                role: DeliberationRole::Critic,
+                objective: "review the work".to_string(),
+                producer_content: Some("some content".to_string()),
+                critic_content: None,
+                feedback: vec![],
+                node_kind: NodeKind::Work,
+                tool_context: Some(RoleToolContext {
+                    artifact_view: Box::new(view),
+                }),
+            },
+            &telemetry,
+        );
+
+        assert!(
+            matches!(output.result, RoleResult::Accepted { .. }),
+            "reviewer must eventually accept after reading; got {:?}",
+            output.result
+        );
+        let records = telemetry.into_records();
+        let retries: Vec<_> = records
+            .iter()
+            .filter(|r| matches!(r.event, TelemetryEvent::ProtocolRetry { .. }))
+            .collect();
+        assert_eq!(
+            retries.len(),
+            1,
+            "exactly one ProtocolRetry must be emitted for the enforcement violation"
+        );
+    }
+
+    #[test]
+    fn work_reviewer_exhausts_retries_without_reading_fails() {
+        // Reviewer accepts without reading on every attempt; after
+        // MAX_PROTOCOL_RETRIES+1 tries the role must fail.
+        let (_temp, view) = make_view("reviewer-exhaust-retries");
+        let mut responses = vec![];
+        for _ in 0..=MAX_PROTOCOL_RETRIES + 1 {
+            responses.push(r#"{"status":"accepted","content":"looks good"}"#);
+        }
+        let provider = ScriptedProvider::from_strs(&responses);
+        let runner = ProviderRoleRunner::new(&provider);
+
+        let output = runner.run_role(
+            RoleRequest {
+                role: DeliberationRole::Critic,
+                objective: "review the work".to_string(),
+                producer_content: Some("some content".to_string()),
+                critic_content: None,
+                feedback: vec![],
+                node_kind: NodeKind::Work,
+                tool_context: Some(RoleToolContext {
+                    artifact_view: Box::new(view),
+                }),
+            },
+            &crate::telemetry::NoopTelemetry,
+        );
+
+        assert!(
+            matches!(output.result, RoleResult::Failed { .. }),
+            "reviewer that never reads must fail after exhausting retries; got {:?}",
+            output.result
+        );
+        if let RoleResult::Failed { reason } = &output.result {
+            assert!(
+                reason.contains("reading"),
+                "failure reason must mention reading; got: {reason}"
+            );
+        }
+    }
+
+    #[test]
+    fn plan_reviewer_can_accept_without_reading_files() {
+        // Plan-node reviewers judge structure, not file contents.
+        // The read-file enforcement must NOT apply to them.
+        let provider =
+            ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"plan is sound"}"#]);
+        let runner = ProviderRoleRunner::new(&provider);
+
+        let output = runner.run_role(
+            RoleRequest {
+                role: DeliberationRole::Critic,
+                objective: "review the plan".to_string(),
+                producer_content: Some("plan output".to_string()),
+                critic_content: None,
+                feedback: vec![],
+                node_kind: NodeKind::Plan,
+                tool_context: None,
+            },
+            &crate::telemetry::NoopTelemetry,
+        );
+
+        assert!(
+            matches!(output.result, RoleResult::Accepted { .. }),
+            "plan reviewer must accept without needing to read a file; got {:?}",
+            output.result
+        );
+    }
+
+    #[test]
+    fn work_reviewer_without_tool_context_can_accept() {
+        // When tool_context is None the reviewer has no file tools; the
+        // read-file enforcement must not apply in that case.
+        let provider =
+            ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"approved"}"#]);
+        let runner = ProviderRoleRunner::new(&provider);
+
+        let output = runner.run_role(
+            RoleRequest {
+                role: DeliberationRole::Referee,
+                objective: "approve the result".to_string(),
+                producer_content: Some("content".to_string()),
+                critic_content: Some("review".to_string()),
+                feedback: vec![],
+                node_kind: NodeKind::Work,
+                tool_context: None,
+            },
+            &crate::telemetry::NoopTelemetry,
+        );
+
+        assert!(
+            matches!(output.result, RoleResult::Accepted { .. }),
+            "reviewer without tool context must accept without enforcement; got {:?}",
+            output.result
+        );
     }
 }
