@@ -50,6 +50,8 @@ pub struct PlannerOutput {
 /// Reasons a structured planner output fails validation.
 #[derive(Debug, PartialEq)]
 pub enum PlannerValidationError {
+    /// The plan contains no tasks.
+    EmptyTaskList,
     /// Two tasks share the same id.
     DuplicateId(String),
     /// A task has an empty (or whitespace-only) objective.
@@ -89,6 +91,13 @@ pub enum PlannerValidationError {
 impl std::fmt::Display for PlannerValidationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            PlannerValidationError::EmptyTaskList => {
+                write!(
+                    f,
+                    "The objective requires work, but the submitted plan contains no tasks. \
+                     Create one or more bounded tasks that satisfy the objective."
+                )
+            }
             PlannerValidationError::DuplicateId(id) => {
                 write!(f, "duplicate task id: {id}")
             }
@@ -167,6 +176,9 @@ pub fn try_parse_planner_response(raw: &str) -> Result<PlannerOutput, String> {
 ///
 /// Returns `Err` on the first violation. Does not attempt to repair.
 pub fn validate_planner_output(output: &PlannerOutput) -> Result<(), PlannerValidationError> {
+    if output.tasks.is_empty() {
+        return Err(PlannerValidationError::EmptyTaskList);
+    }
     let mut seen: HashSet<&str> = HashSet::new();
     for task in &output.tasks {
         if !seen.insert(task.id.as_str()) {

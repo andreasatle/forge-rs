@@ -15,7 +15,7 @@ use crate::machines::deliberation::state::{DeliberationRole, RevisionFeedback};
 use crate::machines::scheduler::{FailureKind, NodeKind};
 use crate::node_runner::planner::{
     PlannerValidationError, parse_planner_content, validate_planner_explicit_targets,
-    validate_planner_no_recreate, validate_planner_tests_required,
+    validate_planner_no_recreate, validate_planner_output, validate_planner_tests_required,
 };
 use crate::roles::policy::RolePolicy;
 use crate::roles::runner::{ProviderRoleRunner, RoleRequest, RoleRunner, RoleToolContext};
@@ -303,6 +303,9 @@ fn validate_plan_output_for_context(
     planner_out: &crate::node_runner::planner::PlannerOutput,
     context: &PlanValidationContext,
 ) -> Result<(), crate::node_runner::planner::PlannerValidationError> {
+    // Semantic invariants first — Critic/Referee must never see a structurally
+    // broken plan (e.g. an empty task list).
+    validate_planner_output(planner_out)?;
     validate_planner_explicit_targets(planner_out, &context.top_objective)?;
     validate_planner_no_recreate(planner_out, &context.top_objective, &context.existing_files)?;
     if context.requires_tests {
@@ -313,6 +316,34 @@ fn validate_plan_output_for_context(
 
 fn planner_validation_feedback(error: &PlannerValidationError) -> String {
     match error {
+        PlannerValidationError::EmptyTaskList => error.to_string(),
+        PlannerValidationError::DuplicateId(id) => {
+            format!("{error}. Assign a unique id to every task; '{id}' appears more than once.")
+        }
+        PlannerValidationError::EmptyObjective(id) => {
+            format!(
+                "{error}. Every task must have a non-empty objective. \
+                 Add a clear objective to task '{id}'."
+            )
+        }
+        PlannerValidationError::EmptyTargets(id) => {
+            format!(
+                "{error}. Every task must declare at least one concrete target file. \
+                 Add a target to task '{id}'."
+            )
+        }
+        PlannerValidationError::SelfDependency(id) => {
+            format!(
+                "{error}. A task cannot depend on itself. \
+                 Remove '{id}' from its own depends_on list."
+            )
+        }
+        PlannerValidationError::UnknownDependency { task_id, dep_id } => {
+            format!(
+                "{error}. Task '{task_id}' depends on '{dep_id}', which does not exist in this \
+                 plan. Only reference task ids defined in the same plan."
+            )
+        }
         PlannerValidationError::ExplicitTargetViolation {
             allowed_targets, ..
         } => {
@@ -323,14 +354,12 @@ fn planner_validation_feedback(error: &PlannerValidationError) -> String {
             )
         }
         PlannerValidationError::MissingTestsForCodeChange => {
-            let error = error.to_string();
             format!(
                 "{error}. Project validation includes a test command, so code changes must include \
                  at least one test-related task and target such as a test file."
             )
         }
-        _ => {
-            let error = error.to_string();
+        PlannerValidationError::TaskRecreatesExistingFile { .. } => {
             format!(
                 "{error}. Remove tasks for existing project files not mentioned in the objective. \
                  Only include tasks for files explicitly named in the run objective."
@@ -656,6 +685,233 @@ mod tests {
         assert!(
             req.tool_context.is_none(),
             "plan node must have no tool context regardless of whether artifact_view is set"
+        );
+    }
+
+    // --- semantic validation regression tests ---
+
+    const VALID_SINGLE_TASK: &str = r#"{"tasks":[{"id":"t1","objective":"do work","operation":"modify","targets":["foo.rs"],"depends_on":[]}]}"#;
+    const EMPTY_PLAN: &str = r#"{"tasks":[]}"#;
+
+    fn handler_with_validation(
+        results: Vec<RoleResult>,
+    ) -> DeliberationHandler<ScriptedRoleRunner> {
+        DeliberationHandler {
+            runner: ScriptedRoleRunner::new(results),
+            artifact_view: None,
+            node_kind: NodeKind::Plan,
+            accumulated_update: RefCell::new(Vec::new()),
+            plan_validation_context: Some(PlanValidationContext {
+                top_objective: "create foo.rs".to_string(),
+                existing_files: vec![],
+                requires_tests: false,
+            }),
+        }
+    }
+
+    struct ScriptedMachine {
+        handler: DeliberationHandler<ScriptedRoleRunner>,
+    }
+
+    impl Machine for ScriptedMachine {
+        type State = DeliberationState;
+        type Event = DeliberationEvent;
+        type Effect = DeliberationEffect;
+        type Output = DeliberationTerminalOutput;
+
+        fn start_event(&self) -> DeliberationEvent {
+            DeliberationEvent::Start
+        }
+
+        fn transition(
+            &self,
+            state: DeliberationState,
+            event: DeliberationEvent,
+        ) -> Transition<DeliberationState, DeliberationEffect> {
+            DeliberationMachine.transition(state, event)
+        }
+
+        fn handle_effect(&self, effect: DeliberationEffect) -> DeliberationEvent {
+            self.handler.handle_effect(effect)
+        }
+
+        fn output(&self, state: &DeliberationState) -> Option<DeliberationTerminalOutput> {
+            DeliberationMachine.output(state)
+        }
+    }
+
+    #[test]
+    fn valid_single_task_plan_passes_semantic_validation() {
+        let handler = handler_with_validation(vec![RoleResult::Accepted {
+            content: VALID_SINGLE_TASK.to_string(),
+        }]);
+        let effect = run_role_effect(
+            DeliberationRole::Producer,
+            "create foo.rs",
+            None,
+            None,
+            vec![],
+        );
+        let event = handler.handle_effect(effect);
+        assert_eq!(
+            handler.runner.requests.borrow().len(),
+            1,
+            "valid plan must not trigger retry"
+        );
+        assert!(
+            matches!(
+                event,
+                DeliberationEvent::RoleReturned {
+                    result: RoleResult::Accepted { .. },
+                    ..
+                }
+            ),
+            "valid plan must produce Accepted; got {event:?}"
+        );
+    }
+
+    #[test]
+    fn empty_plan_triggers_revision_feedback() {
+        let handler = handler_with_validation(vec![
+            RoleResult::Accepted {
+                content: EMPTY_PLAN.to_string(),
+            },
+            RoleResult::Accepted {
+                content: VALID_SINGLE_TASK.to_string(),
+            },
+        ]);
+        let effect = run_role_effect(
+            DeliberationRole::Producer,
+            "create foo.rs",
+            None,
+            None,
+            vec![],
+        );
+        let event = handler.handle_effect(effect);
+
+        assert_eq!(
+            handler.runner.requests.borrow().len(),
+            2,
+            "empty plan must trigger exactly one retry"
+        );
+        let second_feedback = &handler.runner.requests.borrow()[1].feedback;
+        assert!(
+            !second_feedback.is_empty(),
+            "retry request must carry revision feedback"
+        );
+        assert!(
+            second_feedback[0].reason.contains("no tasks"),
+            "feedback must mention missing tasks; got: {}",
+            second_feedback[0].reason
+        );
+        assert!(
+            matches!(
+                event,
+                DeliberationEvent::RoleReturned {
+                    result: RoleResult::Accepted { .. },
+                    ..
+                }
+            ),
+            "valid retry must succeed; got {event:?}"
+        );
+    }
+
+    #[test]
+    fn repeated_empty_plans_exhaust_retries() {
+        let handler = handler_with_validation(vec![
+            RoleResult::Accepted {
+                content: EMPTY_PLAN.to_string(),
+            },
+            RoleResult::Accepted {
+                content: EMPTY_PLAN.to_string(),
+            },
+            RoleResult::Accepted {
+                content: EMPTY_PLAN.to_string(),
+            },
+        ]);
+        let effect = run_role_effect(
+            DeliberationRole::Producer,
+            "create foo.rs",
+            None,
+            None,
+            vec![],
+        );
+        let event = handler.handle_effect(effect);
+
+        assert_eq!(
+            handler.runner.requests.borrow().len(),
+            MAX_PLAN_VALIDATION_RETRIES + 1,
+            "must attempt exactly {} producer calls before failing",
+            MAX_PLAN_VALIDATION_RETRIES + 1
+        );
+        assert!(
+            matches!(
+                event,
+                DeliberationEvent::RoleReturned {
+                    result: RoleResult::Failed {
+                        kind: FailureKind::PlannerValidationFailure,
+                        ..
+                    },
+                    ..
+                }
+            ),
+            "exhausted retries must produce PlannerValidationFailure; got {event:?}"
+        );
+    }
+
+    #[test]
+    fn empty_plan_revision_then_valid_plan_completes() {
+        // Full run_machine integration: empty plan → revision → valid plan → Critic → Referee → Complete
+        let machine = ScriptedMachine {
+            handler: handler_with_validation(vec![
+                RoleResult::Accepted {
+                    content: EMPTY_PLAN.to_string(),
+                },
+                RoleResult::Accepted {
+                    content: VALID_SINGLE_TASK.to_string(),
+                },
+                RoleResult::Accepted {
+                    content: "looks good".to_string(),
+                }, // Critic
+                RoleResult::Accepted {
+                    content: "approved".to_string(),
+                }, // Referee
+            ]),
+        };
+        let output = run_machine(machine, ready("create foo.rs", 1));
+        assert!(
+            matches!(output, DeliberationTerminalOutput::Complete(_)),
+            "run must complete after one revision; got {output:?}"
+        );
+    }
+
+    #[test]
+    fn semantic_validation_failure_ends_run_before_critic_or_referee() {
+        // Provide exactly MAX+1 Producer responses and no Critic/Referee responses.
+        // If Critic or Referee were called, ScriptedRoleRunner would panic.
+        let machine = ScriptedMachine {
+            handler: handler_with_validation(vec![
+                RoleResult::Accepted {
+                    content: EMPTY_PLAN.to_string(),
+                },
+                RoleResult::Accepted {
+                    content: EMPTY_PLAN.to_string(),
+                },
+                RoleResult::Accepted {
+                    content: EMPTY_PLAN.to_string(),
+                },
+            ]),
+        };
+        let output = run_machine(machine, ready("create foo.rs", 1));
+        assert!(
+            matches!(
+                output,
+                DeliberationTerminalOutput::Failed {
+                    kind: FailureKind::PlannerValidationFailure,
+                    ..
+                }
+            ),
+            "run must fail with PlannerValidationFailure; got {output:?}"
         );
     }
 
