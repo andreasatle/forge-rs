@@ -14,7 +14,8 @@ use crate::machines::deliberation::event::RoleResult;
 use crate::machines::deliberation::state::{DeliberationRole, RevisionFeedback};
 use crate::machines::scheduler::NodeKind;
 use crate::node_runner::planner::{
-    parse_planner_content, validate_planner_no_recreate, validate_planner_tests_required,
+    PlannerValidationError, parse_planner_content, validate_planner_explicit_targets,
+    validate_planner_no_recreate, validate_planner_tests_required,
 };
 use crate::roles::policy::RolePolicy;
 use crate::roles::runner::{ProviderRoleRunner, RoleRequest, RoleRunner, RoleToolContext};
@@ -259,7 +260,7 @@ impl<R: RoleRunner> DeliberationHandler<R> {
                                     };
                                 }
                                 feedback = vec![RevisionFeedback {
-                                    reason: planner_validation_feedback(&e.to_string()),
+                                    reason: planner_validation_feedback(&e),
                                 }];
                             }
                         }
@@ -301,6 +302,7 @@ fn validate_plan_output_for_context(
     planner_out: &crate::node_runner::planner::PlannerOutput,
     context: &PlanValidationContext,
 ) -> Result<(), crate::node_runner::planner::PlannerValidationError> {
+    validate_planner_explicit_targets(planner_out, &context.top_objective)?;
     validate_planner_no_recreate(planner_out, &context.top_objective, &context.existing_files)?;
     if context.requires_tests {
         validate_planner_tests_required(planner_out)?;
@@ -308,17 +310,31 @@ fn validate_plan_output_for_context(
     Ok(())
 }
 
-fn planner_validation_feedback(error: &str) -> String {
-    if error.contains("does not include a test-related target") {
-        format!(
-            "{error}. Project validation includes a test command, so code changes must include \
-             at least one test-related task and target such as a test file."
-        )
-    } else {
-        format!(
-            "{error}. Remove tasks for existing project files not mentioned in the objective. \
-             Only include tasks for files explicitly named in the run objective."
-        )
+fn planner_validation_feedback(error: &PlannerValidationError) -> String {
+    match error {
+        PlannerValidationError::ExplicitTargetViolation {
+            allowed_targets, ..
+        } => {
+            format!(
+                "The objective explicitly targets {}. Remove all non-test targets except {}.",
+                allowed_targets.join(", "),
+                allowed_targets.join(", ")
+            )
+        }
+        PlannerValidationError::MissingTestsForCodeChange => {
+            let error = error.to_string();
+            format!(
+                "{error}. Project validation includes a test command, so code changes must include \
+                 at least one test-related task and target such as a test file."
+            )
+        }
+        _ => {
+            let error = error.to_string();
+            format!(
+                "{error}. Remove tasks for existing project files not mentioned in the objective. \
+                 Only include tasks for files explicitly named in the run objective."
+            )
+        }
     }
 }
 

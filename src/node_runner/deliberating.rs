@@ -171,7 +171,9 @@ fn run_with_provider<P: ProviderClient>(
         .into_iter()
         .map(|p| p.to_string_lossy().into_owned())
         .collect();
-    let plan_validation_context = if existing_files.is_empty() && !requires_tests {
+    let plan_validation_context = if request.kind == NodeKind::Plan {
+        Some((top_objective, existing_files, requires_tests))
+    } else if existing_files.is_empty() && !requires_tests {
         None
     } else {
         Some((top_objective, existing_files, requires_tests))
@@ -585,7 +587,7 @@ mod tests {
 
     #[test]
     fn deliberating_runner_plan_returns_plan_output() {
-        let tasks_json = r#"{"tasks":[{"id":"task-1","objective":"the actual work","targets":["work.txt"],"depends_on":[]}]}"#;
+        let tasks_json = r#"{"tasks":[{"id":"task-1","objective":"the actual work","operation":"modify","targets":["work.txt"],"depends_on":[]}]}"#;
         let provider = ScriptedProvider::from_strs(&[
             tasks_json,
             r#"{"status":"accepted","content":"looks good"}"#,
@@ -1045,7 +1047,7 @@ mod tests {
 
     #[test]
     fn structured_planner_output_creates_multiple_work_nodes() {
-        let tasks_json = r#"{"tasks":[{"id":"alpha","objective":"do alpha","targets":["alpha.txt"],"depends_on":[]},{"id":"beta","objective":"do beta","targets":["beta.txt"],"depends_on":["alpha"]}]}"#;
+        let tasks_json = r#"{"tasks":[{"id":"alpha","objective":"do alpha","operation":"modify","targets":["alpha.txt"],"depends_on":[]},{"id":"beta","objective":"do beta","operation":"modify","targets":["beta.txt"],"depends_on":["alpha"]}]}"#;
         let provider = ScriptedProvider::from_strs(&[
             tasks_json,
             r#"{"status":"accepted","content":"looks good"}"#,
@@ -1101,8 +1103,7 @@ mod tests {
     fn invalid_structured_plan_returns_failed() {
         // Parses as PlannerOutput but has a self-dependency — validation must fail loudly.
         // All three producer attempts return the same invalid plan, exhausting retries.
-        let tasks_json =
-            r#"{"tasks":[{"id":"x","objective":"do x","targets":["x.txt"],"depends_on":["x"]}]}"#;
+        let tasks_json = r#"{"tasks":[{"id":"x","objective":"do x","operation":"modify","targets":["x.txt"],"depends_on":["x"]}]}"#;
         let provider = ScriptedProvider::from_strs(&[
             tasks_json, // Producer attempt 1
             tasks_json, // Producer attempt 2 (retry)
@@ -1331,9 +1332,9 @@ mod tests {
         let view = make_artifact_view(&temp, ".gitignore", "*.pyc\n__pycache__/\n");
 
         // First planner response: includes .gitignore task (violates no-recreate).
-        let bad_plan = r#"{"tasks":[{"id":"task-1","objective":"Create .gitignore file for the project.","targets":[".gitignore"],"depends_on":[]},{"id":"task-2","objective":"Write main.py with the haiku.","targets":["main.py"],"depends_on":[]}]}"#;
+        let bad_plan = r#"{"tasks":[{"id":"task-1","objective":"Create .gitignore file for the project.","operation":"modify","targets":[".gitignore"],"depends_on":[]},{"id":"task-2","objective":"Write main.py with the haiku.","operation":"modify","targets":["main.py"],"depends_on":[]}]}"#;
         // Second planner response (after revision feedback): only the main.py task.
-        let good_plan = r#"{"tasks":[{"id":"task-1","objective":"Write main.py with the haiku.","targets":["main.py"],"depends_on":[]}]}"#;
+        let good_plan = r#"{"tasks":[{"id":"task-1","objective":"Write main.py with the haiku.","operation":"modify","targets":["main.py"],"depends_on":[]}]}"#;
 
         let provider = ScriptedProvider::from_strs(&[
             bad_plan,  // Plan+Producer attempt 1 — fails no-recreate, handler retries
@@ -1367,8 +1368,8 @@ mod tests {
 
     #[test]
     fn planner_missing_test_target_sends_revision_feedback_and_retries() {
-        let bad_plan = r#"{"tasks":[{"id":"task-1","objective":"Modify main.py to return the haiku.","targets":["main.py"],"depends_on":[]}]}"#;
-        let good_plan = r#"{"tasks":[{"id":"task-1","objective":"Modify main.py to return the haiku.","targets":["main.py"],"depends_on":[]},{"id":"task-2","objective":"Add tests for the main.py haiku behavior.","targets":["test_main.py"],"depends_on":["task-1"]}]}"#;
+        let bad_plan = r#"{"tasks":[{"id":"task-1","objective":"Modify main.py to return the haiku.","operation":"modify","targets":["main.py"],"depends_on":[]}]}"#;
+        let good_plan = r#"{"tasks":[{"id":"task-1","objective":"Modify main.py to return the haiku.","operation":"modify","targets":["main.py"],"depends_on":[]},{"id":"task-2","objective":"Add tests for the main.py haiku behavior.","operation":"modify","targets":["test_main.py"],"depends_on":["task-1"]}]}"#;
 
         let provider = ScriptedProvider::from_strs(&[
             bad_plan,  // Plan+Producer attempt 1 — fails test-target validation
@@ -1399,6 +1400,59 @@ mod tests {
     }
 
     #[test]
+    fn planner_explicit_target_violation_sends_revision_feedback_and_retries() {
+        let bad_plan = r#"{"tasks":[{"id":"task-1","objective":"Modify main.py to return the haiku.","operation":"modify","targets":["main.py"],"depends_on":[]},{"id":"task-2","objective":"Modify project configuration.","operation":"modify","targets":["pyproject.toml"],"depends_on":[]},{"id":"task-3","objective":"Add tests for the main.py haiku behavior.","operation":"create","targets":["test_main.py"],"depends_on":["task-1"]}]}"#;
+        let good_plan = r#"{"tasks":[{"id":"task-1","objective":"Modify main.py to return the haiku.","operation":"modify","targets":["main.py"],"depends_on":[]},{"id":"task-2","objective":"Add tests for the main.py haiku behavior.","operation":"create","targets":["test_main.py"],"depends_on":["task-1"]}]}"#;
+
+        let provider = RecordingProvider::from_strs(&[
+            bad_plan,  // Plan+Producer attempt 1 — fails explicit-target validation
+            good_plan, // Plan+Producer attempt 2 (with feedback) — passes
+            r#"{"status":"accepted","content":"plan looks good"}"#, // Plan+Critic
+            r#"{"status":"accepted","content":"plan approved"}"#, // Plan+Referee
+        ]);
+        let runner = DeliberatingNodeRunner::new(&provider, &provider).with_requires_tests(true);
+        let request = NodeRunRequest {
+            kind: NodeKind::Plan,
+            objective: "Modify main.py to print a short haiku.".to_string(),
+            model_tier: ModelTier::Cheap,
+            attempt: 0,
+            artifact_view: None,
+        };
+        let result = runner.run_node(request, &NoopTelemetry);
+
+        let NodeRunResult::PlanAccepted(plan) = result else {
+            panic!("expected PlanAccepted after planner removes pyproject.toml");
+        };
+        assert_eq!(plan.children.len(), 2);
+        assert!(
+            plan.children
+                .iter()
+                .any(|child| child.objective.contains("Target files: main.py")),
+            "revised plan must include main.py"
+        );
+        assert!(
+            plan.children
+                .iter()
+                .any(|child| child.objective.contains("Target files: test_main.py")),
+            "revised plan must include test_main.py"
+        );
+        assert!(
+            plan.children
+                .iter()
+                .all(|child| !child.objective.contains("pyproject.toml")),
+            "revised plan must reject pyproject.toml"
+        );
+
+        let prompts = provider.recorded_prompts();
+        assert!(
+            prompts.iter().any(|prompt| prompt.contains(
+                "The objective explicitly targets main.py. Remove all non-test targets except main.py."
+            )),
+            "retry prompt must contain exact explicit-target feedback; got: {prompts:#?}"
+        );
+    }
+
+    #[test]
     fn planner_no_recreate_violation_exhausts_retries_returns_failed() {
         // When the planner keeps including tasks for existing files after MAX retries,
         // the run must fail — not silently accept the bad plan.
@@ -1406,7 +1460,7 @@ mod tests {
         let view = make_artifact_view(&temp, ".gitignore", "*.pyc\n");
 
         // All three producer responses include the .gitignore task.
-        let bad_plan = r#"{"tasks":[{"id":"task-1","objective":"Create .gitignore file.","targets":[".gitignore"],"depends_on":[]}]}"#;
+        let bad_plan = r#"{"tasks":[{"id":"task-1","objective":"Create .gitignore file.","operation":"modify","targets":[".gitignore"],"depends_on":[]}]}"#;
 
         let provider = ScriptedProvider::from_strs(&[
             bad_plan, // attempt 1

@@ -10,6 +10,7 @@ Express dependencies explicitly. \
 Do not include implementation details in plan nodes — describe what to achieve, not how. \
 Output a structured task list that the execution framework can schedule.\n\
 Every task must target a concrete artifact operation: create, modify, or delete named files. \
+Every task must include `operation` as exactly one of \"create\", \"modify\", or \"delete\". \
 Every task must include a non-empty `targets` array listing the exact files that task may create, modify, or delete. \
 Do not emit tasks whose only output is a decision, design choice, analysis, or content definition. \
 Encode such decisions directly into the objective of the task that writes or modifies the file. \
@@ -23,7 +24,7 @@ When project validation includes a test command, code-change plans must include 
 test-related task with an explicit test target.\n\
 Return exactly one JSON object. No markdown. No code fence. \
 No explanation. No text before or after the JSON.\n\
-{\"tasks\":[{\"id\":\"task-id\",\"objective\":\"Task objective.\",\"targets\":[\"path/to/file\"],\"depends_on\":[]}]}\n\
+{\"tasks\":[{\"id\":\"task-id\",\"objective\":\"Task objective.\",\"operation\":\"modify\",\"targets\":[\"path/to/file\"],\"depends_on\":[]}]}\n\
 Do not copy example values. Replace them with actual task IDs and objectives.";
 
 const CODING_WORKER_SYSTEM: &str = "You are a software implementation agent. \
@@ -485,6 +486,11 @@ mod tests {
                 .planner_producer_system
                 .contains("concrete artifact operation"),
             "planner_producer_system must require concrete artifact operations; got:\n{}",
+            policy.planner_producer_system
+        );
+        assert!(
+            policy.planner_producer_system.contains("`operation`"),
+            "planner_producer_system must require structured operation; got:\n{}",
             policy.planner_producer_system
         );
     }

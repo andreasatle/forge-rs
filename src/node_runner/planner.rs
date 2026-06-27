@@ -17,10 +17,24 @@ pub struct PlannerTask {
     pub id: String,
     /// Natural-language description of what this task should accomplish.
     pub objective: String,
+    /// Concrete artifact operation this task will perform.
+    pub operation: PlannerOperation,
     /// Explicit artifact files this task is allowed and expected to touch.
     pub targets: Vec<String>,
     /// Ids of other tasks in the same output that must complete before this one.
     pub depends_on: Vec<String>,
+}
+
+/// Concrete artifact operation a planner task will perform.
+#[derive(Clone, Deserialize, Serialize, Debug, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum PlannerOperation {
+    /// Create one or more target files.
+    Create,
+    /// Modify one or more existing target files.
+    Modify,
+    /// Delete one or more target files.
+    Delete,
 }
 
 /// The structured JSON output the planner is expected to produce.
@@ -60,6 +74,14 @@ pub enum PlannerValidationError {
         /// The filename that already exists and is not an objective target.
         filename: String,
     },
+    /// The top-level coding objective explicitly named target files, but a
+    /// non-test task targets a different file.
+    ExplicitTargetViolation {
+        /// The filename targeted by the invalid task.
+        filename: String,
+        /// Non-test targets explicitly named by the objective.
+        allowed_targets: Vec<String>,
+    },
     /// Test validation is configured, but a code-changing plan has no test target.
     MissingTestsForCodeChange,
 }
@@ -87,6 +109,16 @@ impl std::fmt::Display for PlannerValidationError {
                     f,
                     "task {task_id} targets existing file '{filename}' \
                      which is not mentioned in the run objective"
+                )
+            }
+            PlannerValidationError::ExplicitTargetViolation {
+                filename,
+                allowed_targets,
+            } => {
+                write!(
+                    f,
+                    "task targets non-test file '{filename}' but the objective explicitly targets {}",
+                    allowed_targets.join(", ")
                 )
             }
             PlannerValidationError::MissingTestsForCodeChange => {
@@ -161,6 +193,37 @@ pub fn validate_planner_output(output: &PlannerOutput) -> Result<(), PlannerVali
             }
         }
     }
+    Ok(())
+}
+
+/// Check that when a coding objective explicitly names target files, all
+/// non-test planner targets are among those named files.
+///
+/// Test targets are intentionally exempt because project validation can require
+/// newly-created tests even when the user only names the implementation file.
+pub fn validate_planner_explicit_targets(
+    output: &PlannerOutput,
+    top_objective: &str,
+) -> Result<(), PlannerValidationError> {
+    let allowed_targets = explicit_objective_targets(top_objective);
+    if allowed_targets.is_empty()
+        || !allowed_targets
+            .iter()
+            .any(|target| target_is_code_like(target))
+    {
+        return Ok(());
+    }
+
+    for target in output.tasks.iter().flat_map(|task| task.targets.iter()) {
+        let normalized = normalize_target_token(target);
+        if !target_is_test_related(&normalized) && !allowed_targets.contains(&normalized) {
+            return Err(PlannerValidationError::ExplicitTargetViolation {
+                filename: normalized,
+                allowed_targets: sorted_targets(&allowed_targets),
+            });
+        }
+    }
+
     Ok(())
 }
 
@@ -273,6 +336,47 @@ fn target_is_code_like(target: &str) -> bool {
     )
 }
 
+fn explicit_objective_targets(top_objective: &str) -> HashSet<String> {
+    top_objective
+        .split_whitespace()
+        .map(normalize_target_token)
+        .filter(|token| token_contains_file_separator(token) && token_has_file_extension(token))
+        .collect()
+}
+
+fn normalize_target_token(token: &str) -> String {
+    token
+        .trim_matches(|c: char| {
+            !(c.is_ascii_alphanumeric() || matches!(c, '.' | '/' | '\\' | '_' | '-' | '@' | '+'))
+        })
+        .trim_start_matches("./")
+        .replace('\\', "/")
+}
+
+fn token_contains_file_separator(token: &str) -> bool {
+    token.contains('.') || token.contains('/')
+}
+
+fn token_has_file_extension(token: &str) -> bool {
+    let Some(filename) = token.rsplit('/').next() else {
+        return false;
+    };
+    let Some((stem, extension)) = filename.rsplit_once('.') else {
+        return false;
+    };
+    !stem.is_empty()
+        && !extension.is_empty()
+        && extension
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'))
+}
+
+fn sorted_targets(targets: &HashSet<String>) -> Vec<String> {
+    let mut sorted: Vec<String> = targets.iter().cloned().collect();
+    sorted.sort();
+    sorted
+}
+
 /// Convert a validated [`PlannerOutput`] into a scheduler [`PlanOutput`].
 ///
 /// Each task becomes a [`NodeRequest`] of kind `Work`. The planner-assigned
@@ -308,7 +412,7 @@ mod tests {
 
     #[test]
     fn direct_planner_output_parses_successfully() {
-        let json = r#"{"tasks":[{"id":"a","objective":"do alpha","targets":["alpha.txt"],"depends_on":[]}]}"#;
+        let json = r#"{"tasks":[{"id":"a","objective":"do alpha","operation":"modify","targets":["alpha.txt"],"depends_on":[]}]}"#;
         let result = try_parse_planner_response(json);
         assert!(
             result.is_ok(),
@@ -323,7 +427,7 @@ mod tests {
     fn planner_output_does_not_require_nested_json_string() {
         // The planner schema is {"tasks":[...]} directly, not wrapped in
         // {"status":"accepted","content":"<escaped-json>"}.
-        let direct = r#"{"tasks":[{"id":"t1","objective":"do the work","targets":["work.txt"],"depends_on":[]}]}"#;
+        let direct = r#"{"tasks":[{"id":"t1","objective":"do the work","operation":"modify","targets":["work.txt"],"depends_on":[]}]}"#;
         assert!(
             try_parse_planner_response(direct).is_ok(),
             "direct PlannerOutput must parse without a status/content wrapper"
@@ -375,8 +479,8 @@ mod tests {
     fn parses_multiple_tasks() {
         let json = r#"{
             "tasks": [
-                {"id": "a", "objective": "do alpha", "targets": ["alpha.txt"], "depends_on": []},
-                {"id": "b", "objective": "do beta",  "targets": ["beta.txt"], "depends_on": []}
+                {"id": "a", "objective": "do alpha", "operation": "modify", "targets": ["alpha.txt"], "depends_on": []},
+                {"id": "b", "objective": "do beta", "operation": "modify", "targets": ["beta.txt"], "depends_on": []}
             ]
         }"#;
         let output = parse_planner_content(json).expect("parse must return Some");
@@ -392,8 +496,8 @@ mod tests {
     fn parses_dependencies() {
         let json = r#"{
             "tasks": [
-                {"id": "first",  "objective": "write tests",  "targets": ["test.txt"], "depends_on": []},
-                {"id": "second", "objective": "implement it", "targets": ["impl.txt"], "depends_on": ["first"]}
+                {"id": "first",  "objective": "write tests", "operation": "modify", "targets": ["test.txt"], "depends_on": []},
+                {"id": "second", "objective": "implement it", "operation": "modify", "targets": ["impl.txt"], "depends_on": ["first"]}
             ]
         }"#;
         let output = parse_planner_content(json).expect("parse must return Some");
@@ -415,12 +519,14 @@ mod tests {
                 PlannerTask {
                     id: "x".to_string(),
                     objective: "first".to_string(),
+                    operation: PlannerOperation::Modify,
                     targets: vec!["first.txt".to_string()],
                     depends_on: vec![],
                 },
                 PlannerTask {
                     id: "x".to_string(),
                     objective: "second".to_string(),
+                    operation: PlannerOperation::Modify,
                     targets: vec!["second.txt".to_string()],
                     depends_on: vec![],
                 },
@@ -436,6 +542,7 @@ mod tests {
             tasks: vec![PlannerTask {
                 id: "task".to_string(),
                 objective: "   ".to_string(),
+                operation: PlannerOperation::Modify,
                 targets: vec!["task.txt".to_string()],
                 depends_on: vec![],
             }],
@@ -453,6 +560,7 @@ mod tests {
             tasks: vec![PlannerTask {
                 id: "task".to_string(),
                 objective: "do something".to_string(),
+                operation: PlannerOperation::Modify,
                 targets: vec![],
                 depends_on: vec![],
             }],
@@ -470,6 +578,7 @@ mod tests {
             tasks: vec![PlannerTask {
                 id: "loop".to_string(),
                 objective: "do something".to_string(),
+                operation: PlannerOperation::Modify,
                 targets: vec!["loop.txt".to_string()],
                 depends_on: vec!["loop".to_string()],
             }],
@@ -487,6 +596,7 @@ mod tests {
             tasks: vec![PlannerTask {
                 id: "task".to_string(),
                 objective: "do something".to_string(),
+                operation: PlannerOperation::Modify,
                 targets: vec!["task.txt".to_string()],
                 depends_on: vec!["nonexistent".to_string()],
             }],
@@ -520,12 +630,14 @@ mod tests {
                 PlannerTask {
                     id: "py-version".to_string(),
                     objective: "Create .python-version file for Python project.".to_string(),
+                    operation: PlannerOperation::Modify,
                     targets: vec![".python-version".to_string()],
                     depends_on: vec![],
                 },
                 PlannerTask {
                     id: "main".to_string(),
                     objective: "Create main.py with haiku about Python state machines.".to_string(),
+                    operation: PlannerOperation::Modify,
                     targets: vec!["main.py".to_string()],
                     depends_on: vec![],
                 },
@@ -552,6 +664,7 @@ mod tests {
             tasks: vec![PlannerTask {
                 id: "readme".to_string(),
                 objective: "Document the haiku program setup.".to_string(),
+                operation: PlannerOperation::Modify,
                 targets: vec!["README.md".to_string()],
                 depends_on: vec![],
             }],
@@ -575,6 +688,7 @@ mod tests {
             tasks: vec![PlannerTask {
                 id: "main".to_string(),
                 objective: "Write a haiku about Python state machines in main.py.".to_string(),
+                operation: PlannerOperation::Modify,
                 targets: vec!["main.py".to_string()],
                 depends_on: vec![],
             }],
@@ -592,6 +706,7 @@ mod tests {
             tasks: vec![PlannerTask {
                 id: "main".to_string(),
                 objective: "Modify main.py.".to_string(),
+                operation: PlannerOperation::Modify,
                 targets: vec!["main.py".to_string()],
                 depends_on: vec![],
             }],
@@ -609,12 +724,14 @@ mod tests {
                 PlannerTask {
                     id: "main".to_string(),
                     objective: "Modify main.py.".to_string(),
+                    operation: PlannerOperation::Modify,
                     targets: vec!["main.py".to_string()],
                     depends_on: vec![],
                 },
                 PlannerTask {
                     id: "tests".to_string(),
                     objective: "Add tests for main.py.".to_string(),
+                    operation: PlannerOperation::Modify,
                     targets: vec!["test_main.py".to_string()],
                     depends_on: vec!["main".to_string()],
                 },
@@ -627,12 +744,77 @@ mod tests {
     }
 
     #[test]
+    fn explicit_objective_target_rejects_unlisted_non_test_target() {
+        let output = PlannerOutput {
+            tasks: vec![
+                PlannerTask {
+                    id: "main".to_string(),
+                    objective: "Modify main.py.".to_string(),
+                    operation: PlannerOperation::Modify,
+                    targets: vec!["main.py".to_string()],
+                    depends_on: vec![],
+                },
+                PlannerTask {
+                    id: "config".to_string(),
+                    objective: "Modify project config.".to_string(),
+                    operation: PlannerOperation::Modify,
+                    targets: vec!["pyproject.toml".to_string()],
+                    depends_on: vec![],
+                },
+                PlannerTask {
+                    id: "tests".to_string(),
+                    objective: "Add tests for main.py.".to_string(),
+                    operation: PlannerOperation::Create,
+                    targets: vec!["test_main.py".to_string()],
+                    depends_on: vec!["main".to_string()],
+                },
+            ],
+        };
+        let err = validate_planner_explicit_targets(&output, "Modify main.py to print a haiku.")
+            .expect_err("pyproject.toml must be rejected when only main.py is named");
+        assert_eq!(
+            err,
+            PlannerValidationError::ExplicitTargetViolation {
+                filename: "pyproject.toml".to_string(),
+                allowed_targets: vec!["main.py".to_string()],
+            }
+        );
+    }
+
+    #[test]
+    fn explicit_objective_target_allows_test_target() {
+        let output = PlannerOutput {
+            tasks: vec![
+                PlannerTask {
+                    id: "main".to_string(),
+                    objective: "Modify main.py.".to_string(),
+                    operation: PlannerOperation::Modify,
+                    targets: vec!["main.py".to_string()],
+                    depends_on: vec![],
+                },
+                PlannerTask {
+                    id: "tests".to_string(),
+                    objective: "Add tests for main.py.".to_string(),
+                    operation: PlannerOperation::Create,
+                    targets: vec!["test_main.py".to_string()],
+                    depends_on: vec!["main".to_string()],
+                },
+            ],
+        };
+        assert!(
+            validate_planner_explicit_targets(&output, "Modify main.py to print a haiku.").is_ok(),
+            "test_main.py must be allowed as a test target"
+        );
+    }
+
+    #[test]
     fn no_recreate_allows_existing_file_when_objective_names_it() {
         // Objective explicitly targets pyproject.toml — planner task is allowed.
         let output = PlannerOutput {
             tasks: vec![PlannerTask {
                 id: "config".to_string(),
                 objective: "Update pyproject.toml to add a new dependency.".to_string(),
+                operation: PlannerOperation::Modify,
                 targets: vec!["pyproject.toml".to_string()],
                 depends_on: vec![],
             }],
@@ -650,6 +832,7 @@ mod tests {
             tasks: vec![PlannerTask {
                 id: "any".to_string(),
                 objective: "Create anything at all.".to_string(),
+                operation: PlannerOperation::Modify,
                 targets: vec!["anything.txt".to_string()],
                 depends_on: vec![],
             }],
@@ -669,12 +852,14 @@ mod tests {
                 PlannerTask {
                     id: "step-one".to_string(),
                     objective: "do step one".to_string(),
+                    operation: PlannerOperation::Modify,
                     targets: vec!["one.txt".to_string()],
                     depends_on: vec![],
                 },
                 PlannerTask {
                     id: "step-two".to_string(),
                     objective: "do step two".to_string(),
+                    operation: PlannerOperation::Modify,
                     targets: vec!["two.txt".to_string()],
                     depends_on: vec![],
                 },
@@ -698,12 +883,14 @@ mod tests {
                 PlannerTask {
                     id: "tests".to_string(),
                     objective: "write tests".to_string(),
+                    operation: PlannerOperation::Modify,
                     targets: vec!["tests.txt".to_string()],
                     depends_on: vec![],
                 },
                 PlannerTask {
                     id: "impl".to_string(),
                     objective: "implement".to_string(),
+                    operation: PlannerOperation::Modify,
                     targets: vec!["impl.txt".to_string()],
                     depends_on: vec!["tests".to_string()],
                 },
