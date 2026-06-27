@@ -1214,4 +1214,43 @@ mod tests {
             "node must fail when Referee rejects incorrect file contents"
         );
     }
+
+    #[test]
+    fn producer_read_file_does_not_satisfy_critic_read_requirement() {
+        // The read_file_executed flag is scoped per role invocation.
+        // Even if the Producer successfully read a file, the Critic's own
+        // invocation starts fresh with read_file_executed = false.
+        // A Critic that never reads must fail the enforcement regardless of
+        // what the Producer did.
+        let temp = TempDir::new("producer-read-no-critic");
+        let view = make_artifact_view(&temp, "hello.txt", "hello world\n");
+
+        // Producer: reads hello.txt (success), then accepts.
+        // Critic: accepts three times without reading, exhausting protocol retries.
+        // The deliberation must fail — not succeed because Producer already read.
+        let provider = ScriptedProvider::from_strs(&[
+            r#"{"tool":"read_file","path":"hello.txt"}"#,
+            r#"{"status":"accepted","content":"I read the file and it looks correct"}"#,
+            // Critic attempt 1: enforcement fires, must-read retry issued
+            r#"{"status":"accepted","content":"looks good to me here ok"}"#,
+            // Critic attempt 2: enforcement fires again
+            r#"{"status":"accepted","content":"still looks good to me now"}"#,
+            // Critic attempt 3: enforcement fires, protocol_attempt > MAX_PROTOCOL_RETRIES → fail
+            r#"{"status":"accepted","content":"I accept this work done now"}"#,
+        ]);
+        let runner = DeliberatingNodeRunner::new(&provider, &provider);
+        let request = NodeRunRequest {
+            kind: NodeKind::Work,
+            objective: "write the work".to_string(),
+            model_tier: ModelTier::Cheap,
+            attempt: 0,
+            artifact_view: Some(view),
+        };
+        let result = runner.run_node(request, &NoopTelemetry);
+
+        assert!(
+            matches!(result, NodeRunResult::Failed(_)),
+            "node must fail when Critic never reads, even though Producer did"
+        );
+    }
 }
