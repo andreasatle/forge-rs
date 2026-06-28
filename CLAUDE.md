@@ -144,6 +144,9 @@ Providers, tools, Git, and the filesystem should be exercised only in effect-han
 Every new test must state the invariant it protects.
 If a new test differs only by parameters from an existing test, add a table case instead of a new test.
 
+Do not add new inline tests to production files.
+Add tests to existing test modules, or create behavior-oriented test modules when appropriate.
+
 ⸻
 
 Non-goals
