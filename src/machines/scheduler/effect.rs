@@ -11,7 +11,7 @@
 use crate::validation::ValidationPlan;
 
 use super::event::WorkOutput;
-use super::state::{ModelTier, NodeId, NodeKind, RunGraph};
+use super::state::{ModelTier, NodeId, NodeKind, RunGraph, TestPlanContext};
 
 /// Commands that the scheduler emits to the outside world.
 ///
@@ -35,6 +35,8 @@ pub enum SchedulerEffect {
         objective: String,
         /// Structured target files this node is expected and allowed to touch.
         target_files: Vec<String>,
+        /// Structured test-target planning context for this node.
+        test_plan_context: TestPlanContext,
         /// The model capability level the runner should use.
         model_tier: ModelTier,
         /// Zero-based retry count; 0 on the first attempt.

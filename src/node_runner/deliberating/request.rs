@@ -107,6 +107,7 @@ fn build_handler<'a, P: ProviderClient>(
             request.kind.clone(),
             policy.clone(),
             plan_validation_context,
+            request.test_plan_context.clone(),
         )
     }
 }

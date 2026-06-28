@@ -164,6 +164,65 @@ fn work_role_prompt_uses_structured_tool_targets() {
 }
 
 #[test]
+fn reviewer_prompt_explains_tests_planned_separately() {
+    let provider = ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"review ok"}"#]);
+    let runner = ProviderRoleRunner::new(&provider);
+    let mut request = critic_request("implement fibonacci", "source updated");
+    request.target_files = vec!["main.py".to_string()];
+    request.test_plan_context = TestPlanContext {
+        required_test_targets: vec!["test_main.py".to_string()],
+        planned_test_targets: vec!["test_main.py".to_string()],
+    };
+
+    runner.run_role(request, &crate::telemetry::NoopTelemetry);
+
+    let prompt = &provider.requests.borrow()[0].prompt;
+    assert!(
+        prompt.contains("Test target plan context"),
+        "critic prompt must include structured test planning context; got:\n{prompt}"
+    );
+    assert!(
+        prompt.contains("Required test targets covered by planned follow-up work: test_main.py"),
+        "critic prompt must identify planned downstream test coverage; got:\n{prompt}"
+    );
+    assert!(
+        prompt.contains(
+            "Do not reject this source-only node solely because those tests are planned separately"
+        ),
+        "critic prompt must explain the graph-aware exception; got:\n{prompt}"
+    );
+}
+
+#[test]
+fn referee_prompt_explains_missing_planned_test_target_from_metadata() {
+    let provider = ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"approved"}"#]);
+    let runner = ProviderRoleRunner::new(&provider);
+    let mut request = referee_request(
+        "implement fibonacci and mention test_main.py in prose only",
+        "source updated",
+        "review ok",
+    );
+    request.target_files = vec!["main.py".to_string()];
+    request.test_plan_context = TestPlanContext {
+        required_test_targets: vec!["test_main.py".to_string()],
+        planned_test_targets: vec![],
+    };
+
+    runner.run_role(request, &crate::telemetry::NoopTelemetry);
+
+    let prompt = &provider.requests.borrow()[0].prompt;
+    assert!(
+        prompt
+            .contains("Required test targets not covered by planned follow-up work: test_main.py"),
+        "referee prompt must use structured planned targets, not objective text; got:\n{prompt}"
+    );
+    assert!(
+        prompt.contains("Planned dependent/follow-up targets: none"),
+        "referee prompt must report no planned test target despite objective prose; got:\n{prompt}"
+    );
+}
+
+#[test]
 fn planner_prompt_omits_tool_section() {
     // When node_kind is Plan and tool_context is None, no tool section appears.
     let tasks_json = r#"{"tasks":[{"id":"t1","objective":"do the work","operation":"modify","targets":["work.txt"],"depends_on":[]}]}"#;

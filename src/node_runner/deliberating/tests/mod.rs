@@ -7,7 +7,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::*;
 use crate::artifacts::{ArtifactView, FileChange};
-use crate::machines::scheduler::{FailureKind, ModelTier, NodeId, NodeKind, RecoveryAction};
+use crate::machines::scheduler::{
+    FailureKind, ModelTier, NodeId, NodeKind, RecoveryAction, TestPlanContext,
+};
 use crate::providers::{ProviderError, ProviderErrorKind, ProviderRequest, ProviderResponse};
 use crate::telemetry::NoopTelemetry;
 
@@ -120,6 +122,7 @@ fn plan_request(objective: &str) -> NodeRunRequest {
         kind: NodeKind::Plan,
         objective: objective.to_string(),
         target_files: vec![],
+        test_plan_context: TestPlanContext::default(),
         model_tier: ModelTier::Cheap,
         attempt: 0,
         artifact_view: None,
@@ -131,6 +134,7 @@ fn work_request(objective: &str) -> NodeRunRequest {
         kind: NodeKind::Work,
         objective: objective.to_string(),
         target_files: vec![],
+        test_plan_context: TestPlanContext::default(),
         model_tier: ModelTier::Cheap,
         attempt: 0,
         artifact_view: None,
@@ -142,6 +146,7 @@ fn strong_work_request(objective: &str) -> NodeRunRequest {
         kind: NodeKind::Work,
         objective: objective.to_string(),
         target_files: vec![],
+        test_plan_context: TestPlanContext::default(),
         model_tier: ModelTier::Strong,
         attempt: 0,
         artifact_view: None,
@@ -225,6 +230,7 @@ fn work_request_with_artifact(objective: &str, temp: &TempDir) -> NodeRunRequest
         kind: NodeKind::Work,
         objective: objective.to_string(),
         target_files: vec![],
+        test_plan_context: TestPlanContext::default(),
         model_tier: ModelTier::Cheap,
         attempt: 0,
         artifact_view: Some(make_artifact_view(temp, "hello.txt", "world\n")),
@@ -236,6 +242,7 @@ fn strong_work_request_with_artifact(objective: &str, temp: &TempDir) -> NodeRun
         kind: NodeKind::Work,
         objective: objective.to_string(),
         target_files: vec![],
+        test_plan_context: TestPlanContext::default(),
         model_tier: ModelTier::Strong,
         attempt: 0,
         artifact_view: Some(make_artifact_view(temp, "hello.txt", "world\n")),

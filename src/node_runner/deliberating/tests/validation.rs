@@ -65,6 +65,7 @@ fn referee_reads_file_and_rejects_default_content_causes_node_failure() {
         kind: NodeKind::Work,
         objective: "Write a haiku about Python state machines in main.py".to_string(),
         target_files: vec![],
+        test_plan_context: TestPlanContext::default(),
         model_tier: ModelTier::Cheap,
         attempt: 0,
         artifact_view: Some(view),
@@ -105,6 +106,7 @@ fn producer_read_file_does_not_satisfy_critic_read_requirement() {
         kind: NodeKind::Work,
         objective: "write the work".to_string(),
         target_files: vec![],
+        test_plan_context: TestPlanContext::default(),
         model_tier: ModelTier::Cheap,
         attempt: 0,
         artifact_view: Some(view),
@@ -146,6 +148,7 @@ fn planner_no_recreate_violation_sends_revision_feedback_and_retries() {
         // and the LLM planner is called with the scripted responses.
         objective: "Write a haiku about Python state machines.".to_string(),
         target_files: vec![],
+        test_plan_context: TestPlanContext::default(),
         model_tier: ModelTier::Cheap,
         attempt: 0,
         artifact_view: Some(view),
@@ -183,6 +186,7 @@ fn planner_missing_test_target_sends_revision_feedback_and_retries() {
         // and the LLM planner is called with the scripted responses.
         objective: "Print a short haiku about state machines.".to_string(),
         target_files: vec![],
+        test_plan_context: TestPlanContext::default(),
         model_tier: ModelTier::Cheap,
         attempt: 0,
         artifact_view: None,
@@ -220,6 +224,7 @@ fn planner_explicit_target_violation_sends_revision_feedback_and_retries() {
         // ExplicitTargetViolation still fires when the planner targets pyproject.toml.
         objective: "Modify main.py and utils.py to print a short haiku.".to_string(),
         target_files: vec![],
+        test_plan_context: TestPlanContext::default(),
         model_tier: ModelTier::Cheap,
         attempt: 0,
         artifact_view: None,
@@ -281,6 +286,7 @@ fn planner_no_recreate_violation_exhausts_retries_returns_failed() {
         // and the LLM planner is called until retries are exhausted.
         objective: "Write a haiku about Python state machines.".to_string(),
         target_files: vec![],
+        test_plan_context: TestPlanContext::default(),
         model_tier: ModelTier::Cheap,
         attempt: 0,
         artifact_view: Some(view),

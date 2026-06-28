@@ -163,6 +163,7 @@ impl<R: NodeRunner> Machine for SchedulerHandler<R> {
                 kind,
                 objective,
                 target_files,
+                test_plan_context,
                 model_tier,
                 attempt,
             } => {
@@ -171,6 +172,7 @@ impl<R: NodeRunner> Machine for SchedulerHandler<R> {
                     kind,
                     objective,
                     target_files,
+                    test_plan_context,
                     model_tier,
                     attempt,
                 };

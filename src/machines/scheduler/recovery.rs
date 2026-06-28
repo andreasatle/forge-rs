@@ -36,12 +36,23 @@ pub(super) fn apply_retry(
     failure_kind: FailureKind,
     retry_message: &str,
 ) -> RunGraph {
-    let (kind, objective, target_files, deps, attempt, plan_depth, model_tier, validation_plan) = {
+    let (
+        kind,
+        objective,
+        target_files,
+        required_test_targets,
+        deps,
+        attempt,
+        plan_depth,
+        model_tier,
+        validation_plan,
+    ) = {
         let n = get_node(&graph, node_id);
         (
             n.kind.clone(),
             n.objective.clone(),
             n.target_files.clone(),
+            n.required_test_targets.clone(),
             n.dependencies.clone(),
             n.attempt,
             n.plan_depth,
@@ -62,6 +73,7 @@ pub(super) fn apply_retry(
         kind,
         objective,
         target_files,
+        required_test_targets,
         dependencies: deps,
         status: NodeStatus::Pending,
         attempt: attempt + 1,
@@ -137,10 +149,11 @@ fn concise_retry_diagnostics(message: &str) -> String {
 }
 
 pub(super) fn apply_split(graph: RunGraph, node_id: &NodeId, message: String) -> RunGraph {
-    let (target_files, deps, attempt, plan_depth) = {
+    let (target_files, required_test_targets, deps, attempt, plan_depth) = {
         let n = get_node(&graph, node_id);
         (
             n.target_files.clone(),
+            n.required_test_targets.clone(),
             n.dependencies.clone(),
             n.attempt,
             n.plan_depth + 1,
@@ -153,6 +166,7 @@ pub(super) fn apply_split(graph: RunGraph, node_id: &NodeId, message: String) ->
         kind: NodeKind::Plan,
         objective: message,
         target_files,
+        required_test_targets,
         dependencies: deps,
         status: NodeStatus::Pending,
         attempt: attempt + 1,
@@ -170,12 +184,22 @@ pub(super) fn apply_split(graph: RunGraph, node_id: &NodeId, message: String) ->
 }
 
 pub(super) fn apply_elevate(graph: RunGraph, node_id: &NodeId) -> RunGraph {
-    let (kind, objective, target_files, deps, attempt, plan_depth, validation_plan) = {
+    let (
+        kind,
+        objective,
+        target_files,
+        required_test_targets,
+        deps,
+        attempt,
+        plan_depth,
+        validation_plan,
+    ) = {
         let n = get_node(&graph, node_id);
         (
             n.kind.clone(),
             n.objective.clone(),
             n.target_files.clone(),
+            n.required_test_targets.clone(),
             n.dependencies.clone(),
             n.attempt,
             n.plan_depth,
@@ -188,6 +212,7 @@ pub(super) fn apply_elevate(graph: RunGraph, node_id: &NodeId) -> RunGraph {
         kind,
         objective,
         target_files,
+        required_test_targets,
         dependencies: deps,
         status: NodeStatus::Pending,
         attempt: attempt + 1,

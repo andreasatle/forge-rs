@@ -12,7 +12,7 @@ use crate::machines::deliberation::state::{
     DeliberationRequest, DeliberationRole, DeliberationState, DeliberationTerminalOutput,
     RevisionFeedback,
 };
-use crate::machines::scheduler::{FailureKind, NodeKind};
+use crate::machines::scheduler::{FailureKind, NodeKind, TestPlanContext};
 use crate::providers::types::{ProviderError, ProviderResponse};
 use crate::providers::{ProviderClient, ProviderRequest};
 use crate::roles::runner::{RoleRequest, RoleRunOutput, RoleRunner};
@@ -207,6 +207,7 @@ fn deliberation_handler_delegates_run_role_to_role_runner() {
         artifact_view: None,
         node_kind: NodeKind::Work,
         work_requires_artifact_update: false,
+        test_plan_context: TestPlanContext::default(),
         accumulated_update: RefCell::new(Vec::new()),
         plan_validation_context: None,
     };
@@ -247,6 +248,7 @@ fn structured_targets_flow_to_worker_role_request() {
         artifact_view: None,
         node_kind: NodeKind::Work,
         work_requires_artifact_update: false,
+        test_plan_context: TestPlanContext::default(),
         accumulated_update: RefCell::new(Vec::new()),
         plan_validation_context: None,
     };
@@ -291,6 +293,7 @@ fn run_machine_with_provider_handler_success() {
             NodeKind::Work,
             crate::roles::policy::RolePolicy::default(),
             None,
+            TestPlanContext::default(),
         ),
     };
     let output = run_machine(machine, ready("write a poem", 0));
@@ -325,6 +328,7 @@ fn run_machine_with_provider_handler_revision() {
             NodeKind::Work,
             crate::roles::policy::RolePolicy::default(),
             None,
+            TestPlanContext::default(),
         ),
     };
     let output = run_machine(machine, ready("write a poem", 1));
@@ -356,6 +360,7 @@ fn planner_handler_passes_no_tool_context_for_plan_nodes() {
         artifact_view: Some(dummy_view()),
         node_kind: NodeKind::Plan,
         work_requires_artifact_update: false,
+        test_plan_context: TestPlanContext::default(),
         accumulated_update: RefCell::new(Vec::new()),
         plan_validation_context: None,
     };
@@ -387,6 +392,7 @@ fn worker_handler_passes_tool_context_when_view_available() {
         artifact_view: Some(dummy_view()),
         node_kind: NodeKind::Work,
         work_requires_artifact_update: true,
+        test_plan_context: TestPlanContext::default(),
         accumulated_update: RefCell::new(Vec::new()),
         plan_validation_context: None,
     };
@@ -417,6 +423,7 @@ fn planner_handler_no_tool_context_without_view() {
         artifact_view: None,
         node_kind: NodeKind::Plan,
         work_requires_artifact_update: false,
+        test_plan_context: TestPlanContext::default(),
         accumulated_update: RefCell::new(Vec::new()),
         plan_validation_context: None,
     };
@@ -448,6 +455,7 @@ fn handler_with_validation(results: Vec<RoleResult>) -> DeliberationHandler<Scri
         artifact_view: None,
         node_kind: NodeKind::Plan,
         work_requires_artifact_update: false,
+        test_plan_context: TestPlanContext::default(),
         accumulated_update: RefCell::new(Vec::new()),
         plan_validation_context: Some(PlanValidationContext {
             top_objective: "create foo.rs".to_string(),
@@ -465,6 +473,7 @@ fn handler_with_work_validation(
         artifact_view: Some(dummy_view()),
         node_kind: NodeKind::Work,
         work_requires_artifact_update: true,
+        test_plan_context: TestPlanContext::default(),
         accumulated_update: RefCell::new(Vec::new()),
         plan_validation_context: None,
     }
@@ -857,6 +866,7 @@ fn artifact_work_constructor_requires_artifact_view() {
         NodeKind::Work,
         crate::roles::policy::RolePolicy::default(),
         None,
+        TestPlanContext::default(),
     );
 }
 
@@ -1044,6 +1054,7 @@ fn staged_handler(
         artifact_view: Some(dummy_view()),
         node_kind: NodeKind::Work,
         work_requires_artifact_update: true,
+        test_plan_context: TestPlanContext::default(),
         accumulated_update: RefCell::new(Vec::new()),
         plan_validation_context: None,
     }
@@ -1350,6 +1361,7 @@ fn handle_effect_without_telemetry_compiles() {
         NodeKind::Work,
         crate::roles::policy::RolePolicy::default(),
         None,
+        TestPlanContext::default(),
     );
     let event = handler.handle_effect(run_role_effect(
         DeliberationRole::Producer,

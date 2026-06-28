@@ -10,6 +10,7 @@ fn run_node_effect_uses_node_runner() {
         kind: NodeKind::Work,
         objective: "write some code".to_string(),
         target_files: vec![],
+        test_plan_context: TestPlanContext::default(),
         model_tier: ModelTier::Cheap,
         attempt: 0,
     };

@@ -14,7 +14,8 @@ use crate::machines::scheduler::event::{
 };
 use crate::machines::scheduler::machine::{SchedulerMachine, SchedulerOutput};
 use crate::machines::scheduler::state::{
-    ModelTier, Node, NodeId, NodeKind, NodeOrigin, NodeStatus, RunGraph, RunRequest, SchedulerState,
+    ModelTier, Node, NodeId, NodeKind, NodeOrigin, NodeStatus, RunGraph, RunRequest,
+    SchedulerState, TestPlanContext,
 };
 use crate::node_runner::runner::NodeRunner;
 use crate::node_runner::types::{NodeRunRequest, NodeRunResult};
@@ -119,6 +120,7 @@ fn work_node(id: &str, objective: &str) -> Node {
         kind: NodeKind::Work,
         objective: objective.to_string(),
         target_files: vec![],
+        required_test_targets: vec![],
         dependencies: vec![],
         status: NodeStatus::Pending,
         attempt: 0,
@@ -136,6 +138,7 @@ fn work_node_with_deps(id: &str, objective: &str, deps: &[&str]) -> Node {
         kind: NodeKind::Work,
         objective: objective.to_string(),
         target_files: vec![],
+        required_test_targets: vec![],
         dependencies: deps.iter().map(|d| NodeId(d.to_string())).collect(),
         status: NodeStatus::Pending,
         attempt: 0,

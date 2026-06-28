@@ -97,6 +97,7 @@ impl<R: RoleRunner> DeliberationHandler<R> {
                     role: role.clone(),
                     objective,
                     target_files,
+                    test_plan_context: self.test_plan_context.clone(),
                     target_views,
                     producer_content,
                     critic_content,

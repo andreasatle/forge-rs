@@ -2,7 +2,7 @@
 
 use crate::artifacts::{Artifact, ArtifactUpdate, ArtifactView};
 use crate::machines::scheduler::event::{NodeOutcome, SchedulerEvent};
-use crate::machines::scheduler::state::{ModelTier, NodeId, NodeKind};
+use crate::machines::scheduler::state::{ModelTier, NodeId, NodeKind, TestPlanContext};
 use crate::node_runner::{NodeRunRequest, NodeRunResult, NodeRunner};
 use crate::telemetry::{ConsoleTelemetry, TelemetrySink};
 
@@ -11,6 +11,7 @@ pub(crate) struct RunNodeDispatch {
     pub(crate) kind: NodeKind,
     pub(crate) objective: String,
     pub(crate) target_files: Vec<String>,
+    pub(crate) test_plan_context: TestPlanContext,
     pub(crate) model_tier: ModelTier,
     pub(crate) attempt: u32,
 }
@@ -44,6 +45,7 @@ pub(crate) fn dispatch_run_node<R: NodeRunner>(
         kind: command.kind,
         objective: command.objective,
         target_files: command.target_files,
+        test_plan_context: command.test_plan_context,
         model_tier: command.model_tier,
         attempt: command.attempt,
         artifact_view,

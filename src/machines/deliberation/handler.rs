@@ -8,7 +8,7 @@
 use std::cell::RefCell;
 
 use crate::artifacts::{ArtifactView, FileChange};
-use crate::machines::scheduler::NodeKind;
+use crate::machines::scheduler::{NodeKind, TestPlanContext};
 use crate::roles::policy::RolePolicy;
 use crate::roles::runner::ProviderRoleRunner;
 
@@ -41,6 +41,8 @@ pub struct DeliberationHandler<R> {
     pub(crate) node_kind: NodeKind,
     /// Whether Work+Producer accepted output must include artifact file changes.
     pub(crate) work_requires_artifact_update: bool,
+    /// Structured test-target planning context forwarded to role prompts.
+    pub(crate) test_plan_context: TestPlanContext,
     /// File changes accumulated across all tool loops run so far.
     pub(crate) accumulated_update: RefCell<Vec<FileChange>>,
     /// For plan nodes: optional structured validation applied to planner
@@ -64,6 +66,7 @@ impl<P> DeliberationHandler<ProviderRoleRunner<P>> {
             artifact_view: None,
             node_kind: NodeKind::Work,
             work_requires_artifact_update: false,
+            test_plan_context: TestPlanContext::default(),
             accumulated_update: RefCell::new(Vec::new()),
             plan_validation_context: None,
         }
@@ -81,6 +84,7 @@ impl<P> DeliberationHandler<ProviderRoleRunner<P>> {
             artifact_view: None,
             node_kind: NodeKind::Work,
             work_requires_artifact_update: false,
+            test_plan_context: TestPlanContext::default(),
             accumulated_update: RefCell::new(Vec::new()),
             plan_validation_context: None,
         }
@@ -98,6 +102,7 @@ impl<P> DeliberationHandler<ProviderRoleRunner<P>> {
         node_kind: NodeKind,
         policy: RolePolicy,
         plan_validation_context: Option<PlanValidationContext>,
+        test_plan_context: TestPlanContext,
     ) -> Self {
         assert!(
             node_kind != NodeKind::Work || artifact_view.is_some(),
@@ -109,6 +114,7 @@ impl<P> DeliberationHandler<ProviderRoleRunner<P>> {
                 .with_policy(policy),
             artifact_view,
             work_requires_artifact_update: node_kind == NodeKind::Work,
+            test_plan_context,
             node_kind,
             accumulated_update: RefCell::new(Vec::new()),
             plan_validation_context,

@@ -60,6 +60,7 @@ impl<R: RoleRunner> DeliberationHandler<R> {
                 role: config.role.clone(),
                 objective: config.objective.clone(),
                 target_files: config.target_files.clone(),
+                test_plan_context: self.test_plan_context.clone(),
                 target_views: base_target_views.clone(),
                 producer_content: config.producer_content.clone(),
                 critic_content: config.critic_content.clone(),

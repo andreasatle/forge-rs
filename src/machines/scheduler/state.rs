@@ -44,6 +44,19 @@ pub enum NodeKind {
     Work,
 }
 
+/// Structured test-target context for a work node.
+///
+/// `required_test_targets` is the adapter-derived contract attached to source
+/// nodes. `planned_test_targets` is computed from graph dependency metadata at
+/// dispatch time and tells reviewers whether tests are scheduled separately.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TestPlanContext {
+    /// Test targets required for the node's own structured target files.
+    pub required_test_targets: Vec<String>,
+    /// Targets scheduled in nodes that depend on this node, directly or transitively.
+    pub planned_test_targets: Vec<String>,
+}
+
 /// The model capability level to use when running a node.
 ///
 /// `Cheap` is used for most work because cost compounds quickly across many
@@ -134,6 +147,12 @@ pub struct Node {
     /// Prompt text may render these for the model, but tooling must use this
     /// metadata instead of parsing the objective.
     pub target_files: Vec<String>,
+    /// Adapter-derived test targets required for this node's target files.
+    ///
+    /// This is structured planner/adapter metadata. It is not inferred from
+    /// objective text and is preserved across retries and model escalation.
+    #[serde(default)]
+    pub required_test_targets: Vec<String>,
     /// Nodes that must be `Completed` before this node is eligible to run.
     /// The scheduler will not dispatch a node until all listed dependencies are
     /// in the `Completed` state.

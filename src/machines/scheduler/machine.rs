@@ -114,6 +114,7 @@ impl SchedulerMachine {
             kind: NodeKind::Plan,
             objective: request.objective,
             target_files: vec![],
+            required_test_targets: vec![],
             dependencies: vec![],
             status: NodeStatus::Pending,
             attempt: 0,
@@ -180,11 +181,21 @@ impl SchedulerMachine {
                     return recovery::failed_transition(graph, reason);
                 }
                 if graph::all_complete(&graph) {
-                    Transition {
-                        state: SchedulerState::Complete {
-                            graph: graph.clone(),
-                        },
-                        effects: vec![SchedulerEffect::ReturnComplete { graph }],
+                    if let Err(reason) = graph::validate_required_tests_completed(&graph) {
+                        Transition {
+                            state: SchedulerState::Failed {
+                                graph: graph.clone(),
+                                reason: reason.clone(),
+                            },
+                            effects: vec![SchedulerEffect::ReturnFailed { graph, reason }],
+                        }
+                    } else {
+                        Transition {
+                            state: SchedulerState::Complete {
+                                graph: graph.clone(),
+                            },
+                            effects: vec![SchedulerEffect::ReturnComplete { graph }],
+                        }
                     }
                 } else {
                     let ready = graph::find_ready(&graph);
@@ -199,12 +210,13 @@ impl SchedulerMachine {
                         }
                     } else {
                         let node_id = ready[0].clone();
-                        let (kind, objective, target_files, model_tier, attempt) = {
+                        let (kind, objective, target_files, test_plan_context, model_tier, attempt) = {
                             let n = graph::get_node(&graph, &node_id);
                             (
                                 n.kind.clone(),
                                 n.objective.clone(),
                                 n.target_files.clone(),
+                                graph::test_plan_context_for_node(&graph, &node_id),
                                 n.model_tier,
                                 n.attempt,
                             )
@@ -214,6 +226,7 @@ impl SchedulerMachine {
                             kind,
                             objective,
                             target_files,
+                            test_plan_context,
                             model_tier,
                             attempt,
                         };

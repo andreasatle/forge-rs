@@ -46,6 +46,7 @@ impl NodeRunner for StaticNodeRunner {
                     kind: NodeKind::Work,
                     objective: format!("work for: {}", request.objective),
                     target_files: vec![],
+                    required_test_targets: vec![],
                     dependencies: vec![],
                     validation_plan: None,
                 }],
@@ -77,7 +78,7 @@ mod tests {
 
     use super::*;
     use crate::artifacts::{ArtifactUpdate, ArtifactView, FileChange};
-    use crate::machines::scheduler::{ModelTier, RecoveryAction};
+    use crate::machines::scheduler::{ModelTier, RecoveryAction, TestPlanContext};
     use crate::telemetry::NoopTelemetry;
 
     fn plan_request(objective: &str) -> NodeRunRequest {
@@ -85,6 +86,7 @@ mod tests {
             kind: NodeKind::Plan,
             objective: objective.to_string(),
             target_files: vec![],
+            test_plan_context: TestPlanContext::default(),
             model_tier: ModelTier::Cheap,
             attempt: 0,
             artifact_view: None,
@@ -96,6 +98,7 @@ mod tests {
             kind: NodeKind::Work,
             objective: objective.to_string(),
             target_files: vec![],
+            test_plan_context: TestPlanContext::default(),
             model_tier: ModelTier::Cheap,
             attempt: 0,
             artifact_view: None,
@@ -108,6 +111,7 @@ mod tests {
             kind: NodeKind::Work,
             objective: "test objective".to_string(),
             target_files: vec![],
+            test_plan_context: TestPlanContext::default(),
             model_tier: ModelTier::Strong,
             attempt: 2,
             artifact_view: None,
@@ -128,6 +132,7 @@ mod tests {
             kind: NodeKind::Work,
             objective: "test".to_string(),
             target_files: vec![],
+            test_plan_context: TestPlanContext::default(),
             model_tier: ModelTier::Cheap,
             attempt: 0,
             artifact_view: Some(view),

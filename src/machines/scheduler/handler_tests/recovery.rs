@@ -51,6 +51,7 @@ fn scheduler_handler_maps_integration_error_to_failed_outcome() {
         kind: NodeKind::Work,
         objective: "write a file".to_string(),
         target_files: vec![],
+        test_plan_context: TestPlanContext::default(),
         model_tier: ModelTier::Cheap,
         attempt: 0,
     });
@@ -104,6 +105,7 @@ fn scheduler_handler_maps_integration_conflict_to_failed_outcome() {
         kind: NodeKind::Work,
         objective: "write a file".to_string(),
         target_files: vec![],
+        test_plan_context: TestPlanContext::default(),
         model_tier: ModelTier::Cheap,
         attempt: 0,
     });

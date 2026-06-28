@@ -19,6 +19,7 @@ fn validation_pass_allows_commit() {
         kind: NodeKind::Work,
         objective: "write a file".to_string(),
         target_files: vec![],
+        test_plan_context: TestPlanContext::default(),
         model_tier: ModelTier::Cheap,
         attempt: 0,
     });
@@ -68,6 +69,7 @@ fn validation_failure_blocks_commit() {
         kind: NodeKind::Work,
         objective: "write a file".to_string(),
         target_files: vec![],
+        test_plan_context: TestPlanContext::default(),
         model_tier: ModelTier::Cheap,
         attempt: 0,
     });
@@ -179,6 +181,7 @@ fn validation_failure_telemetry_keeps_full_diagnostics() {
         kind: NodeKind::Work,
         objective: "write a file".to_string(),
         target_files: vec![],
+        test_plan_context: TestPlanContext::default(),
         model_tier: ModelTier::Cheap,
         attempt: 0,
     });
@@ -235,6 +238,7 @@ fn validator_runs_after_update_apply() {
         kind: NodeKind::Work,
         objective: "write a file".to_string(),
         target_files: vec![],
+        test_plan_context: TestPlanContext::default(),
         model_tier: ModelTier::Cheap,
         attempt: 0,
     });
@@ -266,6 +270,7 @@ fn no_update_does_not_run_validator() {
         kind: NodeKind::Work,
         objective: "do some work".to_string(),
         target_files: vec![],
+        test_plan_context: TestPlanContext::default(),
         model_tier: ModelTier::Cheap,
         attempt: 0,
     });
@@ -307,6 +312,7 @@ fn validation_pass_sets_validation_passed_true() {
         kind: NodeKind::Work,
         objective: "write a file".to_string(),
         target_files: vec![],
+        test_plan_context: TestPlanContext::default(),
         model_tier: ModelTier::Cheap,
         attempt: 0,
     });
@@ -348,6 +354,7 @@ fn validation_failure_sets_validation_passed_false() {
         kind: NodeKind::Work,
         objective: "write a file".to_string(),
         target_files: vec![],
+        test_plan_context: TestPlanContext::default(),
         model_tier: ModelTier::Cheap,
         attempt: 0,
     });
@@ -379,6 +386,7 @@ fn no_update_leaves_validation_passed_none() {
         kind: NodeKind::Work,
         objective: "do some work".to_string(),
         target_files: vec![],
+        test_plan_context: TestPlanContext::default(),
         model_tier: ModelTier::Cheap,
         attempt: 0,
     });
@@ -415,6 +423,7 @@ fn validation_passed_true_even_when_integration_conflicts() {
         kind: NodeKind::Work,
         objective: "write a file".to_string(),
         target_files: vec![],
+        test_plan_context: TestPlanContext::default(),
         model_tier: ModelTier::Cheap,
         attempt: 0,
     });
@@ -466,6 +475,7 @@ fn validation_failure_does_not_leave_artifact_changed() {
         kind: NodeKind::Work,
         objective: "write a file".to_string(),
         target_files: vec![],
+        test_plan_context: TestPlanContext::default(),
         model_tier: ModelTier::Cheap,
         attempt: 0,
     });
@@ -522,6 +532,7 @@ fn timeout_blocks_commit() {
         kind: NodeKind::Work,
         objective: "write a file".to_string(),
         target_files: vec![],
+        test_plan_context: TestPlanContext::default(),
         model_tier: ModelTier::Cheap,
         attempt: 0,
     });

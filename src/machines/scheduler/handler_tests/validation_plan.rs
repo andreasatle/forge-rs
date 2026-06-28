@@ -48,6 +48,7 @@ fn integration_executes_nodes_passing_validation_plan() {
         kind: NodeKind::Work,
         objective: "write a file".to_string(),
         target_files: vec![],
+        test_plan_context: TestPlanContext::default(),
         model_tier: ModelTier::Cheap,
         attempt: 0,
     });
@@ -91,6 +92,7 @@ fn integration_executes_nodes_failing_validation_plan() {
         kind: NodeKind::Work,
         objective: "write a file".to_string(),
         target_files: vec![],
+        test_plan_context: TestPlanContext::default(),
         model_tier: ModelTier::Cheap,
         attempt: 0,
     });
@@ -152,6 +154,7 @@ fn integration_executes_validation_plan_with_target_file_scope() {
         kind: NodeKind::Work,
         objective: "write scoped file".to_string(),
         target_files: vec!["scoped.py".to_string()],
+        test_plan_context: TestPlanContext::default(),
         model_tier: ModelTier::Cheap,
         attempt: 0,
     });
@@ -206,6 +209,7 @@ fn preconditioned_step_skipped_when_file_absent() {
         kind: NodeKind::Work,
         objective: "write a file (no test files)".to_string(),
         target_files: vec![],
+        test_plan_context: TestPlanContext::default(),
         model_tier: ModelTier::Cheap,
         attempt: 0,
     });

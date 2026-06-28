@@ -1,6 +1,7 @@
 //! Prompt rendering functions for role invocations.
 
 use crate::machines::deliberation::state::{DeliberationRole, RevisionFeedback};
+use crate::machines::scheduler::TestPlanContext;
 use crate::roles::{TargetView, TargetViewKind};
 use crate::services::extract_json_object;
 use crate::tools::{FileToolPolicy, FileToolResponse, parse_tool_request};
@@ -236,6 +237,7 @@ pub(super) fn render_completion_pressure_retry_prompt(
 }
 
 /// Build a prompt for a single role invocation.
+#[cfg(test)]
 pub(super) fn render_role_prompt(
     system: &str,
     role: &DeliberationRole,
@@ -245,24 +247,105 @@ pub(super) fn render_role_prompt(
     feedback: &[RevisionFeedback],
     target_views: &[TargetView],
 ) -> String {
+    render_role_prompt_with_test_plan_context(RolePromptRender {
+        system,
+        role,
+        objective,
+        producer_content,
+        critic_content,
+        feedback,
+        target_views,
+        test_plan_context: &TestPlanContext::default(),
+    })
+}
+
+pub(super) struct RolePromptRender<'a> {
+    pub(super) system: &'a str,
+    pub(super) role: &'a DeliberationRole,
+    pub(super) objective: &'a str,
+    pub(super) producer_content: Option<&'a str>,
+    pub(super) critic_content: Option<&'a str>,
+    pub(super) feedback: &'a [RevisionFeedback],
+    pub(super) target_views: &'a [TargetView],
+    pub(super) test_plan_context: &'a TestPlanContext,
+}
+
+pub(super) fn render_role_prompt_with_test_plan_context(input: RolePromptRender<'_>) -> String {
     let mut parts = Vec::new();
-    parts.push(format!("Objective: {objective}"));
-    parts.push(format!("Role: {role:?}"));
-    if !target_views.is_empty() {
-        parts.push(render_target_state_view(target_views));
+    parts.push(format!("Objective: {}", input.objective));
+    parts.push(format!("Role: {:?}", input.role));
+    if !input.target_views.is_empty() {
+        parts.push(render_target_state_view(input.target_views));
     }
-    if let Some(pc) = producer_content {
+    if !input.test_plan_context.required_test_targets.is_empty() {
+        parts.push(render_test_plan_context(input.test_plan_context));
+    }
+    if let Some(pc) = input.producer_content {
         parts.push(format!("Producer content: {pc}"));
     }
-    if let Some(cc) = critic_content {
+    if let Some(cc) = input.critic_content {
         parts.push(format!("Critic content: {cc}"));
     }
-    if !feedback.is_empty() {
-        let reasons: Vec<&str> = feedback.iter().map(|f| f.reason.as_str()).collect();
+    if !input.feedback.is_empty() {
+        let reasons: Vec<&str> = input.feedback.iter().map(|f| f.reason.as_str()).collect();
         parts.push(format!("Revision feedback: {}", reasons.join("; ")));
     }
-    parts.push(system.to_string());
+    parts.push(input.system.to_string());
     parts.join("\n")
+}
+
+pub(super) fn render_test_plan_context(context: &TestPlanContext) -> String {
+    let required = context.required_test_targets.join(", ");
+    let planned_set = context
+        .planned_test_targets
+        .iter()
+        .map(String::as_str)
+        .collect::<std::collections::HashSet<_>>();
+    let covered = context
+        .required_test_targets
+        .iter()
+        .filter(|target| planned_set.contains(target.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+    let missing = context
+        .required_test_targets
+        .iter()
+        .filter(|target| !planned_set.contains(target.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+
+    let mut lines = vec![
+        "Test target plan context (built from structured target/dependency metadata):".to_string(),
+        format!("Required test targets for this node: {required}"),
+    ];
+    if context.planned_test_targets.is_empty() {
+        lines.push("Planned dependent/follow-up targets: none".to_string());
+    } else {
+        lines.push(format!(
+            "Planned dependent/follow-up targets: {}",
+            context.planned_test_targets.join(", ")
+        ));
+    }
+    if missing.is_empty() {
+        lines.push(format!(
+            "Required test targets covered by planned follow-up work: {}",
+            covered.join(", ")
+        ));
+        lines.push(
+            "Do not reject this source-only node solely because those tests are planned separately."
+                .to_string(),
+        );
+    } else {
+        lines.push(format!(
+            "Required test targets not covered by planned follow-up work: {}",
+            missing.join(", ")
+        ));
+        lines.push(
+            "A source change still requires corresponding tests unless covered by structured follow-up work."
+                .to_string(),
+        );
+    }
+    lines.join("\n")
 }
 
 pub(super) fn render_target_state_view(views: &[TargetView]) -> String {

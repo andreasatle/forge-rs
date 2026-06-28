@@ -8,7 +8,9 @@
 use std::collections::{HashMap, HashSet};
 
 use super::event::{NodeOutcome, NodeOutcome::*};
-use super::state::{ModelTier, Node, NodeId, NodeKind, NodeOrigin, NodeStatus, RunGraph};
+use super::state::{
+    ModelTier, Node, NodeId, NodeKind, NodeOrigin, NodeStatus, RunGraph, TestPlanContext,
+};
 
 /// Maximum number of attempts allowed per objective before recovery stops.
 pub(super) const MAX_ATTEMPTS: u32 = 3;
@@ -79,6 +81,73 @@ pub(super) fn graph_has_capacity(graph: &RunGraph, additional_nodes: usize) -> b
         .len()
         .checked_add(additional_nodes)
         .is_some_and(|total| total <= MAX_GRAPH_NODES)
+}
+
+pub(super) fn test_plan_context_for_node(graph: &RunGraph, node_id: &NodeId) -> TestPlanContext {
+    let node = get_node(graph, node_id);
+    TestPlanContext {
+        required_test_targets: node.required_test_targets.clone(),
+        planned_test_targets: downstream_target_files(graph, node_id),
+    }
+}
+
+fn downstream_target_files(graph: &RunGraph, node_id: &NodeId) -> Vec<String> {
+    let mut downstream_ids: HashSet<NodeId> = HashSet::new();
+    downstream_ids.insert(node_id.clone());
+    let mut grew = true;
+    while grew {
+        grew = false;
+        for node in &graph.nodes {
+            if downstream_ids.contains(&node.id) {
+                continue;
+            }
+            if node
+                .dependencies
+                .iter()
+                .any(|dep| downstream_ids.contains(dep))
+            {
+                downstream_ids.insert(node.id.clone());
+                grew = true;
+            }
+        }
+    }
+    downstream_ids.remove(node_id);
+
+    let mut targets = graph
+        .nodes
+        .iter()
+        .filter(|node| downstream_ids.contains(&node.id))
+        .flat_map(|node| node.target_files.iter().cloned())
+        .collect::<Vec<_>>();
+    targets.sort();
+    targets.dedup();
+    targets
+}
+
+pub(super) fn validate_required_tests_completed(graph: &RunGraph) -> Result<(), String> {
+    let completed_targets: HashSet<&str> = graph
+        .nodes
+        .iter()
+        .filter(|node| node.kind == NodeKind::Work && node.status == NodeStatus::Completed)
+        .flat_map(|node| node.target_files.iter().map(String::as_str))
+        .collect();
+
+    for node in graph
+        .nodes
+        .iter()
+        .filter(|node| node.kind == NodeKind::Work && node.status == NodeStatus::Completed)
+    {
+        for required in &node.required_test_targets {
+            if !completed_targets.contains(required.as_str()) {
+                return Err(format!(
+                    "required test target '{required}' for node {} was not completed",
+                    node.id.0
+                ));
+            }
+        }
+    }
+
+    Ok(())
 }
 
 // ── graph mutations ────────────────────────────────────────────────────────────
@@ -225,6 +294,7 @@ pub(super) fn insert_children(
             kind: req.kind,
             objective: req.objective,
             target_files: req.target_files,
+            required_test_targets: req.required_test_targets,
             dependencies,
             status: NodeStatus::Pending,
             attempt: 0,

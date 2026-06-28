@@ -15,6 +15,7 @@ fn producer_prompt_for_targets(
             role: DeliberationRole::Producer,
             objective: objective.to_string(),
             target_files,
+            test_plan_context: TestPlanContext::default(),
             target_views,
             producer_content: None,
             critic_content: None,

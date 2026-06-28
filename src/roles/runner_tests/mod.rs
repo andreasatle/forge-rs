@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::*;
 use crate::artifacts::{ArtifactView, FileChange};
-use crate::machines::scheduler::NodeKind;
+use crate::machines::scheduler::{NodeKind, TestPlanContext};
 use crate::providers::types::{ProviderError, ProviderErrorKind, ProviderResponse};
 use crate::providers::{ProviderClient, ProviderRequest};
 
@@ -183,6 +183,7 @@ fn make_role_request(role: DeliberationRole, objective: &str) -> RoleRequest {
         role,
         objective: objective.to_string(),
         target_files: vec![],
+        test_plan_context: TestPlanContext::default(),
         target_views: vec![],
         producer_content: None,
         critic_content: None,

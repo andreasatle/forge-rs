@@ -93,6 +93,11 @@ pub struct NodeRequest {
     /// This is planner metadata, not natural-language prompt text. An empty
     /// list means no target constraint is known.
     pub target_files: Vec<String>,
+    /// Adapter-derived test targets required for this node's target files.
+    ///
+    /// Planners normally leave this empty; runner-side plan stamping fills it
+    /// from project adapter metadata before the scheduler inserts the node.
+    pub required_test_targets: Vec<String>,
     /// Nodes that must complete before this node is eligible to run.
     pub dependencies: Vec<NodeId>,
     /// The validation contract to attach to the new node.

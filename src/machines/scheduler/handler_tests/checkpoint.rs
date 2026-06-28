@@ -38,6 +38,7 @@ fn temporary_workspace_removed_after_successful_integration() {
         kind: NodeKind::Work,
         objective: "write a file".to_string(),
         target_files: vec![],
+        test_plan_context: TestPlanContext::default(),
         model_tier: ModelTier::Cheap,
         attempt: 0,
     });
@@ -80,6 +81,7 @@ fn temporary_workspace_removed_after_validation_failure() {
         kind: NodeKind::Work,
         objective: "write a file".to_string(),
         target_files: vec![],
+        test_plan_context: TestPlanContext::default(),
         model_tier: ModelTier::Cheap,
         attempt: 0,
     });
@@ -168,6 +170,7 @@ fn checkpoint_load_round_trip() {
                     kind: NodeKind::Work,
                     objective: "do A".to_string(),
                     target_files: vec![],
+                    required_test_targets: vec![],
                     dependencies: vec![],
                     status: NodeStatus::Completed,
                     attempt: 0,

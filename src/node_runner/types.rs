@@ -1,7 +1,9 @@
 //! Request and result types for the NodeRunner boundary.
 
 use crate::artifacts::{ArtifactUpdate, ArtifactView};
-use crate::machines::scheduler::{ModelTier, NodeFailure, NodeKind, PlanOutput, WorkOutput};
+use crate::machines::scheduler::{
+    ModelTier, NodeFailure, NodeKind, PlanOutput, TestPlanContext, WorkOutput,
+};
 
 /// A request to run a single scheduler node.
 ///
@@ -14,6 +16,8 @@ pub struct NodeRunRequest {
     pub objective: String,
     /// Structured target files this node is expected and allowed to touch.
     pub target_files: Vec<String>,
+    /// Structured test-target context computed from graph metadata.
+    pub test_plan_context: TestPlanContext,
     /// The model capability level the runner should use.
     pub model_tier: ModelTier,
     /// Zero-based retry count; 0 on the first attempt.

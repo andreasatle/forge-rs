@@ -180,6 +180,7 @@ mod tests {
             kind: NodeKind::Work,
             objective: format!("do {id}"),
             target_files: vec![],
+            required_test_targets: vec![],
             dependencies: vec![],
             status,
             attempt: 0,

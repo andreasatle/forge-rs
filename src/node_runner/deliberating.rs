@@ -137,7 +137,7 @@ impl<C: ProviderClient, S: ProviderClient> NodeRunner for DeliberatingNodeRunner
                 "DeliberatingNodeRunner",
                 TelemetryEvent::FastPlanUsed { task_count },
             ));
-            return NodeRunResult::PlanAccepted(self.stamp_validation_plan(plan));
+            return NodeRunResult::PlanAccepted(self.stamp_plan_metadata(plan));
         }
 
         let result = match request.model_tier {
@@ -162,7 +162,7 @@ impl<C: ProviderClient, S: ProviderClient> NodeRunner for DeliberatingNodeRunner
         };
 
         if let NodeRunResult::PlanAccepted(plan) = result {
-            NodeRunResult::PlanAccepted(self.stamp_validation_plan(plan))
+            NodeRunResult::PlanAccepted(self.stamp_plan_metadata(plan))
         } else {
             result
         }
@@ -171,15 +171,16 @@ impl<C: ProviderClient, S: ProviderClient> NodeRunner for DeliberatingNodeRunner
 
 impl<C, S> DeliberatingNodeRunner<C, S> {
     /// Stamp `self.validation_plan` onto every Work-kind [`NodeRequest`] in `plan`.
-    fn stamp_validation_plan(
+    fn stamp_plan_metadata(
         &self,
         mut plan: crate::machines::scheduler::PlanOutput,
     ) -> crate::machines::scheduler::PlanOutput {
-        if self.validation_plan.is_some() {
-            for child in &mut plan.children {
-                if child.kind == NodeKind::Work {
-                    child.validation_plan = self.validation_plan.clone();
-                }
+        for child in &mut plan.children {
+            if child.kind == NodeKind::Work {
+                child.required_test_targets = (self.required_test_targets_fn)(&child.target_files);
+            }
+            if self.validation_plan.is_some() && child.kind == NodeKind::Work {
+                child.validation_plan = self.validation_plan.clone();
             }
         }
         plan

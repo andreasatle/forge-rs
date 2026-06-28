@@ -74,6 +74,7 @@ fn scheduler_handler_passes_artifact_view_to_node_runner() {
         kind: NodeKind::Work,
         objective: "do something".to_string(),
         target_files: vec![],
+        test_plan_context: TestPlanContext::default(),
         model_tier: ModelTier::Cheap,
         attempt: 0,
     });
@@ -191,6 +192,7 @@ fn run_node_does_not_commit_artifact_update() {
         kind: NodeKind::Work,
         objective: "write a file".to_string(),
         target_files: vec![],
+        test_plan_context: TestPlanContext::default(),
         model_tier: ModelTier::Cheap,
         attempt: 0,
     });
@@ -219,6 +221,7 @@ fn integrate_work_commits_pending_artifact_update() {
         kind: NodeKind::Work,
         objective: "write a file".to_string(),
         target_files: vec![],
+        test_plan_context: TestPlanContext::default(),
         model_tier: ModelTier::Cheap,
         attempt: 0,
     });
@@ -266,6 +269,7 @@ fn artifact_update_apply_failure_returns_integration_failure() {
         kind: NodeKind::Work,
         objective: "do work".to_string(),
         target_files: vec![],
+        test_plan_context: TestPlanContext::default(),
         model_tier: ModelTier::Cheap,
         attempt: 0,
     });
@@ -309,6 +313,7 @@ fn second_work_node_sees_first_only_after_integration() {
         kind: NodeKind::Work,
         objective: "write the file".to_string(),
         target_files: vec![],
+        test_plan_context: TestPlanContext::default(),
         model_tier: ModelTier::Cheap,
         attempt: 0,
     });
@@ -354,6 +359,7 @@ fn work_node_without_update_integrates_without_commit() {
         kind: NodeKind::Work,
         objective: "do some work".to_string(),
         target_files: vec![],
+        test_plan_context: TestPlanContext::default(),
         model_tier: ModelTier::Cheap,
         attempt: 0,
     });

@@ -25,6 +25,56 @@ fn running_start_all_complete_moves_to_complete() {
 }
 
 #[test]
+fn final_run_fails_when_required_test_target_is_absent() {
+    let graph = RunGraph {
+        nodes: vec![Node {
+            target_files: vec!["main.py".to_string()],
+            required_test_targets: vec!["test_main.py".to_string()],
+            status: NodeStatus::Completed,
+            ..work_node("source", "implement fibonacci", &[])
+        }],
+        next_id: 0,
+    };
+
+    let t = do_transition(SchedulerState::Running { graph }, SchedulerEvent::Start);
+
+    let SchedulerState::Failed { reason, .. } = t.state else {
+        panic!("expected Failed, got {:#?}", t.state);
+    };
+    assert!(
+        reason.contains("test_main.py"),
+        "failure reason should identify missing required test target; got: {reason}"
+    );
+    assert!(matches!(
+        t.effects.as_slice(),
+        [SchedulerEffect::ReturnFailed { .. }]
+    ));
+}
+
+#[test]
+fn final_run_completes_when_required_test_target_completed_separately() {
+    let graph = RunGraph {
+        nodes: vec![
+            Node {
+                target_files: vec!["main.py".to_string()],
+                required_test_targets: vec!["test_main.py".to_string()],
+                status: NodeStatus::Completed,
+                ..work_node("source", "implement fibonacci", &[])
+            },
+            Node {
+                target_files: vec!["test_main.py".to_string()],
+                status: NodeStatus::Completed,
+                ..work_node("tests", "write tests", &["source"])
+            },
+        ],
+        next_id: 0,
+    };
+
+    let t = do_transition(SchedulerState::Running { graph }, SchedulerEvent::Start);
+    assert!(matches!(t.state, SchedulerState::Complete { .. }));
+}
+
+#[test]
 fn running_start_no_ready_moves_to_failed() {
     let graph = RunGraph {
         nodes: vec![work_node("B", "blocked", &["A"])],
@@ -68,6 +118,7 @@ fn terminal_failure_produces_failed_scheduler_output() {
             kind: NodeKind::Work,
             objective: "fail this step".to_string(),
             target_files: vec![],
+            required_test_targets: vec![],
             dependencies: vec![],
             status: NodeStatus::Pending,
             attempt: 0,
@@ -91,6 +142,7 @@ fn scheduler_output_includes_node_failure_reason() {
             kind: NodeKind::Work,
             objective: "fail this step".to_string(),
             target_files: vec![],
+            required_test_targets: vec![],
             dependencies: vec![],
             status: NodeStatus::Running,
             attempt: 0,
@@ -389,6 +441,7 @@ fn split_success_reports_recovery() {
                 kind: NodeKind::Work,
                 objective: "complex task".to_string(),
                 target_files: vec![],
+                required_test_targets: vec![],
                 dependencies: vec![],
                 status: NodeStatus::Failed,
                 attempt: 0,
@@ -403,6 +456,7 @@ fn split_success_reports_recovery() {
                 kind: NodeKind::Plan,
                 objective: "decompose complex task".to_string(),
                 target_files: vec![],
+                required_test_targets: vec![],
                 dependencies: vec![],
                 status: NodeStatus::Completed,
                 attempt: 1,
