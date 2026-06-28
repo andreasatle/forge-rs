@@ -38,8 +38,14 @@ pub mod effect;
 pub mod event;
 pub mod handler;
 pub mod machine;
+mod planner_validation;
+mod role_execution;
+mod semantic_validation;
+mod staged_context;
 pub mod state;
+mod telemetry;
 mod validation;
+mod work_validation;
 
 pub use effect::DeliberationEffect;
 pub use event::{DeliberationEvent, RoleResult};

@@ -8,7 +8,7 @@ use crate::node_runner::planner::{
 
 /// Structured context used to validate planner output for a Plan node.
 #[derive(Clone)]
-pub(super) struct PlanValidationContext {
+pub(crate) struct PlanValidationContext {
     pub(super) top_objective: String,
     pub(super) existing_files: Vec<String>,
     pub(super) requires_tests: bool,

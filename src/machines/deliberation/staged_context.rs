@@ -1,0 +1,46 @@
+use crate::artifacts::{ArtifactRead, ArtifactUpdate, StagedArtifactView};
+use crate::machines::deliberation::state::DeliberationRole;
+use crate::machines::scheduler::NodeKind;
+use crate::roles::TargetView;
+use crate::roles::runner::RoleToolContext;
+
+use super::handler::{DeliberationHandler, TARGET_VIEW_BUDGET};
+
+impl<R> DeliberationHandler<R> {
+    pub(crate) fn role_tool_context_and_target_views(
+        &self,
+        role: &DeliberationRole,
+        target_files: &[String],
+    ) -> (Option<RoleToolContext>, Vec<TargetView>) {
+        if self.node_kind == NodeKind::Plan {
+            return (None, vec![]);
+        }
+
+        let Some(base) = &self.artifact_view else {
+            return (None, vec![]);
+        };
+
+        let view: Box<dyn ArtifactRead> = match role {
+            DeliberationRole::Producer => Box::new(base.clone()),
+            DeliberationRole::Critic | DeliberationRole::Referee => {
+                let changes = self.accumulated_update.borrow().clone();
+                let update = ArtifactUpdate { changes };
+                Box::new(
+                    StagedArtifactView::from_update(base.clone(), &update).expect(
+                        "staged view construction must succeed for a valid accumulated update",
+                    ),
+                )
+            }
+        };
+
+        let target_views =
+            crate::project::build_file_text_target_views(&*view, target_files, TARGET_VIEW_BUDGET);
+
+        (
+            Some(RoleToolContext {
+                artifact_view: view,
+            }),
+            target_views,
+        )
+    }
+}
