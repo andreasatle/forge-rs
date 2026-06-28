@@ -190,10 +190,11 @@ impl<R: NodeRunner> Machine for SchedulerHandler<R> {
             SchedulerEffect::IntegrateWork {
                 node_id,
                 work,
+                target_files,
                 validation_plan,
             } => self
                 .integration
-                .integrate_work(node_id, work, validation_plan),
+                .integrate_work(node_id, work, target_files, validation_plan),
             SchedulerEffect::ReturnComplete { .. } | SchedulerEffect::ReturnFailed { .. } => {
                 unreachable!("return effects are never dispatched to the effect handler")
             }

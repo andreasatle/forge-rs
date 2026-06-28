@@ -35,6 +35,23 @@ pub struct ArtifactUpdate {
 }
 
 impl ArtifactUpdate {
+    /// Return the relative workspace paths affected by this update, in first
+    /// occurrence order.
+    pub fn changed_paths(&self) -> Vec<String> {
+        let mut paths = Vec::new();
+        for change in &self.changes {
+            let path = match change {
+                FileChange::Write { path, .. }
+                | FileChange::Replace { path, .. }
+                | FileChange::Delete { path } => path,
+            };
+            if !paths.contains(path) {
+                paths.push(path.clone());
+            }
+        }
+        paths
+    }
+
     /// Applies all changes in order, stopping at the first error.
     pub fn apply(&self, workspace: &mut Workspace) -> Result<(), ArtifactError> {
         for change in &self.changes {

@@ -196,6 +196,7 @@ mod tests {
                                 "printf 'configured artifact\\n' > generated.txt".to_string(),
                             ],
                             when_files_present: vec![],
+                            scope: crate::validation::ValidationScope::Workspace,
                         },
                         CommandSpec {
                             program: "sh".to_string(),
@@ -211,6 +212,7 @@ mod tests {
                                 .to_string(),
                             ],
                             when_files_present: vec![],
+                            scope: crate::validation::ValidationScope::Workspace,
                         },
                     ],
                 },

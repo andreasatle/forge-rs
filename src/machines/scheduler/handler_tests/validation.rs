@@ -28,6 +28,7 @@ fn validation_pass_allows_commit() {
         work: WorkOutput {
             summary: "wrote output.txt".to_string(),
         },
+        target_files: vec![],
         validation_plan: None,
     });
 
@@ -76,6 +77,7 @@ fn validation_failure_blocks_commit() {
         work: WorkOutput {
             summary: "wrote output.txt".to_string(),
         },
+        target_files: vec![],
         validation_plan: None,
     });
 
@@ -182,6 +184,7 @@ fn validator_runs_after_update_apply() {
         work: WorkOutput {
             summary: "wrote applied.txt".to_string(),
         },
+        target_files: vec![],
         validation_plan: None,
     });
 
@@ -213,6 +216,7 @@ fn no_update_does_not_run_validator() {
         work: WorkOutput {
             summary: "no file changes".to_string(),
         },
+        target_files: vec![],
         validation_plan: None,
     });
 
@@ -257,6 +261,7 @@ fn validation_pass_sets_validation_passed_true() {
         work: WorkOutput {
             summary: "wrote output.txt".to_string(),
         },
+        target_files: vec![],
         validation_plan: None,
     });
 
@@ -292,6 +297,7 @@ fn validation_failure_sets_validation_passed_false() {
         work: WorkOutput {
             summary: "wrote output.txt".to_string(),
         },
+        target_files: vec![],
         validation_plan: None,
     });
 
@@ -322,6 +328,7 @@ fn no_update_leaves_validation_passed_none() {
         work: WorkOutput {
             summary: "no files".to_string(),
         },
+        target_files: vec![],
         validation_plan: None,
     });
 
@@ -360,6 +367,7 @@ fn validation_passed_true_even_when_integration_conflicts() {
         work: WorkOutput {
             summary: "wrote output.txt".to_string(),
         },
+        target_files: vec![],
         validation_plan: None,
     });
 
@@ -407,6 +415,7 @@ fn validation_failure_does_not_leave_artifact_changed() {
         work: WorkOutput {
             summary: "wrote output.txt".to_string(),
         },
+        target_files: vec![],
         validation_plan: None,
     });
 
@@ -442,6 +451,7 @@ fn timeout_blocks_commit() {
             program: "sleep".to_string(),
             args: vec!["5".to_string()],
             when_files_present: vec![],
+            scope: crate::validation::ValidationScope::Workspace,
         }],
         Duration::from_secs(1),
     );
@@ -461,6 +471,7 @@ fn timeout_blocks_commit() {
         work: WorkOutput {
             summary: "wrote output.txt".to_string(),
         },
+        target_files: vec![],
         validation_plan: None,
     });
 

@@ -1,11 +1,12 @@
 use super::*;
-use crate::validation::{ValidationPlan, ValidationStage, ValidationStep};
+use crate::validation::{ValidationPlan, ValidationScope, ValidationStage, ValidationStep};
 
 fn one_step_plan() -> ValidationPlan {
     ValidationPlan {
         steps: vec![ValidationStep {
             command: vec!["true".to_string()],
             when_artifacts_present: vec![],
+            scope: ValidationScope::TargetFiles,
             stage: ValidationStage::PreIntegration,
             must_pass: true,
         }],
@@ -175,6 +176,7 @@ fn checkpointed_plan_is_independent_of_later_config() {
         steps: vec![ValidationStep {
             command: vec!["false".to_string()],
             when_artifacts_present: vec![],
+            scope: ValidationScope::Workspace,
             stage: ValidationStage::PreIntegration,
             must_pass: true,
         }],

@@ -9,7 +9,10 @@ validation:
   commands:
     - program: cargo
       args: ["fmt", "--check"]
+      scope: workspace
     - program: cargo
       args: ["check"]
+      scope: workspace
     - program: cargo
       args: ["test"]
+      scope: workspace

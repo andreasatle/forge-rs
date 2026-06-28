@@ -5,9 +5,26 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::artifacts::Workspace;
+
+/// Determines whether a validation command runs against node-local file paths
+/// or the full workspace.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ValidationScope {
+    /// Append the node's declared target files to the command.
+    TargetFiles,
+    /// Append the files changed by the node's artifact update to the command.
+    ChangedFiles,
+    /// Run the command exactly as declared against the full workspace.
+    Workspace,
+}
+
+fn default_validation_scope() -> ValidationScope {
+    ValidationScope::Workspace
+}
 
 /// A structured command specification executed directly without a shell.
 ///
@@ -31,6 +48,13 @@ pub struct CommandSpec {
     /// test files are present in the workspace.
     #[serde(default)]
     pub when_files_present: Vec<String>,
+    /// Validation scope used when this command is stamped into a
+    /// node-owned [`crate::validation::ValidationPlan`].
+    ///
+    /// The legacy [`CommandValidator`] treats every command as workspace
+    /// scoped and does not append paths.
+    #[serde(default = "default_validation_scope")]
+    pub scope: ValidationScope,
 }
 
 /// Outcome of a workspace validation pass.
@@ -146,7 +170,7 @@ pub(crate) fn workspace_has_matching_file(dir: &Path, patterns: &[String]) -> bo
 ///
 /// If the pattern contains no `*`, it is treated as an exact match.
 /// Only the file name component is matched — no path separators.
-fn matches_name_glob(pattern: &str, name: &str) -> bool {
+pub(crate) fn matches_name_glob(pattern: &str, name: &str) -> bool {
     match pattern.find('*') {
         None => pattern == name,
         Some(star) => {
@@ -377,6 +401,7 @@ mod tests {
             program: program.to_string(),
             args: args.iter().map(|s| s.to_string()).collect(),
             when_files_present: vec![],
+            scope: ValidationScope::Workspace,
         }
     }
 
@@ -605,6 +630,7 @@ mod tests {
                 program: "sh".to_string(),
                 args: vec!["-c".to_string(), "true".to_string()],
                 when_files_present: vec![],
+                scope: ValidationScope::Workspace,
             }],
             default_timeout(),
         );
@@ -626,6 +652,7 @@ mod tests {
                 program: "sh".to_string(),
                 args: vec!["-c".to_string(), "false".to_string()],
                 when_files_present: vec![],
+                scope: ValidationScope::Workspace,
             }],
             default_timeout(),
         );
@@ -652,6 +679,7 @@ mod tests {
                 program: "false".to_string(),
                 args: vec![],
                 when_files_present: vec!["test_*.py".to_string()],
+                scope: ValidationScope::Workspace,
             }],
             default_timeout(),
         );
@@ -676,6 +704,7 @@ mod tests {
                 program: "true".to_string(),
                 args: vec![],
                 when_files_present: vec!["test_*.py".to_string()],
+                scope: ValidationScope::Workspace,
             }],
             default_timeout(),
         );
@@ -700,6 +729,7 @@ mod tests {
                 program: "false".to_string(),
                 args: vec![],
                 when_files_present: vec!["*_test.py".to_string()],
+                scope: ValidationScope::Workspace,
             }],
             default_timeout(),
         );
@@ -717,6 +747,7 @@ mod tests {
                 program: "true".to_string(),
                 args: vec![],
                 when_files_present: vec!["*_test.py".to_string()],
+                scope: ValidationScope::Workspace,
             }],
             default_timeout(),
         );
@@ -740,6 +771,7 @@ mod tests {
                 program: "true".to_string(),
                 args: vec![],
                 when_files_present: vec![],
+                scope: ValidationScope::Workspace,
             }],
             default_timeout(),
         );
@@ -763,6 +795,7 @@ mod tests {
                 program: "true".to_string(),
                 args: vec![],
                 when_files_present: vec!["test_*.py".to_string()],
+                scope: ValidationScope::Workspace,
             }],
             default_timeout(),
         );

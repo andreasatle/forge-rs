@@ -55,6 +55,7 @@ pub struct LanguageValidationSpec {
 mod tests {
     use super::*;
     use crate::language::registry::language_spec;
+    use crate::validation::ValidationScope;
 
     #[test]
     fn validation_includes_test_command_is_true_when_runs_tests_set() {
@@ -89,6 +90,7 @@ mod tests {
                     program: "cargo".to_string(),
                     args: vec!["test".to_string()],
                     when_files_present: vec![],
+                    scope: ValidationScope::Workspace,
                 }],
             },
         };

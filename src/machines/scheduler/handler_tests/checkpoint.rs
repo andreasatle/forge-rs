@@ -47,6 +47,7 @@ fn temporary_workspace_removed_after_successful_integration() {
         work: WorkOutput {
             summary: "wrote output.txt".to_string(),
         },
+        target_files: vec![],
         validation_plan: None,
     });
 
@@ -88,6 +89,7 @@ fn temporary_workspace_removed_after_validation_failure() {
         work: WorkOutput {
             summary: "wrote output.txt".to_string(),
         },
+        target_files: vec![],
         validation_plan: None,
     });
 

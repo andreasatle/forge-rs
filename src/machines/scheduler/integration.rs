@@ -70,6 +70,7 @@ impl IntegrationService {
         &self,
         node_id: NodeId,
         work: WorkOutput,
+        target_files: Vec<String>,
         validation_plan: Option<ValidationPlan>,
     ) -> SchedulerEvent {
         eprintln!("[integration] start {}", node_id.0);
@@ -89,6 +90,7 @@ impl IntegrationService {
                 }
             };
 
+            let changed_files = update.changed_paths();
             match update.apply(&mut workspace) {
                 Err(err) => {
                     return SchedulerEvent::IntegrationReturned {
@@ -101,8 +103,13 @@ impl IntegrationService {
                         "Integration",
                         TelemetryEvent::ValidationStarted,
                     ));
-                    let result =
-                        run_validation(&workspace, validation_plan.as_ref(), &*self.validator);
+                    let result = run_validation(
+                        &workspace,
+                        validation_plan.as_ref(),
+                        &*self.validator,
+                        &target_files,
+                        &changed_files,
+                    );
                     if result.passed {
                         *self.last_validation_passed.borrow_mut() = Some(true);
                         self.telemetry.record(TelemetryRecord::new(
@@ -162,9 +169,11 @@ fn run_validation(
     workspace: &crate::artifacts::Workspace,
     plan: Option<&ValidationPlan>,
     fallback: &dyn Validator,
+    target_files: &[String],
+    changed_files: &[String],
 ) -> ValidationResult {
     match plan {
-        Some(p) => p.execute(workspace),
+        Some(p) => p.execute_scoped(workspace, target_files, changed_files),
         None => fallback.validate(workspace),
     }
 }

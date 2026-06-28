@@ -28,8 +28,8 @@ use crate::runtime::resume::find_resumable_run;
 use crate::runtime::{create_run, finalize_manifest};
 use crate::telemetry::{FileTelemetry, TelemetryEvent, TelemetryRecord, TelemetrySink};
 use crate::validation::{
-    AlwaysPassValidator, CommandSpec, CommandValidator, ValidationPlan, ValidationStage,
-    ValidationStep, Validator,
+    AlwaysPassValidator, CommandSpec, CommandValidator, ValidationPlan, ValidationScope,
+    ValidationStage, ValidationStep, Validator,
 };
 
 /// Entry point for a single forge run driven by a [`ForgeConfig`].
@@ -350,6 +350,7 @@ fn make_validation_plan(
             .map(|cmd| ValidationStep {
                 command: std::iter::once(cmd.program).chain(cmd.args).collect(),
                 when_artifacts_present: cmd.when_files_present,
+                scope: cmd.scope,
                 stage: ValidationStage::PreIntegration,
                 must_pass: true,
             })
@@ -369,6 +370,7 @@ fn make_validation_plan(
                 .map(|cmd| ValidationStep {
                     command: vec!["sh".to_string(), "-c".to_string(), cmd.clone()],
                     when_artifacts_present: vec![],
+                    scope: ValidationScope::Workspace,
                     stage: ValidationStage::PreIntegration,
                     must_pass: true,
                 })
@@ -405,6 +407,7 @@ fn make_validator(
                     program: "sh".to_string(),
                     args: vec!["-c".to_string(), cmd.clone()],
                     when_files_present: vec![],
+                    scope: ValidationScope::Workspace,
                 })
                 .collect();
             Ok(Rc::new(CommandValidator::new(specs, timeout)))

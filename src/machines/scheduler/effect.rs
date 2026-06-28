@@ -50,6 +50,8 @@ pub enum SchedulerEffect {
         node_id: NodeId,
         /// The work output to integrate.
         work: WorkOutput,
+        /// Structured target files declared for the node.
+        target_files: Vec<String>,
         /// The node's declared validation contract.
         ///
         /// When present, integration executes this plan instead of the global

@@ -12,11 +12,14 @@ validation:
   runs_tests: true
   commands:
     - program: uv
-      args: ["run", "ruff", "check", "."]
+      args: ["run", "ruff", "check"]
+      scope: target_files
     - program: uv
       args: ["run", "pyright"]
+      scope: workspace
     - program: uv
       args: ["run", "pytest"]
+      scope: target_files
       when_files_present:
         - "test_*.py"
         - "*_test.py"
