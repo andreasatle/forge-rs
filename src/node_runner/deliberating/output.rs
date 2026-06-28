@@ -1,0 +1,114 @@
+//! Conversion from deliberation terminal output into node-run results.
+
+use crate::artifacts::ArtifactUpdate;
+use crate::machines::deliberation::DeliberationTerminalOutput;
+use crate::machines::scheduler::{FailureKind, NodeFailure, NodeKind, RecoveryAction, WorkOutput};
+use crate::telemetry::{TelemetryEvent, TelemetryRecord, TelemetrySink};
+
+use crate::node_runner::classify::{classify_deliberation_failure, recovery_label};
+use crate::node_runner::types::{NodeRunResult, NodeRunWorkResult};
+
+pub(crate) fn map_output(
+    output: DeliberationTerminalOutput,
+    kind: NodeKind,
+    tool_artifact_update: Option<ArtifactUpdate>,
+    telemetry: &dyn TelemetrySink,
+) -> NodeRunResult {
+    match output {
+        DeliberationTerminalOutput::Complete(out) => match kind {
+            NodeKind::Plan => map_plan_output(out.content, telemetry),
+            NodeKind::Work => NodeRunResult::WorkAccepted(NodeRunWorkResult {
+                work: WorkOutput {
+                    summary: out.content,
+                },
+                artifact_update: tool_artifact_update,
+            }),
+        },
+        DeliberationTerminalOutput::Failed { kind, reason } => {
+            let recovery = classify_deliberation_failure(kind, &reason);
+            telemetry.record(TelemetryRecord::new(
+                "DeliberatingNodeRunner",
+                TelemetryEvent::FailureClassified {
+                    reason: reason.clone(),
+                    recovery: recovery_label(&recovery).to_string(),
+                },
+            ));
+            NodeRunResult::Failed(NodeFailure {
+                kind,
+                message: reason,
+                recovery,
+            })
+        }
+    }
+}
+
+/// Map a plan node's raw content to a [`NodeRunResult`].
+///
+/// Attempts to parse `content` as a structured [`PlannerOutput`] JSON object.
+///
+/// - If parsing succeeds and the graph is structurally valid: emits
+///   `PlannerOutputParsed` and returns `PlanAccepted` with one `NodeRequest`
+///   per task. No-recreate validation has already been enforced by the handler
+///   before the content reaches this function.
+/// - If parsing succeeds but structural validation fails: emits
+///   `PlannerOutputValidationFailed` and returns `Failed` with `Terminal`
+///   recovery.
+/// - If parsing fails (prose or unexpected schema): emits
+///   `PlannerOutputFallback` and returns `Failed` with `Terminal` recovery.
+fn map_plan_output(content: String, telemetry: &dyn TelemetrySink) -> NodeRunResult {
+    use crate::node_runner::planner::{
+        parse_planner_content, planner_output_to_plan_output, validate_planner_output,
+    };
+
+    match parse_planner_content(&content) {
+        Some(planner_out) => match validate_planner_output(&planner_out) {
+            Ok(()) => {
+                let task_count = planner_out.tasks.len();
+                let dependency_count: usize =
+                    planner_out.tasks.iter().map(|t| t.depends_on.len()).sum();
+                telemetry.record(TelemetryRecord::new(
+                    "DeliberatingNodeRunner",
+                    TelemetryEvent::PlannerOutputParsed {
+                        task_count,
+                        dependency_count,
+                    },
+                ));
+                NodeRunResult::PlanAccepted(planner_output_to_plan_output(planner_out))
+            }
+            Err(e) => {
+                let reason = e.to_string();
+                telemetry.record(TelemetryRecord::new(
+                    "DeliberatingNodeRunner",
+                    TelemetryEvent::PlannerOutputValidationFailed {
+                        reason: reason.clone(),
+                    },
+                ));
+                NodeRunResult::Failed(NodeFailure {
+                    kind: FailureKind::PlannerValidationFailure,
+                    message: reason.clone(),
+                    recovery: RecoveryAction::Terminal {
+                        message: format!("planner output validation failed: {reason}"),
+                    },
+                })
+            }
+        },
+        None => {
+            // Planner content was not valid PlannerOutput JSON.
+            // This path should be unreachable when runner validation is active,
+            // but if reached it must fail loudly rather than silently substituting
+            // a single work node.
+            let reason = "planner content is not valid PlannerOutput JSON".to_string();
+            telemetry.record(TelemetryRecord::new(
+                "DeliberatingNodeRunner",
+                TelemetryEvent::PlannerOutputFallback,
+            ));
+            NodeRunResult::Failed(NodeFailure {
+                kind: FailureKind::PlannerValidationFailure,
+                message: reason.clone(),
+                recovery: RecoveryAction::Terminal {
+                    message: format!("planner output invalid: {reason}"),
+                },
+            })
+        }
+    }
+}
