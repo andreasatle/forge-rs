@@ -1,8 +1,8 @@
 use crate::artifacts::{ArtifactUpdate, FileChange};
 use crate::machines::deliberation::state::DeliberationRole;
-use crate::machines::scheduler::NodeKind;
+use crate::machines::scheduler::{FailureKind, NodeKind};
 use crate::roles::runner::{RoleRequest, RoleRunner};
-use crate::telemetry::TelemetrySink;
+use crate::telemetry::{TelemetryEvent, TelemetryRecord, TelemetrySink};
 
 use super::effect::DeliberationEffect;
 use super::event::DeliberationEvent;
@@ -28,7 +28,32 @@ impl<R: RoleRunner> DeliberationHandler<R> {
                 feedback,
             } => {
                 let (tool_context, target_views) =
-                    self.role_tool_context_and_target_views(&role, &target_files);
+                    match self.role_tool_context_and_target_views(&role, &target_files) {
+                        Ok(context) => context,
+                        Err(error) => {
+                            let reason = format!(
+                                "artifact update could not be applied to the staged view for \
+                                 {role:?}: {error}. Re-read the target file(s) and modify them \
+                                 with file tools such as read_file, write_file, replace_text, or \
+                                 delete_file before accepting."
+                            );
+                            telemetry.record(TelemetryRecord::new_with_subsource(
+                                "DeliberationHandler",
+                                format!("{role:?}"),
+                                TelemetryEvent::StagedViewConstructionFailed {
+                                    role: format!("{role:?}"),
+                                    reason: reason.clone(),
+                                },
+                            ));
+                            return DeliberationEvent::RoleReturned {
+                                role,
+                                result: super::event::RoleResult::Failed {
+                                    kind: FailureKind::WorkSemanticValidationFailure,
+                                    reason,
+                                },
+                            };
+                        }
+                    };
 
                 if self.node_kind == NodeKind::Plan
                     && matches!(role, DeliberationRole::Producer)

@@ -173,6 +173,14 @@ pub enum TelemetryEvent {
     },
     /// The tool loop reached its hard step limit without a final role result.
     ToolLoopLimitReached,
+    /// A reviewer staged artifact view could not be constructed from the
+    /// accumulated model-produced artifact update.
+    StagedViewConstructionFailed {
+        /// Role that needed the staged view.
+        role: String,
+        /// Human-readable failure reason.
+        reason: String,
+    },
     /// A plan node's provider output was parsed as a structured task graph.
     PlannerOutputParsed {
         /// Number of tasks in the parsed graph.
@@ -249,6 +257,9 @@ impl TelemetryEvent {
             TelemetryEvent::ToolRequested { .. } => "tool-requested",
             TelemetryEvent::ToolReturned { .. } => "tool-returned",
             TelemetryEvent::ToolLoopLimitReached => "tool-loop-limit-reached",
+            TelemetryEvent::StagedViewConstructionFailed { .. } => {
+                "staged-view-construction-failed"
+            }
             TelemetryEvent::PlannerOutputParsed { .. } => "planner-output-parsed",
             TelemetryEvent::PlannerOutputFallback => "planner-output-fallback",
             TelemetryEvent::PlannerOutputValidationFailed { .. } => {
@@ -348,6 +359,9 @@ impl TelemetryEvent {
                 format!("kind: ToolReturned\ntool: {tool}\nresult: {result}\n")
             }
             TelemetryEvent::ToolLoopLimitReached => "kind: ToolLoopLimitReached\n".to_string(),
+            TelemetryEvent::StagedViewConstructionFailed { role, reason } => {
+                format!("kind: StagedViewConstructionFailed\nrole: {role}\nreason: {reason}\n")
+            }
             TelemetryEvent::PlannerOutputParsed {
                 task_count,
                 dependency_count,

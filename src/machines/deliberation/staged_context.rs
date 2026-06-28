@@ -1,4 +1,4 @@
-use crate::artifacts::{ArtifactRead, ArtifactUpdate, StagedArtifactView};
+use crate::artifacts::{ArtifactError, ArtifactRead, ArtifactUpdate, StagedArtifactView};
 use crate::machines::deliberation::state::DeliberationRole;
 use crate::machines::scheduler::NodeKind;
 use crate::roles::TargetView;
@@ -11,13 +11,13 @@ impl<R> DeliberationHandler<R> {
         &self,
         role: &DeliberationRole,
         target_files: &[String],
-    ) -> (Option<RoleToolContext>, Vec<TargetView>) {
+    ) -> Result<(Option<RoleToolContext>, Vec<TargetView>), ArtifactError> {
         if self.node_kind == NodeKind::Plan {
-            return (None, vec![]);
+            return Ok((None, vec![]));
         }
 
         let Some(base) = &self.artifact_view else {
-            return (None, vec![]);
+            return Ok((None, vec![]));
         };
 
         let view: Box<dyn ArtifactRead> = match role {
@@ -25,22 +25,18 @@ impl<R> DeliberationHandler<R> {
             DeliberationRole::Critic | DeliberationRole::Referee => {
                 let changes = self.accumulated_update.borrow().clone();
                 let update = ArtifactUpdate { changes };
-                Box::new(
-                    StagedArtifactView::from_update(base.clone(), &update).expect(
-                        "staged view construction must succeed for a valid accumulated update",
-                    ),
-                )
+                Box::new(StagedArtifactView::from_update(base.clone(), &update)?)
             }
         };
 
         let target_views =
             crate::project::build_file_text_target_views(&*view, target_files, TARGET_VIEW_BUDGET);
 
-        (
+        Ok((
             Some(RoleToolContext {
                 artifact_view: view,
             }),
             target_views,
-        )
+        ))
     }
 }

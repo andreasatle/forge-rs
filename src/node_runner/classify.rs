@@ -15,8 +15,10 @@ pub fn classify_deliberation_failure(kind: FailureKind, message: &str) -> Recove
         FailureKind::WorkSemanticValidationFailure => RecoveryAction::Retry {
             message: format!(
                 "retryable work semantic validation failure: {message}. Accepted Work results \
-                 must modify the artifact. Use a file tool such as write_file, replace_text, or \
-                 delete_file before returning accepted output."
+                 must modify the artifact with an update that can be applied to the current \
+                 staged/base view. If an artifact update could not be applied, re-read the \
+                 target file(s), then use file tools such as read_file, write_file, replace_text, \
+                 or delete_file before returning accepted output."
             ),
         },
         FailureKind::DeliberationFailure => RecoveryAction::ElevateModel {
@@ -105,6 +107,19 @@ mod tests {
     }
 
     #[test]
+    fn invalid_staged_update_failure_retries_by_kind_not_message() {
+        let action = classify_deliberation_failure(
+            FailureKind::WorkSemanticValidationFailure,
+            "replacement target not found",
+        );
+
+        assert!(
+            matches!(action, RecoveryAction::Retry { .. }),
+            "invalid staged artifact updates must retry because of the typed kind"
+        );
+    }
+
+    #[test]
     fn work_semantic_validation_retry_message_mentions_file_tool() {
         let action = classify_deliberation_failure(
             FailureKind::WorkSemanticValidationFailure,
@@ -120,6 +135,10 @@ mod tests {
         assert!(
             message.contains("write_file"),
             "retry message must name a file tool; got: {message}"
+        );
+        assert!(
+            message.contains("could not be applied") && message.contains("re-read"),
+            "retry message must tell Producer how to recover from invalid staged updates; got: {message}"
         );
     }
 

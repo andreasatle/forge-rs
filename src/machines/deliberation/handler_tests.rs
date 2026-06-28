@@ -16,7 +16,7 @@ use crate::machines::scheduler::{FailureKind, NodeKind};
 use crate::providers::types::{ProviderError, ProviderResponse};
 use crate::providers::{ProviderClient, ProviderRequest};
 use crate::roles::runner::{RoleRequest, RoleRunOutput, RoleRunner};
-use crate::telemetry::{NoopTelemetry, TelemetrySink};
+use crate::telemetry::{NoopTelemetry, TelemetryEvent, TelemetrySink, VecTelemetry};
 
 // --- fake RoleRunner for delegation tests ---
 
@@ -176,6 +176,22 @@ fn write_update(path: &str) -> ArtifactUpdate {
 
 fn empty_update() -> ArtifactUpdate {
     ArtifactUpdate { changes: vec![] }
+}
+
+fn invalid_replace_update() -> ArtifactUpdate {
+    ArtifactUpdate {
+        changes: vec![
+            FileChange::Write {
+                path: "main.py".to_string(),
+                content: "print('hello')\n".to_string(),
+            },
+            FileChange::Replace {
+                path: "main.py".to_string(),
+                old: "missing target".to_string(),
+                new: "replacement".to_string(),
+            },
+        ],
+    }
 }
 
 // --- delegation test ---
@@ -1033,6 +1049,37 @@ fn staged_handler(
     }
 }
 
+struct StagedScriptedMachine {
+    handler: DeliberationHandler<ScriptedRoleRunnerWithUpdates>,
+}
+
+impl Machine for StagedScriptedMachine {
+    type State = DeliberationState;
+    type Event = DeliberationEvent;
+    type Effect = DeliberationEffect;
+    type Output = DeliberationTerminalOutput;
+
+    fn start_event(&self) -> DeliberationEvent {
+        DeliberationEvent::Start
+    }
+
+    fn transition(
+        &self,
+        state: DeliberationState,
+        event: DeliberationEvent,
+    ) -> Transition<DeliberationState, DeliberationEffect> {
+        DeliberationMachine.transition(state, event)
+    }
+
+    fn handle_effect(&self, effect: DeliberationEffect) -> DeliberationEvent {
+        self.handler.handle_effect(effect)
+    }
+
+    fn output(&self, state: &DeliberationState) -> Option<DeliberationTerminalOutput> {
+        DeliberationMachine.output(state)
+    }
+}
+
 #[test]
 fn critic_sees_producer_staged_write_before_integration() {
     let producer_update = ArtifactUpdate {
@@ -1172,6 +1219,120 @@ fn reviewer_staged_view_does_not_see_new_file_without_producer_write() {
     assert!(
         critic_ctx.artifact_view.read_file("main.py").is_err(),
         "Critic must not see main.py when Producer did not write it"
+    );
+}
+
+#[test]
+fn invalid_replace_text_accumulated_update_does_not_panic() {
+    let handler = staged_handler(vec![
+        (
+            RoleResult::Accepted {
+                content: "updated main.py".to_owned(),
+            },
+            Some(invalid_replace_update()),
+        ),
+        (
+            RoleResult::Accepted {
+                content: "this critic response must not be used".to_owned(),
+            },
+            None,
+        ),
+    ]);
+    let telemetry = VecTelemetry::new();
+
+    handler.handle_effect_with_telemetry(
+        run_role_effect(
+            DeliberationRole::Producer,
+            "update main.py",
+            None,
+            None,
+            vec![],
+        ),
+        &telemetry,
+    );
+    let event = handler.handle_effect_with_telemetry(
+        run_role_effect(
+            DeliberationRole::Critic,
+            "update main.py",
+            Some("updated main.py"),
+            None,
+            vec![],
+        ),
+        &telemetry,
+    );
+
+    assert!(
+        matches!(
+            event,
+            DeliberationEvent::RoleReturned {
+                role: DeliberationRole::Critic,
+                result: RoleResult::Failed {
+                    kind: FailureKind::WorkSemanticValidationFailure,
+                    ..
+                },
+            }
+        ),
+        "invalid staged update must become a typed recoverable role failure; got {event:?}"
+    );
+    assert!(
+        telemetry.records().iter().any(|record| matches!(
+            record.event,
+            TelemetryEvent::StagedViewConstructionFailed { .. }
+        )),
+        "staged view construction failure must be visible in telemetry"
+    );
+}
+
+#[test]
+fn critic_and_referee_are_not_invoked_when_staged_view_cannot_be_constructed() {
+    let machine = StagedScriptedMachine {
+        handler: staged_handler(vec![
+            (
+                RoleResult::Accepted {
+                    content: "updated main.py".to_owned(),
+                },
+                Some(invalid_replace_update()),
+            ),
+            (
+                RoleResult::Accepted {
+                    content: "critic should not run".to_owned(),
+                },
+                None,
+            ),
+            (
+                RoleResult::Accepted {
+                    content: "referee should not run".to_owned(),
+                },
+                None,
+            ),
+        ]),
+    };
+
+    let (output, machine) =
+        run_machine_with_telemetry(machine, ready("update main.py", 1), &NoopTelemetry);
+
+    assert!(
+        matches!(
+            output,
+            DeliberationTerminalOutput::Failed {
+                kind: FailureKind::WorkSemanticValidationFailure,
+                ..
+            }
+        ),
+        "invalid staged update must fail deliberation before review; got {output:?}"
+    );
+    let roles: Vec<_> = machine
+        .handler
+        .runner
+        .requests
+        .borrow()
+        .iter()
+        .map(|request| request.role.clone())
+        .collect();
+    assert_eq!(
+        roles,
+        vec![DeliberationRole::Producer],
+        "Critic/Referee runner must not be invoked when staged view construction fails"
     );
 }
 
