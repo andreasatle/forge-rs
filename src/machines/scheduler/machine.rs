@@ -1,54 +1,23 @@
-//! Scheduler machine — transition logic and graph helpers.
+//! Scheduler machine — state-machine entry point.
 //!
-//! This module owns the `SchedulerMachine` pure transition carrier. It
-//! contains:
-//!
-//! - Pure graph-inspection helpers (`find_ready`, `all_complete`).
-//! - Pure graph-mutation helpers (`mark_node`, `push_node`, `insert_children`,
-//!   `apply_retry`, `apply_split`, `apply_elevate`).
-//! - The `transition` function, which is the only place where state advances.
-//! - An `output` recogniser that identifies terminal states.
-//!
-//! # What this module does NOT own
-//!
-//! - The definitions of state, events, and effects — those live in their
-//!   respective sibling modules.
-//! - The generic runner loop — that is in `engine::runner`.
-//! - Effect handling or node execution — those live in `handler.rs` behind the
-//!   `NodeRunner` boundary.
-
-use std::collections::{HashMap, HashSet};
+//! Owns `SchedulerMachine`, `SchedulerOutput`, `RecoverySummary`, and the
+//! `transition` and `output` functions. Pure graph helpers live in `graph.rs`;
+//! recovery routing and application live in `recovery.rs`.
 
 use crate::engine::Transition;
 
 use super::effect::SchedulerEffect;
-
-/// Maximum number of attempts allowed per objective before recovery stops.
-///
-/// Attempts are zero-based: attempts 0, 1, 2, and 3 are all valid runs.
-/// When `node.attempt >= MAX_ATTEMPTS`, `Retry`, `ElevateModel`, and `Split`
-/// recovery will not create a replacement — the scheduler transitions to
-/// `Failed`.
-const MAX_ATTEMPTS: u32 = 3;
-
-/// Scheduler circuit breaker for graph growth.
-///
-/// This is not a business limit. It exists only to bound recursive planning and
-/// recovery expansion so a run cannot append nodes forever.
-const MAX_GRAPH_NODES: usize = 100;
-
-/// Scheduler circuit breaker for recursive planning depth.
-///
-/// This is not a business rule. It only bounds Plan ancestry so recursive
-/// Plan expansion and Split recovery cannot create infinitely deep plan chains.
-const MAX_PLAN_DEPTH: usize = 10;
 use super::event::{
-    IntegrationFailure, IntegrationOutcome, NodeFailure, NodeOutcome, NodeOutcome::*, NodeRequest,
-    RecoveryAction, SchedulerEvent,
+    IntegrationFailure, IntegrationOutcome, NodeFailure, NodeOutcome::*, SchedulerEvent,
 };
 use super::state::{
     ModelTier, Node, NodeId, NodeKind, NodeOrigin, NodeStatus, RunGraph, RunRequest, SchedulerState,
 };
+use super::{graph, recovery};
+
+// Re-expose constants so the nested test module sees them via `use super::*`.
+#[cfg(test)]
+use super::graph::{MAX_ATTEMPTS, MAX_GRAPH_NODES, MAX_PLAN_DEPTH};
 
 /// A typed summary of what recovery actions occurred during a successful run.
 ///
@@ -161,851 +130,13 @@ impl SchedulerMachine {
         }
     }
 
-    /// Returns the IDs of all nodes that are `Pending` and whose every
-    /// dependency has reached `Completed`.
-    ///
-    /// A node is eligible to run only when its full dependency set is satisfied.
-    /// `Running`, `Failed`, and `Cancelled` dependencies do *not* satisfy the
-    /// check — only `Completed` does.
-    fn find_ready(graph: &RunGraph) -> Vec<NodeId> {
-        let completed: HashSet<&NodeId> = graph
-            .nodes
-            .iter()
-            .filter(|n| n.status == NodeStatus::Completed)
-            .map(|n| &n.id)
-            .collect();
+    // All graph helpers live in graph.rs and recovery.rs.
+}
 
-        graph
-            .nodes
-            .iter()
-            .filter(|n| {
-                n.status == NodeStatus::Pending
-                    && n.dependencies.iter().all(|dep| completed.contains(dep))
-            })
-            .map(|n| n.id.clone())
-            .collect()
-    }
-
-    /// Returns `true` when no node is still `Pending`, `Running`, or `Integrating`.
-    ///
-    /// `Failed` and `Cancelled` nodes count as terminal for this scan. Terminal
-    /// recovery transitions directly to `SchedulerState::Failed`, while
-    /// recoverable failures leave failed historical nodes behind and continue
-    /// through replacement nodes. `Integrating` is active and therefore blocks
-    /// completion just like `Pending` and `Running`.
-    fn all_complete(graph: &RunGraph) -> bool {
-        !graph.nodes.iter().any(|n| {
-            matches!(
-                n.status,
-                NodeStatus::Pending | NodeStatus::Running | NodeStatus::Integrating
-            )
-        })
-    }
-
-    /// Update a single node's status, leaving all other nodes unchanged.
-    ///
-    /// The entire `nodes` vec is rebuilt via iterator to keep ownership simple.
-    /// This is intentionally not `O(1)`, but graphs are small enough that the
-    /// difference is irrelevant at this stage.
-    fn mark_node(graph: RunGraph, node_id: &NodeId, status: NodeStatus) -> RunGraph {
-        let next_id = graph.next_id;
-        RunGraph {
-            nodes: graph
-                .nodes
-                .into_iter()
-                .map(|mut n| {
-                    if &n.id == node_id {
-                        n.status = status.clone();
-                    }
-                    n
-                })
-                .collect(),
-            next_id,
-        }
-    }
-
-    /// Mark a node `Completed` and attach the work summary in one pass.
-    ///
-    /// Doing both mutations together avoids a second vec scan that `mark_node`
-    /// would require if called separately.
-    fn mark_node_completed_with_summary(
-        graph: RunGraph,
-        node_id: &NodeId,
-        summary: String,
-    ) -> RunGraph {
-        let next_id = graph.next_id;
-        RunGraph {
-            nodes: graph
-                .nodes
-                .into_iter()
-                .map(|mut n| {
-                    if &n.id == node_id {
-                        n.status = NodeStatus::Completed;
-                        n.summary = Some(summary.clone());
-                    }
-                    n
-                })
-                .collect(),
-            next_id,
-        }
-    }
-
-    /// Look up a node by ID, panicking if it is absent.
-    ///
-    /// Every node that the scheduler dispatches is present in the graph by
-    /// construction. A missing node_id here indicates a bug in the event
-    /// routing, not a recoverable runtime condition.
-    fn get_node<'a>(graph: &'a RunGraph, node_id: &NodeId) -> &'a Node {
-        graph
-            .nodes
-            .iter()
-            .find(|n| &n.id == node_id)
-            .expect("node not found in graph")
-    }
-
-    /// Append a node to the graph and advance the ID counter.
-    fn push_node(mut graph: RunGraph, node: Node) -> RunGraph {
-        graph.nodes.push(node);
-        graph.next_id += 1;
-        graph
-    }
-
-    /// Insert children produced by a plan node into the graph.
-    ///
-    /// Each `NodeRequest` becomes a real node with a fresh ID derived from the
-    /// parent's ID and the current counter. Children always start at `attempt 0`
-    /// with `ModelTier::Cheap`; the planner specifies everything else.
-    ///
-    /// Intra-batch dependencies (where a child depends on a sibling in the same
-    /// `PlanOutput` by the sibling's `NodeRequest.id`) are rewritten to the
-    /// actual graph `NodeId` assigned to that sibling at insertion time.
-    /// Dependencies that reference existing graph nodes are left unchanged.
-    fn insert_children(
-        mut graph: RunGraph,
-        parent_id: &NodeId,
-        children: Vec<NodeRequest>,
-    ) -> RunGraph {
-        let parent_depth = Self::get_node(&graph, parent_id).plan_depth;
-
-        // Pre-compute the graph NodeId that will be assigned to each planner-local id.
-        let local_to_graph: HashMap<NodeId, NodeId> = children
-            .iter()
-            .enumerate()
-            .map(|(i, req)| {
-                let graph_id = NodeId(format!(
-                    "{}-child-{}",
-                    parent_id.0,
-                    graph.next_id + i as u32
-                ));
-                (req.id.clone(), graph_id)
-            })
-            .collect();
-
-        for req in children {
-            let id = NodeId(format!("{}-child-{}", parent_id.0, graph.next_id));
-            graph.next_id += 1;
-            let plan_depth = Self::plan_child_depth(parent_depth, &req.kind);
-            let dependencies = req
-                .dependencies
-                .into_iter()
-                .map(|dep| local_to_graph.get(&dep).cloned().unwrap_or(dep))
-                .collect();
-            graph.nodes.push(Node {
-                id,
-                kind: req.kind,
-                objective: req.objective,
-                target_files: req.target_files,
-                dependencies,
-                status: NodeStatus::Pending,
-                attempt: 0,
-                plan_depth,
-                model_tier: ModelTier::Cheap,
-                summary: None,
-                origin: NodeOrigin::PlanExpansion,
-            });
-        }
-        graph
-    }
-
-    /// Rewrite `old_id` → `new_id` in the `dependencies` of every `Pending` node.
-    ///
-    /// Only `Pending` nodes are mutable; `Running`, `Completed`, `Failed`, and
-    /// `Cancelled` nodes are historical records and must not be touched.
-    fn remap_pending_dependencies(graph: RunGraph, old_id: &NodeId, new_id: &NodeId) -> RunGraph {
-        let next_id = graph.next_id;
-        RunGraph {
-            nodes: graph
-                .nodes
-                .into_iter()
-                .map(|mut n| {
-                    if n.status == NodeStatus::Pending {
-                        n.dependencies = n
-                            .dependencies
-                            .into_iter()
-                            .map(|dep| if &dep == old_id { new_id.clone() } else { dep })
-                            .collect();
-                    }
-                    n
-                })
-                .collect(),
-            next_id,
-        }
-    }
-
-    /// Verify that every dependency listed in every child request is either an
-    /// existing graph node or another sibling request in the same batch.
-    ///
-    /// Returns `Err` with a descriptive message on the first invalid reference.
-    /// The graph is not mutated; callers must not insert children when this
-    /// returns `Err`.
-    ///
-    /// Intra-batch sibling dependencies are allowed: a child may depend on
-    /// another child in the same `PlanOutput` by referencing its planner-local
-    /// `NodeRequest.id`. `insert_children` rewrites those local ids to the
-    /// actual graph `NodeId`s assigned at insertion time.
-    fn validate_plan_dependencies(
-        graph: &RunGraph,
-        children: &[NodeRequest],
-    ) -> Result<(), String> {
-        let known: HashSet<&NodeId> = graph.nodes.iter().map(|n| &n.id).collect();
-        let sibling_ids: HashSet<&NodeId> = children.iter().map(|c| &c.id).collect();
-        for child in children {
-            for dep in &child.dependencies {
-                if known.contains(dep) || sibling_ids.contains(dep) {
-                    continue;
-                }
-                return Err(format!(
-                    "plan output references unknown node id: {:?}",
-                    dep.0
-                ));
-            }
-        }
-        Ok(())
-    }
-
-    /// Validate structural invariants of an externally supplied `RunGraph`.
-    ///
-    /// Returns `Err` with a human-readable reason on the first violation found.
-    /// Called once at `Running + Start` before any scheduling logic runs.
-    ///
-    /// Invariants checked:
-    /// 1. No two nodes share the same `NodeId`.
-    /// 2. Every dependency in every node references an existing `NodeId`.
-    /// 3. Every origin source (`Retry`, `ElevateModel`, `Split`) references an
-    ///    existing `NodeId`.
-    ///
-    /// `RunGraph::next_id` is an internal generator cursor. Validation treats
-    /// `NodeId` values as opaque and does not parse their string form to infer
-    /// whether the cursor is stale.
-    fn validate_graph_invariants(graph: &RunGraph) -> Result<(), String> {
-        let mut seen: HashSet<&NodeId> = HashSet::new();
-        for node in &graph.nodes {
-            if !seen.insert(&node.id) {
-                return Err(format!("duplicate node id: {}", node.id.0));
-            }
-        }
-
-        let all_ids: HashSet<&NodeId> = graph.nodes.iter().map(|n| &n.id).collect();
-        for node in &graph.nodes {
-            for dep in &node.dependencies {
-                if !all_ids.contains(dep) {
-                    return Err(format!(
-                        "missing dependency: node {} depends on unknown id {}",
-                        node.id.0, dep.0
-                    ));
-                }
-            }
-        }
-
-        Self::validate_origin_sources(graph, &all_ids)?;
-
-        Ok(())
-    }
-
-    /// Check that every origin source ID exists in the graph.
-    ///
-    /// `Root` and `PlanExpansion` carry no source reference and are always valid.
-    /// `Retry`, `ElevateModel`, and `Split` each carry a `source` that must
-    /// resolve to an existing node.
-    fn validate_origin_sources(graph: &RunGraph, all_ids: &HashSet<&NodeId>) -> Result<(), String> {
-        for node in &graph.nodes {
-            match &node.origin {
-                NodeOrigin::Retry { source } => {
-                    if !all_ids.contains(source) {
-                        return Err(format!(
-                            "missing origin source: node {} has Retry source {}",
-                            node.id.0, source.0
-                        ));
-                    }
-                }
-                NodeOrigin::ElevateModel { source } => {
-                    if !all_ids.contains(source) {
-                        return Err(format!(
-                            "missing origin source: node {} has ElevateModel source {}",
-                            node.id.0, source.0
-                        ));
-                    }
-                }
-                NodeOrigin::Split { source } => {
-                    if !all_ids.contains(source) {
-                        return Err(format!(
-                            "missing origin source: node {} has Split source {}",
-                            node.id.0, source.0
-                        ));
-                    }
-                }
-                NodeOrigin::Root | NodeOrigin::PlanExpansion => {}
-            }
-        }
-        Ok(())
-    }
-
-    /// Classify why no node became ready when the graph is not yet complete.
-    ///
-    /// Checks pending nodes for missing dependencies first. If all referenced
-    /// IDs exist but no node is ready, the graph is stuck in a cycle or a
-    /// mutually blocked chain.
-    fn diagnose_no_ready(graph: &RunGraph) -> String {
-        let existing: HashSet<&NodeId> = graph.nodes.iter().map(|n| &n.id).collect();
-        for node in &graph.nodes {
-            if node.status == NodeStatus::Pending {
-                for dep in &node.dependencies {
-                    if !existing.contains(dep) {
-                        return format!(
-                            "pending node {} has missing dependency {}",
-                            node.id.0, dep.0
-                        );
-                    }
-                }
-            }
-        }
-        "no ready nodes: blocked dependency chain or possible cycle".to_string()
-    }
-
-    /// Returns `true` when the node has already consumed all permitted attempts.
-    ///
-    /// Used by `Retry`, `ElevateModel`, and `Split` recovery arms to guard
-    /// against infinite recovery loops.
-    fn attempts_exhausted(node: &Node) -> bool {
-        node.attempt >= MAX_ATTEMPTS
-    }
-
-    /// Return whether the graph can accept `additional_nodes` more appended nodes.
-    fn graph_has_capacity(graph: &RunGraph, additional_nodes: usize) -> bool {
-        graph
-            .nodes
-            .len()
-            .checked_add(additional_nodes)
-            .is_some_and(|total| total <= MAX_GRAPH_NODES)
-    }
-
-    fn graph_size_limit_reason(additional_nodes: usize) -> String {
-        format!(
-            "graph size limit exceeded: cannot add {additional_nodes} node(s); limit is {MAX_GRAPH_NODES}"
-        )
-    }
-
-    fn plan_depth_limit_reason(depth: usize) -> String {
-        format!("plan depth limit exceeded: requested depth {depth}; limit is {MAX_PLAN_DEPTH}")
-    }
-
-    fn plan_child_depth(parent_depth: usize, kind: &NodeKind) -> usize {
-        match kind {
-            NodeKind::Plan => parent_depth + 1,
-            NodeKind::Work => parent_depth,
-        }
-    }
-
-    fn validate_plan_child_depths(
-        parent_depth: usize,
-        children: &[NodeRequest],
-    ) -> Result<(), String> {
-        for child in children {
-            let child_depth = Self::plan_child_depth(parent_depth, &child.kind);
-            if child_depth > MAX_PLAN_DEPTH {
-                return Err(Self::plan_depth_limit_reason(child_depth));
-            }
-        }
-        Ok(())
-    }
-
-    fn validate_split_depth(original_depth: usize) -> Result<(), String> {
-        let split_depth = original_depth + 1;
-        if split_depth > MAX_PLAN_DEPTH {
-            Err(Self::plan_depth_limit_reason(split_depth))
-        } else {
-            Ok(())
-        }
-    }
-
-    fn failed_transition(
-        graph: RunGraph,
-        reason: String,
-    ) -> Transition<SchedulerState, SchedulerEffect> {
-        Transition {
-            state: SchedulerState::Failed {
-                graph: graph.clone(),
-                reason: reason.clone(),
-            },
-            effects: vec![SchedulerEffect::ReturnFailed { graph, reason }],
-        }
-    }
-
-    /// Mark every `Pending` node that depends (directly or indirectly) on
-    /// `failed_id` as `Cancelled`.
-    ///
-    /// The failed node itself must already be marked `Failed` before this is
-    /// called. Only `Pending` nodes are eligible; all other statuses are left
-    /// untouched.
-    fn cancel_pending_dependents(graph: RunGraph, failed_id: &NodeId) -> RunGraph {
-        let mut tainted: HashSet<NodeId> = HashSet::new();
-        tainted.insert(failed_id.clone());
-
-        loop {
-            let mut grew = false;
-            for node in &graph.nodes {
-                if node.status == NodeStatus::Pending
-                    && !tainted.contains(&node.id)
-                    && node.dependencies.iter().any(|dep| tainted.contains(dep))
-                {
-                    tainted.insert(node.id.clone());
-                    grew = true;
-                }
-            }
-            if !grew {
-                break;
-            }
-        }
-
-        tainted.remove(failed_id);
-
-        let next_id = graph.next_id;
-        RunGraph {
-            nodes: graph
-                .nodes
-                .into_iter()
-                .map(|mut n| {
-                    if tainted.contains(&n.id) {
-                        n.status = NodeStatus::Cancelled;
-                    }
-                    n
-                })
-                .collect(),
-            next_id,
-        }
-    }
-
-    /// Handle a `Retry` recovery: mark the failed node and create a replacement.
-    ///
-    /// The replacement carries the same objective, kind, model tier, and
-    /// dependencies as the original, with `attempt` incremented. The original
-    /// node is marked `Failed` — it is never removed or mutated further.
-    ///
-    /// After inserting the replacement, all `Pending` downstream nodes that
-    /// referenced `node_id` are remapped to reference `replacement_id` so that
-    /// the graph does not deadlock waiting for a `Failed` node to complete.
-    fn apply_retry(graph: RunGraph, node_id: &NodeId) -> RunGraph {
-        let (kind, objective, target_files, deps, attempt, plan_depth, model_tier) = {
-            let n = Self::get_node(&graph, node_id);
-            (
-                n.kind.clone(),
-                n.objective.clone(),
-                n.target_files.clone(),
-                n.dependencies.clone(),
-                n.attempt,
-                n.plan_depth,
-                n.model_tier,
-            )
-        };
-        let replacement_id = NodeId(format!("{}-retry-{}", node_id.0, graph.next_id));
-        let replacement = Node {
-            id: replacement_id.clone(),
-            kind,
-            objective,
-            target_files,
-            dependencies: deps,
-            status: NodeStatus::Pending,
-            attempt: attempt + 1,
-            plan_depth,
-            model_tier,
-            summary: None,
-            origin: NodeOrigin::Retry {
-                source: node_id.clone(),
-            },
-        };
-        let graph = Self::mark_node(graph, node_id, NodeStatus::Failed);
-        let graph = Self::push_node(graph, replacement);
-        Self::remap_pending_dependencies(graph, node_id, &replacement_id)
-    }
-
-    /// Handle a `Split` recovery: mark the failed node and insert a plan node.
-    ///
-    /// The new plan node is always `ModelTier::Strong`, regardless of the tier
-    /// the original node used. Planning quality directly determines how much
-    /// downstream work is created, so maximum capability is warranted here even
-    /// if it is expensive.
-    ///
-    /// The original node is marked `Failed` (not `Cancelled`) so the audit trail
-    /// is unambiguous: it attempted its objective and could not complete it.
-    fn apply_split(graph: RunGraph, node_id: &NodeId, message: String) -> RunGraph {
-        let (target_files, deps, attempt, plan_depth) = {
-            let n = Self::get_node(&graph, node_id);
-            (
-                n.target_files.clone(),
-                n.dependencies.clone(),
-                n.attempt,
-                n.plan_depth + 1,
-            )
-        };
-        let split_id = NodeId(format!("{}-split-{}", node_id.0, graph.next_id));
-        let split_node = Node {
-            id: split_id.clone(),
-            kind: NodeKind::Plan,
-            objective: message,
-            target_files,
-            dependencies: deps,
-            status: NodeStatus::Pending,
-            attempt: attempt + 1,
-            plan_depth,
-            model_tier: ModelTier::Strong,
-            summary: None,
-            origin: NodeOrigin::Split {
-                source: node_id.clone(),
-            },
-        };
-        let graph = Self::mark_node(graph, node_id, NodeStatus::Failed);
-        let graph = Self::push_node(graph, split_node);
-        Self::remap_pending_dependencies(graph, node_id, &split_id)
-    }
-
-    /// Route a `RecoveryAction` for a failed or failed-integration node.
-    ///
-    /// Both `NodeOutcome::Failed` and `IntegrationOutcome::Failed` share the
-    /// same four recovery branches. This helper centralises the routing so
-    /// neither caller duplicates the exhaustion checks or graph mutations.
-    ///
-    /// The caller is responsible for ensuring `node_id` is present in `graph`.
-    fn route_recovery(
-        &self,
-        graph: RunGraph,
-        node_id: &NodeId,
-        failure_reason: String,
-        recovery: RecoveryAction,
-    ) -> Transition<SchedulerState, SchedulerEffect> {
-        match recovery {
-            RecoveryAction::Retry { .. } => {
-                let exhausted = Self::attempts_exhausted(Self::get_node(&graph, node_id));
-                if exhausted {
-                    let reason = format!(
-                        "node {} exhausted all {} attempts (Retry)",
-                        node_id.0, MAX_ATTEMPTS
-                    );
-                    let graph = Self::mark_node(graph, node_id, NodeStatus::Failed);
-                    Transition {
-                        state: SchedulerState::Failed {
-                            graph: graph.clone(),
-                            reason: reason.clone(),
-                        },
-                        effects: vec![SchedulerEffect::ReturnFailed { graph, reason }],
-                    }
-                } else if !Self::graph_has_capacity(&graph, 1) {
-                    let graph = Self::mark_node(graph, node_id, NodeStatus::Failed);
-                    Self::failed_transition(graph, Self::graph_size_limit_reason(1))
-                } else {
-                    let graph = Self::apply_retry(graph, node_id);
-                    Transition {
-                        state: SchedulerState::Running { graph },
-                        effects: vec![],
-                    }
-                }
-            }
-
-            RecoveryAction::Split { message } => {
-                let node = Self::get_node(&graph, node_id);
-                let exhausted = Self::attempts_exhausted(node);
-                let split_depth_result = Self::validate_split_depth(node.plan_depth);
-                if exhausted {
-                    let reason = format!(
-                        "node {} exhausted all {} attempts (Split)",
-                        node_id.0, MAX_ATTEMPTS
-                    );
-                    let graph = Self::mark_node(graph, node_id, NodeStatus::Failed);
-                    Transition {
-                        state: SchedulerState::Failed {
-                            graph: graph.clone(),
-                            reason: reason.clone(),
-                        },
-                        effects: vec![SchedulerEffect::ReturnFailed { graph, reason }],
-                    }
-                } else if !Self::graph_has_capacity(&graph, 1) {
-                    let graph = Self::mark_node(graph, node_id, NodeStatus::Failed);
-                    Self::failed_transition(graph, Self::graph_size_limit_reason(1))
-                } else if let Err(reason) = split_depth_result {
-                    let graph = Self::mark_node(graph, node_id, NodeStatus::Failed);
-                    Self::failed_transition(graph, reason)
-                } else {
-                    let graph = Self::apply_split(graph, node_id, message);
-                    Transition {
-                        state: SchedulerState::Running { graph },
-                        effects: vec![],
-                    }
-                }
-            }
-
-            RecoveryAction::ElevateModel { .. } => {
-                let (can_elevate, exhausted) = {
-                    let node = Self::get_node(&graph, node_id);
-                    // Elevation is only meaningful when a distinct strong-tier model
-                    // is configured AND the node is not already at the highest tier.
-                    let can = self.has_strong_tier && node.model_tier == ModelTier::Cheap;
-                    (can, Self::attempts_exhausted(node))
-                };
-
-                if !can_elevate {
-                    // No higher model tier available — fall back to Retry when
-                    // attempts remain, otherwise Terminal.
-                    if exhausted {
-                        let reason = format!(
-                            "node {} exhausted all {} attempts; no higher model tier available",
-                            node_id.0, MAX_ATTEMPTS
-                        );
-                        let graph = Self::mark_node(graph, node_id, NodeStatus::Failed);
-                        Transition {
-                            state: SchedulerState::Failed {
-                                graph: graph.clone(),
-                                reason: reason.clone(),
-                            },
-                            effects: vec![SchedulerEffect::ReturnFailed { graph, reason }],
-                        }
-                    } else if !Self::graph_has_capacity(&graph, 1) {
-                        let graph = Self::mark_node(graph, node_id, NodeStatus::Failed);
-                        Self::failed_transition(graph, Self::graph_size_limit_reason(1))
-                    } else {
-                        let graph = Self::apply_retry(graph, node_id);
-                        Transition {
-                            state: SchedulerState::Running { graph },
-                            effects: vec![],
-                        }
-                    }
-                } else if exhausted {
-                    let reason = format!(
-                        "node {} exhausted all {} attempts (ElevateModel)",
-                        node_id.0, MAX_ATTEMPTS
-                    );
-                    let graph = Self::mark_node(graph, node_id, NodeStatus::Failed);
-                    Transition {
-                        state: SchedulerState::Failed {
-                            graph: graph.clone(),
-                            reason: reason.clone(),
-                        },
-                        effects: vec![SchedulerEffect::ReturnFailed { graph, reason }],
-                    }
-                } else if !Self::graph_has_capacity(&graph, 1) {
-                    let graph = Self::mark_node(graph, node_id, NodeStatus::Failed);
-                    Self::failed_transition(graph, Self::graph_size_limit_reason(1))
-                } else {
-                    let graph = Self::apply_elevate(graph, node_id);
-                    Transition {
-                        state: SchedulerState::Running { graph },
-                        effects: vec![],
-                    }
-                }
-            }
-
-            RecoveryAction::Terminal { message } => {
-                let reason = Self::terminal_failure_reason(&failure_reason, &message);
-                let graph = Self::mark_node(graph, node_id, NodeStatus::Failed);
-                let graph = Self::cancel_pending_dependents(graph, node_id);
-                Transition {
-                    state: SchedulerState::Failed {
-                        graph: graph.clone(),
-                        reason: reason.clone(),
-                    },
-                    effects: vec![SchedulerEffect::ReturnFailed { graph, reason }],
-                }
-            }
-        }
-    }
-
-    fn terminal_failure_reason(failure_reason: &str, terminal_message: &str) -> String {
-        if terminal_message.is_empty() {
-            return failure_reason.to_string();
-        }
-        if failure_reason.is_empty()
-            || terminal_message == failure_reason
-            || terminal_message.contains(failure_reason)
-        {
-            return terminal_message.to_string();
-        }
-        if failure_reason.contains(terminal_message) {
-            return failure_reason.to_string();
-        }
-        format!("{terminal_message}: {failure_reason}")
-    }
-
-    /// Handle an `ElevateModel` recovery: create a replacement at `Strong` tier.
-    ///
-    /// Preserves the exact same objective so the stronger model retries the same
-    /// goal. Unlike `Retry`, the model tier is unconditionally upgraded to
-    /// `Strong`, because the failure signal indicates the task is beyond
-    /// `Cheap` tier capacity.
-    ///
-    /// After inserting the replacement, all `Pending` downstream nodes that
-    /// referenced `node_id` are remapped to reference `replacement_id` so that
-    /// the graph does not deadlock waiting for a `Failed` node to complete.
-    /// Find a node by ID without panicking.
-    ///
-    /// Used for validation where a missing node means an invalid event, not an
-    /// internal inconsistency.
-    fn node_for_running<'a>(graph: &'a RunGraph, node_id: &NodeId) -> Option<&'a Node> {
-        graph.nodes.iter().find(|n| &n.id == node_id)
-    }
-
-    /// Return `Some(reason)` when `outcome` is incompatible with `node_kind`.
-    ///
-    /// `Failed` is always valid. `PlanAccepted` is only valid for Plan nodes;
-    /// `WorkAccepted` is only valid for Work nodes.
-    fn invalid_node_outcome_reason(
-        node_id: &NodeId,
-        node_kind: &NodeKind,
-        outcome: &NodeOutcome,
-    ) -> Option<String> {
-        match (node_kind, outcome) {
-            (NodeKind::Work, PlanAccepted(_)) => Some(format!(
-                "node {} is Work but received PlanAccepted outcome",
-                node_id.0
-            )),
-            (NodeKind::Plan, WorkAccepted(_)) => Some(format!(
-                "node {} is Plan but received WorkAccepted outcome",
-                node_id.0
-            )),
-            _ => None,
-        }
-    }
-
-    /// Return `Some(reason)` when `NodeReturned` is not valid for the node.
-    ///
-    /// Valid only when the node has `NodeStatus::Running`. A node in
-    /// `Integrating` status must use `IntegrationReturned` instead.
-    fn invalid_node_return_reason(graph: &RunGraph, node_id: &NodeId) -> Option<String> {
-        match Self::node_for_running(graph, node_id) {
-            None => Some(format!("node {} not found in graph", node_id.0)),
-            Some(node) if node.status != NodeStatus::Running => Some(format!(
-                "protocol violation: NodeReturned for node {} expected Running but found {:?}",
-                node_id.0, node.status
-            )),
-            _ => None,
-        }
-    }
-
-    /// Return `Some(reason)` when `IntegrationReturned` is not valid for the node.
-    ///
-    /// Valid only when the node exists, has `NodeKind::Work`, and is in
-    /// `NodeStatus::Integrating`.
-    fn invalid_integration_reason(graph: &RunGraph, node_id: &NodeId) -> Option<String> {
-        match Self::node_for_running(graph, node_id) {
-            None => Some(format!("node {} not found in graph", node_id.0)),
-            Some(node) if node.kind != NodeKind::Work => Some(format!(
-                "node {} is {:?} but IntegrationReturned requires a Work node",
-                node_id.0, node.kind
-            )),
-            Some(node) if node.status != NodeStatus::Integrating => Some(format!(
-                "node {} has status {:?} but IntegrationReturned requires Integrating",
-                node_id.0, node.status
-            )),
-            _ => None,
-        }
-    }
-
-    /// Return all nodes currently in an active status (Running or Integrating).
-    ///
-    /// The serial scheduler invariant requires exactly one active node while in
-    /// `Waiting` and zero active nodes while in `Running`.
-    fn active_nodes(graph: &RunGraph) -> Vec<&Node> {
-        graph
-            .nodes
-            .iter()
-            .filter(|n| matches!(n.status, NodeStatus::Running | NodeStatus::Integrating))
-            .collect()
-    }
-
-    /// Check that the Waiting state satisfies the serial active-node invariant.
-    ///
-    /// Called before processing any event in `Waiting` to catch externally
-    /// constructed states. Four conditions are enforced:
-    ///
-    /// 1. `running` names a node that exists in the graph.
-    /// 2. Exactly one node is active (Running or Integrating).
-    /// 3. That active node's ID equals `running`.
-    fn validate_waiting_state(graph: &RunGraph, running: &NodeId) -> Result<(), String> {
-        let running_node = match graph.nodes.iter().find(|n| &n.id == running) {
-            None => {
-                return Err(format!(
-                    "invalid waiting state: running node missing node id {}",
-                    running.0
-                ));
-            }
-            Some(n) => n,
-        };
-
-        let active = Self::active_nodes(graph);
-
-        if active.is_empty() {
-            return Err(format!(
-                "invalid waiting state: expected active node for {}; found none (status: {:?})",
-                running.0, running_node.status
-            ));
-        }
-
-        if active.len() > 1 {
-            let ids: Vec<String> = active.iter().map(|n| n.id.0.clone()).collect();
-            return Err(format!(
-                "invalid waiting state: multiple active nodes: {}",
-                ids.join(", ")
-            ));
-        }
-
-        if active[0].id != *running {
-            return Err(format!(
-                "invalid waiting state: active node is {} but waiting.running is {}",
-                active[0].id.0, running.0
-            ));
-        }
-
-        Ok(())
-    }
-
-    fn apply_elevate(graph: RunGraph, node_id: &NodeId) -> RunGraph {
-        let (kind, objective, target_files, deps, attempt, plan_depth) = {
-            let n = Self::get_node(&graph, node_id);
-            (
-                n.kind.clone(),
-                n.objective.clone(),
-                n.target_files.clone(),
-                n.dependencies.clone(),
-                n.attempt,
-                n.plan_depth,
-            )
-        };
-        let elevated_id = NodeId(format!("{}-elevated-{}", node_id.0, graph.next_id));
-        let replacement = Node {
-            id: elevated_id.clone(),
-            kind,
-            objective,
-            target_files,
-            dependencies: deps,
-            status: NodeStatus::Pending,
-            attempt: attempt + 1,
-            plan_depth,
-            model_tier: ModelTier::Strong,
-            summary: None,
-            origin: NodeOrigin::ElevateModel {
-                source: node_id.clone(),
-            },
-        };
-        let graph = Self::mark_node(graph, node_id, NodeStatus::Failed);
-        let graph = Self::push_node(graph, replacement);
-        Self::remap_pending_dependencies(graph, node_id, &elevated_id)
+#[cfg(test)]
+impl SchedulerMachine {
+    pub(super) fn find_ready(g: &RunGraph) -> Vec<NodeId> {
+        graph::find_ready(g)
     }
 }
 
@@ -1030,7 +161,7 @@ impl SchedulerMachine {
             //   2. Some nodes are Pending but none are ready → deadlock; emit ReturnFailed.
             //   3. At least one node is ready → mark it Running, emit RunNode, move to Waiting.
             (SchedulerState::Running { graph }, SchedulerEvent::Start) => {
-                if let Err(reason) = Self::validate_graph_invariants(&graph) {
+                if let Err(reason) = graph::validate_graph_invariants(&graph) {
                     return Transition {
                         state: SchedulerState::Failed {
                             graph: graph.clone(),
@@ -1039,15 +170,15 @@ impl SchedulerMachine {
                         effects: vec![SchedulerEffect::ReturnFailed { graph, reason }],
                     };
                 }
-                let active = Self::active_nodes(&graph);
+                let active = graph::active_nodes(&graph);
                 if let Some(node) = active.first() {
                     let reason = format!(
                         "invalid running state: node {} is {:?}",
                         node.id.0, node.status
                     );
-                    return Self::failed_transition(graph, reason);
+                    return recovery::failed_transition(graph, reason);
                 }
-                if Self::all_complete(&graph) {
+                if graph::all_complete(&graph) {
                     Transition {
                         state: SchedulerState::Complete {
                             graph: graph.clone(),
@@ -1055,9 +186,9 @@ impl SchedulerMachine {
                         effects: vec![SchedulerEffect::ReturnComplete { graph }],
                     }
                 } else {
-                    let ready = Self::find_ready(&graph);
+                    let ready = graph::find_ready(&graph);
                     if ready.is_empty() {
-                        let reason = Self::diagnose_no_ready(&graph);
+                        let reason = graph::diagnose_no_ready(&graph);
                         Transition {
                             state: SchedulerState::Failed {
                                 graph: graph.clone(),
@@ -1068,7 +199,7 @@ impl SchedulerMachine {
                     } else {
                         let node_id = ready[0].clone();
                         let (kind, objective, target_files, model_tier, attempt) = {
-                            let n = Self::get_node(&graph, &node_id);
+                            let n = graph::get_node(&graph, &node_id);
                             (
                                 n.kind.clone(),
                                 n.objective.clone(),
@@ -1085,7 +216,7 @@ impl SchedulerMachine {
                             model_tier,
                             attempt,
                         };
-                        let graph = Self::mark_node(graph, &node_id, NodeStatus::Running);
+                        let graph = graph::mark_node(graph, &node_id, NodeStatus::Running);
                         Transition {
                             state: SchedulerState::Waiting {
                                 graph,
@@ -1106,8 +237,8 @@ impl SchedulerMachine {
                 SchedulerState::Waiting { graph, running },
                 SchedulerEvent::NodeReturned { node_id, outcome },
             ) => {
-                if let Err(reason) = Self::validate_waiting_state(&graph, &running) {
-                    return Self::failed_transition(graph, reason);
+                if let Err(reason) = graph::validate_waiting_state(&graph, &running) {
+                    return recovery::failed_transition(graph, reason);
                 }
 
                 if running != node_id {
@@ -1115,18 +246,18 @@ impl SchedulerMachine {
                         "protocol violation: expected result for node {} but received {}",
                         running.0, node_id.0
                     );
-                    return Self::failed_transition(graph, reason);
+                    return recovery::failed_transition(graph, reason);
                 }
 
                 // Validate that the node is in Running status (not Integrating or other).
-                if let Some(reason) = Self::invalid_node_return_reason(&graph, &node_id) {
-                    return Self::failed_transition(graph, reason);
+                if let Some(reason) = graph::invalid_node_return_reason(&graph, &node_id) {
+                    return recovery::failed_transition(graph, reason);
                 }
 
                 // Validate that the outcome is compatible with the node's kind.
-                let node_kind = Self::get_node(&graph, &node_id).kind.clone();
+                let node_kind = graph::get_node(&graph, &node_id).kind.clone();
                 if let Some(reason) =
-                    Self::invalid_node_outcome_reason(&node_id, &node_kind, &outcome)
+                    graph::invalid_node_outcome_reason(&node_id, &node_kind, &outcome)
                 {
                     return Transition {
                         state: SchedulerState::Failed {
@@ -1146,8 +277,8 @@ impl SchedulerMachine {
                     // does not insert children. A plan-depth violation additionally
                     // marks the original plan Failed as the circuit breaker source.
                     PlanAccepted(plan) => {
-                        let parent_depth = Self::get_node(&graph, &node_id).plan_depth;
-                        match Self::validate_plan_dependencies(&graph, &plan.children) {
+                        let parent_depth = graph::get_node(&graph, &node_id).plan_depth;
+                        match graph::validate_plan_dependencies(&graph, &plan.children) {
                             Err(reason) => Transition {
                                 state: SchedulerState::Failed {
                                     graph: graph.clone(),
@@ -1155,8 +286,8 @@ impl SchedulerMachine {
                                 },
                                 effects: vec![SchedulerEffect::ReturnFailed { graph, reason }],
                             },
-                            Ok(()) if !Self::graph_has_capacity(&graph, plan.children.len()) => {
-                                let reason = Self::graph_size_limit_reason(plan.children.len());
+                            Ok(()) if !graph::graph_has_capacity(&graph, plan.children.len()) => {
+                                let reason = graph::graph_size_limit_reason(plan.children.len());
                                 Transition {
                                     state: SchedulerState::Failed {
                                         graph: graph.clone(),
@@ -1167,14 +298,15 @@ impl SchedulerMachine {
                             }
                             Ok(()) => {
                                 if let Err(reason) =
-                                    Self::validate_plan_child_depths(parent_depth, &plan.children)
+                                    graph::validate_plan_child_depths(parent_depth, &plan.children)
                                 {
                                     let graph =
-                                        Self::mark_node(graph, &node_id, NodeStatus::Failed);
-                                    return Self::failed_transition(graph, reason);
+                                        graph::mark_node(graph, &node_id, NodeStatus::Failed);
+                                    return recovery::failed_transition(graph, reason);
                                 }
-                                let graph = Self::mark_node(graph, &node_id, NodeStatus::Completed);
-                                let graph = Self::insert_children(graph, &node_id, plan.children);
+                                let graph =
+                                    graph::mark_node(graph, &node_id, NodeStatus::Completed);
+                                let graph = graph::insert_children(graph, &node_id, plan.children);
                                 Transition {
                                     state: SchedulerState::Running { graph },
                                     effects: vec![],
@@ -1187,7 +319,7 @@ impl SchedulerMachine {
                     // effect is emitted. The node is not yet dependency-satisfying; that
                     // only happens when IntegrationReturned(Succeeded) arrives.
                     WorkAccepted(work) => {
-                        let graph = Self::mark_node(graph, &node_id, NodeStatus::Integrating);
+                        let graph = graph::mark_node(graph, &node_id, NodeStatus::Integrating);
                         Transition {
                             state: SchedulerState::Waiting {
                                 graph,
@@ -1199,7 +331,13 @@ impl SchedulerMachine {
 
                     Failed(NodeFailure {
                         message, recovery, ..
-                    }) => self.route_recovery(graph, &node_id, message, recovery),
+                    }) => recovery::route_recovery(
+                        self.has_strong_tier,
+                        graph,
+                        &node_id,
+                        message,
+                        recovery,
+                    ),
                 }
             }
 
@@ -1210,8 +348,8 @@ impl SchedulerMachine {
                 SchedulerState::Waiting { graph, running },
                 SchedulerEvent::IntegrationReturned { node_id, outcome },
             ) => {
-                if let Err(reason) = Self::validate_waiting_state(&graph, &running) {
-                    return Self::failed_transition(graph, reason);
+                if let Err(reason) = graph::validate_waiting_state(&graph, &running) {
+                    return recovery::failed_transition(graph, reason);
                 }
 
                 if running != node_id {
@@ -1219,11 +357,11 @@ impl SchedulerMachine {
                         "protocol violation: expected integration result for node {} but received {}",
                         running.0, node_id.0
                     );
-                    return Self::failed_transition(graph, reason);
+                    return recovery::failed_transition(graph, reason);
                 }
 
                 // Validate that integration arrives for a Work node in Integrating status.
-                if let Some(reason) = Self::invalid_integration_reason(&graph, &node_id) {
+                if let Some(reason) = graph::invalid_integration_reason(&graph, &node_id) {
                     return Transition {
                         state: SchedulerState::Failed {
                             graph: graph.clone(),
@@ -1235,7 +373,7 @@ impl SchedulerMachine {
 
                 match outcome {
                     IntegrationOutcome::Succeeded(integration_output) => {
-                        let graph = Self::mark_node_completed_with_summary(
+                        let graph = graph::mark_node_completed_with_summary(
                             graph,
                             &node_id,
                             integration_output.summary,
@@ -1247,19 +385,25 @@ impl SchedulerMachine {
                     }
                     IntegrationOutcome::Failed(IntegrationFailure {
                         message, recovery, ..
-                    }) => self.route_recovery(graph, &node_id, message, recovery),
+                    }) => recovery::route_recovery(
+                        self.has_strong_tier,
+                        graph,
+                        &node_id,
+                        message,
+                        recovery,
+                    ),
                 }
             }
 
             (SchedulerState::Running { graph }, SchedulerEvent::NodeReturned { .. }) => {
-                Self::failed_transition(
+                recovery::failed_transition(
                     graph,
                     "protocol violation: state Running cannot consume NodeReturned".to_string(),
                 )
             }
 
             (SchedulerState::Running { graph }, SchedulerEvent::IntegrationReturned { .. }) => {
-                Self::failed_transition(
+                recovery::failed_transition(
                     graph,
                     "protocol violation: state Running cannot consume IntegrationReturned"
                         .to_string(),
@@ -1267,7 +411,7 @@ impl SchedulerMachine {
             }
 
             (SchedulerState::Waiting { graph, .. }, SchedulerEvent::Start) => {
-                Self::failed_transition(
+                recovery::failed_transition(
                     graph,
                     "protocol violation: state Waiting cannot consume Start".to_string(),
                 )

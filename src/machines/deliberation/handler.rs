@@ -13,10 +13,6 @@ use crate::artifacts::{
 use crate::machines::deliberation::event::RoleResult;
 use crate::machines::deliberation::state::{DeliberationRole, RevisionFeedback};
 use crate::machines::scheduler::{FailureKind, NodeKind};
-use crate::node_runner::planner::{
-    PlannerValidationError, parse_planner_content, validate_planner_explicit_targets,
-    validate_planner_no_recreate, validate_planner_output, validate_planner_tests_required,
-};
 use crate::roles::TargetView;
 use crate::roles::policy::RolePolicy;
 use crate::roles::runner::{
@@ -26,6 +22,12 @@ use crate::telemetry::{NoopTelemetry, TelemetrySink};
 
 use super::effect::DeliberationEffect;
 use super::event::DeliberationEvent;
+use crate::node_runner::planner::parse_planner_content;
+
+use super::validation::{
+    PlanValidationContext, planner_parse_failure_feedback, planner_validation_feedback,
+    validate_plan_output_for_context, validate_work_output, work_validation_feedback,
+};
 
 /// Maximum retry attempts after the first accepted plan violates structured
 /// planner validation.
@@ -59,13 +61,6 @@ pub struct DeliberationHandler<R> {
     /// For plan nodes: optional structured validation applied to planner
     /// output before the plan is accepted.
     plan_validation_context: Option<PlanValidationContext>,
-}
-
-#[derive(Clone)]
-struct PlanValidationContext {
-    top_objective: String,
-    existing_files: Vec<String>,
-    requires_tests: bool,
 }
 
 struct ProducerSemanticValidationConfig {
@@ -475,123 +470,6 @@ impl<R: RoleRunner> DeliberationHandler<R> {
             None
         } else {
             Some(ArtifactUpdate { changes })
-        }
-    }
-}
-
-fn validate_plan_output_for_context(
-    planner_out: &crate::node_runner::planner::PlannerOutput,
-    context: &PlanValidationContext,
-) -> Result<(), crate::node_runner::planner::PlannerValidationError> {
-    // Semantic invariants first — Critic/Referee must never see a structurally
-    // broken plan (e.g. an empty task list).
-    validate_planner_output(planner_out)?;
-    validate_planner_explicit_targets(planner_out, &context.top_objective)?;
-    validate_planner_no_recreate(planner_out, &context.top_objective, &context.existing_files)?;
-    if context.requires_tests {
-        validate_planner_tests_required(planner_out)?;
-    }
-    Ok(())
-}
-
-fn planner_validation_feedback(error: &PlannerValidationError) -> String {
-    match error {
-        PlannerValidationError::EmptyTaskList => error.to_string(),
-        PlannerValidationError::DuplicateId(id) => {
-            format!("{error}. Assign a unique id to every task; '{id}' appears more than once.")
-        }
-        PlannerValidationError::EmptyObjective(id) => {
-            format!(
-                "{error}. Every task must have a non-empty objective. \
-                 Add a clear objective to task '{id}'."
-            )
-        }
-        PlannerValidationError::EmptyTargets(id) => {
-            format!(
-                "{error}. Every task must declare at least one concrete target file. \
-                 Add a target to task '{id}'."
-            )
-        }
-        PlannerValidationError::SelfDependency(id) => {
-            format!(
-                "{error}. A task cannot depend on itself. \
-                 Remove '{id}' from its own depends_on list."
-            )
-        }
-        PlannerValidationError::UnknownDependency { task_id, dep_id } => {
-            format!(
-                "{error}. Task '{task_id}' depends on '{dep_id}', which does not exist in this \
-                 plan. Only reference task ids defined in the same plan."
-            )
-        }
-        PlannerValidationError::ExplicitTargetViolation {
-            allowed_targets, ..
-        } => {
-            format!(
-                "The objective explicitly targets {}. Remove all non-test targets except {}.",
-                allowed_targets.join(", "),
-                allowed_targets.join(", ")
-            )
-        }
-        PlannerValidationError::MissingTestsForCodeChange => {
-            format!(
-                "{error}. Project validation includes a test command, so code changes must include \
-                 at least one test-related task and target such as a test file."
-            )
-        }
-        PlannerValidationError::TaskRecreatesExistingFile { .. } => {
-            format!(
-                "{error}. Remove tasks for existing project files not mentioned in the objective. \
-                 Only include tasks for files explicitly named in the run objective."
-            )
-        }
-    }
-}
-
-fn planner_parse_failure_feedback() -> String {
-    "Planner output must be valid PlannerOutput JSON with a top-level tasks array. \
-     Return only the structured plan JSON, not prose or markdown."
-        .to_string()
-}
-
-#[derive(Clone, Debug, PartialEq)]
-enum WorkSemanticValidationError {
-    MissingArtifactUpdate,
-    EmptyArtifactUpdate,
-}
-
-impl std::fmt::Display for WorkSemanticValidationError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            WorkSemanticValidationError::MissingArtifactUpdate => {
-                write!(f, "accepted work did not produce an artifact update")
-            }
-            WorkSemanticValidationError::EmptyArtifactUpdate => {
-                write!(f, "accepted work produced an empty artifact update")
-            }
-        }
-    }
-}
-
-fn validate_work_output(
-    artifact_update: Option<&ArtifactUpdate>,
-) -> Result<(), WorkSemanticValidationError> {
-    match artifact_update {
-        None => Err(WorkSemanticValidationError::MissingArtifactUpdate),
-        Some(update) if update.changes.is_empty() => {
-            Err(WorkSemanticValidationError::EmptyArtifactUpdate)
-        }
-        Some(_) => Ok(()),
-    }
-}
-
-fn work_validation_feedback(error: &WorkSemanticValidationError) -> String {
-    match error {
-        WorkSemanticValidationError::MissingArtifactUpdate => {
-            "Accepted Work results must modify the artifact. Use a file tool such as write_file, replace_text, or delete_file before returning accepted output.".to_string()
-        }
-        WorkSemanticValidationError::EmptyArtifactUpdate => {
-            "Accepted Work results must include at least one file change. Produce a concrete artifact update before returning accepted output.".to_string()
         }
     }
 }

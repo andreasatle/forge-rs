@@ -39,6 +39,7 @@ pub mod event;
 pub mod handler;
 pub mod machine;
 pub mod state;
+mod validation;
 
 pub use effect::DeliberationEffect;
 pub use event::{DeliberationEvent, RoleResult};
