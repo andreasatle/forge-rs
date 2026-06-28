@@ -1,7 +1,7 @@
 //! Effect handler for `DeliberationMachine`.
 //!
 //! `DeliberationHandler` is a thin adapter: it unpacks a `RunRole` effect,
-//! delegates to a [`RoleRunner`], and wraps the result back into a
+//! delegates to a [`RoleRunner`](crate::roles::runner::RoleRunner), and wraps the result back into a
 //! `RoleReturned` event. All prompt rendering, provider calls, JSON parsing,
 //! protocol retries, and file tool loops live in the runner layer.
 
@@ -26,9 +26,9 @@ pub(crate) const MAX_WORK_SEMANTIC_VALIDATION_RETRIES: usize = 2;
 pub(crate) const TARGET_VIEW_BUDGET: usize = 16 * 1024;
 
 /// Executes `DeliberationEffect` values by delegating role execution to a
-/// [`RoleRunner`].
+/// [`RoleRunner`](crate::roles::runner::RoleRunner).
 ///
-/// Accumulates any [`ArtifactUpdate`] values produced by tool loops across
+/// Accumulates any [`ArtifactUpdate`](crate::artifacts::ArtifactUpdate) values produced by tool loops across
 /// all role invocations. Retrieve the combined update with
 /// [`take_artifact_update`](DeliberationHandler::take_artifact_update) after
 /// the machine finishes.
