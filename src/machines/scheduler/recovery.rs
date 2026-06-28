@@ -119,13 +119,20 @@ fn retry_objective(
 }
 
 fn concise_retry_diagnostics(message: &str) -> String {
-    const LIMIT: usize = 4000;
+    const LIMIT: usize = 1200;
+    const MAX_LINES: usize = 12;
     let trimmed = message.trim();
-    if trimmed.chars().count() <= LIMIT {
-        return trimmed.to_string();
+    let mut out = trimmed
+        .lines()
+        .take(MAX_LINES)
+        .collect::<Vec<_>>()
+        .join("\n");
+    if out.chars().count() > LIMIT {
+        out = out.chars().take(LIMIT).collect();
+        out.push_str("\n[diagnostics truncated]");
+    } else if trimmed.lines().count() > MAX_LINES {
+        out.push_str("\n[diagnostics truncated]");
     }
-    let mut out: String = trimmed.chars().take(LIMIT).collect();
-    out.push_str("\n[diagnostics truncated]");
     out
 }
 

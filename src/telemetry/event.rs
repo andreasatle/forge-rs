@@ -150,6 +150,14 @@ pub enum TelemetryEvent {
     ValidationFailed {
         /// Human-readable validation summary.
         summary: String,
+        /// Human-readable command line for the failed validation command.
+        command: Option<String>,
+        /// Process exit code when the command exited normally.
+        exit_code: Option<i32>,
+        /// Full captured stdout for the failed validation command.
+        stdout: Option<String>,
+        /// Full captured stderr for the failed validation command.
+        stderr: Option<String>,
     },
     /// A file tool was requested by a role during execution.
     ToolRequested {
@@ -316,8 +324,22 @@ impl TelemetryEvent {
             TelemetryEvent::ValidationPassed { summary } => {
                 format!("kind: ValidationPassed\nsummary: {summary}\n")
             }
-            TelemetryEvent::ValidationFailed { summary } => {
-                format!("kind: ValidationFailed\nsummary: {summary}\n")
+            TelemetryEvent::ValidationFailed {
+                summary,
+                command,
+                exit_code,
+                stdout,
+                stderr,
+            } => {
+                let command = command.as_deref().unwrap_or("(unknown)");
+                let exit_code = exit_code
+                    .map(|code| code.to_string())
+                    .unwrap_or_else(|| "none".to_string());
+                let stdout = stdout.as_deref().unwrap_or("");
+                let stderr = stderr.as_deref().unwrap_or("");
+                format!(
+                    "kind: ValidationFailed\nsummary: {summary}\ncommand: {command}\nexit_code: {exit_code}\nstdout:\n{stdout}\nstderr:\n{stderr}\n"
+                )
             }
             TelemetryEvent::ToolRequested { tool } => {
                 format!("kind: ToolRequested\ntool: {tool}\n")

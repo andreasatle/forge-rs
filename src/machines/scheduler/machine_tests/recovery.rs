@@ -56,7 +56,7 @@ fn validation_failure_creates_retry_feedback() {
                 kind: FailureKind::ValidationFailure,
                 message: "validation failed".to_string(),
                 recovery: RecoveryAction::Retry {
-                    message: "previous validation command: validate main.py\nexit code: 2\nstdout:\nchecking\nstderr:\ninvalid syntax".to_string(),
+                    message: "validation failed\ncommand: validate main.py\nexit code: 2\nfirst location: main.py:1:1\ndiagnostics:\nmain.py:1:1: invalid syntax\ninstruction: fix the existing file using file tools before accepting".to_string(),
                 },
             }),
         },
@@ -72,12 +72,15 @@ fn validation_failure_creates_retry_feedback() {
     assert_eq!(retry.target_files, vec!["main.py"]);
     assert!(retry.objective.starts_with("fix main"));
     assert!(retry.objective.contains("Target files: main.py"));
+    assert!(retry.objective.contains("command: validate main.py"));
+    assert!(retry.objective.contains("exit code: 2"));
+    assert!(retry.objective.contains("first location: main.py:1:1"));
+    assert!(retry.objective.contains("invalid syntax"));
     assert!(
         retry
             .objective
-            .contains("previous validation command: validate main.py")
+            .contains("fix the existing file using file tools before accepting")
     );
-    assert!(retry.objective.contains("invalid syntax"));
 }
 
 #[test]
@@ -814,7 +817,7 @@ fn validation_retry_feedback_includes_all_structured_target_files() {
         },
         validation_retry_event(
             "W",
-            "previous validation command: pytest\nexit code: 1\nstdout:\n0 tests ran\nstderr:\n",
+            "validation failed\ncommand: pytest\nexit code: 1\nfirst location: (not detected)\ndiagnostics:\n0 tests ran\ninstruction: fix the existing file using file tools before accepting",
         ),
     );
 
@@ -857,7 +860,7 @@ fn validation_retry_test_target_appears_in_retry_prompt() {
         },
         validation_retry_event(
             "W",
-            "previous validation command: cargo test\nexit code: 101\nstdout:\ntest failed\nstderr:\n",
+            "validation failed\ncommand: cargo test\nexit code: 101\nfirst location: (not detected)\ndiagnostics:\ntest failed\ninstruction: fix the existing file using file tools before accepting",
         ),
     );
 
@@ -890,7 +893,7 @@ fn repeated_validation_retries_do_not_duplicate_feedback_blocks() {
         },
         validation_retry_event(
             "W",
-            "previous validation command: val\nexit code: 1\nstdout:\nfirst-error\nstderr:\n",
+            "validation failed\ncommand: val\nexit code: 1\nfirst location: main.py:1:1\ndiagnostics:\nfirst-error\ninstruction: fix the existing file using file tools before accepting",
         ),
     );
     let SchedulerState::Running { mut graph } = t1.state else {
@@ -907,7 +910,7 @@ fn repeated_validation_retries_do_not_duplicate_feedback_blocks() {
         },
         validation_retry_event(
             &retry1_id.0,
-            "previous validation command: val\nexit code: 2\nstdout:\nsecond-error\nstderr:\n",
+            "validation failed\ncommand: val\nexit code: 2\nfirst location: main.py:2:1\ndiagnostics:\nsecond-error\ninstruction: fix the existing file using file tools before accepting",
         ),
     );
     let SchedulerState::Running { graph } = t2.state else {
@@ -956,7 +959,7 @@ fn retry_target_files_unchanged_across_retries() {
         },
         validation_retry_event(
             "W",
-            "previous validation command: v\nexit code: 1\nstdout:\n\nstderr:\n",
+            "validation failed\ncommand: v\nexit code: 1\nfirst location: (not detected)\ndiagnostics:\n(no diagnostic output)\ninstruction: fix the existing file using file tools before accepting",
         ),
     );
     let SchedulerState::Running { mut graph } = t1.state else {
@@ -977,7 +980,7 @@ fn retry_target_files_unchanged_across_retries() {
         },
         validation_retry_event(
             &retry1_id.0,
-            "previous validation command: v\nexit code: 2\nstdout:\n\nstderr:\n",
+            "validation failed\ncommand: v\nexit code: 2\nfirst location: (not detected)\ndiagnostics:\n(no diagnostic output)\ninstruction: fix the existing file using file tools before accepting",
         ),
     );
     let SchedulerState::Running { graph } = t2.state else {

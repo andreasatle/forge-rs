@@ -137,6 +137,22 @@ impl IntegrationService {
                             "Integration",
                             TelemetryEvent::ValidationFailed {
                                 summary: result.summary.clone(),
+                                command: result
+                                    .failure
+                                    .as_ref()
+                                    .map(|failure| failure.command.clone()),
+                                exit_code: result
+                                    .failure
+                                    .as_ref()
+                                    .and_then(|failure| failure.exit_code),
+                                stdout: result
+                                    .failure
+                                    .as_ref()
+                                    .map(|failure| failure.stdout.clone()),
+                                stderr: result
+                                    .failure
+                                    .as_ref()
+                                    .map(|failure| failure.stderr.clone()),
                             },
                         ));
                         return SchedulerEvent::IntegrationReturned {

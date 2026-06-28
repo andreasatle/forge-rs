@@ -142,15 +142,75 @@ fn retry_worker_receives_validation_diagnostics_and_can_fix_file() {
     assert!(
         captured[1]
             .objective
-            .contains("previous validation command: custom-validator main.py")
+            .contains("command: custom-validator main.py")
     );
     assert!(captured[1].objective.contains("exit code: 7"));
-    assert!(captured[1].objective.contains("checked main.py"));
+    assert!(captured[1].objective.contains("first location: main.py:1"));
     assert!(captured[1].objective.contains("main.py:1: invalid syntax"));
+    assert!(
+        captured[1]
+            .objective
+            .contains("fix the existing file using file tools before accepting")
+    );
+    assert!(
+        !captured[1].objective.contains("checked main.py"),
+        "stdout should remain in telemetry, not the retry objective"
+    );
 
     let final_sha = git_output(&repo_path, &["rev-parse", "HEAD"]);
     let final_content = git_output(&repo_path, &["show", &format!("{final_sha}:main.py")]);
     assert_eq!(final_content, "ok");
+}
+
+#[test]
+fn validation_failure_telemetry_keeps_full_diagnostics() {
+    let (_temp, artifact) = fixture("validation-fail-telemetry");
+    let telemetry = Rc::new(VecTelemetry::new());
+    let runner = FileWritingRunner {
+        path: "output.txt".to_string(),
+        content: "hello\n".to_string(),
+    };
+    let h = SchedulerHandler::with_artifact(runner, artifact)
+        .with_validator(Rc::new(AlwaysFailValidator))
+        .with_telemetry(telemetry.clone());
+
+    h.handle_effect(SchedulerEffect::RunNode {
+        node_id: NodeId("W".to_string()),
+        kind: NodeKind::Work,
+        objective: "write a file".to_string(),
+        target_files: vec![],
+        model_tier: ModelTier::Cheap,
+        attempt: 0,
+    });
+
+    h.handle_effect(SchedulerEffect::IntegrateWork {
+        node_id: NodeId("W".to_string()),
+        work: WorkOutput {
+            summary: "wrote output.txt".to_string(),
+        },
+        target_files: vec![],
+        validation_plan: None,
+    });
+
+    let records = telemetry.records();
+    let event = records
+        .iter()
+        .find_map(|record| match &record.event {
+            TelemetryEvent::ValidationFailed {
+                command,
+                exit_code,
+                stdout,
+                stderr,
+                ..
+            } => Some((command, exit_code, stdout, stderr)),
+            _ => None,
+        })
+        .expect("validation failure telemetry must be recorded");
+
+    assert_eq!(event.0.as_deref(), Some("validator test command"));
+    assert_eq!(*event.1, Some(1));
+    assert_eq!(event.2.as_deref(), Some("validator stdout"));
+    assert_eq!(event.3.as_deref(), Some("validator stderr"));
 }
 
 #[test]
