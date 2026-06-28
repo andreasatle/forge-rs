@@ -41,6 +41,16 @@ pub trait ProjectAdapter {
         role: &DeliberationRole,
         budget: usize,
     ) -> Vec<TargetView>;
+
+    /// Returns artifact file names whose contents should be included as
+    /// ambient context in the deliberation objective.
+    ///
+    /// The framework reads each named file from the artifact (if present) and
+    /// prepends its content to the prompt. The default returns no context
+    /// files; adapters override this to expose project-specific context.
+    fn context_file_names(&self) -> Vec<String> {
+        vec![]
+    }
 }
 
 /// Shared file-text projection used by both built-in adapters.
@@ -109,10 +119,66 @@ pub(crate) fn build_file_text_target_views(
 }
 
 fn safe_target_error(error: crate::artifacts::ArtifactError) -> String {
-    let message = error.to_string();
-    if message.contains("utf-8") || message.contains("utf8") {
-        "binary or non-UTF-8 file cannot be represented as text".to_string()
-    } else {
-        message
+    use crate::artifacts::ArtifactError;
+    match error {
+        ArtifactError::Encoding => {
+            "binary or non-UTF-8 file cannot be represented as text".to_string()
+        }
+        _ => error.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::artifacts::ArtifactError;
+    use crate::project::{CodingProjectAdapter, DefaultProjectAdapter};
+
+    // ── safe_target_error ────────────────────────────────────────────────────
+
+    #[test]
+    fn encoding_error_produces_user_friendly_message() {
+        let msg = safe_target_error(ArtifactError::Encoding);
+        assert!(
+            msg.contains("binary") || msg.contains("non-UTF-8"),
+            "encoding error must describe binary/encoding issue; got: {msg}"
+        );
+        assert!(
+            !msg.contains("utf-8") && !msg.contains("utf8"),
+            "encoding error must not leak raw error text; got: {msg}"
+        );
+    }
+
+    #[test]
+    fn io_error_is_passed_through_unchanged() {
+        let original = "disk full";
+        let msg = safe_target_error(ArtifactError::IoError(original.to_string()));
+        assert_eq!(msg, original);
+    }
+
+    #[test]
+    fn file_not_found_is_passed_through() {
+        let msg = safe_target_error(ArtifactError::FileNotFound);
+        assert_eq!(msg, ArtifactError::FileNotFound.to_string());
+    }
+
+    // ── ProjectAdapter::context_file_names ───────────────────────────────────
+
+    #[test]
+    fn default_adapter_context_file_names_is_empty() {
+        let names = DefaultProjectAdapter.context_file_names();
+        assert!(
+            names.is_empty(),
+            "DefaultProjectAdapter must return no context file names; got: {names:?}"
+        );
+    }
+
+    #[test]
+    fn coding_adapter_context_file_names_includes_readme() {
+        let names = CodingProjectAdapter.context_file_names();
+        assert!(
+            names.contains(&"README.md".to_string()),
+            "CodingProjectAdapter must include README.md as a context file; got: {names:?}"
+        );
     }
 }

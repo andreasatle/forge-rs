@@ -9,6 +9,7 @@ init:
     - program: uv
       args: ["add", "--dev", "pytest", "ruff", "pyright"]
 validation:
+  runs_tests: true
   commands:
     - program: uv
       args: ["run", "ruff", "check", "."]

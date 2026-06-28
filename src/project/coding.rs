@@ -144,6 +144,10 @@ impl ProjectAdapter for CodingProjectAdapter {
     ) -> Vec<TargetView> {
         build_file_text_target_views(artifact_view, targets, budget)
     }
+
+    fn context_file_names(&self) -> Vec<String> {
+        vec!["README.md".to_string()]
+    }
 }
 
 #[cfg(test)]

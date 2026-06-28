@@ -212,7 +212,10 @@ mod tests {
                         },
                     ],
                 },
-                validation: LanguageValidationSpec { commands: vec![] },
+                validation: LanguageValidationSpec {
+                    runs_tests: false,
+                    commands: vec![],
+                },
             },
         );
         id

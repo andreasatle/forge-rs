@@ -16,25 +16,13 @@ pub struct LanguageSpec {
 }
 
 impl LanguageSpec {
-    /// Return true when the validation command list appears to run tests.
+    /// Return true when the validation spec declares that it runs tests.
     ///
-    /// The registry stays tool-agnostic: this checks command tokens for common
-    /// test-command names rather than recognizing a specific language tool.
+    /// This is driven by the explicit `runs_tests` field in the language YAML
+    /// rather than by inspecting command tokens.
     pub fn validation_includes_test_command(&self) -> bool {
-        self.validation.commands.iter().any(command_is_test_like)
+        self.validation.runs_tests
     }
-}
-
-/// Return true when a command token looks like a test runner or test subcommand.
-pub fn command_is_test_like(command: &CommandSpec) -> bool {
-    std::iter::once(command.program.as_str())
-        .chain(command.args.iter().map(String::as_str))
-        .any(token_is_test_like)
-}
-
-fn token_is_test_like(token: &str) -> bool {
-    let lower = token.to_ascii_lowercase();
-    lower == "test" || lower.ends_with("test") || lower.ends_with("tests")
 }
 
 /// Init-phase command list for a language.
@@ -53,6 +41,77 @@ pub struct LanguageInitSpec {
 /// Validation-phase command list for a language.
 #[derive(Debug, Clone, Deserialize)]
 pub struct LanguageValidationSpec {
+    /// When true, the validation suite runs tests and the planner must include
+    /// test-related targets for code-changing plans.
+    ///
+    /// Set explicitly in the language YAML rather than inferred from command tokens.
+    #[serde(default)]
+    pub runs_tests: bool,
     /// Ordered commands executed to validate the workspace.
     pub commands: Vec<CommandSpec>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::language::registry::language_spec;
+
+    #[test]
+    fn validation_includes_test_command_is_true_when_runs_tests_set() {
+        let spec = LanguageSpec {
+            prompt_guidance: String::new(),
+            init: LanguageInitSpec {
+                gitignore: vec![],
+                commands: vec![],
+            },
+            validation: LanguageValidationSpec {
+                runs_tests: true,
+                commands: vec![],
+            },
+        };
+        assert!(
+            spec.validation_includes_test_command(),
+            "must return true when runs_tests is explicitly true"
+        );
+    }
+
+    #[test]
+    fn validation_includes_test_command_is_false_without_runs_tests() {
+        let spec = LanguageSpec {
+            prompt_guidance: String::new(),
+            init: LanguageInitSpec {
+                gitignore: vec![],
+                commands: vec![],
+            },
+            validation: LanguageValidationSpec {
+                runs_tests: false,
+                commands: vec![CommandSpec {
+                    program: "cargo".to_string(),
+                    args: vec!["test".to_string()],
+                }],
+            },
+        };
+        assert!(
+            !spec.validation_includes_test_command(),
+            "must return false when runs_tests is not set, even if commands include 'test'"
+        );
+    }
+
+    #[test]
+    fn rust_language_spec_declares_runs_tests() {
+        let spec = language_spec("rust").expect("rust spec must load");
+        assert!(
+            spec.validation_includes_test_command(),
+            "rust validation spec must declare runs_tests: true"
+        );
+    }
+
+    #[test]
+    fn python_language_spec_declares_runs_tests() {
+        let spec = language_spec("python").expect("python spec must load");
+        assert!(
+            spec.validation_includes_test_command(),
+            "python validation spec must declare runs_tests: true"
+        );
+    }
 }

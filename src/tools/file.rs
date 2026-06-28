@@ -222,15 +222,12 @@ impl FileToolExecutor {
                             FileToolResponse::FileContents { path, content }
                         }
                     }
-                    Err(e) => {
-                        let msg = e.to_string();
-                        let reason = if msg.contains("utf-8") || msg.contains("utf8") {
-                            "binary or non-UTF-8 file cannot be read as text".to_string()
-                        } else {
-                            msg
-                        };
-                        FileToolResponse::Failed { reason }
-                    }
+                    Err(ArtifactError::Encoding) => FileToolResponse::Failed {
+                        reason: "binary or non-UTF-8 file cannot be read as text".to_string(),
+                    },
+                    Err(e) => FileToolResponse::Failed {
+                        reason: e.to_string(),
+                    },
                 }
             }
 
@@ -283,14 +280,15 @@ impl FileToolExecutor {
                 // so subsequent reads within this session see the updated state.
                 let content = match self.overlay_read_content(&path) {
                     Ok(c) => c,
-                    Err(e) => {
-                        let msg = e.to_string();
-                        let reason = if msg.contains("utf-8") || msg.contains("utf8") {
-                            "binary or non-UTF-8 file cannot be read as text".to_string()
-                        } else {
-                            msg
+                    Err(ArtifactError::Encoding) => {
+                        return FileToolResponse::Failed {
+                            reason: "binary or non-UTF-8 file cannot be read as text".to_string(),
                         };
-                        return FileToolResponse::Failed { reason };
+                    }
+                    Err(e) => {
+                        return FileToolResponse::Failed {
+                            reason: e.to_string(),
+                        };
                     }
                 };
                 let mut occurrences = content.match_indices(old.as_str());

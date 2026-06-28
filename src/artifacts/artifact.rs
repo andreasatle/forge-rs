@@ -79,6 +79,6 @@ impl ArtifactView {
             return Err(ArtifactError::IoError(stderr.trim().to_owned()));
         }
 
-        String::from_utf8(output.stdout).map_err(|e| ArtifactError::IoError(e.to_string()))
+        String::from_utf8(output.stdout).map_err(|_| ArtifactError::Encoding)
     }
 }

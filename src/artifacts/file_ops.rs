@@ -18,6 +18,8 @@ pub enum ArtifactError {
     IoError(String),
     /// The path escapes the workspace root (absolute path or parent traversal).
     PathOutsideWorkspace,
+    /// The file exists but is not valid UTF-8 and cannot be read as text.
+    Encoding,
 }
 
 impl fmt::Display for ArtifactError {
@@ -30,6 +32,9 @@ impl fmt::Display for ArtifactError {
             }
             Self::IoError(message) => formatter.write_str(message),
             Self::PathOutsideWorkspace => formatter.write_str("path escapes the workspace root"),
+            Self::Encoding => {
+                formatter.write_str("binary or non-UTF-8 file cannot be represented as text")
+            }
         }
     }
 }
@@ -201,10 +206,10 @@ fn collect_files(root: &Path, directory: &Path, files: &mut Vec<PathBuf>) {
 }
 
 fn map_file_error(error: io::Error) -> ArtifactError {
-    if error.kind() == io::ErrorKind::NotFound {
-        ArtifactError::FileNotFound
-    } else {
-        map_io_error(error)
+    match error.kind() {
+        io::ErrorKind::NotFound => ArtifactError::FileNotFound,
+        io::ErrorKind::InvalidData => ArtifactError::Encoding,
+        _ => ArtifactError::IoError(error.to_string()),
     }
 }
 

@@ -41,6 +41,7 @@ pub struct DeliberatingNodeRunner<C, S> {
     strong_max_tokens: u32,
     role_policy: RolePolicy,
     requires_tests: bool,
+    context_file_names: Vec<String>,
 }
 
 impl<C, S> DeliberatingNodeRunner<C, S> {
@@ -57,6 +58,7 @@ impl<C, S> DeliberatingNodeRunner<C, S> {
             strong_max_tokens: 1024,
             role_policy: RolePolicy::default(),
             requires_tests: false,
+            context_file_names: vec![],
         }
     }
 
@@ -85,6 +87,13 @@ impl<C, S> DeliberatingNodeRunner<C, S> {
     /// Require planner output for code changes to include test-related targets.
     pub fn with_requires_tests(mut self, requires_tests: bool) -> Self {
         self.requires_tests = requires_tests;
+        self
+    }
+
+    /// Set the artifact file names whose contents are prepended as ambient
+    /// context in the deliberation objective. Provided by the project adapter.
+    pub fn with_context_file_names(mut self, names: Vec<String>) -> Self {
+        self.context_file_names = names;
         self
     }
 }
@@ -155,6 +164,7 @@ impl<C: ProviderClient, S: ProviderClient> NodeRunner for DeliberatingNodeRunner
                 self.cheap_max_tokens,
                 &self.role_policy,
                 self.requires_tests,
+                &self.context_file_names,
                 telemetry,
             ),
             ModelTier::Strong => run_with_provider(
@@ -163,6 +173,7 @@ impl<C: ProviderClient, S: ProviderClient> NodeRunner for DeliberatingNodeRunner
                 self.strong_max_tokens,
                 &self.role_policy,
                 self.requires_tests,
+                &self.context_file_names,
                 telemetry,
             ),
         }
@@ -175,6 +186,7 @@ fn run_with_provider<P: ProviderClient>(
     max_tokens: u32,
     policy: &RolePolicy,
     requires_tests: bool,
+    context_file_names: &[String],
     telemetry: &dyn TelemetrySink,
 ) -> NodeRunResult {
     let top_objective = request.objective.clone();
@@ -194,7 +206,7 @@ fn run_with_provider<P: ProviderClient>(
         Some((top_objective, existing_files, requires_tests))
     };
 
-    let objective = enrich_objective(&request, requires_tests);
+    let objective = enrich_objective(&request, requires_tests, context_file_names);
     let delib_request = DeliberationRequest {
         objective,
         target_files: request.target_files.clone(),
@@ -226,7 +238,11 @@ fn run_with_provider<P: ProviderClient>(
 }
 
 /// Returns the objective string, optionally prefixed with artifact file context.
-fn enrich_objective(request: &NodeRunRequest, requires_tests: bool) -> String {
+fn enrich_objective(
+    request: &NodeRunRequest,
+    requires_tests: bool,
+    context_file_names: &[String],
+) -> String {
     let testing_context = if requires_tests {
         Some(
             "Testing requirement: project validation includes a test command. Code changes require corresponding tests, and plans for code changes must include at least one test-related target.".to_string(),
@@ -240,7 +256,7 @@ fn enrich_objective(request: &NodeRunRequest, requires_tests: bool) -> String {
             None => request.objective.clone(),
         };
     };
-    let context = build_artifact_context(view);
+    let context = build_artifact_context(view, context_file_names);
     if context.is_empty() {
         return match testing_context {
             Some(testing_context) => {
@@ -263,11 +279,11 @@ fn enrich_objective(request: &NodeRunRequest, requires_tests: bool) -> String {
 /// Builds a short context string from a read-only artifact view.
 ///
 /// Lists all files under a heading that signals they already exist and must
-/// not be recreated unless the objective explicitly names them. If `README.md`
-/// is present its content is included after the listing.
+/// not be recreated unless the objective explicitly names them. Then includes
+/// the content of each file named in `context_file_names` if present.
 ///
 /// Returns an empty string when the view has no files or when git fails.
-fn build_artifact_context(view: &ArtifactView) -> String {
+fn build_artifact_context(view: &ArtifactView, context_file_names: &[String]) -> String {
     let files = match view.list_files() {
         Ok(f) if !f.is_empty() => f,
         _ => return String::new(),
@@ -279,8 +295,10 @@ fn build_artifact_context(view: &ArtifactView) -> String {
          or reinitialize these files unless the objective explicitly names them as targets):\n{}",
         listing.join("\n")
     ));
-    if let Ok(readme) = view.read_file("README.md") {
-        parts.push(format!("README.md:\n{readme}"));
+    for name in context_file_names {
+        if let Ok(content) = view.read_file(name) {
+            parts.push(format!("{name}:\n{content}"));
+        }
     }
     parts.join("\n\n")
 }
@@ -844,6 +862,112 @@ mod tests {
         assert!(
             first.contains("do the thing"),
             "first prompt must include the original objective; got:\n{first}"
+        );
+    }
+
+    #[test]
+    fn context_file_content_is_included_in_prompt_when_present() {
+        let temp = TempDir::new("context-file-prompt");
+        let view = make_artifact_view(&temp, "README.md", "This is the README.\n");
+
+        let provider = RecordingProvider::from_strs(&[
+            r#"{"status":"accepted","content":"draft output"}"#,
+            r#"{"tool":"read_file","path":"README.md"}"#,
+            r#"{"status":"accepted","content":"review ok"}"#,
+            r#"{"tool":"read_file","path":"README.md"}"#,
+            r#"{"status":"accepted","content":"approved"}"#,
+        ]);
+        let runner = DeliberatingNodeRunner::new(&provider, &provider)
+            .with_context_file_names(vec!["README.md".to_string()]);
+        let request = NodeRunRequest {
+            kind: NodeKind::Work,
+            objective: "do the thing".to_string(),
+            target_files: vec![],
+            model_tier: ModelTier::Cheap,
+            attempt: 0,
+            artifact_view: Some(view),
+        };
+        runner.run_node(request, &NoopTelemetry);
+
+        let prompts = provider.recorded_prompts();
+        assert!(!prompts.is_empty(), "provider must have received prompts");
+        let first = &prompts[0];
+        assert!(
+            first.contains("This is the README."),
+            "first prompt must include the README.md content; got:\n{first}"
+        );
+        assert!(
+            first.contains("README.md"),
+            "first prompt must name the context file; got:\n{first}"
+        );
+    }
+
+    #[test]
+    fn absent_context_file_is_silently_omitted_from_prompt() {
+        let temp = TempDir::new("context-file-absent");
+        let view = make_artifact_view(&temp, "hello.txt", "world\n");
+
+        let provider = RecordingProvider::from_strs(&[
+            r#"{"status":"accepted","content":"draft output"}"#,
+            r#"{"tool":"read_file","path":"hello.txt"}"#,
+            r#"{"status":"accepted","content":"review ok"}"#,
+            r#"{"tool":"read_file","path":"hello.txt"}"#,
+            r#"{"status":"accepted","content":"approved"}"#,
+        ]);
+        // Ask for README.md which does not exist in this artifact.
+        let runner = DeliberatingNodeRunner::new(&provider, &provider)
+            .with_context_file_names(vec!["README.md".to_string()]);
+        let request = NodeRunRequest {
+            kind: NodeKind::Work,
+            objective: "do something".to_string(),
+            target_files: vec![],
+            model_tier: ModelTier::Cheap,
+            attempt: 0,
+            artifact_view: Some(view),
+        };
+        runner.run_node(request, &NoopTelemetry);
+
+        let prompts = provider.recorded_prompts();
+        assert!(!prompts.is_empty(), "provider must have received prompts");
+        let first = &prompts[0];
+        assert!(
+            first.contains("hello.txt"),
+            "first prompt must still list artifact files; got:\n{first}"
+        );
+    }
+
+    #[test]
+    fn no_context_file_names_produces_no_extra_content() {
+        let temp = TempDir::new("no-context-files");
+        let view = make_artifact_view(&temp, "hello.txt", "world\n");
+
+        let provider = RecordingProvider::from_strs(&[
+            r#"{"status":"accepted","content":"draft output"}"#,
+            r#"{"tool":"read_file","path":"hello.txt"}"#,
+            r#"{"status":"accepted","content":"review ok"}"#,
+            r#"{"tool":"read_file","path":"hello.txt"}"#,
+            r#"{"status":"accepted","content":"approved"}"#,
+        ]);
+        let runner = DeliberatingNodeRunner::new(&provider, &provider);
+        let request = NodeRunRequest {
+            kind: NodeKind::Work,
+            objective: "do something".to_string(),
+            target_files: vec![],
+            model_tier: ModelTier::Cheap,
+            attempt: 0,
+            artifact_view: Some(view),
+        };
+        runner.run_node(request, &NoopTelemetry);
+
+        let prompts = provider.recorded_prompts();
+        let first = &prompts[0];
+        assert!(
+            first.contains("hello.txt"),
+            "first prompt must list artifact files; got:\n{first}"
+        );
+        assert!(
+            !first.contains("README.md"),
+            "first prompt must not mention README.md when no context files configured; got:\n{first}"
         );
     }
 

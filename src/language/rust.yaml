@@ -5,6 +5,7 @@ init:
     - program: cargo
       args: ["init", "--vcs", "none", "."]
 validation:
+  runs_tests: true
   commands:
     - program: cargo
       args: ["fmt", "--check"]

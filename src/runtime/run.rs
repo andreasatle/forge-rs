@@ -14,7 +14,6 @@ use crate::artifacts::{Artifact, ArtifactView};
 use crate::config::{ForgeConfig, ProjectConfig, ProjectKind, ValidationConfig};
 use crate::engine::run_machine_with_telemetry;
 use crate::language::registry::language_spec;
-use crate::language::spec::command_is_test_like;
 
 use super::repo::load_or_create_artifact;
 use crate::machines::scheduler::state::SchedulerState;
@@ -79,6 +78,7 @@ impl ForgeRuntime {
             .unwrap_or(config.provider.n_predict) as u32;
 
         let role_policy = make_role_policy(&config.project);
+        let context_file_names = make_context_file_names(&config.project);
         let requires_tests = project_requires_tests(
             config.project.language.as_deref(),
             config.validation.as_ref(),
@@ -87,7 +87,8 @@ impl ForgeRuntime {
             .with_cheap_max_tokens(cheap_tokens)
             .with_strong_max_tokens(strong_tokens)
             .with_role_policy(role_policy)
-            .with_requires_tests(requires_tests);
+            .with_requires_tests(requires_tests)
+            .with_context_file_names(context_file_names);
         let validator = make_validator(
             config.project.language.as_deref(),
             config.validation.as_ref(),
@@ -188,6 +189,7 @@ impl ForgeRuntime {
             .unwrap_or(config.provider.n_predict) as u32;
 
         let role_policy = make_role_policy(&config.project);
+        let context_file_names = make_context_file_names(&config.project);
         let requires_tests = project_requires_tests(
             config.project.language.as_deref(),
             config.validation.as_ref(),
@@ -196,7 +198,8 @@ impl ForgeRuntime {
             .with_cheap_max_tokens(cheap_tokens)
             .with_strong_max_tokens(strong_tokens)
             .with_role_policy(role_policy)
-            .with_requires_tests(requires_tests);
+            .with_requires_tests(requires_tests)
+            .with_context_file_names(context_file_names);
         let validator = make_validator(
             config.project.language.as_deref(),
             config.validation.as_ref(),
@@ -266,6 +269,13 @@ fn make_role_policy(project: &ProjectConfig) -> RolePolicy {
     }
 }
 
+fn make_context_file_names(project: &ProjectConfig) -> Vec<String> {
+    match project.kind {
+        ProjectKind::Default => DefaultProjectAdapter.context_file_names(),
+        ProjectKind::Coding => CodingProjectAdapter.context_file_names(),
+    }
+}
+
 fn project_requires_tests(
     language: Option<&str>,
     validation_config: Option<&ValidationConfig>,
@@ -276,16 +286,25 @@ fn project_requires_tests(
         return spec.validation_includes_test_command();
     }
 
+    // For user-supplied validation commands there is no YAML spec with an
+    // explicit `runs_tests` flag, so we fall back to a heuristic: any token
+    // in any command that equals "test" or ends with "test"/"tests" implies a
+    // test runner is configured.
     validation_config
         .map(|config| {
-            config.commands.iter().any(|cmd| {
-                command_is_test_like(&CommandSpec {
-                    program: "sh".to_string(),
-                    args: vec!["-c".to_string(), cmd.clone()],
-                })
-            })
+            config
+                .commands
+                .iter()
+                .any(|cmd| validation_command_is_test_like(cmd))
         })
         .unwrap_or(false)
+}
+
+fn validation_command_is_test_like(cmd: &str) -> bool {
+    cmd.split_whitespace().any(|token| {
+        let lower = token.to_ascii_lowercase();
+        lower == "test" || lower.ends_with("test") || lower.ends_with("tests")
+    })
 }
 
 fn make_validator(
@@ -1239,5 +1258,81 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    // ── validation_command_is_test_like ──────────────────────────────────────
+
+    #[test]
+    fn cargo_test_command_is_test_like() {
+        assert!(
+            validation_command_is_test_like("cargo test"),
+            "'cargo test' must be detected as a test command"
+        );
+    }
+
+    #[test]
+    fn pytest_command_is_test_like() {
+        assert!(
+            validation_command_is_test_like("uv run pytest"),
+            "'uv run pytest' must be detected as a test command"
+        );
+    }
+
+    #[test]
+    fn test_token_alone_is_test_like() {
+        assert!(
+            validation_command_is_test_like("test"),
+            "bare 'test' token must be detected as a test command"
+        );
+    }
+
+    #[test]
+    fn fmt_check_command_is_not_test_like() {
+        assert!(
+            !validation_command_is_test_like("cargo fmt --check"),
+            "'cargo fmt --check' must not be detected as a test command"
+        );
+    }
+
+    #[test]
+    fn lint_command_is_not_test_like() {
+        assert!(
+            !validation_command_is_test_like("uv run ruff check ."),
+            "'uv run ruff check .' must not be detected as a test command"
+        );
+    }
+
+    // ── project_requires_tests ───────────────────────────────────────────────
+
+    #[test]
+    fn project_requires_tests_true_for_validation_config_with_test_command() {
+        let config = ValidationConfig {
+            commands: vec!["cargo test".to_string()],
+            timeout_seconds: None,
+        };
+        assert!(
+            project_requires_tests(None, Some(&config)),
+            "ValidationConfig with 'cargo test' must set requires_tests = true"
+        );
+    }
+
+    #[test]
+    fn project_requires_tests_false_for_validation_config_without_test_command() {
+        let config = ValidationConfig {
+            commands: vec!["cargo fmt --check".to_string()],
+            timeout_seconds: None,
+        };
+        assert!(
+            !project_requires_tests(None, Some(&config)),
+            "ValidationConfig without test command must set requires_tests = false"
+        );
+    }
+
+    #[test]
+    fn project_requires_tests_false_when_no_validation() {
+        assert!(
+            !project_requires_tests(None, None),
+            "absent validation must set requires_tests = false"
+        );
     }
 }
