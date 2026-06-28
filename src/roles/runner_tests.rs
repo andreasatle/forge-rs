@@ -84,47 +84,41 @@ fn json_rejected_response_maps_to_role_rejected() {
 }
 
 #[test]
-fn json_accepted_empty_content_fails() {
-    let result = parse_role_response(r#"{"status":"accepted","content":""}"#);
-    assert!(
-        matches!(result, RoleResult::Failed { .. }),
-        "empty content must produce Failed, got {result:?}"
-    );
+fn empty_role_response_field_fails() {
+    for (case, input) in [
+        ("accepted/content", r#"{"status":"accepted","content":""}"#),
+        ("rejected/reason", r#"{"status":"rejected","reason":""}"#),
+    ] {
+        let result = parse_role_response(input);
+        assert!(
+            matches!(result, RoleResult::Failed { .. }),
+            "[{case}] empty field must produce Failed, got {result:?}"
+        );
+    }
 }
 
 #[test]
-fn json_accepted_placeholder_content_fails_without_including_raw() {
-    let result = parse_role_response(r#"{"status":"accepted","content":"..."}"#);
-    let RoleResult::Failed { reason, .. } = result else {
-        panic!("placeholder '...' content must produce Failed, got {result:?}");
-    };
-    assert!(
-        reason.contains("placeholder"),
-        "failure reason must mention 'placeholder'; got: {reason}"
-    );
-    assert!(!reason.contains("raw:"));
-}
-
-#[test]
-fn json_rejected_empty_reason_fails() {
-    let result = parse_role_response(r#"{"status":"rejected","reason":""}"#);
-    assert!(
-        matches!(result, RoleResult::Failed { .. }),
-        "empty reason must produce Failed, got {result:?}"
-    );
-}
-
-#[test]
-fn json_rejected_placeholder_reason_fails_without_including_raw() {
-    let result = parse_role_response(r#"{"status":"rejected","reason":"..."}"#);
-    let RoleResult::Failed { reason, .. } = result else {
-        panic!("placeholder '...' reason must produce Failed, got {result:?}");
-    };
-    assert!(
-        reason.contains("placeholder"),
-        "failure reason must mention 'placeholder'; got: {reason}"
-    );
-    assert!(!reason.contains("raw:"));
+fn dot_placeholder_fails_without_including_raw() {
+    for (case, input) in [
+        (
+            "accepted/content",
+            r#"{"status":"accepted","content":"..."}"#,
+        ),
+        ("rejected/reason", r#"{"status":"rejected","reason":"..."}"#),
+    ] {
+        let result = parse_role_response(input);
+        let RoleResult::Failed { reason, .. } = result else {
+            panic!("[{case}] placeholder '...' must produce Failed, got {result:?}");
+        };
+        assert!(
+            reason.contains("placeholder"),
+            "[{case}] failure reason must mention 'placeholder'; got: {reason}"
+        );
+        assert!(
+            !reason.contains("raw:"),
+            "[{case}] failure reason must not include 'raw:'; got: {reason}"
+        );
+    }
 }
 
 #[test]
@@ -167,54 +161,25 @@ fn dollar_reason_placeholder_is_rejected() {
     );
 }
 
-#[test]
-fn dollar_response_summary_placeholder_is_rejected() {
-    let result = parse_role_response(r#"{"status":"accepted","content":"$RESPONSE_SUMMARY"}"#);
-    let RoleResult::Failed { reason, .. } = result else {
-        panic!("$RESPONSE_SUMMARY placeholder must produce Failed, got {result:?}");
-    };
-    assert!(
-        reason.contains("framework placeholder"),
-        "failure reason must mention 'framework placeholder'; got: {reason}"
-    );
-}
-
-#[test]
-fn dollar_reason_for_rejection_placeholder_is_rejected() {
-    let result = parse_role_response(r#"{"status":"rejected","reason":"$REASON_FOR_REJECTION"}"#);
-    let RoleResult::Failed { reason, .. } = result else {
-        panic!("$REASON_FOR_REJECTION placeholder must produce Failed, got {result:?}");
-    };
-    assert!(
-        reason.contains("framework placeholder"),
-        "failure reason must mention 'framework placeholder'; got: {reason}"
-    );
-}
-
 // --- minimum-length guard tests ---
 
 #[test]
-fn single_brace_accepted_content_fails() {
-    let result = parse_role_response(r#"{"status":"accepted","content":"{"}"#);
-    let RoleResult::Failed { reason, .. } = result else {
-        panic!("single-char content must produce Failed, got {result:?}");
-    };
-    assert!(
-        reason.contains("too short"),
-        "failure reason must mention 'too short'; got: {reason}"
-    );
-}
-
-#[test]
-fn two_char_accepted_content_fails() {
-    let result = parse_role_response(r#"{"status":"accepted","content":"ok"}"#);
-    let RoleResult::Failed { reason, .. } = result else {
-        panic!("two-char content must produce Failed, got {result:?}");
-    };
-    assert!(
-        reason.contains("too short"),
-        "failure reason must mention 'too short'; got: {reason}"
-    );
+fn too_short_role_response_field_fails() {
+    for (case, input) in [
+        ("accepted/1-char", r#"{"status":"accepted","content":"{"}"#),
+        ("accepted/2-char", r#"{"status":"accepted","content":"ok"}"#),
+        ("rejected/1-char", r#"{"status":"rejected","reason":"{"}"#),
+        ("rejected/2-char", r#"{"status":"rejected","reason":"ok"}"#),
+    ] {
+        let result = parse_role_response(input);
+        let RoleResult::Failed { reason, .. } = result else {
+            panic!("[{case}] short field must produce Failed, got {result:?}");
+        };
+        assert!(
+            reason.contains("too short"),
+            "[{case}] failure reason must mention 'too short'; got: {reason}"
+        );
+    }
 }
 
 #[test]
@@ -225,30 +190,6 @@ fn meaningful_accepted_content_passes() {
     assert!(
         matches!(result, RoleResult::Accepted { .. }),
         "long meaningful content must be accepted, got {result:?}"
-    );
-}
-
-#[test]
-fn single_brace_rejection_reason_fails() {
-    let result = parse_role_response(r#"{"status":"rejected","reason":"{"}"#);
-    let RoleResult::Failed { reason, .. } = result else {
-        panic!("single-char reason must produce Failed, got {result:?}");
-    };
-    assert!(
-        reason.contains("too short"),
-        "failure reason must mention 'too short'; got: {reason}"
-    );
-}
-
-#[test]
-fn two_char_rejection_reason_fails() {
-    let result = parse_role_response(r#"{"status":"rejected","reason":"ok"}"#);
-    let RoleResult::Failed { reason, .. } = result else {
-        panic!("two-char reason must produce Failed, got {result:?}");
-    };
-    assert!(
-        reason.contains("too short"),
-        "failure reason must mention 'too short'; got: {reason}"
     );
 }
 
@@ -431,59 +372,26 @@ fn role_response_with_leading_and_trailing_whitespace_parses() {
 // --- ProviderRoleRunner tests ---
 
 #[test]
-fn provider_error_still_maps_to_failed() {
-    let runner = ProviderRoleRunner::new(FailingProvider {
-        kind: ProviderErrorKind::Retryable,
-        message: "rate limited".to_string(),
-    });
-    let result = runner
-        .run_role(
-            RoleRequest {
-                role: DeliberationRole::Producer,
-                objective: "write a poem".to_string(),
-                target_files: vec![],
-                target_views: vec![],
-                producer_content: None,
-                critic_content: None,
-                feedback: vec![],
-                node_kind: NodeKind::Work,
-                tool_context: None,
-            },
-            &crate::telemetry::NoopTelemetry,
-        )
-        .result;
-    assert!(
-        matches!(result, RoleResult::Failed { .. }),
-        "provider error must map to Failed, not Rejected, got {result:?}"
-    );
-}
-
-#[test]
-fn provider_terminal_error_maps_to_failed() {
-    let runner = ProviderRoleRunner::new(FailingProvider {
-        kind: ProviderErrorKind::Terminal,
-        message: "auth error".to_string(),
-    });
-    let result = runner
-        .run_role(
-            RoleRequest {
-                role: DeliberationRole::Producer,
-                objective: "write a poem".to_string(),
-                target_files: vec![],
-                target_views: vec![],
-                producer_content: None,
-                critic_content: None,
-                feedback: vec![],
-                node_kind: NodeKind::Work,
-                tool_context: None,
-            },
-            &crate::telemetry::NoopTelemetry,
-        )
-        .result;
-    assert!(
-        matches!(result, RoleResult::Failed { .. }),
-        "terminal provider error must map to Failed, not {result:?}"
-    );
+fn provider_error_maps_to_failed() {
+    for (case, kind, message) in [
+        ("Retryable", ProviderErrorKind::Retryable, "rate limited"),
+        ("Terminal", ProviderErrorKind::Terminal, "auth error"),
+    ] {
+        let runner = ProviderRoleRunner::new(FailingProvider {
+            kind,
+            message: message.to_string(),
+        });
+        let result = runner
+            .run_role(
+                make_role_request(DeliberationRole::Producer, "write a poem"),
+                &crate::telemetry::NoopTelemetry,
+            )
+            .result;
+        assert!(
+            matches!(result, RoleResult::Failed { .. }),
+            "[{case}] provider error must map to Failed, got {result:?}"
+        );
+    }
 }
 
 #[test]
@@ -992,6 +900,20 @@ fn dummy_view() -> ArtifactView {
     ArtifactView {
         repo_path: PathBuf::from("/nonexistent"),
         commit_sha: "deadbeef".to_string(),
+    }
+}
+
+fn make_role_request(role: DeliberationRole, objective: &str) -> RoleRequest {
+    RoleRequest {
+        role,
+        objective: objective.to_string(),
+        target_files: vec![],
+        target_views: vec![],
+        producer_content: None,
+        critic_content: None,
+        feedback: vec![],
+        node_kind: NodeKind::Work,
+        tool_context: None,
     }
 }
 
@@ -2053,90 +1975,53 @@ fn read_only_role_write_request_still_rejected() {
 // failure observed in the 2026-06-24 run.
 
 #[test]
-fn echoed_replace_text_placeholder_triggers_parse_failure_not_tool_execution() {
+fn echoed_tool_placeholder_triggers_parse_failure_not_tool_execution() {
     use crate::telemetry::{TelemetryEvent, VecTelemetry};
 
-    let provider = ScriptedProvider::from_strs(&[
-        // Exact payload echoed by the confused model in the failing run.
-        r#"{"tool":"replace_text","path":"output.txt","old":"...","new":"..."}"#,
-        r#"{"status":"accepted","content":"haiku written"}"#,
-    ]);
-    let runner = ProviderRoleRunner::new(&provider);
-    let telemetry = VecTelemetry::new();
+    // A confused model sometimes echoes the tool-section examples verbatim.
+    // These must be treated as parse failures and trigger a retry, NOT executed.
+    for (case, placeholder_response, second_response, expected_content) in [
+        (
+            "replace_text",
+            r#"{"tool":"replace_text","path":"output.txt","old":"...","new":"..."}"#,
+            r#"{"status":"accepted","content":"haiku written"}"#,
+            "haiku written",
+        ),
+        (
+            "write_file",
+            r#"{"tool":"write_file","path":"output.txt","content":"..."}"#,
+            r#"{"status":"accepted","content":"completed"}"#,
+            "completed",
+        ),
+    ] {
+        let provider = ScriptedProvider::from_strs(&[placeholder_response, second_response]);
+        let runner = ProviderRoleRunner::new(&provider);
+        let telemetry = VecTelemetry::new();
 
-    let output = runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Producer,
-            objective: "write a haiku".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: None,
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Work,
-            tool_context: None,
-        },
-        &telemetry,
-    );
+        let output = runner.run_role(
+            make_role_request(DeliberationRole::Producer, "write a file"),
+            &telemetry,
+        );
 
-    assert!(
-        matches!(output.result, RoleResult::Accepted { ref content } if content == "haiku written"),
-        "placeholder tool request must not execute; got {:?}",
-        output.result
-    );
-    let records = telemetry.records();
-    assert!(
-        records
-            .iter()
-            .all(|r| !matches!(r.event, TelemetryEvent::ToolRequested { .. })),
-        "placeholder tool request must not emit ToolRequested"
-    );
-    assert!(
-        records
-            .iter()
-            .any(|r| matches!(&r.event, TelemetryEvent::ParseFailed { .. })),
-        "placeholder tool request must emit ParseFailed"
-    );
-}
-
-#[test]
-fn echoed_write_file_placeholder_triggers_parse_failure_not_tool_execution() {
-    use crate::telemetry::{TelemetryEvent, VecTelemetry};
-
-    let provider = ScriptedProvider::from_strs(&[
-        r#"{"tool":"write_file","path":"output.txt","content":"..."}"#,
-        r#"{"status":"accepted","content":"completed"}"#,
-    ]);
-    let runner = ProviderRoleRunner::new(&provider);
-    let telemetry = VecTelemetry::new();
-
-    let output = runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Producer,
-            objective: "write something".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: None,
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Work,
-            tool_context: None,
-        },
-        &telemetry,
-    );
-
-    assert!(
-        matches!(output.result, RoleResult::Accepted { ref content } if content == "completed"),
-        "placeholder write_file must not execute; got {:?}",
-        output.result
-    );
-    let records = telemetry.records();
-    assert!(
-        records
-            .iter()
-            .all(|r| !matches!(r.event, TelemetryEvent::ToolRequested { .. })),
-        "placeholder write_file must not emit ToolRequested"
-    );
+        assert!(
+            matches!(output.result, RoleResult::Accepted { ref content } if content == expected_content),
+            "[{case}] placeholder tool must not execute; got {:?}",
+            output.result
+        );
+        let records = telemetry.records();
+        assert!(
+            records
+                .iter()
+                .all(|r| !matches!(r.event, TelemetryEvent::ToolRequested { .. })),
+            "[{case}] placeholder tool must not emit ToolRequested"
+        );
+        assert!(
+            records
+                .iter()
+                .any(|r| matches!(&r.event, TelemetryEvent::ParseFailed { .. })),
+            "[{case}] placeholder tool must emit ParseFailed"
+        );
+    }
 }
 
 // ── prompt hardening: no "..." placeholders in any rendered prompt ───────
@@ -3705,87 +3590,57 @@ fn successful_replace_text_observation_instructs_final_response() {
 }
 
 #[test]
-fn successful_write_file_observation_instructs_final_response() {
-    let provider = ScriptedProvider::from_strs(&[
-        r#"{"tool":"write_file","path":"result.txt","content":"some output"}"#,
-        r#"{"status":"accepted","content":"wrote result.txt"}"#,
-    ]);
-    let runner = ProviderRoleRunner::new(&provider);
+fn successful_mutation_tool_observation_instructs_final_response() {
+    for (case, tool_response, final_response, objective) in [
+        (
+            "write_file",
+            r#"{"tool":"write_file","path":"result.txt","content":"some output"}"#,
+            r#"{"status":"accepted","content":"wrote result.txt"}"#,
+            "write result.txt",
+        ),
+        (
+            "delete_file",
+            r#"{"tool":"delete_file","path":"old.txt"}"#,
+            r#"{"status":"accepted","content":"deleted old.txt"}"#,
+            "delete old.txt",
+        ),
+    ] {
+        let provider = ScriptedProvider::from_strs(&[tool_response, final_response]);
+        let runner = ProviderRoleRunner::new(&provider);
 
-    runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Producer,
-            objective: "write result.txt".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: None,
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Work,
-            tool_context: Some(RoleToolContext {
-                artifact_view: Box::new(dummy_view()),
-            }),
-        },
-        &crate::telemetry::NoopTelemetry,
-    );
+        runner.run_role(
+            RoleRequest {
+                role: DeliberationRole::Producer,
+                objective: objective.to_string(),
+                target_files: vec![],
+                target_views: vec![],
+                producer_content: None,
+                critic_content: None,
+                feedback: vec![],
+                node_kind: NodeKind::Work,
+                tool_context: Some(RoleToolContext {
+                    artifact_view: Box::new(dummy_view()),
+                }),
+            },
+            &crate::telemetry::NoopTelemetry,
+        );
 
-    let requests = provider.requests.borrow();
-    assert_eq!(requests.len(), 2, "must call provider twice");
-    let second_prompt = &requests[1].prompt;
-    assert!(
-        second_prompt.contains("The requested change has already been recorded."),
-        "successful write_file must include completion-pressure text; got:\n{second_prompt}"
-    );
-    assert!(
-        second_prompt.contains("Do not call any more tools."),
-        "successful write_file must prohibit further tool calls; got:\n{second_prompt}"
-    );
-    assert!(
-        !second_prompt.contains("Available file tools:"),
-        "completion-pressure prompt must not include the tool section; got:\n{second_prompt}"
-    );
-}
-
-#[test]
-fn successful_delete_file_observation_instructs_final_response() {
-    let provider = ScriptedProvider::from_strs(&[
-        r#"{"tool":"delete_file","path":"old.txt"}"#,
-        r#"{"status":"accepted","content":"deleted old.txt"}"#,
-    ]);
-    let runner = ProviderRoleRunner::new(&provider);
-
-    runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Producer,
-            objective: "delete old.txt".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: None,
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Work,
-            tool_context: Some(RoleToolContext {
-                artifact_view: Box::new(dummy_view()),
-            }),
-        },
-        &crate::telemetry::NoopTelemetry,
-    );
-
-    let requests = provider.requests.borrow();
-    assert_eq!(requests.len(), 2, "must call provider twice");
-    let second_prompt = &requests[1].prompt;
-    assert!(
-        second_prompt.contains("The requested change has already been recorded."),
-        "successful delete_file must include completion-pressure text; got:\n{second_prompt}"
-    );
-    assert!(
-        second_prompt.contains("Do not call any more tools."),
-        "successful delete_file must prohibit further tool calls; got:\n{second_prompt}"
-    );
-    assert!(
-        !second_prompt.contains("Available file tools:"),
-        "completion-pressure prompt must not include the tool section; got:\n{second_prompt}"
-    );
+        let requests = provider.requests.borrow();
+        assert_eq!(requests.len(), 2, "[{case}] must call provider twice");
+        let second_prompt = &requests[1].prompt;
+        assert!(
+            second_prompt.contains("The requested change has already been recorded."),
+            "[{case}] successful {case} must include completion-pressure text; got:\n{second_prompt}"
+        );
+        assert!(
+            second_prompt.contains("Do not call any more tools."),
+            "[{case}] successful {case} must prohibit further tool calls; got:\n{second_prompt}"
+        );
+        assert!(
+            !second_prompt.contains("Available file tools:"),
+            "[{case}] completion-pressure prompt must not include the tool section; got:\n{second_prompt}"
+        );
+    }
 }
 
 #[test]
@@ -3896,121 +3751,6 @@ fn observation_json_echo_triggers_protocol_retry_not_tool_execution() {
 }
 
 // ── Completion pressure tests ────────────────────────────────────────────
-
-#[test]
-fn successful_write_file_enables_completion_pressure() {
-    let provider = ScriptedProvider::from_strs(&[
-        r#"{"tool":"write_file","path":"out.txt","content":"hello"}"#,
-        r#"{"status":"accepted","content":"wrote out.txt"}"#,
-    ]);
-    let runner = ProviderRoleRunner::new(&provider);
-
-    runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Producer,
-            objective: "write out.txt".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: None,
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Work,
-            tool_context: Some(RoleToolContext {
-                artifact_view: Box::new(dummy_view()),
-            }),
-        },
-        &crate::telemetry::NoopTelemetry,
-    );
-
-    let requests = provider.requests.borrow();
-    assert_eq!(requests.len(), 2);
-    let second_prompt = &requests[1].prompt;
-    assert!(
-        second_prompt.contains("The requested change has already been recorded."),
-        "write_file must enable completion pressure; got:\n{second_prompt}"
-    );
-    assert!(
-        second_prompt.contains("Do not call any more tools."),
-        "completion-pressure prompt must prohibit further tools; got:\n{second_prompt}"
-    );
-}
-
-#[test]
-fn successful_replace_text_enables_completion_pressure() {
-    let (_temp, view) = make_view("cp-replace-text");
-    let provider = ScriptedProvider::from_strs(&[
-        r#"{"tool":"replace_text","path":"hello.txt","old":"hello world","new":"goodbye"}"#,
-        r#"{"status":"accepted","content":"replaced text"}"#,
-    ]);
-    let runner = ProviderRoleRunner::new(&provider);
-
-    runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Producer,
-            objective: "replace text in hello.txt".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: None,
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Work,
-            tool_context: Some(RoleToolContext {
-                artifact_view: Box::new(view),
-            }),
-        },
-        &crate::telemetry::NoopTelemetry,
-    );
-
-    let requests = provider.requests.borrow();
-    assert_eq!(requests.len(), 2);
-    let second_prompt = &requests[1].prompt;
-    assert!(
-        second_prompt.contains("The requested change has already been recorded."),
-        "replace_text must enable completion pressure; got:\n{second_prompt}"
-    );
-    assert!(
-        second_prompt.contains("Do not call any more tools."),
-        "completion-pressure prompt must prohibit further tools; got:\n{second_prompt}"
-    );
-}
-
-#[test]
-fn successful_delete_file_enables_completion_pressure() {
-    let provider = ScriptedProvider::from_strs(&[
-        r#"{"tool":"delete_file","path":"old.txt"}"#,
-        r#"{"status":"accepted","content":"deleted old.txt"}"#,
-    ]);
-    let runner = ProviderRoleRunner::new(&provider);
-
-    runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Producer,
-            objective: "delete old.txt".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: None,
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Work,
-            tool_context: Some(RoleToolContext {
-                artifact_view: Box::new(dummy_view()),
-            }),
-        },
-        &crate::telemetry::NoopTelemetry,
-    );
-
-    let requests = provider.requests.borrow();
-    assert_eq!(requests.len(), 2);
-    let second_prompt = &requests[1].prompt;
-    assert!(
-        second_prompt.contains("The requested change has already been recorded."),
-        "delete_file must enable completion pressure; got:\n{second_prompt}"
-    );
-    assert!(
-        second_prompt.contains("Do not call any more tools."),
-        "completion-pressure prompt must prohibit further tools; got:\n{second_prompt}"
-    );
-}
 
 #[test]
 fn completion_pressure_hides_tool_section() {

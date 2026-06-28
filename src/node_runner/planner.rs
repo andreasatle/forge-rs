@@ -592,103 +592,82 @@ mod tests {
 
     // ── Validation ──────────────────────────────────────────────────────────────
 
+    fn planner_task(
+        id: &str,
+        objective: &str,
+        targets: &[&str],
+        depends_on: &[&str],
+    ) -> PlannerTask {
+        PlannerTask {
+            id: id.to_string(),
+            objective: objective.to_string(),
+            operation: PlannerOperation::Modify,
+            targets: targets.iter().map(|s| s.to_string()).collect(),
+            depends_on: depends_on.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
     #[test]
-    fn duplicate_ids_rejected() {
-        let output = PlannerOutput {
-            tasks: vec![
-                PlannerTask {
-                    id: "x".to_string(),
-                    objective: "first".to_string(),
-                    operation: PlannerOperation::Modify,
-                    targets: vec!["first.txt".to_string()],
-                    depends_on: vec![],
+    fn structural_validation_rejects_invalid_plan() {
+        let cases: &[(&str, PlannerOutput, PlannerValidationError)] = &[
+            (
+                "duplicate id",
+                PlannerOutput {
+                    tasks: vec![
+                        planner_task("x", "first", &["first.txt"], &[]),
+                        planner_task("x", "second", &["second.txt"], &[]),
+                    ],
                 },
-                PlannerTask {
-                    id: "x".to_string(),
-                    objective: "second".to_string(),
-                    operation: PlannerOperation::Modify,
-                    targets: vec!["second.txt".to_string()],
-                    depends_on: vec![],
+                PlannerValidationError::DuplicateId("x".to_string()),
+            ),
+            (
+                "empty objective",
+                PlannerOutput {
+                    tasks: vec![planner_task("task", "   ", &["task.txt"], &[])],
                 },
-            ],
-        };
-        let err = validate_planner_output(&output).unwrap_err();
-        assert_eq!(err, PlannerValidationError::DuplicateId("x".to_string()));
-    }
+                PlannerValidationError::EmptyObjective("task".to_string()),
+            ),
+            (
+                "empty targets",
+                PlannerOutput {
+                    tasks: vec![planner_task("task", "do something", &[], &[])],
+                },
+                PlannerValidationError::EmptyTargets("task".to_string()),
+            ),
+            (
+                "self dependency",
+                PlannerOutput {
+                    tasks: vec![planner_task(
+                        "loop",
+                        "do something",
+                        &["loop.txt"],
+                        &["loop"],
+                    )],
+                },
+                PlannerValidationError::SelfDependency("loop".to_string()),
+            ),
+            (
+                "unknown dependency",
+                PlannerOutput {
+                    tasks: vec![planner_task(
+                        "task",
+                        "do something",
+                        &["task.txt"],
+                        &["nonexistent"],
+                    )],
+                },
+                PlannerValidationError::UnknownDependency {
+                    task_id: "task".to_string(),
+                    dep_id: "nonexistent".to_string(),
+                },
+            ),
+        ];
 
-    #[test]
-    fn empty_objective_rejected() {
-        let output = PlannerOutput {
-            tasks: vec![PlannerTask {
-                id: "task".to_string(),
-                objective: "   ".to_string(),
-                operation: PlannerOperation::Modify,
-                targets: vec!["task.txt".to_string()],
-                depends_on: vec![],
-            }],
-        };
-        let err = validate_planner_output(&output).unwrap_err();
-        assert_eq!(
-            err,
-            PlannerValidationError::EmptyObjective("task".to_string())
-        );
-    }
-
-    #[test]
-    fn empty_targets_rejected() {
-        let output = PlannerOutput {
-            tasks: vec![PlannerTask {
-                id: "task".to_string(),
-                objective: "do something".to_string(),
-                operation: PlannerOperation::Modify,
-                targets: vec![],
-                depends_on: vec![],
-            }],
-        };
-        let err = validate_planner_output(&output).unwrap_err();
-        assert_eq!(
-            err,
-            PlannerValidationError::EmptyTargets("task".to_string())
-        );
-    }
-
-    #[test]
-    fn self_dependency_rejected() {
-        let output = PlannerOutput {
-            tasks: vec![PlannerTask {
-                id: "loop".to_string(),
-                objective: "do something".to_string(),
-                operation: PlannerOperation::Modify,
-                targets: vec!["loop.txt".to_string()],
-                depends_on: vec!["loop".to_string()],
-            }],
-        };
-        let err = validate_planner_output(&output).unwrap_err();
-        assert_eq!(
-            err,
-            PlannerValidationError::SelfDependency("loop".to_string())
-        );
-    }
-
-    #[test]
-    fn unknown_dependency_rejected() {
-        let output = PlannerOutput {
-            tasks: vec![PlannerTask {
-                id: "task".to_string(),
-                objective: "do something".to_string(),
-                operation: PlannerOperation::Modify,
-                targets: vec!["task.txt".to_string()],
-                depends_on: vec!["nonexistent".to_string()],
-            }],
-        };
-        let err = validate_planner_output(&output).unwrap_err();
-        assert_eq!(
-            err,
-            PlannerValidationError::UnknownDependency {
-                task_id: "task".to_string(),
-                dep_id: "nonexistent".to_string(),
-            }
-        );
+        for (case, output, expected) in cases {
+            let err = validate_planner_output(output)
+                .expect_err(&format!("[{case}] validate_planner_output must return Err"));
+            assert_eq!(err, *expected, "[{case}]");
+        }
     }
 
     // ── No-recreate validation ───────────────────────────────────────────────────

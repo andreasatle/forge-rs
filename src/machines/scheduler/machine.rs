@@ -1308,54 +1308,69 @@ mod tests {
     // ── Attempt-limit tests ───────────────────────────────────────────────────
 
     #[test]
-    fn retry_exhaustion_fails_scheduler() {
-        // Verify that a Retry recovery on a node already at MAX_ATTEMPTS:
-        //   1. does not insert a replacement node,
-        //   2. marks the original node Failed,
-        //   3. transitions the scheduler to SchedulerState::Failed.
-        let mut node = work_node("W", "failing task", &[]);
-        node.attempt = MAX_ATTEMPTS;
-        let graph = RunGraph {
-            nodes: vec![node],
-            next_id: 0,
-        };
+    fn recovery_exhaustion_fails_scheduler() {
+        // A node already at MAX_ATTEMPTS must not spawn a replacement regardless
+        // of the recovery action; the scheduler transitions to Failed immediately.
+        for (case, recovery) in [
+            (
+                "Retry",
+                RecoveryAction::Retry {
+                    message: "try again".to_string(),
+                },
+            ),
+            (
+                "ElevateModel",
+                RecoveryAction::ElevateModel {
+                    message: "escalate model".to_string(),
+                },
+            ),
+            (
+                "Split",
+                RecoveryAction::Split {
+                    message: "decompose the work".to_string(),
+                },
+            ),
+        ] {
+            let mut node = work_node("W", "failing task", &[]);
+            node.attempt = MAX_ATTEMPTS;
+            let graph = RunGraph {
+                nodes: vec![node],
+                next_id: 0,
+            };
 
-        let t = do_transition(
-            SchedulerState::Waiting {
-                graph: running(graph, "W"),
-                running: NodeId("W".to_string()),
-            },
-            SchedulerEvent::NodeReturned {
-                node_id: NodeId("W".to_string()),
-                outcome: NodeOutcome::Failed(NodeFailure {
-                    kind: FailureKind::DeliberationFailure,
-                    message: "transient error".to_string(),
-                    recovery: RecoveryAction::Retry {
-                        message: "try again".to_string(),
-                    },
-                }),
-            },
-        );
+            let t = do_transition(
+                SchedulerState::Waiting {
+                    graph: running(graph, "W"),
+                    running: NodeId("W".to_string()),
+                },
+                SchedulerEvent::NodeReturned {
+                    node_id: NodeId("W".to_string()),
+                    outcome: NodeOutcome::Failed(NodeFailure {
+                        kind: FailureKind::DeliberationFailure,
+                        message: "transient error".to_string(),
+                        recovery,
+                    }),
+                },
+            );
 
-        let SchedulerState::Failed { graph, reason } = t.state else {
-            panic!("expected Failed, got {:#?}", t.state);
-        };
-        // No replacement node was created.
-        assert_eq!(
-            graph.nodes.len(),
-            1,
-            "no replacement node should be created"
-        );
-        assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
-        assert!(
-            reason.contains("exhausted"),
-            "reason should mention exhaustion, got: {reason:?}"
-        );
-        // The ReturnFailed effect was emitted.
-        assert!(matches!(
-            t.effects.as_slice(),
-            [SchedulerEffect::ReturnFailed { .. }]
-        ));
+            let SchedulerState::Failed { graph, reason } = t.state else {
+                panic!("[{case}] expected Failed, got {:#?}", t.state);
+            };
+            assert_eq!(
+                graph.nodes.len(),
+                1,
+                "[{case}] no replacement node should be created"
+            );
+            assert_eq!(graph.nodes[0].status, NodeStatus::Failed, "[{case}]");
+            assert!(
+                reason.contains("exhausted"),
+                "[{case}] reason should mention exhaustion, got: {reason:?}"
+            );
+            assert!(
+                matches!(t.effects.as_slice(), [SchedulerEffect::ReturnFailed { .. }]),
+                "[{case}]"
+            );
+        }
     }
 
     // ── Plan dependency validation tests ─────────────────────────────────────
@@ -1780,57 +1795,6 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn elevate_exhaustion_fails_scheduler() {
-        // Verify that an ElevateModel recovery on a node already at MAX_ATTEMPTS:
-        //   1. does not insert a replacement node,
-        //   2. marks the original node Failed,
-        //   3. transitions the scheduler to SchedulerState::Failed.
-        let mut node = work_node("W", "hard task", &[]);
-        node.attempt = MAX_ATTEMPTS;
-        let graph = RunGraph {
-            nodes: vec![node],
-            next_id: 0,
-        };
-
-        let t = do_transition(
-            SchedulerState::Waiting {
-                graph: running(graph, "W"),
-                running: NodeId("W".to_string()),
-            },
-            SchedulerEvent::NodeReturned {
-                node_id: NodeId("W".to_string()),
-                outcome: NodeOutcome::Failed(NodeFailure {
-                    kind: FailureKind::DeliberationFailure,
-                    message: "capability ceiling".to_string(),
-                    recovery: RecoveryAction::ElevateModel {
-                        message: "escalate model".to_string(),
-                    },
-                }),
-            },
-        );
-
-        let SchedulerState::Failed { graph, reason } = t.state else {
-            panic!("expected Failed, got {:#?}", t.state);
-        };
-        // No replacement node was created.
-        assert_eq!(
-            graph.nodes.len(),
-            1,
-            "no replacement node should be created"
-        );
-        assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
-        assert!(
-            reason.contains("exhausted"),
-            "reason should mention exhaustion, got: {reason:?}"
-        );
-        // The ReturnFailed effect was emitted.
-        assert!(matches!(
-            t.effects.as_slice(),
-            [SchedulerEffect::ReturnFailed { .. }]
-        ));
-    }
-
     // ── Cancellation propagation tests ───────────────────────────────────────
 
     #[test]
@@ -1886,176 +1850,76 @@ mod tests {
         assert_eq!(status("D"), NodeStatus::Cancelled);
     }
 
-    // ── Split attempt-limit tests ─────────────────────────────────────────────
-
     #[test]
-    fn split_exhaustion_fails_scheduler() {
-        // A node already at MAX_ATTEMPTS that returns Split must not create a
-        // replacement Plan node; the scheduler transitions to Failed immediately.
-        let mut node = work_node("W", "complex task", &[]);
-        node.attempt = MAX_ATTEMPTS;
-        let graph = RunGraph {
-            nodes: vec![node],
-            next_id: 0,
-        };
+    fn recovery_respects_graph_size_limit() {
+        // When the graph is already at MAX_GRAPH_NODES, any recovery action must
+        // fail the scheduler rather than inserting a replacement node.
+        #[derive(Clone, Copy)]
+        enum RecoveryKind {
+            Retry,
+            Split,
+            Elevate,
+        }
 
-        let t = do_transition(
-            SchedulerState::Waiting {
-                graph: running(graph, "W"),
-                running: NodeId("W".to_string()),
-            },
-            SchedulerEvent::NodeReturned {
-                node_id: NodeId("W".to_string()),
-                outcome: NodeOutcome::Failed(NodeFailure {
-                    kind: FailureKind::DeliberationFailure,
-                    message: "task too complex".to_string(),
-                    recovery: RecoveryAction::Split {
-                        message: "decompose the work".to_string(),
-                    },
+        for (case, recovery_kind) in [
+            ("Retry", RecoveryKind::Retry),
+            ("Split", RecoveryKind::Split),
+            ("Elevate", RecoveryKind::Elevate),
+        ] {
+            let recovery = match recovery_kind {
+                RecoveryKind::Retry => RecoveryAction::Retry {
+                    message: "try again".to_string(),
+                },
+                RecoveryKind::Split => RecoveryAction::Split {
+                    message: "decompose the work".to_string(),
+                },
+                RecoveryKind::Elevate => RecoveryAction::ElevateModel {
+                    message: "use stronger model".to_string(),
+                },
+            };
+
+            let graph =
+                graph_with_filler_nodes(work_node("W", "failing task", &[]), MAX_GRAPH_NODES);
+
+            let t = do_transition(
+                SchedulerState::Waiting {
+                    graph: running(graph, "W"),
+                    running: NodeId("W".to_string()),
+                },
+                SchedulerEvent::NodeReturned {
+                    node_id: NodeId("W".to_string()),
+                    outcome: NodeOutcome::Failed(NodeFailure {
+                        kind: FailureKind::DeliberationFailure,
+                        message: "transient error".to_string(),
+                        recovery,
+                    }),
+                },
+            );
+
+            let SchedulerState::Failed { graph, reason } = t.state else {
+                panic!("[{case}] expected Failed, got {:#?}", t.state);
+            };
+            assert_eq!(graph.nodes.len(), MAX_GRAPH_NODES, "[{case}]");
+            assert_eq!(graph.nodes[0].status, NodeStatus::Failed, "[{case}]");
+            assert!(
+                graph.nodes.iter().all(|node| match recovery_kind {
+                    RecoveryKind::Retry => !matches!(node.origin, NodeOrigin::Retry { .. }),
+                    RecoveryKind::Split => !matches!(node.origin, NodeOrigin::Split { .. }),
+                    RecoveryKind::Elevate =>
+                        !matches!(node.origin, NodeOrigin::ElevateModel { .. }),
                 }),
-            },
-        );
-
-        let SchedulerState::Failed { graph, reason } = t.state else {
-            panic!("expected Failed, got {:#?}", t.state);
-        };
-        assert_eq!(
-            graph.nodes.len(),
-            1,
-            "no split replacement node should be created"
-        );
-        assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
-        assert!(
-            reason.contains("exhausted"),
-            "reason should mention exhaustion, got: {reason:?}"
-        );
-        assert!(matches!(
-            t.effects.as_slice(),
-            [SchedulerEffect::ReturnFailed { .. }]
-        ));
-    }
-
-    #[test]
-    fn retry_respects_graph_size_limit() {
-        let graph = graph_with_filler_nodes(work_node("W", "failing task", &[]), MAX_GRAPH_NODES);
-
-        let t = do_transition(
-            SchedulerState::Waiting {
-                graph: running(graph, "W"),
-                running: NodeId("W".to_string()),
-            },
-            SchedulerEvent::NodeReturned {
-                node_id: NodeId("W".to_string()),
-                outcome: NodeOutcome::Failed(NodeFailure {
-                    kind: FailureKind::DeliberationFailure,
-                    message: "transient error".to_string(),
-                    recovery: RecoveryAction::Retry {
-                        message: "try again".to_string(),
-                    },
-                }),
-            },
-        );
-
-        let SchedulerState::Failed { graph, reason } = t.state else {
-            panic!("expected Failed, got {:#?}", t.state);
-        };
-        assert_eq!(graph.nodes.len(), MAX_GRAPH_NODES);
-        assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
-        assert!(
-            graph
-                .nodes
-                .iter()
-                .all(|node| !matches!(node.origin, NodeOrigin::Retry { .. })),
-            "no retry replacement should be created"
-        );
-        assert!(reason.contains("graph size limit"));
-        assert!(reason.contains(&MAX_GRAPH_NODES.to_string()));
-        assert!(matches!(
-            t.effects.as_slice(),
-            [SchedulerEffect::ReturnFailed { .. }]
-        ));
-    }
-
-    #[test]
-    fn split_respects_graph_size_limit() {
-        let graph = graph_with_filler_nodes(work_node("W", "complex task", &[]), MAX_GRAPH_NODES);
-
-        let t = do_transition(
-            SchedulerState::Waiting {
-                graph: running(graph, "W"),
-                running: NodeId("W".to_string()),
-            },
-            SchedulerEvent::NodeReturned {
-                node_id: NodeId("W".to_string()),
-                outcome: NodeOutcome::Failed(NodeFailure {
-                    kind: FailureKind::DeliberationFailure,
-                    message: "task too complex".to_string(),
-                    recovery: RecoveryAction::Split {
-                        message: "decompose the work".to_string(),
-                    },
-                }),
-            },
-        );
-
-        let SchedulerState::Failed { graph, reason } = t.state else {
-            panic!("expected Failed, got {:#?}", t.state);
-        };
-        assert_eq!(graph.nodes.len(), MAX_GRAPH_NODES);
-        assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
-        assert!(
-            graph
-                .nodes
-                .iter()
-                .all(|node| !matches!(node.origin, NodeOrigin::Split { .. })),
-            "no split replacement should be created"
-        );
-        assert!(reason.contains("graph size limit"));
-        assert!(reason.contains(&MAX_GRAPH_NODES.to_string()));
-        assert!(matches!(
-            t.effects.as_slice(),
-            [SchedulerEffect::ReturnFailed { .. }]
-        ));
-    }
-
-    #[test]
-    fn elevate_respects_graph_size_limit() {
-        let graph = graph_with_filler_nodes(work_node("W", "hard task", &[]), MAX_GRAPH_NODES);
-
-        let t = do_transition(
-            SchedulerState::Waiting {
-                graph: running(graph, "W"),
-                running: NodeId("W".to_string()),
-            },
-            SchedulerEvent::NodeReturned {
-                node_id: NodeId("W".to_string()),
-                outcome: NodeOutcome::Failed(NodeFailure {
-                    kind: FailureKind::DeliberationFailure,
-                    message: "capability ceiling".to_string(),
-                    recovery: RecoveryAction::ElevateModel {
-                        message: "use stronger model".to_string(),
-                    },
-                }),
-            },
-        );
-
-        let SchedulerState::Failed { graph, reason } = t.state else {
-            panic!("expected Failed, got {:#?}", t.state);
-        };
-        assert_eq!(graph.nodes.len(), MAX_GRAPH_NODES);
-        assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
-        assert!(
-            graph
-                .nodes
-                .iter()
-                .all(|node| !matches!(node.origin, NodeOrigin::ElevateModel { .. })),
-            "no elevate replacement should be created"
-        );
-        assert!(reason.contains("graph size limit"));
-        assert!(reason.contains(&MAX_GRAPH_NODES.to_string()));
-        assert!(matches!(
-            t.effects.as_slice(),
-            [SchedulerEffect::ReturnFailed { .. }]
-        ));
+                "[{case}] no replacement should be created"
+            );
+            assert!(
+                reason.contains("graph size limit"),
+                "[{case}] got: {reason:?}"
+            );
+            assert!(reason.contains(&MAX_GRAPH_NODES.to_string()), "[{case}]");
+            assert!(
+                matches!(t.effects.as_slice(), [SchedulerEffect::ReturnFailed { .. }]),
+                "[{case}]"
+            );
+        }
     }
 
     // ── RecoverySummary / output classification tests ─────────────────────────
@@ -2489,129 +2353,70 @@ mod tests {
     }
 
     #[test]
-    fn integration_failure_retry_exhaustion_fails_scheduler() {
-        let mut node = work_node("B", "step B", &[]);
-        node.status = NodeStatus::Integrating;
-        node.attempt = MAX_ATTEMPTS;
-        let graph = RunGraph {
-            nodes: vec![node],
-            next_id: 0,
-        };
+    fn integration_failure_exhaustion_fails_scheduler() {
+        // A node in Integrating status at MAX_ATTEMPTS must not spawn a replacement
+        // regardless of the recovery action; the scheduler transitions to Failed.
+        for (case, recovery) in [
+            (
+                "Retry",
+                RecoveryAction::Retry {
+                    message: "retry integration".to_string(),
+                },
+            ),
+            (
+                "ElevateModel",
+                RecoveryAction::ElevateModel {
+                    message: "use stronger model".to_string(),
+                },
+            ),
+            (
+                "Split",
+                RecoveryAction::Split {
+                    message: "decompose step B".to_string(),
+                },
+            ),
+        ] {
+            let mut node = work_node("B", "step B", &[]);
+            node.status = NodeStatus::Integrating;
+            node.attempt = MAX_ATTEMPTS;
+            let graph = RunGraph {
+                nodes: vec![node],
+                next_id: 0,
+            };
 
-        let t = do_transition(
-            SchedulerState::Waiting {
-                graph,
-                running: NodeId("B".to_string()),
-            },
-            SchedulerEvent::IntegrationReturned {
-                node_id: NodeId("B".to_string()),
-                outcome: IntegrationOutcome::Failed(IntegrationFailure {
-                    kind: FailureKind::IntegrationFailure,
-                    message: "integration error".to_string(),
-                    recovery: RecoveryAction::Retry {
-                        message: "retry integration".to_string(),
-                    },
-                }),
-            },
-        );
+            let t = do_transition(
+                SchedulerState::Waiting {
+                    graph,
+                    running: NodeId("B".to_string()),
+                },
+                SchedulerEvent::IntegrationReturned {
+                    node_id: NodeId("B".to_string()),
+                    outcome: IntegrationOutcome::Failed(IntegrationFailure {
+                        kind: FailureKind::IntegrationFailure,
+                        message: "integration error".to_string(),
+                        recovery,
+                    }),
+                },
+            );
 
-        let SchedulerState::Failed { graph, reason } = t.state else {
-            panic!("expected Failed, got {:#?}", t.state);
-        };
-        assert_eq!(graph.nodes.len(), 1, "no replacement should be created");
-        assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
-        assert!(
-            reason.contains("exhausted"),
-            "reason should mention exhaustion, got: {reason:?}"
-        );
-        assert!(matches!(
-            t.effects.as_slice(),
-            [SchedulerEffect::ReturnFailed { .. }]
-        ));
-    }
-
-    #[test]
-    fn integration_failure_elevate_exhaustion_fails_scheduler() {
-        let mut node = work_node("B", "step B", &[]);
-        node.status = NodeStatus::Integrating;
-        node.attempt = MAX_ATTEMPTS;
-        let graph = RunGraph {
-            nodes: vec![node],
-            next_id: 0,
-        };
-
-        let t = do_transition(
-            SchedulerState::Waiting {
-                graph,
-                running: NodeId("B".to_string()),
-            },
-            SchedulerEvent::IntegrationReturned {
-                node_id: NodeId("B".to_string()),
-                outcome: IntegrationOutcome::Failed(IntegrationFailure {
-                    kind: FailureKind::IntegrationFailure,
-                    message: "integration error".to_string(),
-                    recovery: RecoveryAction::ElevateModel {
-                        message: "use stronger model".to_string(),
-                    },
-                }),
-            },
-        );
-
-        let SchedulerState::Failed { graph, reason } = t.state else {
-            panic!("expected Failed, got {:#?}", t.state);
-        };
-        assert_eq!(graph.nodes.len(), 1, "no replacement should be created");
-        assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
-        assert!(
-            reason.contains("exhausted"),
-            "reason should mention exhaustion, got: {reason:?}"
-        );
-        assert!(matches!(
-            t.effects.as_slice(),
-            [SchedulerEffect::ReturnFailed { .. }]
-        ));
-    }
-
-    #[test]
-    fn integration_failure_split_exhaustion_fails_scheduler() {
-        let mut node = work_node("B", "step B", &[]);
-        node.status = NodeStatus::Integrating;
-        node.attempt = MAX_ATTEMPTS;
-        let graph = RunGraph {
-            nodes: vec![node],
-            next_id: 0,
-        };
-
-        let t = do_transition(
-            SchedulerState::Waiting {
-                graph,
-                running: NodeId("B".to_string()),
-            },
-            SchedulerEvent::IntegrationReturned {
-                node_id: NodeId("B".to_string()),
-                outcome: IntegrationOutcome::Failed(IntegrationFailure {
-                    kind: FailureKind::IntegrationFailure,
-                    message: "integration error".to_string(),
-                    recovery: RecoveryAction::Split {
-                        message: "decompose step B".to_string(),
-                    },
-                }),
-            },
-        );
-
-        let SchedulerState::Failed { graph, reason } = t.state else {
-            panic!("expected Failed, got {:#?}", t.state);
-        };
-        assert_eq!(graph.nodes.len(), 1, "no replacement should be created");
-        assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
-        assert!(
-            reason.contains("exhausted"),
-            "reason should mention exhaustion, got: {reason:?}"
-        );
-        assert!(matches!(
-            t.effects.as_slice(),
-            [SchedulerEffect::ReturnFailed { .. }]
-        ));
+            let SchedulerState::Failed { graph, reason } = t.state else {
+                panic!("[{case}] expected Failed, got {:#?}", t.state);
+            };
+            assert_eq!(
+                graph.nodes.len(),
+                1,
+                "[{case}] no replacement should be created"
+            );
+            assert_eq!(graph.nodes[0].status, NodeStatus::Failed, "[{case}]");
+            assert!(
+                reason.contains("exhausted"),
+                "[{case}] reason should mention exhaustion, got: {reason:?}"
+            );
+            assert!(
+                matches!(t.effects.as_slice(), [SchedulerEffect::ReturnFailed { .. }]),
+                "[{case}]"
+            );
+        }
     }
 
     // ── Deadlock diagnostics tests ────────────────────────────────────────────

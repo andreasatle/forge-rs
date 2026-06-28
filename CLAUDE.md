@@ -141,6 +141,9 @@ Effect handlers should be tested independently.
 
 Providers, tools, Git, and the filesystem should be exercised only in effect-handler tests.
 
+Every new test must state the invariant it protects.
+If a new test differs only by parameters from an existing test, add a table case instead of a new test.
+
 ⸻
 
 Non-goals
