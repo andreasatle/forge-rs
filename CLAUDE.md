@@ -1,115 +1,152 @@
-# CLAUDE.md
+CLAUDE.md
 
-## Project
+Project
 
-forge-rs is a Rust implementation of Forge built around explicit state machines.
+Forge-RS is a Rust implementation of Forge built around explicit state machines.
 
 The core architecture is:
 
 state + event -> next_state + effects
 
-Business logic belongs in pure transition functions. Side effects belong in effect handlers.
+Transition functions are pure. Effect handlers perform I/O and orchestration.
 
-## Architectural rules
+The architecture should make illegal states difficult or impossible to represent.
 
-* Prefer enums with payloads over flags, nullable fields, or string states.
-* Make illegal states unrepresentable.
-* Keep transitions pure.
-* Do not perform I/O inside transition functions.
-* Emit effects for all external actions.
-* Use exhaustive match statements.
-* Avoid compatibility layers unless explicitly requested.
-* Avoid fallback behavior that preserves old architecture.
-* Avoid hidden mutation and global state.
-* Prefer owned data in public types: String, PathBuf, Vec<T>, HashMap<K, V>.
-* Avoid lifetime parameters in public Forge types unless clearly necessary.
+⸻
 
-## Machine pattern
+Core Principles
 
-Each machine should normally have:
+* Prefer structural solutions over patches.
+* Prefer typed data over parsing strings.
+* Failure recovery is driven by typed failure kinds, never human-readable messages.
+* Semantic validation occurs before Critic/Referee or integration.
+* Remove compatibility layers unless explicitly required.
+* Remove obsolete architecture instead of preserving it.
+* Keep abstractions no broader than the runtime semantics.
 
-state.rs
-event.rs
-effect.rs
-transition.rs
-mod.rs
+⸻
 
-Example:
+State Machines
 
-pub fn transition(
-    state: AttemptState,
-    event: AttemptEvent,
-) -> Transition<AttemptState, AttemptEffect>
+Business logic belongs in transition functions.
 
-Transitions return effects; they do not execute them.
+Transitions:
 
-## Initial machine set
+* are pure
+* never perform I/O
+* emit effects
+* use exhaustive matching
 
-The intended machine hierarchy is:
+Effect handlers:
 
-RunMachine
-  SchedulerMachine
-    NodeMachine
-      AttemptMachine
-        ToolLoopMachine
-      IntegrationMachine
+* execute providers
+* execute tools
+* perform workspace operations
+* perform integration
+* persist checkpoints
+* emit telemetry
 
-Optional later machines:
+⸻
 
-ProviderMachine
-ToolMachine
-TelemetryMachine
-ConfigMachine
+Project Adapters
 
-Do not introduce optional machines until the simpler effect-handler boundary becomes insufficient.
+The framework owns orchestration.
 
-## Implementation order
+Project adapters own project-specific behavior.
 
-Start with pure core logic.
+Adapters define:
 
-Preferred order:
+* target representation (TargetView)
+* semantic validation
+* project-specific rendering
+* future project-specific behavior
 
-1. common Transition type and IDs
-2. AttemptMachine
-3. ToolLoopMachine
-4. NodeMachine
-5. SchedulerMachine
-6. IntegrationMachine
-7. RunMachine
-8. effect handlers
-9. providers, tools, workspace/git
+The framework must never assume that targets are source files.
 
-Do not begin with HTTP providers, CLI, git, or tool execution.
+⸻
 
-## Rust style
+Language Abstraction
 
-* Use small modules.
-* Use clear public names.
-* Avoid clever abstractions.
+Languages are configured through YAML.
+
+Core code must not contain assumptions about:
+
+* Python
+* Rust
+* uv
+* pytest
+* Cargo
+* filename conventions
+
+Language-specific behavior belongs in language specifications or project adapters.
+
+⸻
+
+Tooling
+
+Tool permissions come from structured metadata.
+
+Never infer permissions from prompt text.
+
+Producer:
+
+* receives committed/base state
+
+Critic and Referee:
+
+* receive staged Producer state
+
+Target information is carried as structured metadata (target_files), not parsed from prompts.
+
+⸻
+
+Rust Style
+
+* Small cohesive modules.
 * Prefer explicit structs and enums.
-* Clone at machine boundaries when it keeps ownership simple.
+* Avoid hidden mutation.
+* Prefer owned public types.
+* Avoid unnecessary lifetimes.
+* Clone at machine boundaries when ownership becomes simpler.
 * Optimize later.
-* Keep tests close to transition logic.
 
-## Testing
+⸻
 
-Every machine transition should have focused tests.
+Module Size
+
+Production source files should normally remain below approximately 500 LOC.
+
+If a file grows beyond this, extract cohesive modules before adding additional functionality.
+
+Avoid arbitrary splits (helpers, misc, part2).
+
+Extract concepts instead.
+
+⸻
+
+Testing
+
+Every state machine should have focused transition tests.
 
 Test:
 
-* allowed transitions
-* forbidden transitions
+* valid transitions
+* invalid transitions
 * emitted effects
-* terminal states
-* exhausted/retry paths
-* invariant preservation
+* retries
+* failure paths
+* invariants
 
-Tests should not require real providers, git, network, or filesystem unless testing effect handlers.
+Effect handlers should be tested independently.
 
-## Non-goals
+Providers, tools, Git, and the filesystem should be exercised only in effect-handler tests.
 
-Do not port the Python code mechanically.
+⸻
 
-The Python Forge repo is reference material, not the authority.
+Non-goals
 
-The authority is the Rust state-machine architecture.
+Do not mechanically port the Python implementation.
+
+The Python repository is historical reference material only.
+
+The Rust architecture is the source of truth.
