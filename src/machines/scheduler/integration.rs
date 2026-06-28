@@ -11,7 +11,7 @@ use crate::machines::scheduler::event::{
 };
 use crate::machines::scheduler::state::NodeId;
 use crate::telemetry::{TelemetryEvent, TelemetryRecord, TelemetrySink};
-use crate::validation::{AlwaysPassValidator, Validator};
+use crate::validation::{AlwaysPassValidator, ValidationPlan, ValidationResult, Validator};
 
 use super::validation::validation_retry_message;
 
@@ -66,7 +66,12 @@ impl IntegrationService {
             .insert(node_id, update);
     }
 
-    pub(crate) fn integrate_work(&self, node_id: NodeId, work: WorkOutput) -> SchedulerEvent {
+    pub(crate) fn integrate_work(
+        &self,
+        node_id: NodeId,
+        work: WorkOutput,
+        validation_plan: Option<ValidationPlan>,
+    ) -> SchedulerEvent {
         eprintln!("[integration] start {}", node_id.0);
 
         let pending_update = self.pending_artifact_updates.borrow_mut().remove(&node_id);
@@ -96,7 +101,8 @@ impl IntegrationService {
                         "Integration",
                         TelemetryEvent::ValidationStarted,
                     ));
-                    let result = self.validator.validate(&workspace);
+                    let result =
+                        run_validation(&workspace, validation_plan.as_ref(), &*self.validator);
                     if result.passed {
                         *self.last_validation_passed.borrow_mut() = Some(true);
                         self.telemetry.record(TelemetryRecord::new(
@@ -147,6 +153,19 @@ impl IntegrationService {
                 summary: work.summary,
             }),
         }
+    }
+}
+
+/// Run validation using the node's `ValidationPlan` when present, falling back
+/// to the handler-level `Validator` singleton otherwise.
+fn run_validation(
+    workspace: &crate::artifacts::Workspace,
+    plan: Option<&ValidationPlan>,
+    fallback: &dyn Validator,
+) -> ValidationResult {
+    match plan {
+        Some(p) => p.execute(workspace),
+        None => fallback.validate(workspace),
     }
 }
 

@@ -438,6 +438,7 @@ pub fn try_fast_plan(
         objective: objective.to_string(),
         target_files: vec![source.clone()],
         dependencies: vec![],
+        validation_plan: None,
     };
     let mut children = vec![work];
 
@@ -459,6 +460,7 @@ pub fn try_fast_plan(
             ),
             target_files: vec![test_target],
             dependencies: vec![NodeId("work".to_string())],
+            validation_plan: None,
         });
     }
 
@@ -484,6 +486,7 @@ pub fn planner_output_to_plan_output(output: PlannerOutput) -> PlanOutput {
                 objective: task.objective,
                 target_files: task.targets,
                 dependencies: task.depends_on.into_iter().map(NodeId).collect(),
+                validation_plan: None,
             })
             .collect(),
     }

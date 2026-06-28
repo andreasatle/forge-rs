@@ -22,6 +22,7 @@ fn plan_child_depth_limit_fails_scheduler() {
                     objective: "nested plan".to_string(),
                     target_files: vec![],
                     dependencies: vec![NodeId("P".to_string())],
+                    validation_plan: None,
                 }],
             }),
         },
@@ -83,6 +84,7 @@ fn plan_expansion_respects_graph_size_limit() {
                         objective: "child one".to_string(),
                         target_files: vec![],
                         dependencies: vec![NodeId("P".to_string())],
+                        validation_plan: None,
                     },
                     NodeRequest {
                         id: NodeId("child-2".to_string()),
@@ -90,6 +92,7 @@ fn plan_expansion_respects_graph_size_limit() {
                         objective: "child two".to_string(),
                         target_files: vec![],
                         dependencies: vec![NodeId("P".to_string())],
+                        validation_plan: None,
                     },
                 ],
             }),

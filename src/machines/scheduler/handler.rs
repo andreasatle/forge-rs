@@ -187,9 +187,13 @@ impl<R: NodeRunner> Machine for SchedulerHandler<R> {
                 }
                 result.event
             }
-            SchedulerEffect::IntegrateWork { node_id, work } => {
-                self.integration.integrate_work(node_id, work)
-            }
+            SchedulerEffect::IntegrateWork {
+                node_id,
+                work,
+                validation_plan,
+            } => self
+                .integration
+                .integrate_work(node_id, work, validation_plan),
             SchedulerEffect::ReturnComplete { .. } | SchedulerEffect::ReturnFailed { .. } => {
                 unreachable!("return effects are never dispatched to the effect handler")
             }

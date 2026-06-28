@@ -232,6 +232,7 @@ pub(super) fn insert_children(
             model_tier: ModelTier::Cheap,
             summary: None,
             origin: NodeOrigin::PlanExpansion,
+            validation_plan: req.validation_plan,
         });
     }
     graph

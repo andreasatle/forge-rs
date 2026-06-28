@@ -126,6 +126,7 @@ fn work_node(id: &str, objective: &str) -> Node {
         model_tier: ModelTier::Cheap,
         summary: None,
         origin: NodeOrigin::Root,
+        validation_plan: None,
     }
 }
 
@@ -142,6 +143,7 @@ fn work_node_with_deps(id: &str, objective: &str, deps: &[&str]) -> Node {
         model_tier: ModelTier::Cheap,
         summary: None,
         origin: NodeOrigin::Root,
+        validation_plan: None,
     }
 }
 
@@ -337,3 +339,4 @@ mod integration;
 mod progress;
 mod recovery;
 mod validation;
+mod validation_plan;

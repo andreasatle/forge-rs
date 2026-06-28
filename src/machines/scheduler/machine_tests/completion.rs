@@ -75,6 +75,7 @@ fn terminal_failure_produces_failed_scheduler_output() {
             model_tier: ModelTier::Cheap,
             summary: None,
             origin: NodeOrigin::Root,
+            validation_plan: None,
         }],
         next_id: 0,
     };
@@ -97,6 +98,7 @@ fn scheduler_output_includes_node_failure_reason() {
             model_tier: ModelTier::Cheap,
             summary: None,
             origin: NodeOrigin::Root,
+            validation_plan: None,
         }],
         next_id: 0,
     };
@@ -394,6 +396,7 @@ fn split_success_reports_recovery() {
                 model_tier: ModelTier::Cheap,
                 summary: None,
                 origin: NodeOrigin::Root,
+                validation_plan: None,
             },
             Node {
                 id: split_id,
@@ -407,6 +410,7 @@ fn split_success_reports_recovery() {
                 model_tier: ModelTier::Strong,
                 summary: Some("planned".to_string()),
                 origin: NodeOrigin::Split { source: source_id },
+                validation_plan: None,
             },
         ],
         next_id: 1,

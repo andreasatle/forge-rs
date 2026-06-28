@@ -36,7 +36,7 @@ pub(super) fn apply_retry(
     failure_kind: FailureKind,
     retry_message: &str,
 ) -> RunGraph {
-    let (kind, objective, target_files, deps, attempt, plan_depth, model_tier) = {
+    let (kind, objective, target_files, deps, attempt, plan_depth, model_tier, validation_plan) = {
         let n = get_node(&graph, node_id);
         (
             n.kind.clone(),
@@ -46,6 +46,7 @@ pub(super) fn apply_retry(
             n.attempt,
             n.plan_depth,
             n.model_tier,
+            n.validation_plan.clone(),
         )
     };
     let objective = retry_objective(
@@ -70,6 +71,7 @@ pub(super) fn apply_retry(
         origin: NodeOrigin::Retry {
             source: node_id.clone(),
         },
+        validation_plan,
     };
     let graph = mark_node(graph, node_id, NodeStatus::Failed);
     let graph = push_node(graph, replacement);
@@ -133,6 +135,7 @@ pub(super) fn apply_split(graph: RunGraph, node_id: &NodeId, message: String) ->
         )
     };
     let split_id = NodeId(format!("{}-split-{}", node_id.0, graph.next_id));
+    // Split creates a new Plan node; validation_plan belongs to Work nodes only.
     let split_node = Node {
         id: split_id.clone(),
         kind: NodeKind::Plan,
@@ -147,6 +150,7 @@ pub(super) fn apply_split(graph: RunGraph, node_id: &NodeId, message: String) ->
         origin: NodeOrigin::Split {
             source: node_id.clone(),
         },
+        validation_plan: None,
     };
     let graph = mark_node(graph, node_id, NodeStatus::Failed);
     let graph = push_node(graph, split_node);
@@ -154,7 +158,7 @@ pub(super) fn apply_split(graph: RunGraph, node_id: &NodeId, message: String) ->
 }
 
 pub(super) fn apply_elevate(graph: RunGraph, node_id: &NodeId) -> RunGraph {
-    let (kind, objective, target_files, deps, attempt, plan_depth) = {
+    let (kind, objective, target_files, deps, attempt, plan_depth, validation_plan) = {
         let n = get_node(&graph, node_id);
         (
             n.kind.clone(),
@@ -163,6 +167,7 @@ pub(super) fn apply_elevate(graph: RunGraph, node_id: &NodeId) -> RunGraph {
             n.dependencies.clone(),
             n.attempt,
             n.plan_depth,
+            n.validation_plan.clone(),
         )
     };
     let elevated_id = NodeId(format!("{}-elevated-{}", node_id.0, graph.next_id));
@@ -180,6 +185,7 @@ pub(super) fn apply_elevate(graph: RunGraph, node_id: &NodeId) -> RunGraph {
         origin: NodeOrigin::ElevateModel {
             source: node_id.clone(),
         },
+        validation_plan,
     };
     let graph = mark_node(graph, node_id, NodeStatus::Failed);
     let graph = push_node(graph, replacement);

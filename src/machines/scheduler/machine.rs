@@ -121,6 +121,7 @@ impl SchedulerMachine {
             model_tier: ModelTier::Cheap,
             summary: None,
             origin: NodeOrigin::Root,
+            validation_plan: None,
         };
         SchedulerState::Running {
             graph: RunGraph {
@@ -319,13 +320,19 @@ impl SchedulerMachine {
                     // effect is emitted. The node is not yet dependency-satisfying; that
                     // only happens when IntegrationReturned(Succeeded) arrives.
                     WorkAccepted(work) => {
+                        let validation_plan =
+                            graph::get_node(&graph, &node_id).validation_plan.clone();
                         let graph = graph::mark_node(graph, &node_id, NodeStatus::Integrating);
                         Transition {
                             state: SchedulerState::Waiting {
                                 graph,
                                 running: node_id.clone(),
                             },
-                            effects: vec![SchedulerEffect::IntegrateWork { node_id, work }],
+                            effects: vec![SchedulerEffect::IntegrateWork {
+                                node_id,
+                                work,
+                                validation_plan,
+                            }],
                         }
                     }
 

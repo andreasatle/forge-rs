@@ -12,6 +12,8 @@
 //! This module does **not** own scheduler state shapes or emitted commands;
 //! those live in `state.rs` and `effect.rs`.
 
+use crate::validation::ValidationPlan;
+
 use super::state::{NodeId, NodeKind};
 
 /// Machine-readable cause of a node or integration failure.
@@ -93,6 +95,12 @@ pub struct NodeRequest {
     pub target_files: Vec<String>,
     /// Nodes that must complete before this node is eligible to run.
     pub dependencies: Vec<NodeId>,
+    /// The validation contract to attach to the new node.
+    ///
+    /// The scheduler copies this into the resulting `Node.validation_plan`.
+    /// `None` means no plan; integration will fall back to the handler-level
+    /// validator.
+    pub validation_plan: Option<ValidationPlan>,
 }
 
 /// The failure report returned when a node cannot complete successfully.

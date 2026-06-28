@@ -47,6 +47,7 @@ fn temporary_workspace_removed_after_successful_integration() {
         work: WorkOutput {
             summary: "wrote output.txt".to_string(),
         },
+        validation_plan: None,
     });
 
     let path = captured
@@ -87,6 +88,7 @@ fn temporary_workspace_removed_after_validation_failure() {
         work: WorkOutput {
             summary: "wrote output.txt".to_string(),
         },
+        validation_plan: None,
     });
 
     let path = captured
@@ -171,6 +173,7 @@ fn checkpoint_load_round_trip() {
                     model_tier: ModelTier::Cheap,
                     summary: Some("done".to_string()),
                     origin: NodeOrigin::Root,
+                    validation_plan: None,
                 },
                 work_node("B", "do B"),
             ],

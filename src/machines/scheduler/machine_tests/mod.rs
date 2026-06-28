@@ -26,6 +26,7 @@ fn work_node(id: &str, objective: &str, deps: &[&str]) -> Node {
         model_tier: ModelTier::Cheap,
         summary: None,
         origin: NodeOrigin::Root,
+        validation_plan: None,
     }
 }
 
@@ -42,6 +43,7 @@ fn plan_node(id: &str, objective: &str, deps: &[&str]) -> Node {
         model_tier: ModelTier::Cheap,
         summary: None,
         origin: NodeOrigin::Root,
+        validation_plan: None,
     }
 }
 
@@ -98,3 +100,4 @@ mod graph_limits;
 mod integration;
 mod planning;
 mod recovery;
+mod validation_plan;

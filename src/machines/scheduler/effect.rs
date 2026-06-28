@@ -8,6 +8,8 @@
 //! This module does **not** own scheduler state or events; those live in
 //! `state.rs` and `event.rs`.
 
+use crate::validation::ValidationPlan;
+
 use super::event::WorkOutput;
 use super::state::{ModelTier, NodeId, NodeKind, RunGraph};
 
@@ -48,6 +50,11 @@ pub enum SchedulerEffect {
         node_id: NodeId,
         /// The work output to integrate.
         work: WorkOutput,
+        /// The node's declared validation contract.
+        ///
+        /// When present, integration executes this plan instead of the global
+        /// handler-level validator.  `None` falls back to the global validator.
+        validation_plan: Option<ValidationPlan>,
     },
 
     /// Signal that the entire run completed successfully.

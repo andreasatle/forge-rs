@@ -121,7 +121,7 @@ impl Validator for CommandValidator {
 
 /// Returns `true` if at least one file in the workspace directory tree has a
 /// name matching any of `patterns` using simple glob syntax (single `*`).
-fn workspace_has_matching_file(dir: &Path, patterns: &[String]) -> bool {
+pub(crate) fn workspace_has_matching_file(dir: &Path, patterns: &[String]) -> bool {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return false;
     };
@@ -177,7 +177,7 @@ fn command_display(spec: &CommandSpec) -> String {
 /// Stdout and stderr are redirected to anonymous temp files so large output
 /// cannot fill the pipe buffer and deadlock the child. The parent polls
 /// `try_wait` every 50 ms and kills the child if it outlives `timeout`.
-fn run_command_with_timeout(
+pub(crate) fn run_command_with_timeout(
     spec: &CommandSpec,
     dir: &std::path::Path,
     timeout: Duration,

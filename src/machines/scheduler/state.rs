@@ -15,6 +15,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::validation::ValidationPlan;
+
 /// An opaque, stable identifier for a node in the run graph.
 ///
 /// IDs are unique within a run. The string form is human-readable but must not
@@ -158,6 +160,13 @@ pub struct Node {
     /// Used by `RecoverySummary::from_graph` to classify a completed run
     /// without inspecting IDs or objective strings.
     pub origin: NodeOrigin,
+    /// The validation contract for this node.
+    ///
+    /// Present only on `Work` nodes.  Set at plan-expansion time and preserved
+    /// unchanged through retries, model escalations, and checkpoint/resume.
+    /// When `None`, integration falls back to the handler-level validator.
+    #[serde(default)]
+    pub validation_plan: Option<ValidationPlan>,
 }
 
 /// The complete set of nodes for one Forge run, plus the internal ID cursor.

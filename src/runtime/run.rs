@@ -27,7 +27,10 @@ use crate::runtime::checkpoint::node_counts;
 use crate::runtime::resume::find_resumable_run;
 use crate::runtime::{create_run, finalize_manifest};
 use crate::telemetry::{FileTelemetry, TelemetryEvent, TelemetryRecord, TelemetrySink};
-use crate::validation::{AlwaysPassValidator, CommandSpec, CommandValidator, Validator};
+use crate::validation::{
+    AlwaysPassValidator, CommandSpec, CommandValidator, ValidationPlan, ValidationStage,
+    ValidationStep, Validator,
+};
 
 /// Entry point for a single forge run driven by a [`ForgeConfig`].
 pub struct ForgeRuntime;
@@ -82,12 +85,17 @@ impl ForgeRuntime {
         let context_file_names = make_context_file_names(&config.project);
         let required_test_targets_fn =
             make_required_test_targets_fn(&config.project, config.validation.as_ref());
+        let validation_plan = make_validation_plan(
+            config.project.language.as_deref(),
+            config.validation.as_ref(),
+        )?;
         let runner = DeliberatingNodeRunner::new(cheap, strong)
             .with_cheap_max_tokens(cheap_tokens)
             .with_strong_max_tokens(strong_tokens)
             .with_role_policy(role_policy)
             .with_required_test_targets_fn(required_test_targets_fn)
-            .with_context_file_names(context_file_names);
+            .with_context_file_names(context_file_names)
+            .with_validation_plan(validation_plan);
         let validator = make_validator(
             config.project.language.as_deref(),
             config.validation.as_ref(),
@@ -191,12 +199,17 @@ impl ForgeRuntime {
         let context_file_names = make_context_file_names(&config.project);
         let required_test_targets_fn =
             make_required_test_targets_fn(&config.project, config.validation.as_ref());
+        let validation_plan = make_validation_plan(
+            config.project.language.as_deref(),
+            config.validation.as_ref(),
+        )?;
         let runner = DeliberatingNodeRunner::new(cheap, strong)
             .with_cheap_max_tokens(cheap_tokens)
             .with_strong_max_tokens(strong_tokens)
             .with_role_policy(role_policy)
             .with_required_test_targets_fn(required_test_targets_fn)
-            .with_context_file_names(context_file_names);
+            .with_context_file_names(context_file_names)
+            .with_validation_plan(validation_plan);
         let validator = make_validator(
             config.project.language.as_deref(),
             config.validation.as_ref(),
@@ -317,6 +330,56 @@ fn validation_command_is_test_like(cmd: &str) -> bool {
         let lower = token.to_ascii_lowercase();
         lower == "test" || lower.ends_with("test") || lower.ends_with("tests")
     })
+}
+
+/// Build a [`ValidationPlan`] from the language spec or explicit config.
+///
+/// The plan is stamped onto every Work node at plan-expansion time.  This
+/// captures the validation contract at node-creation time so it survives
+/// checkpoint/resume unchanged, regardless of any later config edits.
+fn make_validation_plan(
+    language: Option<&str>,
+    validation_config: Option<&ValidationConfig>,
+) -> Result<Option<ValidationPlan>, Box<dyn Error>> {
+    if let Some(lang) = language {
+        let spec = language_spec(lang).ok_or_else(|| format!("unknown language: '{lang}'"))?;
+        let steps = spec
+            .validation
+            .commands
+            .into_iter()
+            .map(|cmd| ValidationStep {
+                command: std::iter::once(cmd.program).chain(cmd.args).collect(),
+                when_artifacts_present: cmd.when_files_present,
+                stage: ValidationStage::PreIntegration,
+                must_pass: true,
+            })
+            .collect();
+        return Ok(Some(ValidationPlan {
+            steps,
+            timeout_seconds: 120,
+        }));
+    }
+
+    match validation_config {
+        Some(v) if !v.commands.is_empty() => {
+            let timeout_seconds = v.timeout_seconds.unwrap_or(120);
+            let steps = v
+                .commands
+                .iter()
+                .map(|cmd| ValidationStep {
+                    command: vec!["sh".to_string(), "-c".to_string(), cmd.clone()],
+                    when_artifacts_present: vec![],
+                    stage: ValidationStage::PreIntegration,
+                    must_pass: true,
+                })
+                .collect();
+            Ok(Some(ValidationPlan {
+                steps,
+                timeout_seconds,
+            }))
+        }
+        _ => Ok(None),
+    }
 }
 
 fn make_validator(
@@ -903,6 +966,7 @@ mod tests {
                             objective: "generate result.txt".to_string(),
                             target_files: vec![],
                             dependencies: vec![],
+                            validation_plan: None,
                         }],
                     }),
                     NodeKind::Work => NodeRunResult::WorkAccepted(NodeRunWorkResult {
@@ -1081,6 +1145,7 @@ mod tests {
                             objective: "write result.txt".to_string(),
                             target_files: vec![],
                             dependencies: vec![],
+                            validation_plan: None,
                         }],
                     }),
                     NodeKind::Work => NodeRunResult::WorkAccepted(NodeRunWorkResult {
@@ -1155,6 +1220,7 @@ mod tests {
                             objective: "write result.txt".to_string(),
                             target_files: vec![],
                             dependencies: vec![],
+                            validation_plan: None,
                         }],
                     }),
                     NodeKind::Work => NodeRunResult::WorkAccepted(NodeRunWorkResult {

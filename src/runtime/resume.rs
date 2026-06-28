@@ -187,6 +187,7 @@ mod tests {
             model_tier: ModelTier::Cheap,
             summary: None,
             origin: NodeOrigin::Root,
+            validation_plan: None,
         }
     }
 

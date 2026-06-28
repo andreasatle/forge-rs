@@ -60,6 +60,7 @@ fn scheduler_handler_maps_integration_error_to_failed_outcome() {
         work: WorkOutput {
             summary: "wrote output.txt".to_string(),
         },
+        validation_plan: None,
     });
 
     assert!(
@@ -115,6 +116,7 @@ fn scheduler_handler_maps_integration_conflict_to_failed_outcome() {
         work: WorkOutput {
             summary: "wrote cas-output.txt".to_string(),
         },
+        validation_plan: None,
     });
 
     let IntegrationOutcome::Failed(failure) = (match &event {

@@ -13,6 +13,7 @@ use crate::node_runner::TestTargetsFn;
 use crate::providers::ProviderClient;
 use crate::roles::RolePolicy;
 use crate::telemetry::{TelemetryEvent, TelemetryRecord, TelemetrySink};
+use crate::validation::ValidationPlan;
 
 use super::planner::try_fast_plan;
 use super::runner::NodeRunner;
@@ -47,6 +48,11 @@ pub struct DeliberatingNodeRunner<C, S> {
     role_policy: RolePolicy,
     required_test_targets_fn: Arc<TestTargetsFn>,
     context_file_names: Vec<String>,
+    /// Validation plan stamped onto every Work node request produced by this runner.
+    ///
+    /// `None` means no per-node plan; integration falls back to the global
+    /// handler-level validator.
+    validation_plan: Option<ValidationPlan>,
 }
 
 impl<C, S> DeliberatingNodeRunner<C, S> {
@@ -64,6 +70,7 @@ impl<C, S> DeliberatingNodeRunner<C, S> {
             role_policy: RolePolicy::default(),
             required_test_targets_fn: Arc::new(|_| vec![]),
             context_file_names: vec![],
+            validation_plan: None,
         }
     }
 
@@ -105,6 +112,17 @@ impl<C, S> DeliberatingNodeRunner<C, S> {
         self.context_file_names = names;
         self
     }
+
+    /// Supply the validation plan stamped onto every Work node this runner
+    /// produces.
+    ///
+    /// The plan is cloned onto each [`NodeRequest`](crate::machines::scheduler::NodeRequest)
+    /// when a plan node expands.  When not set (the default), nodes carry no
+    /// plan and integration falls back to the handler-level validator.
+    pub fn with_validation_plan(mut self, plan: Option<ValidationPlan>) -> Self {
+        self.validation_plan = plan;
+        self
+    }
 }
 
 impl<C: ProviderClient, S: ProviderClient> NodeRunner for DeliberatingNodeRunner<C, S> {
@@ -119,10 +137,10 @@ impl<C: ProviderClient, S: ProviderClient> NodeRunner for DeliberatingNodeRunner
                 "DeliberatingNodeRunner",
                 TelemetryEvent::FastPlanUsed { task_count },
             ));
-            return NodeRunResult::PlanAccepted(plan);
+            return NodeRunResult::PlanAccepted(self.stamp_validation_plan(plan));
         }
 
-        match request.model_tier {
+        let result = match request.model_tier {
             ModelTier::Cheap => run_with_provider(
                 &self.cheap_provider,
                 request,
@@ -141,7 +159,30 @@ impl<C: ProviderClient, S: ProviderClient> NodeRunner for DeliberatingNodeRunner
                 &self.context_file_names,
                 telemetry,
             ),
+        };
+
+        if let NodeRunResult::PlanAccepted(plan) = result {
+            NodeRunResult::PlanAccepted(self.stamp_validation_plan(plan))
+        } else {
+            result
         }
+    }
+}
+
+impl<C, S> DeliberatingNodeRunner<C, S> {
+    /// Stamp `self.validation_plan` onto every Work-kind [`NodeRequest`] in `plan`.
+    fn stamp_validation_plan(
+        &self,
+        mut plan: crate::machines::scheduler::PlanOutput,
+    ) -> crate::machines::scheduler::PlanOutput {
+        if self.validation_plan.is_some() {
+            for child in &mut plan.children {
+                if child.kind == NodeKind::Work {
+                    child.validation_plan = self.validation_plan.clone();
+                }
+            }
+        }
+        plan
     }
 }
 

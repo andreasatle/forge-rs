@@ -82,6 +82,7 @@ fn scheduler_output_includes_integration_failure_reason() {
             model_tier: ModelTier::Cheap,
             summary: None,
             origin: NodeOrigin::Root,
+            validation_plan: None,
         }],
         next_id: 0,
     };
