@@ -76,6 +76,16 @@ pub(super) fn apply_retry(
     remap_pending_dependencies(graph, node_id, &replacement_id)
 }
 
+const FEEDBACK_SEPARATOR: &str = "\n\nValidation feedback for retry:";
+
+// Returns the objective text stripped of any previously appended feedback block.
+fn base_objective(objective: &str) -> &str {
+    match objective.find(FEEDBACK_SEPARATOR) {
+        Some(idx) => objective[..idx].trim_end(),
+        None => objective,
+    }
+}
+
 fn retry_objective(
     kind: &NodeKind,
     original_objective: &str,
@@ -87,6 +97,8 @@ fn retry_objective(
         return original_objective.to_string();
     }
 
+    let clean_original = base_objective(original_objective);
+
     let target_text = if target_files.is_empty() {
         "(none specified)".to_string()
     } else {
@@ -94,7 +106,7 @@ fn retry_objective(
     };
 
     format!(
-        "{original_objective}\n\nValidation feedback for retry:\nOriginal objective: {original_objective}\nTarget files: {target_text}\n{diagnostics}",
+        "{clean_original}\n\nValidation feedback for retry:\nTarget files: {target_text}\n{diagnostics}",
         diagnostics = concise_retry_diagnostics(retry_message),
     )
 }

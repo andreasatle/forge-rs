@@ -69,8 +69,7 @@ fn validation_failure_creates_retry_feedback() {
     assert_eq!(retry.status, NodeStatus::Pending);
     assert_eq!(retry.attempt, 1);
     assert_eq!(retry.target_files, vec!["main.py"]);
-    assert!(retry.objective.contains("fix main"));
-    assert!(retry.objective.contains("Original objective: fix main"));
+    assert!(retry.objective.starts_with("fix main"));
     assert!(retry.objective.contains("Target files: main.py"));
     assert!(
         retry
@@ -709,4 +708,210 @@ fn terminal_failure_does_not_touch_completed_nodes() {
     assert_eq!(a.status, NodeStatus::Completed, "A must remain Completed");
     assert_eq!(b.status, NodeStatus::Failed);
     assert_eq!(c.status, NodeStatus::Cancelled);
+}
+
+fn validation_retry_event(node_id: &str, diagnostics: &str) -> SchedulerEvent {
+    SchedulerEvent::IntegrationReturned {
+        node_id: NodeId(node_id.to_string()),
+        outcome: IntegrationOutcome::Failed(IntegrationFailure {
+            kind: FailureKind::ValidationFailure,
+            message: "validation failed".to_string(),
+            recovery: RecoveryAction::Retry {
+                message: diagnostics.to_string(),
+            },
+        }),
+    }
+}
+
+#[test]
+fn validation_retry_feedback_includes_all_structured_target_files() {
+    // Invariant: structured target_files drives the "Target files:" line; every
+    // file present in target_files must appear in the retry objective.
+    let mut graph = RunGraph {
+        nodes: vec![work_node("W", "fix main", &[])],
+        next_id: 0,
+    };
+    graph.nodes[0].target_files = vec!["main.py".to_string(), "test_main.py".to_string()];
+    graph.nodes[0].status = NodeStatus::Integrating;
+
+    let t = do_transition(
+        SchedulerState::Waiting {
+            graph,
+            running: NodeId("W".to_string()),
+        },
+        validation_retry_event(
+            "W",
+            "previous validation command: pytest\nexit code: 1\nstdout:\n0 tests ran\nstderr:\n",
+        ),
+    );
+
+    let SchedulerState::Running { graph } = t.state else {
+        panic!("expected Running, got {:#?}", t.state);
+    };
+    let retry = &graph.nodes[1];
+    assert!(
+        retry.objective.contains("main.py"),
+        "main.py must appear in retry objective"
+    );
+    assert!(
+        retry.objective.contains("test_main.py"),
+        "test_main.py must appear in retry objective"
+    );
+    assert!(
+        retry
+            .objective
+            .contains("Target files: main.py, test_main.py"),
+        "both files must appear together in Target files line; got:\n{}",
+        retry.objective
+    );
+}
+
+#[test]
+fn validation_retry_test_target_appears_in_retry_prompt() {
+    // Invariant: a test-file target added to structured target_files is visible
+    // to the retry node and is not silently dropped from the feedback.
+    let mut graph = RunGraph {
+        nodes: vec![work_node("W", "write and test a feature", &[])],
+        next_id: 0,
+    };
+    graph.nodes[0].target_files = vec!["src/lib.rs".to_string(), "tests/lib_test.rs".to_string()];
+    graph.nodes[0].status = NodeStatus::Integrating;
+
+    let t = do_transition(
+        SchedulerState::Waiting {
+            graph,
+            running: NodeId("W".to_string()),
+        },
+        validation_retry_event(
+            "W",
+            "previous validation command: cargo test\nexit code: 101\nstdout:\ntest failed\nstderr:\n",
+        ),
+    );
+
+    let SchedulerState::Running { graph } = t.state else {
+        panic!("expected Running, got {:#?}", t.state);
+    };
+    let retry = &graph.nodes[1];
+    assert!(
+        retry.objective.contains("tests/lib_test.rs"),
+        "test target must appear in retry objective; got:\n{}",
+        retry.objective
+    );
+}
+
+#[test]
+fn repeated_validation_retries_do_not_duplicate_feedback_blocks() {
+    // Invariant: each retry replaces the previous feedback block with the latest
+    // diagnostics; old blocks must not accumulate across multiple retries.
+    let mut graph = RunGraph {
+        nodes: vec![work_node("W", "fix main", &[])],
+        next_id: 0,
+    };
+    graph.nodes[0].target_files = vec!["main.py".to_string()];
+    graph.nodes[0].status = NodeStatus::Integrating;
+
+    let t1 = do_transition(
+        SchedulerState::Waiting {
+            graph,
+            running: NodeId("W".to_string()),
+        },
+        validation_retry_event(
+            "W",
+            "previous validation command: val\nexit code: 1\nstdout:\nfirst-error\nstderr:\n",
+        ),
+    );
+    let SchedulerState::Running { mut graph } = t1.state else {
+        panic!("expected Running after first retry");
+    };
+
+    let retry1_id = graph.nodes[1].id.clone();
+    graph.nodes[1].status = NodeStatus::Integrating;
+
+    let t2 = do_transition(
+        SchedulerState::Waiting {
+            graph,
+            running: retry1_id.clone(),
+        },
+        validation_retry_event(
+            &retry1_id.0,
+            "previous validation command: val\nexit code: 2\nstdout:\nsecond-error\nstderr:\n",
+        ),
+    );
+    let SchedulerState::Running { graph } = t2.state else {
+        panic!("expected Running after second retry");
+    };
+    let retry2 = &graph.nodes[2];
+
+    let block_count = retry2
+        .objective
+        .matches("Validation feedback for retry:")
+        .count();
+    assert_eq!(
+        block_count, 1,
+        "feedback block must appear exactly once after two retries"
+    );
+    assert!(
+        retry2.objective.starts_with("fix main"),
+        "clean original objective must lead"
+    );
+    assert!(
+        retry2.objective.contains("second-error"),
+        "latest diagnostics must be present"
+    );
+    assert!(
+        !retry2.objective.contains("first-error"),
+        "stale diagnostics must not accumulate"
+    );
+}
+
+#[test]
+fn retry_target_files_unchanged_across_retries() {
+    // Invariant: structured target_files on the retry node is always identical
+    // to the original node's target_files, regardless of retry count.
+    let mut graph = RunGraph {
+        nodes: vec![work_node("W", "fix main", &[])],
+        next_id: 0,
+    };
+    let original_targets = vec!["main.py".to_string(), "test_main.py".to_string()];
+    graph.nodes[0].target_files = original_targets.clone();
+    graph.nodes[0].status = NodeStatus::Integrating;
+
+    let t1 = do_transition(
+        SchedulerState::Waiting {
+            graph,
+            running: NodeId("W".to_string()),
+        },
+        validation_retry_event(
+            "W",
+            "previous validation command: v\nexit code: 1\nstdout:\n\nstderr:\n",
+        ),
+    );
+    let SchedulerState::Running { mut graph } = t1.state else {
+        panic!("expected Running after first retry");
+    };
+    assert_eq!(
+        graph.nodes[1].target_files, original_targets,
+        "target_files after retry 1"
+    );
+
+    let retry1_id = graph.nodes[1].id.clone();
+    graph.nodes[1].status = NodeStatus::Integrating;
+
+    let t2 = do_transition(
+        SchedulerState::Waiting {
+            graph,
+            running: retry1_id.clone(),
+        },
+        validation_retry_event(
+            &retry1_id.0,
+            "previous validation command: v\nexit code: 2\nstdout:\n\nstderr:\n",
+        ),
+    );
+    let SchedulerState::Running { graph } = t2.state else {
+        panic!("expected Running after second retry");
+    };
+    assert_eq!(
+        graph.nodes[2].target_files, original_targets,
+        "target_files after retry 2"
+    );
 }
