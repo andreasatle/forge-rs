@@ -18,6 +18,43 @@ fn parse_role_response(raw_response: &str) -> RoleResult {
     })
 }
 
+fn role_json(status: &str, field: &str, value: &str) -> String {
+    serde_json::json!({ "status": status, field: value }).to_string()
+}
+
+fn accepted_json(content: &str) -> String {
+    role_json("accepted", "content", content)
+}
+
+fn rejected_json(reason: &str) -> String {
+    role_json("rejected", "reason", reason)
+}
+
+fn assert_parse_failed(case: &str, input: &str) -> String {
+    let result = parse_role_response(input);
+    let RoleResult::Failed { reason, .. } = result else {
+        panic!("[{case}] response must produce Failed, got {result:?}");
+    };
+    reason
+}
+
+fn assert_parse_failed_reason_contains(case: &str, input: &str, expected: &str) -> String {
+    let reason = assert_parse_failed(case, input);
+    assert!(
+        reason.contains(expected),
+        "[{case}] failure reason must mention '{expected}'; got: {reason}"
+    );
+    reason
+}
+
+fn assert_placeholder_rejected(case: &str, input: &str) -> String {
+    assert_parse_failed_reason_contains(case, input, "placeholder")
+}
+
+fn assert_too_short(case: &str, input: &str) {
+    assert_parse_failed_reason_contains(case, input, "too short");
+}
+
 // --- fake providers ---
 
 struct FailingProvider {
@@ -86,34 +123,20 @@ fn json_rejected_response_maps_to_role_rejected() {
 #[test]
 fn empty_role_response_field_fails() {
     for (case, input) in [
-        ("accepted/content", r#"{"status":"accepted","content":""}"#),
-        ("rejected/reason", r#"{"status":"rejected","reason":""}"#),
+        ("accepted/content", accepted_json("")),
+        ("rejected/reason", rejected_json("")),
     ] {
-        let result = parse_role_response(input);
-        assert!(
-            matches!(result, RoleResult::Failed { .. }),
-            "[{case}] empty field must produce Failed, got {result:?}"
-        );
+        assert_parse_failed(&case, &input);
     }
 }
 
 #[test]
 fn dot_placeholder_fails_without_including_raw() {
     for (case, input) in [
-        (
-            "accepted/content",
-            r#"{"status":"accepted","content":"..."}"#,
-        ),
-        ("rejected/reason", r#"{"status":"rejected","reason":"..."}"#),
+        ("accepted/content", accepted_json("...")),
+        ("rejected/reason", rejected_json("...")),
     ] {
-        let result = parse_role_response(input);
-        let RoleResult::Failed { reason, .. } = result else {
-            panic!("[{case}] placeholder '...' must produce Failed, got {result:?}");
-        };
-        assert!(
-            reason.contains("placeholder"),
-            "[{case}] failure reason must mention 'placeholder'; got: {reason}"
-        );
+        let reason = assert_placeholder_rejected(case, &input);
         assert!(
             !reason.contains("raw:"),
             "[{case}] failure reason must not include 'raw:'; got: {reason}"
@@ -122,43 +145,23 @@ fn dot_placeholder_fails_without_including_raw() {
 }
 
 #[test]
-fn placeholder_summary_is_rejected() {
-    let result = parse_role_response(r#"{"status":"accepted","content":"$RESPONSE_SUMMARY"}"#);
-    let RoleResult::Failed { reason, .. } = result else {
-        panic!("framework placeholder content must produce Failed, got {result:?}");
-    };
-    assert!(
-        reason.contains("framework placeholder"),
-        "failure reason must mention 'framework placeholder'; got: {reason}"
-    );
-}
-
-#[test]
-fn placeholder_reason_is_rejected() {
-    let result = parse_role_response(r#"{"status":"rejected","reason":"$REASON_FOR_REJECTION"}"#);
-    let RoleResult::Failed { reason, .. } = result else {
-        panic!("framework placeholder reason must produce Failed, got {result:?}");
-    };
-    assert!(
-        reason.contains("framework placeholder"),
-        "failure reason must mention 'framework placeholder'; got: {reason}"
-    );
-}
-
-#[test]
-fn dollar_reason_placeholder_is_rejected() {
-    // "$REASON" is exactly MIN_CONTENT_LENGTH chars so it slips past the
-    // length guard; it must be caught by is_framework_placeholder.
-    let result = parse_role_response(r#"{"status":"rejected","reason":"$REASON"}"#);
-    let RoleResult::Failed { reason, .. } = result else {
-        panic!(
-            r#"placeholder {{"status":"rejected","reason":"$REASON"}} must produce Failed, got {result:?}"#
-        );
-    };
-    assert!(
-        reason.contains("framework placeholder"),
-        "failure reason must mention 'framework placeholder'; got: {reason}"
-    );
+fn framework_placeholders_are_rejected() {
+    for (case, input) in [
+        (
+            "accepted/response-summary",
+            accepted_json("$RESPONSE_SUMMARY"),
+        ),
+        (
+            "rejected/reason-for-rejection",
+            rejected_json("$REASON_FOR_REJECTION"),
+        ),
+        (
+            "rejected/min-length-dollar-reason",
+            rejected_json("$REASON"),
+        ),
+    ] {
+        assert_parse_failed_reason_contains(case, &input, "framework placeholder");
+    }
 }
 
 // --- minimum-length guard tests ---
@@ -166,19 +169,12 @@ fn dollar_reason_placeholder_is_rejected() {
 #[test]
 fn too_short_role_response_field_fails() {
     for (case, input) in [
-        ("accepted/1-char", r#"{"status":"accepted","content":"{"}"#),
-        ("accepted/2-char", r#"{"status":"accepted","content":"ok"}"#),
-        ("rejected/1-char", r#"{"status":"rejected","reason":"{"}"#),
-        ("rejected/2-char", r#"{"status":"rejected","reason":"ok"}"#),
+        ("accepted/1-char", accepted_json("{")),
+        ("accepted/2-char", accepted_json("ok")),
+        ("rejected/1-char", rejected_json("{")),
+        ("rejected/2-char", rejected_json("ok")),
     ] {
-        let result = parse_role_response(input);
-        let RoleResult::Failed { reason, .. } = result else {
-            panic!("[{case}] short field must produce Failed, got {result:?}");
-        };
-        assert!(
-            reason.contains("too short"),
-            "[{case}] failure reason must mention 'too short'; got: {reason}"
-        );
+        assert_too_short(case, &input);
     }
 }
 
@@ -194,27 +190,24 @@ fn meaningful_accepted_content_passes() {
 }
 
 #[test]
-fn min_length_boundary_accepted_content_passes() {
+fn min_length_boundary_fields_pass() {
     // Exactly MIN_CONTENT_LENGTH characters must be accepted.
-    let content = "a".repeat(super::MIN_CONTENT_LENGTH);
-    let input = format!(r#"{{"status":"accepted","content":"{content}"}}"#);
-    let result = parse_role_response(&input);
-    assert!(
-        matches!(result, RoleResult::Accepted { .. }),
-        "content at exactly MIN_CONTENT_LENGTH must be accepted, got {result:?}"
-    );
-}
-
-#[test]
-fn min_length_boundary_rejection_reason_passes() {
-    // Exactly MIN_CONTENT_LENGTH characters must be accepted.
-    let reason = "a".repeat(super::MIN_CONTENT_LENGTH);
-    let input = format!(r#"{{"status":"rejected","reason":"{reason}"}}"#);
-    let result = parse_role_response(&input);
-    assert!(
-        matches!(result, RoleResult::Rejected { .. }),
-        "reason at exactly MIN_CONTENT_LENGTH must be accepted, got {result:?}"
-    );
+    let value = "a".repeat(super::MIN_CONTENT_LENGTH);
+    for (case, input, expected_status) in [
+        ("accepted/content", accepted_json(&value), "accepted"),
+        ("rejected/reason", rejected_json(&value), "rejected"),
+    ] {
+        let result = parse_role_response(&input);
+        let matches_expected = match expected_status {
+            "accepted" => matches!(&result, RoleResult::Accepted { .. }),
+            "rejected" => matches!(&result, RoleResult::Rejected { .. }),
+            _ => unreachable!("unknown expected status"),
+        };
+        assert!(
+            matches_expected,
+            "[{case}] field at exactly MIN_CONTENT_LENGTH must be accepted, got {result:?}"
+        );
+    }
 }
 
 #[test]
