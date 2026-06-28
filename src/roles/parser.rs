@@ -5,9 +5,6 @@ use serde::Deserialize;
 use crate::machines::deliberation::event::RoleResult;
 use crate::services::extract_json_object;
 
-#[cfg(test)]
-use crate::machines::scheduler::FailureKind;
-
 pub(super) const MIN_CONTENT_LENGTH: usize = 8;
 
 #[derive(Deserialize)]
@@ -93,12 +90,4 @@ pub(super) fn strip_code_fence(s: &str) -> &str {
     } else {
         after_newline.trim()
     }
-}
-
-#[cfg(test)]
-pub(super) fn parse_role_response(raw_response: &str) -> RoleResult {
-    try_parse_role_response(raw_response).unwrap_or_else(|reason| RoleResult::Failed {
-        kind: FailureKind::ProtocolFailure,
-        reason,
-    })
 }

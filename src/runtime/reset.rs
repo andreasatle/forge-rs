@@ -324,7 +324,7 @@ mod tests {
             branch: "main".to_string(),
         };
 
-        let artifact = crate::runtime::load_or_create_artifact(&artifact_config, None).unwrap();
+        let _artifact = crate::runtime::load_or_create_artifact(&artifact_config, None).unwrap();
 
         let config = make_forge_config(&repo_path, &telemetry);
         run_reset(config).unwrap();

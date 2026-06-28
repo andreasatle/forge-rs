@@ -454,7 +454,7 @@ mod tests {
 
     #[test]
     fn artifact_view_reads_committed_file() {
-        let (temp, artifact) = fixture("view-reads-committed");
+        let (_temp, artifact) = fixture("view-reads-committed");
         let view = ArtifactView {
             repo_path: artifact.repo_path.clone(),
             commit_sha: artifact.commit_sha.clone(),
@@ -560,7 +560,7 @@ mod tests {
 
     #[test]
     fn temporary_workspace_removed_after_drop() {
-        let (temp, artifact) = fixture("temp-removed-drop");
+        let (_temp, artifact) = fixture("temp-removed-drop");
         let workspace =
             create_temporary_workspace(&artifact).expect("failed to create temporary workspace");
         let path = workspace.path().to_path_buf();
@@ -588,7 +588,7 @@ mod tests {
 
     #[test]
     fn temporary_workspace_removed_after_update_apply_failure() {
-        let (temp, artifact) = fixture("temp-removed-apply-fail");
+        let (_temp, artifact) = fixture("temp-removed-apply-fail");
         let mut workspace =
             create_temporary_workspace(&artifact).expect("failed to create temporary workspace");
         let path = workspace.path().to_path_buf();
