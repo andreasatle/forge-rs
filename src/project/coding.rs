@@ -1,7 +1,9 @@
 //! Coding project adapter — software-oriented role prompt policy.
 
-use super::ProjectAdapter;
-use crate::roles::RolePolicy;
+use super::{ProjectAdapter, build_file_text_target_views};
+use crate::artifacts::ArtifactRead;
+use crate::machines::deliberation::state::DeliberationRole;
+use crate::roles::{RolePolicy, TargetView};
 
 const CODING_PLANNER_SYSTEM: &str = "You are a software planning agent. \
 Decompose the objective into bounded, independent tasks. \
@@ -131,6 +133,16 @@ impl ProjectAdapter for CodingProjectAdapter {
             planner_referee_system: CODING_PLANNER_REFEREE_SYSTEM.to_string(),
             worker_referee_system: CODING_WORKER_REFEREE_SYSTEM.to_string(),
         }
+    }
+
+    fn build_target_views(
+        &self,
+        artifact_view: &dyn ArtifactRead,
+        targets: &[String],
+        _role: &DeliberationRole,
+        budget: usize,
+    ) -> Vec<TargetView> {
+        build_file_text_target_views(artifact_view, targets, budget)
     }
 }
 

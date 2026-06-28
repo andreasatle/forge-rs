@@ -10,6 +10,8 @@
 
 pub mod policy;
 pub mod runner;
+pub mod target_view;
 
 pub use policy::RolePolicy;
 pub use runner::{ProviderRoleRunner, RoleRequest, RoleRunOutput, RoleRunner, RoleToolContext};
+pub use target_view::{TargetView, TargetViewKind};

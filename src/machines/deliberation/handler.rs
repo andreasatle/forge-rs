@@ -17,6 +17,7 @@ use crate::node_runner::planner::{
     PlannerValidationError, parse_planner_content, validate_planner_explicit_targets,
     validate_planner_no_recreate, validate_planner_output, validate_planner_tests_required,
 };
+use crate::roles::TargetView;
 use crate::roles::policy::RolePolicy;
 use crate::roles::runner::{
     ProviderRoleRunner, RoleRequest, RoleRunOutput, RoleRunner, RoleToolContext,
@@ -33,6 +34,9 @@ const MAX_PLAN_VALIDATION_RETRIES: usize = 2;
 /// Maximum retry attempts after the first accepted work result contains no
 /// artifact file changes.
 const MAX_WORK_SEMANTIC_VALIDATION_RETRIES: usize = 2;
+
+/// Maximum bytes per target file to include in the prompt target-state view.
+const TARGET_VIEW_BUDGET: usize = 16 * 1024;
 
 /// Executes `DeliberationEffect` values by delegating role execution to a
 /// [`RoleRunner`].
@@ -189,11 +193,15 @@ impl<R: RoleRunner> DeliberationHandler<R> {
                 // For work nodes: Producer sees the committed base view; Critic and
                 // Referee get a StagedArtifactView that layers the Producer's pending
                 // writes on top, so they can read files before integration.
-                let tool_context = if self.node_kind == NodeKind::Plan {
-                    None
+                // Target views are built from the same artifact view used for tools so
+                // that prompt context and operational access are always consistent.
+                let (tool_context, target_views): (_, Vec<TargetView>) = if self.node_kind
+                    == NodeKind::Plan
+                {
+                    (None, vec![])
                 } else {
                     match &self.artifact_view {
-                        None => None,
+                        None => (None, vec![]),
                         Some(base) => {
                             let view: Box<dyn ArtifactRead> = match &role {
                                 DeliberationRole::Producer => Box::new(base.clone()),
@@ -201,14 +209,22 @@ impl<R: RoleRunner> DeliberationHandler<R> {
                                     let changes = self.accumulated_update.borrow().clone();
                                     let update = ArtifactUpdate { changes };
                                     Box::new(
-                                        StagedArtifactView::from_update(base.clone(), &update)
-                                            .expect("staged view construction must succeed for a valid accumulated update"),
-                                    )
+                                            StagedArtifactView::from_update(base.clone(), &update)
+                                                .expect("staged view construction must succeed for a valid accumulated update"),
+                                        )
                                 }
                             };
-                            Some(RoleToolContext {
-                                artifact_view: view,
-                            })
+                            let views = crate::project::build_file_text_target_views(
+                                &*view,
+                                &target_files,
+                                TARGET_VIEW_BUDGET,
+                            );
+                            (
+                                Some(RoleToolContext {
+                                    artifact_view: view,
+                                }),
+                                views,
+                            )
                         }
                     }
                 };
@@ -260,6 +276,7 @@ impl<R: RoleRunner> DeliberationHandler<R> {
                     role: role.clone(),
                     objective,
                     target_files,
+                    target_views,
                     producer_content,
                     critic_content,
                     feedback,
@@ -377,11 +394,31 @@ impl<R: RoleRunner> DeliberationHandler<R> {
     ) -> DeliberationEvent {
         let mut feedback = config.initial_feedback;
 
+        // For work producers, build target views from the base artifact view on each
+        // attempt. The view is the committed base (not staged), identical to what
+        // the tool context uses, so prompt context and operational access stay in sync.
+        // For plan producers, target views are always empty.
+        let base_target_views: Vec<TargetView> = if self.node_kind == NodeKind::Work {
+            self.artifact_view
+                .as_ref()
+                .map(|base| {
+                    crate::project::build_file_text_target_views(
+                        base,
+                        &config.target_files,
+                        TARGET_VIEW_BUDGET,
+                    )
+                })
+                .unwrap_or_default()
+        } else {
+            vec![]
+        };
+
         for attempt in 0..=config.max_retries {
             let request = RoleRequest {
                 role: config.role.clone(),
                 objective: config.objective.clone(),
                 target_files: config.target_files.clone(),
+                target_views: base_target_views.clone(),
                 producer_content: config.producer_content.clone(),
                 critic_content: config.critic_content.clone(),
                 feedback: feedback.clone(),
