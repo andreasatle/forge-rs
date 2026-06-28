@@ -433,17 +433,7 @@ fn provider_role_runner_retries_malformed_json() {
 
     let result = runner
         .run_role(
-            RoleRequest {
-                role: DeliberationRole::Producer,
-                objective: "recover output".to_string(),
-                target_files: vec![],
-                target_views: vec![],
-                producer_content: None,
-                critic_content: None,
-                feedback: vec![],
-                node_kind: NodeKind::Work,
-                tool_context: None,
-            },
+            producer_request("recover output"),
             &crate::telemetry::NoopTelemetry,
         )
         .result;
@@ -461,17 +451,7 @@ fn retry_prompt_contains_parse_error() {
     let runner = ProviderRoleRunner::new(&provider);
 
     runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Producer,
-            objective: "recover output".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: None,
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Work,
-            tool_context: None,
-        },
+        producer_request("recover output"),
         &crate::telemetry::NoopTelemetry,
     );
 
@@ -492,17 +472,7 @@ fn retry_limit_returns_failure() {
 
     let result = runner
         .run_role(
-            RoleRequest {
-                role: DeliberationRole::Producer,
-                objective: "never valid".to_string(),
-                target_files: vec![],
-                target_views: vec![],
-                producer_content: None,
-                critic_content: None,
-                feedback: vec![],
-                node_kind: NodeKind::Work,
-                tool_context: None,
-            },
+            producer_request("never valid"),
             &crate::telemetry::NoopTelemetry,
         )
         .result;
@@ -519,17 +489,7 @@ fn provider_role_runner_returns_semantic_rejection_without_retry() {
 
     let result = runner
         .run_role(
-            RoleRequest {
-                role: DeliberationRole::Referee,
-                objective: "review output".to_string(),
-                target_files: vec![],
-                target_views: vec![],
-                producer_content: Some("draft".to_string()),
-                critic_content: Some("review".to_string()),
-                feedback: vec![],
-                node_kind: NodeKind::Work,
-                tool_context: None,
-            },
+            referee_request("review output", "draft", "review"),
             &crate::telemetry::NoopTelemetry,
         )
         .result;
@@ -552,20 +512,7 @@ fn protocol_retry_records_role_layer_telemetry() {
     let runner = ProviderRoleRunner::new(&provider);
     let telemetry = VecTelemetry::new();
 
-    runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Producer,
-            objective: "recover output".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: None,
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Work,
-            tool_context: None,
-        },
-        &telemetry,
-    );
+    runner.run_role(producer_request("recover output"), &telemetry);
 
     let records = telemetry.records();
     assert!(records.iter().all(|record| record.source == "RoleMachine"));
@@ -615,20 +562,7 @@ fn role_events_use_role_machine_source() {
     ]);
     let runner = ProviderRoleRunner::new(&provider);
 
-    runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Producer,
-            objective: "recover output".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: None,
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Work,
-            tool_context: None,
-        },
-        &telemetry,
-    );
+    runner.run_role(producer_request("recover output"), &telemetry);
 
     assert!(
         dir.join("000001--role-machine--producer--role-prompt-rendered.txt")
@@ -917,6 +851,48 @@ fn make_role_request(role: DeliberationRole, objective: &str) -> RoleRequest {
     }
 }
 
+fn producer_request(objective: &str) -> RoleRequest {
+    make_role_request(DeliberationRole::Producer, objective)
+}
+
+fn critic_request(objective: &str, producer_content: &str) -> RoleRequest {
+    RoleRequest {
+        producer_content: Some(producer_content.to_string()),
+        ..make_role_request(DeliberationRole::Critic, objective)
+    }
+}
+
+fn referee_request(objective: &str, producer_content: &str, critic_content: &str) -> RoleRequest {
+    RoleRequest {
+        producer_content: Some(producer_content.to_string()),
+        critic_content: Some(critic_content.to_string()),
+        ..make_role_request(DeliberationRole::Referee, objective)
+    }
+}
+
+fn plan_request(objective: &str) -> RoleRequest {
+    RoleRequest {
+        node_kind: NodeKind::Plan,
+        ..producer_request(objective)
+    }
+}
+
+fn with_tool_context(mut request: RoleRequest, view: ArtifactView) -> RoleRequest {
+    request.tool_context = Some(RoleToolContext {
+        artifact_view: Box::new(view),
+    });
+    request
+}
+
+fn with_dummy_tool_context(request: RoleRequest) -> RoleRequest {
+    with_tool_context(request, dummy_view())
+}
+
+fn with_target_files(mut request: RoleRequest, target_files: &[&str]) -> RoleRequest {
+    request.target_files = target_files.iter().map(|path| path.to_string()).collect();
+    request
+}
+
 // --- tool loop tests ---
 
 #[test]
@@ -929,19 +905,7 @@ fn role_runner_executes_read_file_tool_then_accepts() {
     let runner = ProviderRoleRunner::new(&provider);
 
     let output = runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Producer,
-            objective: "read hello.txt".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: None,
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Work,
-            tool_context: Some(RoleToolContext {
-                artifact_view: Box::new(view),
-            }),
-        },
+        with_tool_context(producer_request("read hello.txt"), view),
         &crate::telemetry::NoopTelemetry,
     );
 
@@ -975,19 +939,7 @@ fn role_runner_records_write_file_tool_update() {
     let runner = ProviderRoleRunner::new(&provider);
 
     let output = runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Producer,
-            objective: "write a file".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: None,
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Work,
-            tool_context: Some(RoleToolContext {
-                artifact_view: Box::new(dummy_view()),
-            }),
-        },
+        with_dummy_tool_context(producer_request("write a file")),
         &crate::telemetry::NoopTelemetry,
     );
 
@@ -1018,17 +970,7 @@ fn role_runner_rejects_tool_when_no_artifact_view() {
     let runner = ProviderRoleRunner::new(&provider);
 
     let output = runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Producer,
-            objective: "do the thing".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: None,
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Work,
-            tool_context: None,
-        },
+        producer_request("do the thing"),
         &crate::telemetry::NoopTelemetry,
     );
 
@@ -1055,19 +997,7 @@ fn role_runner_stops_at_tool_loop_limit() {
     let runner = ProviderRoleRunner::new(&provider);
 
     let output = runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Producer,
-            objective: "loop forever".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: None,
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Work,
-            tool_context: Some(RoleToolContext {
-                artifact_view: Box::new(dummy_view()),
-            }),
-        },
+        with_dummy_tool_context(producer_request("loop forever")),
         &crate::telemetry::NoopTelemetry,
     );
 
@@ -1127,19 +1057,7 @@ fn role_runner_generic_tool_loop_limit_applies_without_repetition() {
     let runner = ProviderRoleRunner::new(&provider);
 
     let output = runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Producer,
-            objective: "loop with distinct files".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: None,
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Work,
-            tool_context: Some(RoleToolContext {
-                artifact_view: Box::new(view),
-            }),
-        },
+        with_tool_context(producer_request("loop with distinct files"), view),
         &crate::telemetry::NoopTelemetry,
     );
 
@@ -1166,19 +1084,7 @@ fn producer_completion_pressure_fires_after_write_file() {
     let runner = ProviderRoleRunner::new(&provider);
 
     let output = runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Producer,
-            objective: "write a file".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: None,
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Work,
-            tool_context: Some(RoleToolContext {
-                artifact_view: Box::new(dummy_view()),
-            }),
-        },
+        with_dummy_tool_context(producer_request("write a file")),
         &crate::telemetry::NoopTelemetry,
     );
 
@@ -1211,19 +1117,7 @@ fn critic_decision_pressure_fires_after_max_read_steps() {
     let runner = ProviderRoleRunner::new(&provider);
 
     let output = runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Critic,
-            objective: "review hello.txt".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: Some("draft".to_string()),
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Work,
-            tool_context: Some(RoleToolContext {
-                artifact_view: Box::new(view),
-            }),
-        },
+        with_tool_context(critic_request("review hello.txt", "draft"), view),
         &crate::telemetry::NoopTelemetry,
     );
 
@@ -1252,19 +1146,7 @@ fn producer_repeated_identical_read_file_triggers_coercion() {
     let runner = ProviderRoleRunner::new(&provider);
 
     let output = runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Producer,
-            objective: "inspect hello.txt".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: None,
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Work,
-            tool_context: Some(RoleToolContext {
-                artifact_view: Box::new(view),
-            }),
-        },
+        with_tool_context(producer_request("inspect hello.txt"), view),
         &crate::telemetry::NoopTelemetry,
     );
 
@@ -1299,19 +1181,7 @@ fn repeated_identical_tool_calls_fail_before_generic_limit() {
     let runner = ProviderRoleRunner::new(&provider);
 
     let output = runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Producer,
-            objective: "loop on list_files".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: None,
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Work,
-            tool_context: Some(RoleToolContext {
-                artifact_view: Box::new(dummy_view()),
-            }),
-        },
+        with_dummy_tool_context(producer_request("loop on list_files")),
         &crate::telemetry::NoopTelemetry,
     );
 
@@ -1347,19 +1217,7 @@ fn existing_valid_tool_use_still_works() {
     let runner = ProviderRoleRunner::new(&provider);
 
     let output = runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Producer,
-            objective: "list then write".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: None,
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Work,
-            tool_context: Some(RoleToolContext {
-                artifact_view: Box::new(view),
-            }),
-        },
+        with_tool_context(producer_request("list then write"), view),
         &crate::telemetry::NoopTelemetry,
     );
 
@@ -1389,19 +1247,7 @@ fn placeholder_tool_echo_produces_informative_error_in_retry_prompt() {
     let runner = ProviderRoleRunner::new(&provider);
 
     let output = runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Producer,
-            objective: "write a file".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: None,
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Work,
-            tool_context: Some(RoleToolContext {
-                artifact_view: Box::new(dummy_view()),
-            }),
-        },
+        with_dummy_tool_context(producer_request("write a file")),
         &crate::telemetry::NoopTelemetry,
     );
 
@@ -1434,19 +1280,7 @@ fn protocol_failure_after_write_reason_is_prefixed() {
     let runner = ProviderRoleRunner::new(&provider);
 
     let output = runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Producer,
-            objective: "write and confirm".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: None,
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Work,
-            tool_context: Some(RoleToolContext {
-                artifact_view: Box::new(dummy_view()),
-            }),
-        },
+        with_dummy_tool_context(producer_request("write and confirm")),
         &crate::telemetry::NoopTelemetry,
     );
 
@@ -1472,17 +1306,7 @@ fn role_runner_uses_provider_response_content() {
     let runner = ProviderRoleRunner::new(&provider);
 
     let output = runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Producer,
-            objective: "produce something".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: None,
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Work,
-            tool_context: None,
-        },
+        producer_request("produce something"),
         &crate::telemetry::NoopTelemetry,
     );
 
@@ -1504,19 +1328,7 @@ fn critic_write_request_produces_error_observation() {
     let runner = ProviderRoleRunner::new(&provider);
 
     let output = runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Critic,
-            objective: "review the work".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: Some("draft".to_string()),
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Work,
-            tool_context: Some(RoleToolContext {
-                artifact_view: Box::new(dummy_view()),
-            }),
-        },
+        with_dummy_tool_context(critic_request("review the work", "draft")),
         &crate::telemetry::NoopTelemetry,
     );
 
@@ -1564,20 +1376,7 @@ fn role_runner_uses_configured_max_tokens() {
     let provider = ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"completed"}"#]);
     let runner = ProviderRoleRunner::new_with_max_tokens(&provider, 256);
 
-    runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Producer,
-            objective: "test".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: None,
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Work,
-            tool_context: None,
-        },
-        &crate::telemetry::NoopTelemetry,
-    );
+    runner.run_role(producer_request("test"), &crate::telemetry::NoopTelemetry);
 
     let requests = provider.requests.borrow();
     assert_eq!(
@@ -1592,19 +1391,7 @@ fn role_prompt_includes_tool_request_as_valid_response_when_tools_available() {
     let runner = ProviderRoleRunner::new(&provider);
 
     runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Producer,
-            objective: "test with tools".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: None,
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Work,
-            tool_context: Some(RoleToolContext {
-                artifact_view: Box::new(dummy_view()),
-            }),
-        },
+        with_dummy_tool_context(producer_request("test with tools")),
         &crate::telemetry::NoopTelemetry,
     );
 
@@ -1625,20 +1412,7 @@ fn role_prompt_has_single_protocol_wrapper() {
     let provider = ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"completed"}"#]);
     let runner = ProviderRoleRunner::new(&provider);
 
-    runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Producer,
-            objective: "test".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: None,
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Work,
-            tool_context: None,
-        },
-        &crate::telemetry::NoopTelemetry,
-    );
+    runner.run_role(producer_request("test"), &crate::telemetry::NoopTelemetry);
 
     let requests = provider.requests.borrow();
     let prompt = &requests[0].prompt;
@@ -1693,19 +1467,7 @@ fn tool_observation_is_bounded_in_role_prompt() {
     let runner = ProviderRoleRunner::new(&provider);
 
     runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Producer,
-            objective: "read the large file".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: None,
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Work,
-            tool_context: Some(RoleToolContext {
-                artifact_view: Box::new(view),
-            }),
-        },
+        with_tool_context(producer_request("read the large file"), view),
         &crate::telemetry::NoopTelemetry,
     );
 
@@ -1733,17 +1495,7 @@ fn scripted_provider_supports_request_response_objects() {
     let runner = ProviderRoleRunner::new(&provider);
 
     runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Producer,
-            objective: "anything".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: None,
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Work,
-            tool_context: None,
-        },
+        producer_request("anything"),
         &crate::telemetry::NoopTelemetry,
     );
 
@@ -1767,17 +1519,7 @@ fn role_runner_requests_json_output() {
     let runner = ProviderRoleRunner::new(&provider);
 
     runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Producer,
-            objective: "write something".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: None,
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Work,
-            tool_context: None,
-        },
+        producer_request("write something"),
         &crate::telemetry::NoopTelemetry,
     );
 
@@ -1797,19 +1539,7 @@ fn producer_prompt_lists_write_tools() {
     let runner = ProviderRoleRunner::new(&provider);
 
     runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Producer,
-            objective: "produce something".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: None,
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Work,
-            tool_context: Some(RoleToolContext {
-                artifact_view: Box::new(dummy_view()),
-            }),
-        },
+        with_dummy_tool_context(producer_request("produce something")),
         &crate::telemetry::NoopTelemetry,
     );
 
@@ -1835,19 +1565,7 @@ fn critic_prompt_omits_write_tools() {
     let runner = ProviderRoleRunner::new(&provider);
 
     runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Critic,
-            objective: "review the draft".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: Some("draft".to_string()),
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Work,
-            tool_context: Some(RoleToolContext {
-                artifact_view: Box::new(dummy_view()),
-            }),
-        },
+        with_dummy_tool_context(critic_request("review the draft", "draft")),
         &crate::telemetry::NoopTelemetry,
     );
 
@@ -1885,19 +1603,11 @@ fn referee_prompt_omits_write_tools() {
     let runner = ProviderRoleRunner::new(&provider);
 
     runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Referee,
-            objective: "approve the result".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: Some("content".to_string()),
-            critic_content: Some("looks good".to_string()),
-            feedback: vec![],
-            node_kind: NodeKind::Work,
-            tool_context: Some(RoleToolContext {
-                artifact_view: Box::new(dummy_view()),
-            }),
-        },
+        with_dummy_tool_context(referee_request(
+            "approve the result",
+            "content",
+            "looks good",
+        )),
         &crate::telemetry::NoopTelemetry,
     );
 
@@ -1936,19 +1646,7 @@ fn read_only_role_write_request_still_rejected() {
     let runner = ProviderRoleRunner::new(&provider);
 
     let output = runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Critic,
-            objective: "review".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: Some("draft".to_string()),
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Work,
-            tool_context: Some(RoleToolContext {
-                artifact_view: Box::new(dummy_view()),
-            }),
-        },
+        with_dummy_tool_context(critic_request("review", "draft")),
         &crate::telemetry::NoopTelemetry,
     );
 
@@ -2287,19 +1985,10 @@ fn work_role_prompt_uses_structured_tool_targets() {
     let runner = ProviderRoleRunner::new(&provider);
 
     runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Producer,
-            objective: "Update the program.".to_string(),
-            target_files: vec!["main.py".to_string()],
-            target_views: vec![],
-            producer_content: None,
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Work,
-            tool_context: Some(RoleToolContext {
-                artifact_view: Box::new(dummy_view()),
-            }),
-        },
+        with_dummy_tool_context(with_target_files(
+            producer_request("Update the program."),
+            &["main.py"],
+        )),
         &crate::telemetry::NoopTelemetry,
     );
 
@@ -2325,19 +2014,13 @@ fn prompt_wording_does_not_control_allowed_paths() {
     let runner = ProviderRoleRunner::new(&provider);
 
     let output = runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Producer,
-            objective: "Update the program.\n\nTarget files: prompt.txt".to_string(),
-            target_files: vec!["main.py".to_string()],
-            target_views: vec![],
-            producer_content: None,
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Work,
-            tool_context: Some(RoleToolContext {
-                artifact_view: Box::new(view),
-            }),
-        },
+        with_tool_context(
+            with_target_files(
+                producer_request("Update the program.\n\nTarget files: prompt.txt"),
+                &["main.py"],
+            ),
+            view,
+        ),
         &crate::telemetry::NoopTelemetry,
     );
 
@@ -2384,19 +2067,10 @@ fn work_reviewer_prompt_guides_read_file_to_declared_target() {
     let runner = ProviderRoleRunner::new(&provider);
 
     runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Critic,
-            objective: "Review the update.".to_string(),
-            target_files: vec!["main.py".to_string()],
-            target_views: vec![],
-            producer_content: Some("updated main.py".to_string()),
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Work,
-            tool_context: Some(RoleToolContext {
-                artifact_view: Box::new(dummy_view()),
-            }),
-        },
+        with_dummy_tool_context(with_target_files(
+            critic_request("Review the update.", "updated main.py"),
+            &["main.py"],
+        )),
         &crate::telemetry::NoopTelemetry,
     );
 
@@ -2607,19 +2281,7 @@ fn role_policy_does_not_change_tool_visibility() {
     let runner = ProviderRoleRunner::new_with_policy(&provider, policy);
 
     runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Producer,
-            objective: "produce something".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: None,
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Work,
-            tool_context: Some(RoleToolContext {
-                artifact_view: Box::new(dummy_view()),
-            }),
-        },
+        with_dummy_tool_context(producer_request("produce something")),
         &crate::telemetry::NoopTelemetry,
     );
 
@@ -2648,17 +2310,7 @@ fn planner_node_uses_planner_policy() {
     let runner = ProviderRoleRunner::new_with_policy(&provider, policy);
 
     runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Producer,
-            objective: "plan the work".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: None,
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Plan,
-            tool_context: None,
-        },
+        plan_request("plan the work"),
         &crate::telemetry::NoopTelemetry,
     );
 
@@ -2684,17 +2336,7 @@ fn work_node_uses_worker_policy() {
     let runner = ProviderRoleRunner::new_with_policy(&provider, policy);
 
     runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Producer,
-            objective: "do the work".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: None,
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Work,
-            tool_context: None,
-        },
+        producer_request("do the work"),
         &crate::telemetry::NoopTelemetry,
     );
 
@@ -2719,15 +2361,8 @@ fn plan_critic_uses_planner_critic_policy() {
 
     runner.run_role(
         RoleRequest {
-            role: DeliberationRole::Critic,
-            objective: "review the plan".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: Some("plan graph".to_string()),
-            critic_content: None,
-            feedback: vec![],
             node_kind: NodeKind::Plan,
-            tool_context: None,
+            ..critic_request("review the plan", "plan graph")
         },
         &crate::telemetry::NoopTelemetry,
     );
@@ -2756,17 +2391,7 @@ fn work_critic_uses_worker_critic_policy() {
     let runner = ProviderRoleRunner::new_with_policy(&provider, policy);
 
     runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Critic,
-            objective: "review the draft".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: Some("draft".to_string()),
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Work,
-            tool_context: None,
-        },
+        critic_request("review the draft", "draft"),
         &crate::telemetry::NoopTelemetry,
     );
 
@@ -2795,15 +2420,8 @@ fn plan_referee_uses_planner_referee_policy() {
 
     runner.run_role(
         RoleRequest {
-            role: DeliberationRole::Referee,
-            objective: "approve the plan".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: Some("plan graph".to_string()),
-            critic_content: Some("plan review".to_string()),
-            feedback: vec![],
             node_kind: NodeKind::Plan,
-            tool_context: None,
+            ..referee_request("approve the plan", "plan graph", "plan review")
         },
         &crate::telemetry::NoopTelemetry,
     );
@@ -2831,17 +2449,7 @@ fn work_referee_uses_worker_referee_policy() {
     let runner = ProviderRoleRunner::new_with_policy(&provider, policy);
 
     runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Referee,
-            objective: "approve the result".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: Some("content".to_string()),
-            critic_content: Some("review".to_string()),
-            feedback: vec![],
-            node_kind: NodeKind::Work,
-            tool_context: None,
-        },
+        referee_request("approve the result", "content", "review"),
         &crate::telemetry::NoopTelemetry,
     );
 
@@ -2868,31 +2476,11 @@ fn default_policy_preserves_existing_behavior() {
     let runner = ProviderRoleRunner::new_with_policy(&provider, policy);
 
     runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Producer,
-            objective: "plan the work".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: None,
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Plan,
-            tool_context: None,
-        },
+        plan_request("plan the work"),
         &crate::telemetry::NoopTelemetry,
     );
     runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Producer,
-            objective: "do the work".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: None,
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Work,
-            tool_context: None,
-        },
+        producer_request("do the work"),
         &crate::telemetry::NoopTelemetry,
     );
 
@@ -2916,17 +2504,7 @@ fn planner_prompt_omits_tool_section() {
     let runner = ProviderRoleRunner::new(&provider);
 
     runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Producer,
-            objective: "plan the work".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: None,
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Plan,
-            tool_context: None,
-        },
+        plan_request("plan the work"),
         &crate::telemetry::NoopTelemetry,
     );
 
@@ -2952,17 +2530,7 @@ fn planner_tool_request_produces_error_observation() {
     let runner = ProviderRoleRunner::new(&provider);
 
     let output = runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Producer,
-            objective: "plan the work".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: None,
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Plan,
-            tool_context: None,
-        },
+        plan_request("plan the work"),
         &crate::telemetry::NoopTelemetry,
     );
 
@@ -2985,19 +2553,7 @@ fn worker_prompt_still_has_write_tools() {
     let runner = ProviderRoleRunner::new(&provider);
 
     runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Producer,
-            objective: "implement the feature".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: None,
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Work,
-            tool_context: Some(RoleToolContext {
-                artifact_view: Box::new(dummy_view()),
-            }),
-        },
+        with_dummy_tool_context(producer_request("implement the feature")),
         &crate::telemetry::NoopTelemetry,
     );
 
@@ -3022,17 +2578,7 @@ fn planner_accepts_valid_planner_output() {
     let runner = ProviderRoleRunner::new(&provider);
 
     let output = runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Producer,
-            objective: "plan the work".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: None,
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Plan,
-            tool_context: None,
-        },
+        plan_request("plan the work"),
         &crate::telemetry::NoopTelemetry,
     );
 
@@ -3058,17 +2604,7 @@ fn planner_retries_invalid_planner_output() {
     let runner = ProviderRoleRunner::new(&provider);
 
     let output = runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Producer,
-            objective: "plan the work".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: None,
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Plan,
-            tool_context: None,
-        },
+        plan_request("plan the work"),
         &crate::telemetry::NoopTelemetry,
     );
 
@@ -3094,17 +2630,7 @@ fn planner_rejects_prose_content_in_coding_mode() {
     let runner = ProviderRoleRunner::new(&provider);
 
     let output = runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Producer,
-            objective: "plan the work".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: None,
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Plan,
-            tool_context: None,
-        },
+        plan_request("plan the work"),
         &crate::telemetry::NoopTelemetry,
     );
 
@@ -3152,20 +2678,7 @@ fn tool_request_detection_still_works_with_no_preamble() {
     ]);
     let runner = ProviderRoleRunner::new(&provider);
 
-    let output = runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Producer,
-            objective: "test".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: None,
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Work,
-            tool_context: None,
-        },
-        &crate::telemetry::NoopTelemetry,
-    );
+    let output = runner.run_role(producer_request("test"), &crate::telemetry::NoopTelemetry);
 
     assert!(
         matches!(output.result, RoleResult::Accepted { .. }),
@@ -3191,17 +2704,7 @@ fn preamble_triggers_retry_in_runner_loop() {
     let runner = ProviderRoleRunner::new(&provider);
 
     let output = runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Producer,
-            objective: "produce output".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: None,
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Work,
-            tool_context: None,
-        },
+        producer_request("produce output"),
         &crate::telemetry::NoopTelemetry,
     );
 
@@ -3229,17 +2732,7 @@ fn planner_output_fallback_no_longer_hides_invalid_plan() {
     let runner = ProviderRoleRunner::new(&provider);
 
     let output = runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Producer,
-            objective: "plan the work".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: None,
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Plan,
-            tool_context: None,
-        },
+        plan_request("plan the work"),
         &crate::telemetry::NoopTelemetry,
     );
 
@@ -3260,17 +2753,7 @@ fn planner_prompt_shows_direct_planner_output_schema() {
     let runner = ProviderRoleRunner::new(&provider);
 
     runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Producer,
-            objective: "plan the work".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: None,
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Plan,
-            tool_context: None,
-        },
+        plan_request("plan the work"),
         &crate::telemetry::NoopTelemetry,
     );
 
@@ -3306,17 +2789,7 @@ fn planner_prompt_does_not_show_status_content_schema() {
     let runner = ProviderRoleRunner::new(&provider);
 
     runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Producer,
-            objective: "plan the work".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: None,
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Plan,
-            tool_context: None,
-        },
+        plan_request("plan the work"),
         &crate::telemetry::NoopTelemetry,
     );
 
@@ -3341,17 +2814,7 @@ fn invalid_direct_planner_output_retries() {
     let runner = ProviderRoleRunner::new(&provider);
 
     let output = runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Producer,
-            objective: "plan the work".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: None,
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Plan,
-            tool_context: None,
-        },
+        plan_request("plan the work"),
         &crate::telemetry::NoopTelemetry,
     );
 
@@ -3379,17 +2842,7 @@ fn planner_does_not_require_content_string_starting_with_brace() {
     let runner = ProviderRoleRunner::new(&provider);
 
     let output = runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Producer,
-            objective: "plan the work".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: None,
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Plan,
-            tool_context: None,
-        },
+        plan_request("plan the work"),
         &crate::telemetry::NoopTelemetry,
     );
 
@@ -3406,17 +2859,7 @@ fn worker_still_uses_status_content_schema() {
     let runner = ProviderRoleRunner::new(&provider);
 
     runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Producer,
-            objective: "write some code".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: None,
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Work,
-            tool_context: None,
-        },
+        producer_request("write some code"),
         &crate::telemetry::NoopTelemetry,
     );
 
@@ -3447,17 +2890,7 @@ fn critic_still_uses_status_content_schema() {
     let runner = ProviderRoleRunner::new(&provider);
 
     runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Critic,
-            objective: "review the draft".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: Some("some draft".to_string()),
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Work,
-            tool_context: None,
-        },
+        critic_request("review the draft", "some draft"),
         &crate::telemetry::NoopTelemetry,
     );
 
@@ -3479,17 +2912,7 @@ fn referee_still_uses_status_content_schema() {
     let runner = ProviderRoleRunner::new(&provider);
 
     runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Referee,
-            objective: "approve the result".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: Some("content".to_string()),
-            critic_content: Some("review".to_string()),
-            feedback: vec![],
-            node_kind: NodeKind::Work,
-            tool_context: None,
-        },
+        referee_request("approve the result", "content", "review"),
         &crate::telemetry::NoopTelemetry,
     );
 
@@ -3517,19 +2940,7 @@ fn tool_observation_warns_not_to_copy_observation_json() {
     let runner = ProviderRoleRunner::new(&provider);
 
     runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Producer,
-            objective: "read hello.txt".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: None,
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Work,
-            tool_context: Some(RoleToolContext {
-                artifact_view: Box::new(view),
-            }),
-        },
+        with_tool_context(producer_request("read hello.txt"), view),
         &crate::telemetry::NoopTelemetry,
     );
 
@@ -3556,19 +2967,10 @@ fn successful_replace_text_observation_instructs_final_response() {
     let runner = ProviderRoleRunner::new(&provider);
 
     runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Producer,
-            objective: "replace hello with goodbye in hello.txt".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: None,
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Work,
-            tool_context: Some(RoleToolContext {
-                artifact_view: Box::new(view),
-            }),
-        },
+        with_tool_context(
+            producer_request("replace hello with goodbye in hello.txt"),
+            view,
+        ),
         &crate::telemetry::NoopTelemetry,
     );
 
@@ -3609,19 +3011,7 @@ fn successful_mutation_tool_observation_instructs_final_response() {
         let runner = ProviderRoleRunner::new(&provider);
 
         runner.run_role(
-            RoleRequest {
-                role: DeliberationRole::Producer,
-                objective: objective.to_string(),
-                target_files: vec![],
-                target_views: vec![],
-                producer_content: None,
-                critic_content: None,
-                feedback: vec![],
-                node_kind: NodeKind::Work,
-                tool_context: Some(RoleToolContext {
-                    artifact_view: Box::new(dummy_view()),
-                }),
-            },
+            with_dummy_tool_context(producer_request(objective)),
             &crate::telemetry::NoopTelemetry,
         );
 
@@ -3656,19 +3046,7 @@ fn read_file_after_mutation_is_completion_pressure_violation() {
     let runner = ProviderRoleRunner::new(&provider);
 
     runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Producer,
-            objective: "write data.txt".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: None,
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Work,
-            tool_context: Some(RoleToolContext {
-                artifact_view: Box::new(dummy_view()),
-            }),
-        },
+        with_dummy_tool_context(producer_request("write data.txt")),
         &crate::telemetry::NoopTelemetry,
     );
 
@@ -3703,19 +3081,7 @@ fn observation_json_echo_triggers_protocol_retry_not_tool_execution() {
     let telemetry = VecTelemetry::new();
 
     let output = runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Producer,
-            objective: "write out.txt".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: None,
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Work,
-            tool_context: Some(RoleToolContext {
-                artifact_view: Box::new(dummy_view()),
-            }),
-        },
+        with_dummy_tool_context(producer_request("write out.txt")),
         &telemetry,
     );
 
@@ -3762,19 +3128,7 @@ fn completion_pressure_hides_tool_section() {
     let runner = ProviderRoleRunner::new(&provider);
 
     runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Producer,
-            objective: "write out.txt".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: None,
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Work,
-            tool_context: Some(RoleToolContext {
-                artifact_view: Box::new(dummy_view()),
-            }),
-        },
+        with_dummy_tool_context(producer_request("write out.txt")),
         &crate::telemetry::NoopTelemetry,
     );
 
@@ -3805,19 +3159,7 @@ fn tool_request_after_completion_pressure_is_rejected() {
     let telemetry = VecTelemetry::new();
 
     let output = runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Producer,
-            objective: "write out.txt".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: None,
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Work,
-            tool_context: Some(RoleToolContext {
-                artifact_view: Box::new(dummy_view()),
-            }),
-        },
+        with_dummy_tool_context(producer_request("write out.txt")),
         &telemetry,
     );
 
@@ -3863,19 +3205,7 @@ fn worker_can_return_accepted_after_completion_pressure() {
     let runner = ProviderRoleRunner::new(&provider);
 
     let output = runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Producer,
-            objective: "write result.txt".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: None,
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Work,
-            tool_context: Some(RoleToolContext {
-                artifact_view: Box::new(dummy_view()),
-            }),
-        },
+        with_dummy_tool_context(producer_request("write result.txt")),
         &crate::telemetry::NoopTelemetry,
     );
 
@@ -3902,17 +3232,7 @@ fn planner_not_affected_by_completion_pressure() {
     let runner = ProviderRoleRunner::new(&provider);
 
     let output = runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Producer,
-            objective: "plan the work".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: None,
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Plan,
-            tool_context: None,
-        },
+        plan_request("plan the work"),
         &crate::telemetry::NoopTelemetry,
     );
 
@@ -3940,19 +3260,7 @@ fn critic_not_affected_by_completion_pressure() {
     let runner = ProviderRoleRunner::new(&provider);
 
     let output = runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Critic,
-            objective: "review the draft".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: Some("draft".to_string()),
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Work,
-            tool_context: Some(RoleToolContext {
-                artifact_view: Box::new(dummy_view()),
-            }),
-        },
+        with_dummy_tool_context(critic_request("review the draft", "draft")),
         &crate::telemetry::NoopTelemetry,
     );
 
@@ -3981,19 +3289,10 @@ fn referee_not_affected_by_completion_pressure() {
     let runner = ProviderRoleRunner::new(&provider);
 
     let output = runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Referee,
-            objective: "approve the result".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: Some("content".to_string()),
-            critic_content: Some("review".to_string()),
-            feedback: vec![],
-            node_kind: NodeKind::Work,
-            tool_context: Some(RoleToolContext {
-                artifact_view: Box::new(view),
-            }),
-        },
+        with_tool_context(
+            referee_request("approve the result", "content", "review"),
+            view,
+        ),
         &crate::telemetry::NoopTelemetry,
     );
 
@@ -4059,19 +3358,7 @@ fn critic_enters_decision_pressure_after_max_read_only_steps() {
     let runner = ProviderRoleRunner::new(&provider);
 
     let output = runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Critic,
-            objective: "review the draft".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: Some("draft content".to_string()),
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Work,
-            tool_context: Some(RoleToolContext {
-                artifact_view: Box::new(dummy_view()),
-            }),
-        },
+        with_dummy_tool_context(critic_request("review the draft", "draft content")),
         &crate::telemetry::NoopTelemetry,
     );
 
@@ -4111,19 +3398,10 @@ fn referee_enters_decision_pressure_after_max_read_only_steps() {
     let runner = ProviderRoleRunner::new(&provider);
 
     let output = runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Referee,
-            objective: "approve the result".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: Some("content".to_string()),
-            critic_content: Some("review".to_string()),
-            feedback: vec![],
-            node_kind: NodeKind::Work,
-            tool_context: Some(RoleToolContext {
-                artifact_view: Box::new(view),
-            }),
-        },
+        with_tool_context(
+            referee_request("approve the result", "content", "review"),
+            view,
+        ),
         &crate::telemetry::NoopTelemetry,
     );
 
@@ -4154,19 +3432,7 @@ fn critic_decision_pressure_hides_tool_section() {
     let runner = ProviderRoleRunner::new(&provider);
 
     runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Critic,
-            objective: "review the draft".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: Some("draft".to_string()),
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Work,
-            tool_context: Some(RoleToolContext {
-                artifact_view: Box::new(dummy_view()),
-            }),
-        },
+        with_dummy_tool_context(critic_request("review the draft", "draft")),
         &crate::telemetry::NoopTelemetry,
     );
 
@@ -4196,19 +3462,7 @@ fn critic_decision_pressure_rejects_further_tool_calls() {
     let telemetry = VecTelemetry::new();
 
     let output = runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Critic,
-            objective: "review the draft".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: Some("draft".to_string()),
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Work,
-            tool_context: Some(RoleToolContext {
-                artifact_view: Box::new(dummy_view()),
-            }),
-        },
+        with_dummy_tool_context(critic_request("review the draft", "draft")),
         &telemetry,
     );
 
@@ -4254,19 +3508,7 @@ fn producer_not_affected_by_decision_pressure() {
     let runner = ProviderRoleRunner::new(&provider);
 
     let output = runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Producer,
-            objective: "read files and produce output".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: None,
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Work,
-            tool_context: Some(RoleToolContext {
-                artifact_view: Box::new(view),
-            }),
-        },
+        with_tool_context(producer_request("read files and produce output"), view),
         &crate::telemetry::NoopTelemetry,
     );
 
@@ -4302,19 +3544,7 @@ fn read_only_tool_steps_counter_is_per_invocation() {
         let runner = ProviderRoleRunner::new(&provider);
 
         let output = runner.run_role(
-            RoleRequest {
-                role: DeliberationRole::Critic,
-                objective: "review the draft".to_string(),
-                target_files: vec![],
-                target_views: vec![],
-                producer_content: Some("draft".to_string()),
-                critic_content: None,
-                feedback: vec![],
-                node_kind: NodeKind::Work,
-                tool_context: Some(RoleToolContext {
-                    artifact_view: Box::new(dummy_view()),
-                }),
-            },
+            with_dummy_tool_context(critic_request("review the draft", "draft")),
             &crate::telemetry::NoopTelemetry,
         );
 
@@ -4352,19 +3582,7 @@ fn work_reviewer_must_read_file_before_accepting() {
     let telemetry = VecTelemetry::new();
 
     let output = runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Critic,
-            objective: "review the work".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: Some("some content".to_string()),
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Work,
-            tool_context: Some(RoleToolContext {
-                artifact_view: Box::new(view),
-            }),
-        },
+        with_tool_context(critic_request("review the work", "some content"), view),
         &telemetry,
     );
 
@@ -4398,19 +3616,7 @@ fn work_reviewer_exhausts_retries_without_reading_fails() {
     let runner = ProviderRoleRunner::new(&provider);
 
     let output = runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Critic,
-            objective: "review the work".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: Some("some content".to_string()),
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Work,
-            tool_context: Some(RoleToolContext {
-                artifact_view: Box::new(view),
-            }),
-        },
+        with_tool_context(critic_request("review the work", "some content"), view),
         &crate::telemetry::NoopTelemetry,
     );
 
@@ -4437,15 +3643,8 @@ fn plan_reviewer_can_accept_without_reading_files() {
 
     let output = runner.run_role(
         RoleRequest {
-            role: DeliberationRole::Critic,
-            objective: "review the plan".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: Some("plan output".to_string()),
-            critic_content: None,
-            feedback: vec![],
             node_kind: NodeKind::Plan,
-            tool_context: None,
+            ..critic_request("review the plan", "plan output")
         },
         &crate::telemetry::NoopTelemetry,
     );
@@ -4465,17 +3664,7 @@ fn work_reviewer_without_tool_context_can_accept() {
     let runner = ProviderRoleRunner::new(&provider);
 
     let output = runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Referee,
-            objective: "approve the result".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: Some("content".to_string()),
-            critic_content: Some("review".to_string()),
-            feedback: vec![],
-            node_kind: NodeKind::Work,
-            tool_context: None,
-        },
+        referee_request("approve the result", "content", "review"),
         &crate::telemetry::NoopTelemetry,
     );
 
@@ -4511,19 +3700,7 @@ fn failed_read_file_does_not_satisfy_enforcement() {
     let telemetry = VecTelemetry::new();
 
     let output = runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Critic,
-            objective: "review the work".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: Some("some content".to_string()),
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Work,
-            tool_context: Some(RoleToolContext {
-                artifact_view: Box::new(view),
-            }),
-        },
+        with_tool_context(critic_request("review the work", "some content"), view),
         &telemetry,
     );
 
@@ -4577,19 +3754,7 @@ fn failed_reads_exhaust_budget_enforcement_fails_directly() {
     let runner = ProviderRoleRunner::new(&provider);
 
     let output = runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Critic,
-            objective: "review the work".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: Some("some content".to_string()),
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Work,
-            tool_context: Some(RoleToolContext {
-                artifact_view: Box::new(view),
-            }),
-        },
+        with_tool_context(critic_request("review the work", "some content"), view),
         &crate::telemetry::NoopTelemetry,
     );
 
@@ -4631,19 +3796,7 @@ fn read_file_flag_survives_protocol_retry() {
     let runner = ProviderRoleRunner::new(&provider);
 
     let output = runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Critic,
-            objective: "review the work".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: Some("some content".to_string()),
-            critic_content: None,
-            feedback: vec![],
-            node_kind: NodeKind::Work,
-            tool_context: Some(RoleToolContext {
-                artifact_view: Box::new(view),
-            }),
-        },
+        with_tool_context(critic_request("review the work", "some content"), view),
         &crate::telemetry::NoopTelemetry,
     );
 
@@ -4671,19 +3824,10 @@ fn referee_read_file_satisfies_enforcement() {
     let runner = ProviderRoleRunner::new(&provider);
 
     let output = runner.run_role(
-        RoleRequest {
-            role: DeliberationRole::Referee,
-            objective: "approve the work".to_string(),
-            target_files: vec![],
-            target_views: vec![],
-            producer_content: Some("content".to_string()),
-            critic_content: Some("review".to_string()),
-            feedback: vec![],
-            node_kind: NodeKind::Work,
-            tool_context: Some(RoleToolContext {
-                artifact_view: Box::new(view),
-            }),
-        },
+        with_tool_context(
+            referee_request("approve the work", "content", "review"),
+            view,
+        ),
         &crate::telemetry::NoopTelemetry,
     );
 
