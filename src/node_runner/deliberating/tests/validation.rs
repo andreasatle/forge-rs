@@ -24,6 +24,11 @@ fn artifact_worker_without_tool_update_fails_semantic_validation() {
         failure.kind,
         FailureKind::WorkSemanticValidationFailure
     ));
+    assert!(
+        matches!(failure.recovery, RecoveryAction::Retry { .. }),
+        "WorkSemanticValidationFailure must be retryable; got {:?}",
+        failure.recovery
+    );
 }
 
 #[test]

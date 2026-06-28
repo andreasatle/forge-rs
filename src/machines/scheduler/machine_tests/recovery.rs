@@ -1,4 +1,5 @@
 use super::*;
+use crate::validation::{ValidationPlan, ValidationScope, ValidationStage, ValidationStep};
 
 #[test]
 fn retry_creates_replacement_node() {
@@ -77,6 +78,78 @@ fn validation_failure_creates_retry_feedback() {
             .contains("previous validation command: validate main.py")
     );
     assert!(retry.objective.contains("invalid syntax"));
+}
+
+#[test]
+fn work_semantic_validation_failure_retries_with_artifact_feedback() {
+    let plan = ValidationPlan {
+        steps: vec![ValidationStep {
+            command: vec!["cargo".to_string(), "test".to_string()],
+            when_artifacts_present: vec![],
+            scope: ValidationScope::TargetFiles,
+            stage: ValidationStage::PreIntegration,
+            must_pass: true,
+        }],
+        timeout_seconds: 60,
+    };
+    let mut graph = RunGraph {
+        nodes: vec![work_node("W", "modify src/lib.rs", &[])],
+        next_id: 0,
+    };
+    graph.nodes[0].target_files = vec!["src/lib.rs".to_string(), "tests/lib.rs".to_string()];
+    graph.nodes[0].validation_plan = Some(plan.clone());
+    graph.nodes[0].status = NodeStatus::Running;
+
+    let t = do_transition(
+        SchedulerState::Waiting {
+            graph,
+            running: NodeId("W".to_string()),
+        },
+        SchedulerEvent::NodeReturned {
+            node_id: NodeId("W".to_string()),
+            outcome: NodeOutcome::Failed(NodeFailure {
+                kind: FailureKind::WorkSemanticValidationFailure,
+                message: "work semantic validation failed: accepted work did not produce an artifact update".to_string(),
+                recovery: RecoveryAction::Retry {
+                    message: "Accepted Work results must modify the artifact. Use a file tool such as write_file, replace_text, or delete_file before returning accepted output.".to_string(),
+                },
+            }),
+        },
+    );
+
+    let SchedulerState::Running { graph } = t.state else {
+        panic!("expected Running, got {:#?}", t.state);
+    };
+    assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
+    assert_eq!(graph.nodes.len(), 2, "scheduler must create a retry node");
+
+    let retry = &graph.nodes[1];
+    assert_eq!(retry.status, NodeStatus::Pending);
+    assert_eq!(retry.kind, NodeKind::Work);
+    assert_eq!(retry.attempt, 1);
+    assert_eq!(
+        retry.target_files,
+        vec!["src/lib.rs".to_string(), "tests/lib.rs".to_string()]
+    );
+    assert_eq!(retry.validation_plan.as_ref(), Some(&plan));
+    assert!(matches!(retry.origin, NodeOrigin::Retry { .. }));
+    assert!(
+        retry
+            .objective
+            .contains("Target files: src/lib.rs, tests/lib.rs"),
+        "retry objective must preserve target files; got:\n{}",
+        retry.objective
+    );
+    assert!(
+        retry.objective.contains("must modify the artifact"),
+        "retry objective must tell the Producer to modify the artifact; got:\n{}",
+        retry.objective
+    );
+    assert!(
+        retry.objective.contains("write_file"),
+        "retry objective must tell the Producer to use a file tool; got:\n{}",
+        retry.objective
+    );
 }
 
 #[test]

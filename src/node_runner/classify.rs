@@ -12,13 +12,19 @@ pub fn classify_deliberation_failure(kind: FailureKind, message: &str) -> Recove
         | FailureKind::ValidationFailure => RecoveryAction::Retry {
             message: format!("retryable failure: {message}"),
         },
+        FailureKind::WorkSemanticValidationFailure => RecoveryAction::Retry {
+            message: format!(
+                "retryable work semantic validation failure: {message}. Accepted Work results \
+                 must modify the artifact. Use a file tool such as write_file, replace_text, or \
+                 delete_file before returning accepted output."
+            ),
+        },
         FailureKind::DeliberationFailure => RecoveryAction::ElevateModel {
             message: format!("semantic failure: {message}"),
         },
         FailureKind::ProviderTerminalFailure
         | FailureKind::ToolFailure
         | FailureKind::PlannerValidationFailure
-        | FailureKind::WorkSemanticValidationFailure
         | FailureKind::IntegrationFailure
         | FailureKind::UserTaskRejection => RecoveryAction::Terminal {
             message: format!("unrecoverable failure: {message}"),
@@ -82,6 +88,39 @@ mod tests {
         let b = classify_deliberation_failure(FailureKind::ValidationFailure, "tests did not pass");
         assert!(matches!(a, RecoveryAction::Retry { .. }));
         assert!(matches!(b, RecoveryAction::Retry { .. }));
+    }
+
+    #[test]
+    fn work_semantic_validation_failure_retries_independent_of_message_text() {
+        let a = classify_deliberation_failure(
+            FailureKind::WorkSemanticValidationFailure,
+            "accepted work did not produce an artifact update",
+        );
+        let b = classify_deliberation_failure(
+            FailureKind::WorkSemanticValidationFailure,
+            "semantic validation wording changed",
+        );
+        assert!(matches!(a, RecoveryAction::Retry { .. }));
+        assert!(matches!(b, RecoveryAction::Retry { .. }));
+    }
+
+    #[test]
+    fn work_semantic_validation_retry_message_mentions_file_tool() {
+        let action = classify_deliberation_failure(
+            FailureKind::WorkSemanticValidationFailure,
+            "diagnostic text can change",
+        );
+        let RecoveryAction::Retry { message } = action else {
+            panic!("expected Retry");
+        };
+        assert!(
+            message.contains("must modify the artifact"),
+            "retry message must explain artifact mutation requirement; got: {message}"
+        );
+        assert!(
+            message.contains("write_file"),
+            "retry message must name a file tool; got: {message}"
+        );
     }
 
     #[test]

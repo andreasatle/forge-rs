@@ -95,7 +95,12 @@ fn retry_objective(
     failure_kind: FailureKind,
     retry_message: &str,
 ) -> String {
-    if *kind != NodeKind::Work || failure_kind != FailureKind::ValidationFailure {
+    if *kind != NodeKind::Work
+        || !matches!(
+            failure_kind,
+            FailureKind::ValidationFailure | FailureKind::WorkSemanticValidationFailure
+        )
+    {
         return original_objective.to_string();
     }
 
