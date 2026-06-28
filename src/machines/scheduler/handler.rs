@@ -337,6 +337,10 @@ impl<R: NodeRunner> Machine for SchedulerHandler<R> {
                                 }
                             } else {
                                 *self.last_validation_passed.borrow_mut() = Some(false);
+                                let diagnostic_message = validation_retry_message(
+                                    &result.summary,
+                                    result.failure.as_ref(),
+                                );
                                 self.telemetry.record(TelemetryRecord::new(
                                     "Integration",
                                     TelemetryEvent::ValidationFailed {
@@ -347,12 +351,9 @@ impl<R: NodeRunner> Machine for SchedulerHandler<R> {
                                     node_id,
                                     outcome: IntegrationOutcome::Failed(IntegrationFailure {
                                         kind: FailureKind::ValidationFailure,
-                                        message: format!("validation failed: {}", result.summary),
-                                        recovery: RecoveryAction::Terminal {
-                                            message: format!(
-                                                "validation failed: {}",
-                                                result.summary
-                                            ),
+                                        message: diagnostic_message.clone(),
+                                        recovery: RecoveryAction::Retry {
+                                            message: diagnostic_message,
                                         },
                                     }),
                                 };
@@ -381,6 +382,40 @@ impl<R: NodeRunner> Machine for SchedulerHandler<R> {
         }
         .output(state)
     }
+}
+
+fn validation_retry_message(
+    summary: &str,
+    failure: Option<&crate::validation::ValidationCommandFailure>,
+) -> String {
+    let Some(failure) = failure else {
+        return format!("validation failed: {}", concise_text(summary));
+    };
+
+    let exit = failure
+        .exit_code
+        .map(|code| code.to_string())
+        .unwrap_or_else(|| "none".to_string());
+    let stdout = concise_text(&failure.stdout);
+    let stderr = concise_text(&failure.stderr);
+    format!(
+        "validation failed\nprevious validation command: {command}\nexit code: {exit}\nstdout:\n{stdout}\nstderr:\n{stderr}",
+        command = failure.command
+    )
+}
+
+fn concise_text(text: &str) -> String {
+    const LIMIT: usize = 1200;
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return "(empty)".to_string();
+    }
+    if trimmed.chars().count() <= LIMIT {
+        return trimmed.to_string();
+    }
+    let mut out: String = trimmed.chars().take(LIMIT).collect();
+    out.push_str("\n[truncated]");
+    out
 }
 
 fn print_returned_progress(event: &SchedulerEvent) {
@@ -1234,7 +1269,7 @@ mod tests {
     // ── validation tests ──────────────────────────────────────────────────────
 
     use crate::artifacts::Workspace;
-    use crate::validation::{ValidationResult, Validator};
+    use crate::validation::{ValidationCommandFailure, ValidationResult, Validator};
 
     struct AlwaysFailValidator;
 
@@ -1243,6 +1278,12 @@ mod tests {
             ValidationResult {
                 passed: false,
                 summary: "intentional failure".to_string(),
+                failure: Some(ValidationCommandFailure {
+                    command: "validator test command".to_string(),
+                    exit_code: Some(1),
+                    stdout: "validator stdout".to_string(),
+                    stderr: "validator stderr".to_string(),
+                }),
             }
         }
     }
@@ -1260,6 +1301,7 @@ mod tests {
             ValidationResult {
                 passed: true,
                 summary: format!("checked {}", self.path),
+                failure: None,
             }
         }
     }
@@ -1269,6 +1311,73 @@ mod tests {
     impl Validator for PanicOnCallValidator {
         fn validate(&self, _workspace: &Workspace) -> ValidationResult {
             panic!("validator must not be called when there is no pending update");
+        }
+    }
+
+    #[derive(Debug)]
+    struct CapturedRequest {
+        objective: String,
+        target_files: Vec<String>,
+        attempt: u32,
+    }
+
+    struct FixOnValidationRetryRunner {
+        requests: Rc<RefCell<Vec<CapturedRequest>>>,
+    }
+
+    impl NodeRunner for FixOnValidationRetryRunner {
+        fn run_node(
+            &self,
+            request: NodeRunRequest,
+            _telemetry: &dyn TelemetrySink,
+        ) -> NodeRunResult {
+            let content = if request.attempt == 0 {
+                "broken\n"
+            } else {
+                "ok\n"
+            };
+            self.requests.borrow_mut().push(CapturedRequest {
+                objective: request.objective,
+                target_files: request.target_files,
+                attempt: request.attempt,
+            });
+            NodeRunResult::WorkAccepted(NodeRunWorkResult {
+                work: WorkOutput {
+                    summary: "wrote main.py".to_string(),
+                },
+                artifact_update: Some(ArtifactUpdate {
+                    changes: vec![FileChange::Write {
+                        path: "main.py".to_string(),
+                        content: content.to_string(),
+                    }],
+                }),
+            })
+        }
+    }
+
+    struct MainPyValidator;
+
+    impl Validator for MainPyValidator {
+        fn validate(&self, workspace: &Workspace) -> ValidationResult {
+            let content = fs::read_to_string(workspace.path().join("main.py"))
+                .expect("main.py must exist during validation");
+            if content == "ok\n" {
+                return ValidationResult {
+                    passed: true,
+                    summary: "main.py ok".to_string(),
+                    failure: None,
+                };
+            }
+            ValidationResult {
+                passed: false,
+                summary: "main.py failed validation".to_string(),
+                failure: Some(ValidationCommandFailure {
+                    command: "custom-validator main.py".to_string(),
+                    exit_code: Some(7),
+                    stdout: "checked main.py".to_string(),
+                    stderr: "main.py:1: invalid syntax".to_string(),
+                }),
+            }
         }
     }
 
@@ -1363,6 +1472,60 @@ mod tests {
             sha_after, original_sha,
             "commit must not advance when validation fails"
         );
+    }
+
+    #[test]
+    fn retry_worker_receives_validation_diagnostics_and_can_fix_file() {
+        let (_temp, artifact) = fixture("validation-retry-fixes-file");
+        let repo_path = artifact.repo_path.clone();
+        let requests = Rc::new(RefCell::new(Vec::new()));
+        let runner = FixOnValidationRetryRunner {
+            requests: requests.clone(),
+        };
+        let handler = SchedulerHandler::with_artifact(runner, artifact)
+            .with_validator(Rc::new(MainPyValidator));
+        let mut node = work_node("W", "make main.py valid");
+        node.target_files = vec!["main.py".to_string()];
+        let state = SchedulerState::Running {
+            graph: RunGraph {
+                nodes: vec![node],
+                next_id: 0,
+            },
+        };
+
+        let output = run_machine(handler, state);
+
+        let SchedulerOutput::Complete {
+            graph,
+            recovery_summary,
+        } = output
+        else {
+            panic!("expected Complete after retry, got {output:#?}");
+        };
+        assert_eq!(recovery_summary.retry_count, 1);
+        assert_eq!(graph.nodes.len(), 2);
+        assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
+        assert_eq!(graph.nodes[1].status, NodeStatus::Completed);
+
+        let captured = requests.borrow();
+        assert_eq!(captured.len(), 2, "worker must run twice");
+        assert_eq!(captured[0].attempt, 0);
+        assert_eq!(captured[1].attempt, 1);
+        assert_eq!(captured[1].target_files, vec!["main.py"]);
+        assert!(captured[1].objective.contains("make main.py valid"));
+        assert!(captured[1].objective.contains("Target files: main.py"));
+        assert!(
+            captured[1]
+                .objective
+                .contains("previous validation command: custom-validator main.py")
+        );
+        assert!(captured[1].objective.contains("exit code: 7"));
+        assert!(captured[1].objective.contains("checked main.py"));
+        assert!(captured[1].objective.contains("main.py:1: invalid syntax"));
+
+        let final_sha = git_output(&repo_path, &["rev-parse", "HEAD"]);
+        let final_content = git_output(&repo_path, &["show", &format!("{final_sha}:main.py")]);
+        assert_eq!(final_content, "ok");
     }
 
     #[test]
@@ -1703,6 +1866,7 @@ mod tests {
             ValidationResult {
                 passed: self.pass,
                 summary: "path-capturing validator".to_string(),
+                failure: None,
             }
         }
     }

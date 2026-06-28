@@ -8,5 +8,6 @@
 mod validator;
 
 pub use validator::{
-    AlwaysPassValidator, CommandSpec, CommandValidator, ValidationResult, Validator,
+    AlwaysPassValidator, CommandSpec, CommandValidator, ValidationCommandFailure, ValidationResult,
+    Validator,
 };

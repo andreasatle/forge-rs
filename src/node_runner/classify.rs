@@ -7,7 +7,9 @@ use crate::machines::scheduler::{FailureKind, RecoveryAction};
 /// `message` is diagnostic text only. Do not parse it for recovery decisions.
 pub fn classify_deliberation_failure(kind: FailureKind, message: &str) -> RecoveryAction {
     match kind {
-        FailureKind::ProviderFailure | FailureKind::ProtocolFailure => RecoveryAction::Retry {
+        FailureKind::ProviderFailure
+        | FailureKind::ProtocolFailure
+        | FailureKind::ValidationFailure => RecoveryAction::Retry {
             message: format!("retryable failure: {message}"),
         },
         FailureKind::DeliberationFailure => RecoveryAction::ElevateModel {
@@ -15,7 +17,6 @@ pub fn classify_deliberation_failure(kind: FailureKind, message: &str) -> Recove
         },
         FailureKind::ProviderTerminalFailure
         | FailureKind::ToolFailure
-        | FailureKind::ValidationFailure
         | FailureKind::PlannerValidationFailure
         | FailureKind::WorkSemanticValidationFailure
         | FailureKind::IntegrationFailure
@@ -76,11 +77,11 @@ mod tests {
     }
 
     #[test]
-    fn validation_failure_terminal_independent_of_message_text() {
+    fn validation_failure_retries_independent_of_message_text() {
         let a = classify_deliberation_failure(FailureKind::ValidationFailure, "validation failed");
         let b = classify_deliberation_failure(FailureKind::ValidationFailure, "tests did not pass");
-        assert!(matches!(a, RecoveryAction::Terminal { .. }));
-        assert!(matches!(b, RecoveryAction::Terminal { .. }));
+        assert!(matches!(a, RecoveryAction::Retry { .. }));
+        assert!(matches!(b, RecoveryAction::Retry { .. }));
     }
 
     #[test]

@@ -28,6 +28,22 @@ pub struct ValidationResult {
     pub passed: bool,
     /// Human-readable summary of the result.
     pub summary: String,
+    /// Structured details for the first failed validation command, when any.
+    pub failure: Option<ValidationCommandFailure>,
+}
+
+/// Structured details for a failed validation command.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ValidationCommandFailure {
+    /// Human-readable command line.
+    pub command: String,
+    /// Process exit code. `None` means the command did not produce a normal exit
+    /// status, such as timeout, signal termination, or spawn failure.
+    pub exit_code: Option<i32>,
+    /// Captured stdout.
+    pub stdout: String,
+    /// Captured stderr.
+    pub stderr: String,
 }
 
 /// Validates a workspace before artifact integration.
@@ -46,6 +62,7 @@ impl Validator for AlwaysPassValidator {
         ValidationResult {
             passed: true,
             summary: "validation passed".to_string(),
+            failure: None,
         }
     }
 }
@@ -79,6 +96,7 @@ impl Validator for CommandValidator {
         ValidationResult {
             passed: true,
             summary: format!("all {} command(s) passed", self.commands.len()),
+            failure: None,
         }
     }
 }
@@ -107,6 +125,12 @@ fn run_command_with_timeout(
             return ValidationResult {
                 passed: false,
                 summary: format!("command `{display}` failed to start: {e}"),
+                failure: Some(ValidationCommandFailure {
+                    command: display,
+                    exit_code: None,
+                    stdout: String::new(),
+                    stderr: e.to_string(),
+                }),
             };
         }
     };
@@ -116,6 +140,12 @@ fn run_command_with_timeout(
             return ValidationResult {
                 passed: false,
                 summary: format!("command `{display}` failed to start: {e}"),
+                failure: Some(ValidationCommandFailure {
+                    command: display,
+                    exit_code: None,
+                    stdout: String::new(),
+                    stderr: e.to_string(),
+                }),
             };
         }
     };
@@ -126,6 +156,12 @@ fn run_command_with_timeout(
             return ValidationResult {
                 passed: false,
                 summary: format!("command `{display}` failed to start: {e}"),
+                failure: Some(ValidationCommandFailure {
+                    command: display,
+                    exit_code: None,
+                    stdout: String::new(),
+                    stderr: e.to_string(),
+                }),
             };
         }
     };
@@ -135,6 +171,12 @@ fn run_command_with_timeout(
             return ValidationResult {
                 passed: false,
                 summary: format!("command `{display}` failed to start: {e}"),
+                failure: Some(ValidationCommandFailure {
+                    command: display,
+                    exit_code: None,
+                    stdout: String::new(),
+                    stderr: e.to_string(),
+                }),
             };
         }
     };
@@ -151,6 +193,12 @@ fn run_command_with_timeout(
             return ValidationResult {
                 passed: false,
                 summary: format!("command `{display}` failed to start: {e}"),
+                failure: Some(ValidationCommandFailure {
+                    command: display,
+                    exit_code: None,
+                    stdout: String::new(),
+                    stderr: e.to_string(),
+                }),
             };
         }
     };
@@ -164,6 +212,12 @@ fn run_command_with_timeout(
                 return ValidationResult {
                     passed: false,
                     summary: format!("command `{display}` failed to start: {e}"),
+                    failure: Some(ValidationCommandFailure {
+                        command: display,
+                        exit_code: None,
+                        stdout: String::new(),
+                        stderr: e.to_string(),
+                    }),
                 };
             }
             Ok(Some(status)) => {
@@ -178,10 +232,11 @@ fn run_command_with_timeout(
                     return ValidationResult {
                         passed: true,
                         summary: String::new(),
+                        failure: None,
                     };
                 }
-                let code = status
-                    .code()
+                let exit_code = status.code();
+                let code = exit_code
                     .map(|c| c.to_string())
                     .unwrap_or_else(|| "signal".to_string());
                 return ValidationResult {
@@ -189,18 +244,39 @@ fn run_command_with_timeout(
                     summary: format!(
                         "command `{display}` failed (exit {code})\nstdout: {stdout}\nstderr: {stderr}"
                     ),
+                    failure: Some(ValidationCommandFailure {
+                        command: display,
+                        exit_code,
+                        stdout,
+                        stderr,
+                    }),
                 };
             }
             Ok(None) => {
                 if start.elapsed() >= timeout {
                     let _ = child.kill();
                     let _ = child.wait();
+                    stdout_file.seek(SeekFrom::Start(0)).ok();
+                    stderr_file.seek(SeekFrom::Start(0)).ok();
+                    let mut stdout = String::new();
+                    let mut stderr = String::new();
+                    stdout_file.read_to_string(&mut stdout).ok();
+                    stderr_file.read_to_string(&mut stderr).ok();
                     let secs = timeout.as_secs();
+                    if stderr.is_empty() {
+                        stderr = format!("timed out after {secs} seconds");
+                    }
                     return ValidationResult {
                         passed: false,
                         summary: format!(
                             "validation command timed out after {secs} seconds\ncommand:\n{display}"
                         ),
+                        failure: Some(ValidationCommandFailure {
+                            command: display,
+                            exit_code: None,
+                            stdout,
+                            stderr,
+                        }),
                     };
                 }
                 std::thread::sleep(poll);
@@ -275,6 +351,35 @@ mod tests {
             "summary must include exit status, got: {}",
             result.summary
         );
+
+        let _ = std::fs::remove_dir_all(&path);
+    }
+
+    #[test]
+    fn command_validator_captures_failed_command_details() {
+        let (path, ws) = temp_workspace();
+
+        let v = CommandValidator::new(
+            vec![spec(
+                "sh",
+                &[
+                    "-c",
+                    "printf 'from stdout'; printf 'from stderr' >&2; exit 7",
+                ],
+            )],
+            default_timeout(),
+        );
+        let result = v.validate(&ws);
+
+        assert!(!result.passed, "expected failure");
+        let failure = result.failure.expect("failure details must be captured");
+        assert_eq!(
+            failure.command,
+            "sh -c printf 'from stdout'; printf 'from stderr' >&2; exit 7"
+        );
+        assert_eq!(failure.exit_code, Some(7));
+        assert_eq!(failure.stdout, "from stdout");
+        assert_eq!(failure.stderr, "from stderr");
 
         let _ = std::fs::remove_dir_all(&path);
     }

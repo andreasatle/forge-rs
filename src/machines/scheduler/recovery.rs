@@ -7,7 +7,7 @@
 use crate::engine::Transition;
 
 use super::effect::SchedulerEffect;
-use super::event::RecoveryAction;
+use super::event::{FailureKind, RecoveryAction};
 use super::graph::{
     MAX_ATTEMPTS, attempts_exhausted, cancel_pending_dependents, get_node, graph_has_capacity,
     graph_size_limit_reason, mark_node, push_node, remap_pending_dependencies,
@@ -30,7 +30,12 @@ pub(super) fn failed_transition(
     }
 }
 
-pub(super) fn apply_retry(graph: RunGraph, node_id: &NodeId) -> RunGraph {
+pub(super) fn apply_retry(
+    graph: RunGraph,
+    node_id: &NodeId,
+    failure_kind: FailureKind,
+    retry_message: &str,
+) -> RunGraph {
     let (kind, objective, target_files, deps, attempt, plan_depth, model_tier) = {
         let n = get_node(&graph, node_id);
         (
@@ -43,6 +48,13 @@ pub(super) fn apply_retry(graph: RunGraph, node_id: &NodeId) -> RunGraph {
             n.model_tier,
         )
     };
+    let objective = retry_objective(
+        &kind,
+        &objective,
+        &target_files,
+        failure_kind,
+        retry_message,
+    );
     let replacement_id = NodeId(format!("{}-retry-{}", node_id.0, graph.next_id));
     let replacement = Node {
         id: replacement_id.clone(),
@@ -62,6 +74,40 @@ pub(super) fn apply_retry(graph: RunGraph, node_id: &NodeId) -> RunGraph {
     let graph = mark_node(graph, node_id, NodeStatus::Failed);
     let graph = push_node(graph, replacement);
     remap_pending_dependencies(graph, node_id, &replacement_id)
+}
+
+fn retry_objective(
+    kind: &NodeKind,
+    original_objective: &str,
+    target_files: &[String],
+    failure_kind: FailureKind,
+    retry_message: &str,
+) -> String {
+    if *kind != NodeKind::Work || failure_kind != FailureKind::ValidationFailure {
+        return original_objective.to_string();
+    }
+
+    let target_text = if target_files.is_empty() {
+        "(none specified)".to_string()
+    } else {
+        target_files.join(", ")
+    };
+
+    format!(
+        "{original_objective}\n\nValidation feedback for retry:\nOriginal objective: {original_objective}\nTarget files: {target_text}\n{diagnostics}",
+        diagnostics = concise_retry_diagnostics(retry_message),
+    )
+}
+
+fn concise_retry_diagnostics(message: &str) -> String {
+    const LIMIT: usize = 4000;
+    let trimmed = message.trim();
+    if trimmed.chars().count() <= LIMIT {
+        return trimmed.to_string();
+    }
+    let mut out: String = trimmed.chars().take(LIMIT).collect();
+    out.push_str("\n[diagnostics truncated]");
+    out
 }
 
 pub(super) fn apply_split(graph: RunGraph, node_id: &NodeId, message: String) -> RunGraph {
@@ -132,11 +178,12 @@ pub(super) fn route_recovery(
     has_strong_tier: bool,
     graph: RunGraph,
     node_id: &NodeId,
+    failure_kind: FailureKind,
     failure_reason: String,
     recovery: RecoveryAction,
 ) -> Transition<SchedulerState, SchedulerEffect> {
     match recovery {
-        RecoveryAction::Retry { .. } => {
+        RecoveryAction::Retry { message } => {
             let exhausted = attempts_exhausted(get_node(&graph, node_id));
             if exhausted {
                 let reason = format!(
@@ -155,7 +202,7 @@ pub(super) fn route_recovery(
                 let graph = mark_node(graph, node_id, NodeStatus::Failed);
                 failed_transition(graph, graph_size_limit_reason(1))
             } else {
-                let graph = apply_retry(graph, node_id);
+                let graph = apply_retry(graph, node_id, failure_kind, &message);
                 Transition {
                     state: SchedulerState::Running { graph },
                     effects: vec![],
@@ -220,7 +267,7 @@ pub(super) fn route_recovery(
                     let graph = mark_node(graph, node_id, NodeStatus::Failed);
                     failed_transition(graph, graph_size_limit_reason(1))
                 } else {
-                    let graph = apply_retry(graph, node_id);
+                    let graph = apply_retry(graph, node_id, failure_kind, "");
                     Transition {
                         state: SchedulerState::Running { graph },
                         effects: vec![],

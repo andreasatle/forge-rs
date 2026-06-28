@@ -1165,6 +1165,7 @@ mod tests {
                 ValidationResult {
                     passed: false,
                     summary: "intentional failure".to_string(),
+                    failure: None,
                 }
             }
         }

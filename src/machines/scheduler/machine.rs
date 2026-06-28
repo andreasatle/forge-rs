@@ -330,11 +330,14 @@ impl SchedulerMachine {
                     }
 
                     Failed(NodeFailure {
-                        message, recovery, ..
+                        kind,
+                        message,
+                        recovery,
                     }) => recovery::route_recovery(
                         self.has_strong_tier,
                         graph,
                         &node_id,
+                        kind,
                         message,
                         recovery,
                     ),
@@ -384,11 +387,14 @@ impl SchedulerMachine {
                         }
                     }
                     IntegrationOutcome::Failed(IntegrationFailure {
-                        message, recovery, ..
+                        kind,
+                        message,
+                        recovery,
                     }) => recovery::route_recovery(
                         self.has_strong_tier,
                         graph,
                         &node_id,
+                        kind,
                         message,
                         recovery,
                     ),
@@ -800,6 +806,51 @@ mod tests {
         assert_eq!(replacement.attempt, 1);
         assert_eq!(replacement.model_tier, ModelTier::Cheap);
         assert_eq!(replacement.objective, "do retry");
+    }
+
+    #[test]
+    fn validation_failure_creates_retry_feedback() {
+        let mut graph = RunGraph {
+            nodes: vec![work_node("W", "fix main", &[])],
+            next_id: 0,
+        };
+        graph.nodes[0].target_files = vec!["main.py".to_string()];
+        graph.nodes[0].status = NodeStatus::Integrating;
+
+        let t = do_transition(
+            SchedulerState::Waiting {
+                graph,
+                running: NodeId("W".to_string()),
+            },
+            SchedulerEvent::IntegrationReturned {
+                node_id: NodeId("W".to_string()),
+                outcome: IntegrationOutcome::Failed(IntegrationFailure {
+                    kind: FailureKind::ValidationFailure,
+                    message: "validation failed".to_string(),
+                    recovery: RecoveryAction::Retry {
+                        message: "previous validation command: validate main.py\nexit code: 2\nstdout:\nchecking\nstderr:\ninvalid syntax".to_string(),
+                    },
+                }),
+            },
+        );
+
+        let SchedulerState::Running { graph } = t.state else {
+            panic!("expected Running, got {:#?}", t.state);
+        };
+        assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
+        let retry = &graph.nodes[1];
+        assert_eq!(retry.status, NodeStatus::Pending);
+        assert_eq!(retry.attempt, 1);
+        assert_eq!(retry.target_files, vec!["main.py"]);
+        assert!(retry.objective.contains("fix main"));
+        assert!(retry.objective.contains("Original objective: fix main"));
+        assert!(retry.objective.contains("Target files: main.py"));
+        assert!(
+            retry
+                .objective
+                .contains("previous validation command: validate main.py")
+        );
+        assert!(retry.objective.contains("invalid syntax"));
     }
 
     #[test]
