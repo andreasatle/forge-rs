@@ -436,26 +436,51 @@ fn provider_role_runner_retries_malformed_json() {
 }
 
 #[test]
-fn retry_prompt_contains_parse_error() {
+fn protocol_retry_prompt_preserves_context_without_leaking_raw_response() {
+    use crate::telemetry::{TelemetryEvent, VecTelemetry};
+
     let provider = ScriptedProvider::from_strs(&[
         "invalid text",
         r#"{"status":"accepted","content":"recovered"}"#,
     ]);
     let runner = ProviderRoleRunner::new(&provider);
+    let telemetry = VecTelemetry::new();
 
-    runner.run_role(
-        producer_request("recover output"),
-        &crate::telemetry::NoopTelemetry,
-    );
+    runner.run_role(producer_request("recover output"), &telemetry);
+
+    let records = telemetry.records();
+    let parse_error = records
+        .iter()
+        .find_map(|record| match &record.event {
+            TelemetryEvent::ParseFailed { parse_error, .. } => Some(parse_error.as_str()),
+            _ => None,
+        })
+        .expect("protocol failure must emit ParseFailed telemetry");
 
     let requests = provider.requests.borrow();
     let retry_prompt = &requests[1].prompt;
-    // "invalid text" starts with 'i', not '{', so preamble check fires.
-    assert!(retry_prompt.contains("preamble text is not permitted"));
-    assert!(!retry_prompt.contains("invalid text"));
-    assert!(retry_prompt.contains("Objective: recover output"));
-    assert!(retry_prompt.contains("$RESPONSE_SUMMARY"));
-    assert!(!retry_prompt.contains("\"...\""));
+    assert!(
+        retry_prompt.contains(parse_error),
+        "retry prompt must include the parser's actionable feedback; got:\n{retry_prompt}"
+    );
+    assert!(
+        retry_prompt.contains("recover output"),
+        "retry prompt must preserve the original objective; got:\n{retry_prompt}"
+    );
+    assert!(
+        retry_prompt.contains("\"status\"")
+            && retry_prompt.contains("$RESPONSE_SUMMARY")
+            && retry_prompt.contains("$REASON_FOR_REJECTION"),
+        "retry prompt must preserve the role response schema guidance; got:\n{retry_prompt}"
+    );
+    assert!(
+        !retry_prompt.contains("invalid text"),
+        "retry prompt must not leak the raw invalid provider response; got:\n{retry_prompt}"
+    );
+    assert!(
+        !retry_prompt.contains("\"...\""),
+        "retry prompt must not reintroduce dot-placeholder JSON values; got:\n{retry_prompt}"
+    );
 }
 
 #[test]
@@ -543,12 +568,11 @@ fn protocol_retry_records_role_layer_telemetry() {
 }
 
 #[test]
-fn role_events_use_role_machine_source() {
+fn file_telemetry_records_role_machine_source_and_event_identity() {
     use crate::telemetry::FileTelemetry;
 
-    let dir = std::env::temp_dir().join("forge-role-machine-source-test");
-    let _ = std::fs::remove_dir_all(&dir);
-    let telemetry = FileTelemetry::new(dir.clone());
+    let temp = TempDir::new("role-machine-source-events");
+    let telemetry = FileTelemetry::new(temp.0.clone());
     let provider = ScriptedProvider::from_strs(&[
         "invalid text",
         r#"{"status":"accepted","content":"recovered"}"#,
@@ -557,17 +581,36 @@ fn role_events_use_role_machine_source() {
 
     runner.run_role(producer_request("recover output"), &telemetry);
 
+    let entries: Vec<String> = std::fs::read_dir(&temp.0)
+        .expect("file telemetry directory must be readable")
+        .map(|entry| {
+            let path = entry.expect("telemetry entry must be readable").path();
+            std::fs::read_to_string(path).expect("telemetry file must be readable")
+        })
+        .collect();
     assert!(
-        dir.join("000001--role-machine--producer--role-prompt-rendered.txt")
-            .exists()
+        entries
+            .iter()
+            .any(|content| content.contains("source: RoleMachine")
+                && content.contains("subsource: Producer")
+                && content.contains("kind: RolePromptRendered")),
+        "file telemetry must preserve role prompt source, subsource, and event identity"
     );
     assert!(
-        dir.join("000003--role-machine--producer--parse-failed.txt")
-            .exists()
+        entries
+            .iter()
+            .any(|content| content.contains("source: RoleMachine")
+                && content.contains("subsource: Producer")
+                && content.contains("kind: ParseFailed")),
+        "file telemetry must preserve parse-failure source, subsource, and event identity"
     );
     assert!(
-        dir.join("000004--role-machine--producer--protocol-retry.txt")
-            .exists()
+        entries
+            .iter()
+            .any(|content| content.contains("source: RoleMachine")
+                && content.contains("subsource: Producer")
+                && content.contains("kind: ProtocolRetry")),
+        "file telemetry must preserve protocol-retry source, subsource, and event identity"
     );
 }
 
@@ -2040,18 +2083,43 @@ fn prompt_wording_does_not_control_allowed_paths() {
 }
 
 #[test]
-fn production_code_does_not_parse_target_files_prompt_text() {
-    let sources = [
-        include_str!("runner.rs"),
-        include_str!("../node_runner/planner.rs"),
-        include_str!("../node_runner/deliberating.rs"),
-        include_str!("../machines/deliberation/handler.rs"),
-    ]
-    .join("\n");
+fn structured_target_files_control_tool_permissions_not_objective_text() {
+    let (_temp, view) = make_view("structured-target-permissions");
+    let provider = ScriptedProvider::from_strs(&[
+        r#"{"tool":"write_file","path":"prompt.txt","content":"wrong\n"}"#,
+        r#"{"status":"accepted","content":"completed without writing prompt target"}"#,
+    ]);
+    let runner = ProviderRoleRunner::new(&provider);
 
-    assert!(!sources.contains(concat!("declared_target", "_files")));
-    assert!(!sources.contains(concat!("starts_with(\"", "Target files:")));
-    assert!(!sources.contains(concat!("split_once", "(':')")));
+    let output = runner.run_role(
+        with_tool_context(
+            with_target_files(
+                producer_request("Update the program.\n\nTarget files: prompt.txt"),
+                &["main.py"],
+            ),
+            view,
+        ),
+        &crate::telemetry::NoopTelemetry,
+    );
+
+    assert!(
+        matches!(output.result, RoleResult::Accepted { .. }),
+        "runner must continue after rejecting a prompt-text-only target; got {:?}",
+        output.result
+    );
+    assert!(
+        output.artifact_update.is_none(),
+        "tool permissions must reject writes to targets named only in objective text"
+    );
+    let retry_prompt = &provider.requests.borrow()[1].prompt;
+    assert!(
+        retry_prompt.contains("prompt.txt"),
+        "error observation should identify the rejected path; got:\n{retry_prompt}"
+    );
+    assert!(
+        retry_prompt.contains("main.py"),
+        "retry context should preserve the structured target path; got:\n{retry_prompt}"
+    );
 }
 
 #[test]
