@@ -31,13 +31,20 @@
 //! - `NodeId` strings are opaque; graph validation must not parse them.
 //! - `RunGraph::next_id` is only an internal generator cursor.
 
+mod checkpoint;
+mod dispatch;
 pub mod effect;
 pub mod event;
 mod graph;
 pub mod handler;
+#[cfg(test)]
+mod handler_tests;
+mod integration;
 pub mod machine;
+mod progress;
 mod recovery;
 pub mod state;
+mod validation;
 
 pub use effect::SchedulerEffect;
 pub use event::{
