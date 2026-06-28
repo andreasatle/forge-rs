@@ -91,13 +91,13 @@ impl<P> DeliberationHandler<ProviderRoleRunner<P>> {
     /// used to select the matching plan/work system prompt from the policy,
     /// the role policy to inject into the runner, and an optional context used
     /// to reject planner tasks that violate structured plan rules.
-    pub fn new_with_view(
+    pub(crate) fn new_with_view(
         provider: P,
         artifact_view: Option<ArtifactView>,
         max_tokens: u32,
         node_kind: NodeKind,
         policy: RolePolicy,
-        plan_validation_context: Option<(String, Vec<String>, bool)>,
+        plan_validation_context: Option<PlanValidationContext>,
     ) -> Self {
         assert!(
             node_kind != NodeKind::Work || artifact_view.is_some(),
@@ -111,13 +111,7 @@ impl<P> DeliberationHandler<ProviderRoleRunner<P>> {
             work_requires_artifact_update: node_kind == NodeKind::Work,
             node_kind,
             accumulated_update: RefCell::new(Vec::new()),
-            plan_validation_context: plan_validation_context.map(
-                |(top_objective, existing_files, requires_tests)| PlanValidationContext {
-                    top_objective,
-                    existing_files,
-                    requires_tests,
-                },
-            ),
+            plan_validation_context,
         }
     }
 }

@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::collections::VecDeque;
+use std::sync::Arc;
 
 use super::*;
 use crate::artifacts::{ArtifactUpdate, FileChange};
@@ -435,7 +436,7 @@ fn handler_with_validation(results: Vec<RoleResult>) -> DeliberationHandler<Scri
         plan_validation_context: Some(PlanValidationContext {
             top_objective: "create foo.rs".to_string(),
             existing_files: vec![],
-            requires_tests: false,
+            required_test_targets_fn: Arc::new(|_| vec![]),
         }),
     }
 }

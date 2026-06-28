@@ -1,15 +1,22 @@
 //! Objective enrichment for deliberation runs.
 
-use crate::artifacts::ArtifactView;
+use std::sync::Arc;
 
+use crate::artifacts::ArtifactView;
+use crate::node_runner::TestTargetsFn;
 use crate::node_runner::types::NodeRunRequest;
 
 /// Returns the objective string, optionally prefixed with artifact file context.
+///
+/// `required_test_targets_fn` is probed with a sentinel code file to determine
+/// whether the project adapter requires tests; when it does, a testing-context
+/// line is prepended to the objective so the LLM is aware of the requirement.
 pub(crate) fn enrich_objective(
     request: &NodeRunRequest,
-    requires_tests: bool,
+    required_test_targets_fn: &Arc<TestTargetsFn>,
     context_file_names: &[String],
 ) -> String {
+    let requires_tests = !required_test_targets_fn(&["_probe_.rs".to_string()]).is_empty();
     let testing_context = if requires_tests {
         Some(
             "Testing requirement: project validation includes a test command. Code changes require corresponding tests, and plans for code changes must include at least one test-related target.".to_string(),

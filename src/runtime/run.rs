@@ -3,6 +3,7 @@
 use std::error::Error;
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::Arc;
 use std::time::Duration;
 
 #[cfg(test)]
@@ -18,8 +19,8 @@ use crate::language::registry::language_spec;
 use super::repo::load_or_create_artifact;
 use crate::machines::scheduler::state::SchedulerState;
 use crate::machines::scheduler::{RunRequest, SchedulerHandler, SchedulerMachine, SchedulerOutput};
-use crate::node_runner::DeliberatingNodeRunner;
-use crate::project::{CodingProjectAdapter, DefaultProjectAdapter, ProjectAdapter};
+use crate::node_runner::{DeliberatingNodeRunner, TestTargetsFn};
+use crate::project::{CodingProjectAdapter, DefaultProjectAdapter, ProjectAdapter as _};
 use crate::providers::{LlamaCppProvider, RetryingProvider};
 use crate::roles::RolePolicy;
 use crate::runtime::checkpoint::node_counts;
@@ -79,15 +80,13 @@ impl ForgeRuntime {
 
         let role_policy = make_role_policy(&config.project);
         let context_file_names = make_context_file_names(&config.project);
-        let requires_tests = project_requires_tests(
-            config.project.language.as_deref(),
-            config.validation.as_ref(),
-        );
+        let required_test_targets_fn =
+            make_required_test_targets_fn(&config.project, config.validation.as_ref());
         let runner = DeliberatingNodeRunner::new(cheap, strong)
             .with_cheap_max_tokens(cheap_tokens)
             .with_strong_max_tokens(strong_tokens)
             .with_role_policy(role_policy)
-            .with_requires_tests(requires_tests)
+            .with_required_test_targets_fn(required_test_targets_fn)
             .with_context_file_names(context_file_names);
         let validator = make_validator(
             config.project.language.as_deref(),
@@ -190,15 +189,13 @@ impl ForgeRuntime {
 
         let role_policy = make_role_policy(&config.project);
         let context_file_names = make_context_file_names(&config.project);
-        let requires_tests = project_requires_tests(
-            config.project.language.as_deref(),
-            config.validation.as_ref(),
-        );
+        let required_test_targets_fn =
+            make_required_test_targets_fn(&config.project, config.validation.as_ref());
         let runner = DeliberatingNodeRunner::new(cheap, strong)
             .with_cheap_max_tokens(cheap_tokens)
             .with_strong_max_tokens(strong_tokens)
             .with_role_policy(role_policy)
-            .with_requires_tests(requires_tests)
+            .with_required_test_targets_fn(required_test_targets_fn)
             .with_context_file_names(context_file_names);
         let validator = make_validator(
             config.project.language.as_deref(),
@@ -273,6 +270,21 @@ fn make_context_file_names(project: &ProjectConfig) -> Vec<String> {
     match project.kind {
         ProjectKind::Default => DefaultProjectAdapter.context_file_names(),
         ProjectKind::Coding => CodingProjectAdapter.context_file_names(),
+    }
+}
+
+fn make_required_test_targets_fn(
+    project: &ProjectConfig,
+    validation: Option<&ValidationConfig>,
+) -> Arc<TestTargetsFn> {
+    if !project_requires_tests(project.language.as_deref(), validation) {
+        return Arc::new(|_| vec![]);
+    }
+    match project.kind {
+        ProjectKind::Coding => {
+            Arc::new(|targets| CodingProjectAdapter.required_test_targets(targets))
+        }
+        ProjectKind::Default => Arc::new(|_| vec![]),
     }
 }
 

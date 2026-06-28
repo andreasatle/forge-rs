@@ -19,3 +19,9 @@ pub mod types;
 pub use deliberating::DeliberatingNodeRunner;
 pub use runner::{NodeRunner, StaticNodeRunner};
 pub use types::{NodeRunRequest, NodeRunResult, NodeRunWorkResult};
+
+/// Shared type for the adapter-provided test-target derivation function.
+///
+/// Called with the source targets in a plan; returns the test-file paths the
+/// project adapter requires. An empty return means no tests are required.
+pub(crate) type TestTargetsFn = dyn Fn(&[String]) -> Vec<String> + Send + Sync;

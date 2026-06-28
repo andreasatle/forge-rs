@@ -1,6 +1,9 @@
 //! Semantic validation helpers for deliberation producers.
 
+use std::sync::Arc;
+
 use crate::artifacts::ArtifactUpdate;
+use crate::node_runner::TestTargetsFn;
 use crate::node_runner::planner::{
     PlannerOutput, PlannerValidationError, validate_planner_explicit_targets,
     validate_planner_no_recreate, validate_planner_output, validate_planner_tests_required,
@@ -9,9 +12,12 @@ use crate::node_runner::planner::{
 /// Structured context used to validate planner output for a Plan node.
 #[derive(Clone)]
 pub(crate) struct PlanValidationContext {
-    pub(super) top_objective: String,
-    pub(super) existing_files: Vec<String>,
-    pub(super) requires_tests: bool,
+    pub(crate) top_objective: String,
+    pub(crate) existing_files: Vec<String>,
+    /// Called with all targets in the plan; returns the test-file paths the
+    /// project adapter requires for the source files found in that list.
+    /// An empty return means no tests are required for this plan.
+    pub(crate) required_test_targets_fn: Arc<TestTargetsFn>,
 }
 
 pub(super) fn validate_plan_output_for_context(
@@ -19,11 +25,18 @@ pub(super) fn validate_plan_output_for_context(
     context: &PlanValidationContext,
 ) -> Result<(), PlannerValidationError> {
     validate_planner_output(planner_out)?;
-    validate_planner_explicit_targets(planner_out, &context.top_objective)?;
+
+    // Compute adapter-provided exemptions for the explicit-target check using
+    // the source files named in the top-level objective.
+    let objective_targets: Vec<String> = {
+        use crate::node_runner::planner::explicit_objective_targets_pub;
+        explicit_objective_targets_pub(&context.top_objective)
+    };
+    let exempt_targets = (context.required_test_targets_fn)(&objective_targets);
+
+    validate_planner_explicit_targets(planner_out, &context.top_objective, &exempt_targets)?;
     validate_planner_no_recreate(planner_out, &context.top_objective, &context.existing_files)?;
-    if context.requires_tests {
-        validate_planner_tests_required(planner_out)?;
-    }
+    validate_planner_tests_required(planner_out, context.required_test_targets_fn.as_ref())?;
     Ok(())
 }
 

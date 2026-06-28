@@ -1,3 +1,7 @@
+use std::sync::Arc;
+
+use crate::project::{CodingProjectAdapter, ProjectAdapter as _};
+
 use super::*;
 
 #[test]
@@ -166,7 +170,8 @@ fn planner_missing_test_target_sends_revision_feedback_and_retries() {
         r#"{"status":"accepted","content":"plan looks good"}"#, // Plan+Critic
         r#"{"status":"accepted","content":"plan approved"}"#, // Plan+Referee
     ]);
-    let runner = DeliberatingNodeRunner::new(&provider, &provider).with_requires_tests(true);
+    let runner = DeliberatingNodeRunner::new(&provider, &provider)
+        .with_required_test_targets_fn(Arc::new(|t| CodingProjectAdapter.required_test_targets(t)));
     let request = NodeRunRequest {
         kind: NodeKind::Plan,
         // Objective does not name a specific file so the fast path does not apply
@@ -202,7 +207,8 @@ fn planner_explicit_target_violation_sends_revision_feedback_and_retries() {
         r#"{"status":"accepted","content":"plan looks good"}"#, // Plan+Critic
         r#"{"status":"accepted","content":"plan approved"}"#, // Plan+Referee
     ]);
-    let runner = DeliberatingNodeRunner::new(&provider, &provider).with_requires_tests(true);
+    let runner = DeliberatingNodeRunner::new(&provider, &provider)
+        .with_required_test_targets_fn(Arc::new(|t| CodingProjectAdapter.required_test_targets(t)));
     let request = NodeRunRequest {
         kind: NodeKind::Plan,
         // Two explicit files → fast path does not apply (needs exactly one source file);

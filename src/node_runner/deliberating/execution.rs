@@ -1,6 +1,9 @@
 //! Provider execution for one deliberation-backed node run.
 
+use std::sync::Arc;
+
 use crate::engine::run_machine_with_telemetry;
+use crate::node_runner::TestTargetsFn;
 use crate::providers::ProviderClient;
 use crate::roles::RolePolicy;
 use crate::telemetry::TelemetrySink;
@@ -16,7 +19,7 @@ pub(crate) fn run_with_provider<P: ProviderClient>(
     request: NodeRunRequest,
     max_tokens: u32,
     policy: &RolePolicy,
-    requires_tests: bool,
+    required_test_targets_fn: &Arc<TestTargetsFn>,
     context_file_names: &[String],
     telemetry: &dyn TelemetrySink,
 ) -> NodeRunResult {
@@ -25,7 +28,7 @@ pub(crate) fn run_with_provider<P: ProviderClient>(
         &request,
         max_tokens,
         policy,
-        requires_tests,
+        required_test_targets_fn,
         context_file_names,
     );
     let machine = DeliberatingMachine {

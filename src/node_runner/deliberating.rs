@@ -6,7 +6,10 @@ mod machine;
 mod output;
 mod request;
 
+use std::sync::Arc;
+
 use crate::machines::scheduler::{ModelTier, NodeKind};
+use crate::node_runner::TestTargetsFn;
 use crate::providers::ProviderClient;
 use crate::roles::RolePolicy;
 use crate::telemetry::{TelemetryEvent, TelemetryRecord, TelemetrySink};
@@ -42,7 +45,7 @@ pub struct DeliberatingNodeRunner<C, S> {
     cheap_max_tokens: u32,
     strong_max_tokens: u32,
     role_policy: RolePolicy,
-    requires_tests: bool,
+    required_test_targets_fn: Arc<TestTargetsFn>,
     context_file_names: Vec<String>,
 }
 
@@ -59,7 +62,7 @@ impl<C, S> DeliberatingNodeRunner<C, S> {
             cheap_max_tokens: 1024,
             strong_max_tokens: 1024,
             role_policy: RolePolicy::default(),
-            requires_tests: false,
+            required_test_targets_fn: Arc::new(|_| vec![]),
             context_file_names: vec![],
         }
     }
@@ -86,9 +89,13 @@ impl<C, S> DeliberatingNodeRunner<C, S> {
         self
     }
 
-    /// Require planner output for code changes to include test-related targets.
-    pub fn with_requires_tests(mut self, requires_tests: bool) -> Self {
-        self.requires_tests = requires_tests;
+    /// Supply the project adapter's test-target derivation function.
+    ///
+    /// The function receives the source targets in the plan and returns the
+    /// test-file paths the adapter requires. An empty return means no tests
+    /// are required for a given set of targets.
+    pub fn with_required_test_targets_fn(mut self, f: Arc<TestTargetsFn>) -> Self {
+        self.required_test_targets_fn = f;
         self
     }
 
@@ -104,7 +111,8 @@ impl<C: ProviderClient, S: ProviderClient> NodeRunner for DeliberatingNodeRunner
     fn run_node(&self, request: NodeRunRequest, telemetry: &dyn TelemetrySink) -> NodeRunResult {
         // Fast path: bypass LLM for plan nodes whose objective names exactly one source file.
         if request.kind == NodeKind::Plan
-            && let Some(plan) = try_fast_plan(&request.objective, self.requires_tests)
+            && let Some(plan) =
+                try_fast_plan(&request.objective, self.required_test_targets_fn.as_ref())
         {
             let task_count = plan.children.len();
             telemetry.record(TelemetryRecord::new(
@@ -120,7 +128,7 @@ impl<C: ProviderClient, S: ProviderClient> NodeRunner for DeliberatingNodeRunner
                 request,
                 self.cheap_max_tokens,
                 &self.role_policy,
-                self.requires_tests,
+                &self.required_test_targets_fn,
                 &self.context_file_names,
                 telemetry,
             ),
@@ -129,7 +137,7 @@ impl<C: ProviderClient, S: ProviderClient> NodeRunner for DeliberatingNodeRunner
                 request,
                 self.strong_max_tokens,
                 &self.role_policy,
-                self.requires_tests,
+                &self.required_test_targets_fn,
                 &self.context_file_names,
                 telemetry,
             ),

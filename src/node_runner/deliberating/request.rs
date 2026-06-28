@@ -1,9 +1,13 @@
 //! Mapping node-run inputs into deliberation state and handler wiring.
 
+use std::sync::Arc;
+
+use crate::machines::deliberation::PlanValidationContext;
 use crate::machines::deliberation::{
     DeliberationRequest, DeliberationState, ProviderBackedDeliberationHandler,
 };
 use crate::machines::scheduler::NodeKind;
+use crate::node_runner::TestTargetsFn;
 use crate::providers::ProviderClient;
 use crate::roles::RolePolicy;
 
@@ -21,11 +25,12 @@ pub(crate) fn prepare_deliberation<'a, P: ProviderClient>(
     request: &NodeRunRequest,
     max_tokens: u32,
     policy: &RolePolicy,
-    requires_tests: bool,
+    required_test_targets_fn: &Arc<TestTargetsFn>,
     context_file_names: &[String],
 ) -> PreparedDeliberation<'a, P> {
-    let plan_validation_context = build_plan_validation_context(request, requires_tests);
-    let objective = enrich_objective(request, requires_tests, context_file_names);
+    let plan_validation_context =
+        build_plan_validation_context(request, Arc::clone(required_test_targets_fn));
+    let objective = enrich_objective(request, required_test_targets_fn, context_file_names);
     let initial_state = DeliberationState::Ready {
         request: DeliberationRequest {
             objective,
@@ -48,8 +53,8 @@ pub(crate) fn prepare_deliberation<'a, P: ProviderClient>(
 
 fn build_plan_validation_context(
     request: &NodeRunRequest,
-    requires_tests: bool,
-) -> Option<(String, Vec<String>, bool)> {
+    required_test_targets_fn: Arc<TestTargetsFn>,
+) -> Option<PlanValidationContext> {
     let top_objective = request.objective.clone();
     let existing_files: Vec<String> = request
         .artifact_view
@@ -59,12 +64,25 @@ fn build_plan_validation_context(
         .into_iter()
         .map(|p| p.to_string_lossy().into_owned())
         .collect();
+
+    // Check whether the adapter requires tests at all by probing a known code
+    // extension. This avoids threading a separate boolean alongside the fn.
+    let adapter_requires_tests = !required_test_targets_fn(&["_probe_.rs".to_string()]).is_empty();
+
     if request.kind == NodeKind::Plan {
-        Some((top_objective, existing_files, requires_tests))
-    } else if existing_files.is_empty() && !requires_tests {
+        Some(PlanValidationContext {
+            top_objective,
+            existing_files,
+            required_test_targets_fn,
+        })
+    } else if existing_files.is_empty() && !adapter_requires_tests {
         None
     } else {
-        Some((top_objective, existing_files, requires_tests))
+        Some(PlanValidationContext {
+            top_objective,
+            existing_files,
+            required_test_targets_fn,
+        })
     }
 }
 
@@ -73,7 +91,7 @@ fn build_handler<'a, P: ProviderClient>(
     request: &NodeRunRequest,
     max_tokens: u32,
     policy: &RolePolicy,
-    plan_validation_context: Option<(String, Vec<String>, bool)>,
+    plan_validation_context: Option<PlanValidationContext>,
 ) -> ProviderBackedDeliberationHandler<&'a P> {
     if request.kind == NodeKind::Work && request.artifact_view.is_none() {
         ProviderBackedDeliberationHandler::new_non_artifact_work_with_policy(

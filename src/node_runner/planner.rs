@@ -209,13 +209,18 @@ pub fn validate_planner_output(output: &PlannerOutput) -> Result<(), PlannerVali
 }
 
 /// Check that when a coding objective explicitly names target files, all
-/// non-test planner targets are among those named files.
+/// planner targets are either among those named files or among the
+/// `exempt_targets` provided by the project adapter.
 ///
-/// Test targets are intentionally exempt because project validation can require
-/// newly-created tests even when the user only names the implementation file.
+/// The adapter supplies `exempt_targets` as the required test-file paths for
+/// the explicitly-named source files. Test targets are exempt because project
+/// validation may require newly-created tests even when the user only names
+/// the implementation file. The constraint only applies when the objective
+/// names at least one code-like file.
 pub fn validate_planner_explicit_targets(
     output: &PlannerOutput,
     top_objective: &str,
+    exempt_targets: &[String],
 ) -> Result<(), PlannerValidationError> {
     let allowed_targets = explicit_objective_targets(top_objective);
     if allowed_targets.is_empty()
@@ -228,7 +233,7 @@ pub fn validate_planner_explicit_targets(
 
     for target in output.tasks.iter().flat_map(|task| task.targets.iter()) {
         let normalized = normalize_target_token(target);
-        if !target_is_test_related(&normalized) && !allowed_targets.contains(&normalized) {
+        if !exempt_targets.contains(&normalized) && !allowed_targets.contains(&normalized) {
             return Err(PlannerValidationError::ExplicitTargetViolation {
                 filename: normalized,
                 allowed_targets: sorted_targets(&allowed_targets),
@@ -269,32 +274,36 @@ pub fn validate_planner_no_recreate(
     Ok(())
 }
 
-/// Check that a code-changing plan includes at least one test-related target
-/// when project validation includes a test command.
+/// Check that a code-changing plan includes at least one required test target.
+///
+/// `required_test_targets_fn` is called with all targets in the plan and
+/// returns the set of test-file paths the project adapter requires for those
+/// source files. If the adapter requires no tests (returns empty), the check
+/// passes unconditionally. Otherwise the plan must contain at least one of
+/// the required targets.
 ///
 /// This is intentionally based on structured `targets`, not objective prose.
-/// A target is considered code-like when it has a common source-file extension.
-/// A target is considered test-related when its path or filename clearly names
-/// tests. The language-specific reason tests are required comes from the
-/// configured validation commands; this helper does not inspect language IDs.
+/// The adapter decides which source files require tests and what their test
+/// file names should be; the framework only checks coverage.
 pub fn validate_planner_tests_required(
     output: &PlannerOutput,
+    required_test_targets_fn: &dyn Fn(&[String]) -> Vec<String>,
 ) -> Result<(), PlannerValidationError> {
-    let has_code_target = output
+    let all_plan_targets: Vec<String> = output
         .tasks
         .iter()
-        .flat_map(|task| task.targets.iter())
-        .any(|target| target_is_code_like(target) && !target_is_test_related(target));
-    if !has_code_target {
+        .flat_map(|task| task.targets.iter().cloned())
+        .collect();
+    let required = required_test_targets_fn(&all_plan_targets);
+    if required.is_empty() {
         return Ok(());
     }
-
-    let has_test_target = output
-        .tasks
+    let plan_target_set: std::collections::HashSet<&str> =
+        all_plan_targets.iter().map(|s| s.as_str()).collect();
+    if required
         .iter()
-        .flat_map(|task| task.targets.iter())
-        .any(|target| target_is_test_related(target));
-    if has_test_target {
+        .any(|r| plan_target_set.contains(r.as_str()))
+    {
         Ok(())
     } else {
         Err(PlannerValidationError::MissingTestsForCodeChange)
@@ -356,6 +365,14 @@ fn explicit_objective_targets(top_objective: &str) -> HashSet<String> {
         .collect()
 }
 
+/// Public-crate wrapper that returns objective targets as a `Vec` for callers
+/// outside this module (e.g., plan validation context).
+pub(crate) fn explicit_objective_targets_pub(top_objective: &str) -> Vec<String> {
+    explicit_objective_targets(top_objective)
+        .into_iter()
+        .collect()
+}
+
 fn normalize_target_token(token: &str) -> String {
     token
         .trim_matches(|c: char| {
@@ -396,10 +413,13 @@ fn sorted_targets(targets: &HashSet<String>) -> Vec<String> {
 /// source code file that is not itself a test file. Returns `None` when the
 /// fast path does not apply — the caller should fall back to the LLM planner.
 ///
-/// When `requires_tests` is true and the fast path applies, a second work
-/// task targeting the conventionally-derived test file is appended with a
-/// dependency on the source work task.
-pub fn try_fast_plan(objective: &str, requires_tests: bool) -> Option<PlanOutput> {
+/// `required_test_targets_fn` is called with the identified source file; any
+/// returned paths become additional work tasks that depend on the source task.
+/// When the function returns an empty list, only the source work task is created.
+pub fn try_fast_plan(
+    objective: &str,
+    required_test_targets_fn: &dyn Fn(&[String]) -> Vec<String>,
+) -> Option<PlanOutput> {
     let all_targets = explicit_objective_targets(objective);
     let mut source_targets: Vec<String> = all_targets
         .into_iter()
@@ -421,10 +441,17 @@ pub fn try_fast_plan(objective: &str, requires_tests: bool) -> Option<PlanOutput
     };
     let mut children = vec![work];
 
-    if requires_tests {
-        let test_target = derive_test_target(&source);
-        let tests = NodeRequest {
-            id: NodeId("tests".to_string()),
+    for (i, test_target) in required_test_targets_fn(std::slice::from_ref(&source))
+        .into_iter()
+        .enumerate()
+    {
+        let id = if i == 0 {
+            "tests".to_string()
+        } else {
+            format!("tests-{i}")
+        };
+        children.push(NodeRequest {
+            id: NodeId(id),
             kind: NodeKind::Work,
             objective: format!(
                 "Write tests that verify the work described by the following objective:\n\n\
@@ -432,32 +459,10 @@ pub fn try_fast_plan(objective: &str, requires_tests: bool) -> Option<PlanOutput
             ),
             target_files: vec![test_target],
             dependencies: vec![NodeId("work".to_string())],
-        };
-        children.push(tests);
+        });
     }
 
     Some(PlanOutput { children })
-}
-
-/// Derive a conventional test file path for a given source file.
-///
-/// Uses extension-based conventions; does not consult any language runtime.
-/// Falls back to `test_{filename}` for extensions not explicitly listed.
-fn derive_test_target(source: &str) -> String {
-    let path = source.replace('\\', "/");
-    let (prefix, filename) = path
-        .rsplit_once('/')
-        .map(|(dir, f)| (format!("{dir}/"), f))
-        .unwrap_or(("".into(), path.as_str()));
-    let Some((stem, ext)) = filename.rsplit_once('.') else {
-        return format!("{prefix}test_{filename}");
-    };
-    let lower = ext.to_ascii_lowercase();
-    match lower.as_str() {
-        "go" | "rs" => format!("{prefix}{stem}_test.{ext}"),
-        "js" | "ts" | "jsx" | "tsx" => format!("{prefix}{stem}.test.{ext}"),
-        _ => format!("{prefix}test_{stem}.{ext}"),
-    }
 }
 
 /// Convert a validated [`PlannerOutput`] into a scheduler [`PlanOutput`].
@@ -759,8 +764,18 @@ mod tests {
         );
     }
 
+    fn python_tests(targets: &[String]) -> Vec<String> {
+        use crate::project::{CodingProjectAdapter, ProjectAdapter};
+        CodingProjectAdapter.required_test_targets(targets)
+    }
+
+    fn no_tests(_: &[String]) -> Vec<String> {
+        vec![]
+    }
+
     #[test]
     fn code_target_without_test_target_rejected_when_tests_required() {
+        // Invariant: plan with only a source file fails when adapter requires a test file.
         let output = PlannerOutput {
             tasks: vec![PlannerTask {
                 id: "main".to_string(),
@@ -771,13 +786,14 @@ mod tests {
             }],
         };
         assert_eq!(
-            validate_planner_tests_required(&output),
+            validate_planner_tests_required(&output, &python_tests),
             Err(PlannerValidationError::MissingTestsForCodeChange)
         );
     }
 
     #[test]
     fn code_target_with_test_target_passes_when_tests_required() {
+        // Invariant: plan with source + adapter-required test file passes validation.
         let output = PlannerOutput {
             tasks: vec![
                 PlannerTask {
@@ -797,13 +813,32 @@ mod tests {
             ],
         };
         assert!(
-            validate_planner_tests_required(&output).is_ok(),
+            validate_planner_tests_required(&output, &python_tests).is_ok(),
             "main.py plus test_main.py must satisfy test-required planning"
         );
     }
 
     #[test]
-    fn explicit_objective_target_rejects_unlisted_non_test_target() {
+    fn tests_required_passes_when_adapter_requires_nothing() {
+        // Invariant: when the adapter returns no required tests, any plan passes.
+        let output = PlannerOutput {
+            tasks: vec![PlannerTask {
+                id: "main".to_string(),
+                objective: "Modify main.py.".to_string(),
+                operation: PlannerOperation::Modify,
+                targets: vec!["main.py".to_string()],
+                depends_on: vec![],
+            }],
+        };
+        assert!(
+            validate_planner_tests_required(&output, &no_tests).is_ok(),
+            "plan-only task must pass when adapter requires no tests"
+        );
+    }
+
+    #[test]
+    fn explicit_objective_target_rejects_unlisted_non_exempt_target() {
+        // Invariant: target not in objective and not in adapter exemptions is rejected.
         let output = PlannerOutput {
             tasks: vec![
                 PlannerTask {
@@ -829,8 +864,10 @@ mod tests {
                 },
             ],
         };
-        let err = validate_planner_explicit_targets(&output, "Modify main.py to print a haiku.")
-            .expect_err("pyproject.toml must be rejected when only main.py is named");
+        let exempt = python_tests(&["main.py".to_string()]);
+        let err =
+            validate_planner_explicit_targets(&output, "Modify main.py to print a haiku.", &exempt)
+                .expect_err("pyproject.toml must be rejected when only main.py is named");
         assert_eq!(
             err,
             PlannerValidationError::ExplicitTargetViolation {
@@ -841,7 +878,8 @@ mod tests {
     }
 
     #[test]
-    fn explicit_objective_target_allows_test_target() {
+    fn explicit_objective_target_allows_adapter_exempt_test_target() {
+        // Invariant: adapter-provided test targets are exempt from the explicit-target check.
         let output = PlannerOutput {
             tasks: vec![
                 PlannerTask {
@@ -860,9 +898,40 @@ mod tests {
                 },
             ],
         };
+        let exempt = python_tests(&["main.py".to_string()]);
         assert!(
-            validate_planner_explicit_targets(&output, "Modify main.py to print a haiku.").is_ok(),
-            "test_main.py must be allowed as a test target"
+            validate_planner_explicit_targets(&output, "Modify main.py to print a haiku.", &exempt)
+                .is_ok(),
+            "test_main.py must be allowed as adapter-exempt test target"
+        );
+    }
+
+    #[test]
+    fn explicit_objective_target_no_exemptions_rejects_test_target() {
+        // Invariant: when adapter provides no exemptions, test targets are not automatically allowed.
+        let output = PlannerOutput {
+            tasks: vec![
+                PlannerTask {
+                    id: "main".to_string(),
+                    objective: "Modify main.py.".to_string(),
+                    operation: PlannerOperation::Modify,
+                    targets: vec!["main.py".to_string()],
+                    depends_on: vec![],
+                },
+                PlannerTask {
+                    id: "tests".to_string(),
+                    objective: "Add tests for main.py.".to_string(),
+                    operation: PlannerOperation::Create,
+                    targets: vec!["test_main.py".to_string()],
+                    depends_on: vec!["main".to_string()],
+                },
+            ],
+        };
+        let result =
+            validate_planner_explicit_targets(&output, "Modify main.py to print a haiku.", &[]);
+        assert!(
+            result.is_err(),
+            "test_main.py must be rejected when adapter provides no exemptions"
         );
     }
 
@@ -966,9 +1035,10 @@ mod tests {
 
     #[test]
     fn explicit_single_file_objective_produces_direct_plan() {
+        // Invariant: single source file with no required tests yields one work task.
         let objective = "Create a simple Python program in main.py that prints a haiku.";
         let plan =
-            try_fast_plan(objective, false).expect("must return Some for explicit single file");
+            try_fast_plan(objective, &no_tests).expect("must return Some for explicit single file");
         assert_eq!(plan.children.len(), 1, "no tests required → one work task");
         let child = &plan.children[0];
         assert_eq!(child.id, NodeId("work".to_string()));
@@ -982,9 +1052,10 @@ mod tests {
     }
 
     #[test]
-    fn explicit_single_file_with_tests_required_adds_test_target() {
+    fn explicit_single_file_with_adapter_tests_required_adds_test_target() {
+        // Invariant: adapter-provided test target is appended as a dependent task.
         let objective = "Create a simple Python program in main.py that prints a haiku.";
-        let plan = try_fast_plan(objective, true).expect("must return Some");
+        let plan = try_fast_plan(objective, &python_tests).expect("must return Some");
         assert_eq!(plan.children.len(), 2, "tests required → two work tasks");
 
         let work = &plan.children[0];
@@ -1003,7 +1074,8 @@ mod tests {
 
     #[test]
     fn objective_without_explicit_file_falls_back_to_planner() {
-        let plan = try_fast_plan("Refactor the error handling in the codebase.", false);
+        // Invariant: objective without a named file returns None.
+        let plan = try_fast_plan("Refactor the error handling in the codebase.", &no_tests);
         assert!(
             plan.is_none(),
             "objective without a named file must return None"
@@ -1012,7 +1084,8 @@ mod tests {
 
     #[test]
     fn objective_with_multiple_explicit_files_falls_back_to_planner() {
-        let plan = try_fast_plan("Modify main.py and utils.py to add logging.", false);
+        // Invariant: objective naming two source files returns None (LLM planner needed).
+        let plan = try_fast_plan("Modify main.py and utils.py to add logging.", &no_tests);
         assert!(
             plan.is_none(),
             "objective naming two source files must return None, not a fast plan"
@@ -1020,40 +1093,40 @@ mod tests {
     }
 
     #[test]
-    fn fast_plan_derives_correct_test_targets_by_extension() {
-        let cases = [
-            ("main.py", "test_main.py"),
-            ("server.go", "server_test.go"),
-            ("lib.rs", "lib_test.rs"),
-            ("util.js", "util.test.js"),
-            ("component.ts", "component.test.ts"),
-            ("widget.tsx", "widget.test.tsx"),
-            ("app.jsx", "app.test.jsx"),
-            ("helper.rb", "test_helper.rb"),
-        ];
-        for (source, expected_test) in cases {
-            assert_eq!(
-                derive_test_target(source),
-                expected_test,
-                "wrong test target for {source}"
-            );
-        }
-    }
-
-    #[test]
-    fn fast_plan_preserves_directory_prefix_in_test_target() {
-        assert_eq!(derive_test_target("src/main.py"), "src/test_main.py");
-        assert_eq!(derive_test_target("pkg/server.go"), "pkg/server_test.go");
-        assert_eq!(derive_test_target("lib/util.rs"), "lib/util_test.rs");
-    }
-
-    #[test]
     fn explicit_test_file_in_objective_does_not_trigger_fast_plan() {
-        // If the only explicitly named file is a test file, it is not a source target.
-        let plan = try_fast_plan("Add assertions to test_main.py.", false);
+        // Invariant: a test-file-only objective must not trigger the fast path.
+        let plan = try_fast_plan("Add assertions to test_main.py.", &no_tests);
         assert!(
             plan.is_none(),
             "a test-file-only objective must not trigger the fast path"
+        );
+    }
+
+    #[test]
+    fn fast_plan_uses_adapter_fn_for_test_targets() {
+        // Invariant: fast plan delegates test file naming to the adapter fn, not hardcoding.
+        let custom_fn = |sources: &[String]| -> Vec<String> {
+            sources
+                .iter()
+                .filter(|s| s.ends_with(".py"))
+                .map(|s| {
+                    let stem = s.trim_end_matches(".py");
+                    format!("custom_test_{stem}.py")
+                })
+                .collect()
+        };
+        let objective = "Create main.py with a greeting function.";
+        let plan = try_fast_plan(objective, &custom_fn).expect("must return Some");
+        assert_eq!(plan.children.len(), 2);
+        assert!(
+            plan.children
+                .iter()
+                .any(|c| c.target_files == vec!["custom_test_main.py".to_string()]),
+            "fast plan must use adapter fn for test target naming; got: {:?}",
+            plan.children
+                .iter()
+                .map(|c| &c.target_files)
+                .collect::<Vec<_>>()
         );
     }
 }

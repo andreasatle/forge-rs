@@ -51,6 +51,23 @@ pub trait ProjectAdapter {
     fn context_file_names(&self) -> Vec<String> {
         vec![]
     }
+
+    /// Returns the test file paths that this project requires for the given
+    /// set of target files.
+    ///
+    /// The adapter filters `targets` to the source files it considers
+    /// code-bearing and returns the corresponding test file path(s) for each.
+    /// The framework uses the returned paths to:
+    /// - include them in the fast-plan output alongside source tasks,
+    /// - validate that planner output covers them when tests are required,
+    /// - exempt them from explicit-target violations.
+    ///
+    /// The default returns an empty list, meaning no tests are required.
+    /// Adapters for coding projects override this to encode their test-file
+    /// naming conventions.
+    fn required_test_targets(&self, _targets: &[String]) -> Vec<String> {
+        vec![]
+    }
 }
 
 /// Shared file-text projection used by both built-in adapters.
@@ -179,6 +196,18 @@ mod tests {
         assert!(
             names.contains(&"README.md".to_string()),
             "CodingProjectAdapter must include README.md as a context file; got: {names:?}"
+        );
+    }
+
+    // ── ProjectAdapter::required_test_targets ────────────────────────────────
+
+    #[test]
+    fn default_adapter_requires_no_test_targets() {
+        let targets = vec!["main.py".to_string(), "utils.rs".to_string()];
+        let result = DefaultProjectAdapter.required_test_targets(&targets);
+        assert!(
+            result.is_empty(),
+            "DefaultProjectAdapter must require no test targets; got: {result:?}"
         );
     }
 }
