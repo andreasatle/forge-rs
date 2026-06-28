@@ -1,0 +1,472 @@
+use super::*;
+
+// ── validation tests ──────────────────────────────────────────────────────
+
+#[test]
+fn validation_pass_allows_commit() {
+    let (_temp, artifact) = fixture("validation-pass");
+    let original_sha = artifact.commit_sha.clone();
+    let repo_path = artifact.repo_path.clone();
+
+    let runner = FileWritingRunner {
+        path: "output.txt".to_string(),
+        content: "hello\n".to_string(),
+    };
+    let h = SchedulerHandler::with_artifact(runner, artifact);
+
+    h.handle_effect(SchedulerEffect::RunNode {
+        node_id: NodeId("W".to_string()),
+        kind: NodeKind::Work,
+        objective: "write a file".to_string(),
+        target_files: vec![],
+        model_tier: ModelTier::Cheap,
+        attempt: 0,
+    });
+
+    let event = h.handle_effect(SchedulerEffect::IntegrateWork {
+        node_id: NodeId("W".to_string()),
+        work: WorkOutput {
+            summary: "wrote output.txt".to_string(),
+        },
+    });
+
+    assert!(
+        matches!(
+            event,
+            SchedulerEvent::IntegrationReturned {
+                outcome: IntegrationOutcome::Succeeded(_),
+                ..
+            }
+        ),
+        "AlwaysPassValidator must allow integration; got: {event:#?}"
+    );
+
+    let new_sha = git_output(&repo_path, &["rev-parse", "HEAD"]);
+    assert_ne!(
+        new_sha, original_sha,
+        "commit must advance when validation passes"
+    );
+}
+
+#[test]
+fn validation_failure_blocks_commit() {
+    let (_temp, artifact) = fixture("validation-fail");
+    let original_sha = artifact.commit_sha.clone();
+    let repo_path = artifact.repo_path.clone();
+
+    let runner = FileWritingRunner {
+        path: "output.txt".to_string(),
+        content: "hello\n".to_string(),
+    };
+    let h = SchedulerHandler::with_artifact(runner, artifact)
+        .with_validator(Rc::new(AlwaysFailValidator));
+
+    h.handle_effect(SchedulerEffect::RunNode {
+        node_id: NodeId("W".to_string()),
+        kind: NodeKind::Work,
+        objective: "write a file".to_string(),
+        target_files: vec![],
+        model_tier: ModelTier::Cheap,
+        attempt: 0,
+    });
+
+    let event = h.handle_effect(SchedulerEffect::IntegrateWork {
+        node_id: NodeId("W".to_string()),
+        work: WorkOutput {
+            summary: "wrote output.txt".to_string(),
+        },
+    });
+
+    assert!(
+        matches!(
+            event,
+            SchedulerEvent::IntegrationReturned {
+                outcome: IntegrationOutcome::Failed(_),
+                ..
+            }
+        ),
+        "failing validator must block integration; got: {event:#?}"
+    );
+
+    let sha_after = git_output(&repo_path, &["rev-parse", "HEAD"]);
+    assert_eq!(
+        sha_after, original_sha,
+        "commit must not advance when validation fails"
+    );
+}
+
+#[test]
+fn retry_worker_receives_validation_diagnostics_and_can_fix_file() {
+    let (_temp, artifact) = fixture("validation-retry-fixes-file");
+    let repo_path = artifact.repo_path.clone();
+    let requests = Rc::new(RefCell::new(Vec::new()));
+    let runner = FixOnValidationRetryRunner {
+        requests: requests.clone(),
+    };
+    let handler =
+        SchedulerHandler::with_artifact(runner, artifact).with_validator(Rc::new(MainPyValidator));
+    let mut node = work_node("W", "make main.py valid");
+    node.target_files = vec!["main.py".to_string()];
+    let state = SchedulerState::Running {
+        graph: RunGraph {
+            nodes: vec![node],
+            next_id: 0,
+        },
+    };
+
+    let output = run_machine(handler, state);
+
+    let SchedulerOutput::Complete {
+        graph,
+        recovery_summary,
+    } = output
+    else {
+        panic!("expected Complete after retry, got {output:#?}");
+    };
+    assert_eq!(recovery_summary.retry_count, 1);
+    assert_eq!(graph.nodes.len(), 2);
+    assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
+    assert_eq!(graph.nodes[1].status, NodeStatus::Completed);
+
+    let captured = requests.borrow();
+    assert_eq!(captured.len(), 2, "worker must run twice");
+    assert_eq!(captured[0].attempt, 0);
+    assert_eq!(captured[1].attempt, 1);
+    assert_eq!(captured[1].target_files, vec!["main.py"]);
+    assert!(captured[1].objective.contains("make main.py valid"));
+    assert!(captured[1].objective.contains("Target files: main.py"));
+    assert!(
+        captured[1]
+            .objective
+            .contains("previous validation command: custom-validator main.py")
+    );
+    assert!(captured[1].objective.contains("exit code: 7"));
+    assert!(captured[1].objective.contains("checked main.py"));
+    assert!(captured[1].objective.contains("main.py:1: invalid syntax"));
+
+    let final_sha = git_output(&repo_path, &["rev-parse", "HEAD"]);
+    let final_content = git_output(&repo_path, &["show", &format!("{final_sha}:main.py")]);
+    assert_eq!(final_content, "ok");
+}
+
+#[test]
+fn validator_runs_after_update_apply() {
+    let (_temp, artifact) = fixture("validator-after-apply");
+
+    let runner = FileWritingRunner {
+        path: "applied.txt".to_string(),
+        content: "applied content\n".to_string(),
+    };
+
+    let found = Rc::new(RefCell::new(false));
+    let validator = FileExistsValidator {
+        path: "applied.txt".to_string(),
+        found: found.clone(),
+    };
+
+    let h = SchedulerHandler::with_artifact(runner, artifact).with_validator(Rc::new(validator));
+
+    h.handle_effect(SchedulerEffect::RunNode {
+        node_id: NodeId("W".to_string()),
+        kind: NodeKind::Work,
+        objective: "write a file".to_string(),
+        target_files: vec![],
+        model_tier: ModelTier::Cheap,
+        attempt: 0,
+    });
+
+    h.handle_effect(SchedulerEffect::IntegrateWork {
+        node_id: NodeId("W".to_string()),
+        work: WorkOutput {
+            summary: "wrote applied.txt".to_string(),
+        },
+    });
+
+    assert!(
+        *found.borrow(),
+        "validator must see applied.txt in the workspace after update apply"
+    );
+}
+
+#[test]
+fn no_update_does_not_run_validator() {
+    let (_temp, artifact) = fixture("no-update-no-validator");
+
+    let h = SchedulerHandler::with_artifact(StaticNodeRunner, artifact)
+        .with_validator(Rc::new(PanicOnCallValidator));
+
+    h.handle_effect(SchedulerEffect::RunNode {
+        node_id: NodeId("W".to_string()),
+        kind: NodeKind::Work,
+        objective: "do some work".to_string(),
+        target_files: vec![],
+        model_tier: ModelTier::Cheap,
+        attempt: 0,
+    });
+
+    // StaticNodeRunner produces no artifact update, so validator must not be called.
+    let event = h.handle_effect(SchedulerEffect::IntegrateWork {
+        node_id: NodeId("W".to_string()),
+        work: WorkOutput {
+            summary: "no file changes".to_string(),
+        },
+    });
+
+    assert!(
+        matches!(
+            event,
+            SchedulerEvent::IntegrationReturned {
+                outcome: IntegrationOutcome::Succeeded(_),
+                ..
+            }
+        ),
+        "integration with no pending update must succeed without calling validator; got: {event:#?}"
+    );
+}
+
+#[test]
+fn validation_pass_sets_validation_passed_true() {
+    let (_temp, artifact) = fixture("vp-pass-true");
+
+    let runner = FileWritingRunner {
+        path: "output.txt".to_string(),
+        content: "hello\n".to_string(),
+    };
+    let h = SchedulerHandler::with_artifact(runner, artifact);
+
+    h.handle_effect(SchedulerEffect::RunNode {
+        node_id: NodeId("W".to_string()),
+        kind: NodeKind::Work,
+        objective: "write a file".to_string(),
+        target_files: vec![],
+        model_tier: ModelTier::Cheap,
+        attempt: 0,
+    });
+    assert_eq!(
+        h.validation_passed(),
+        None,
+        "validation_passed must be None before IntegrateWork"
+    );
+
+    h.handle_effect(SchedulerEffect::IntegrateWork {
+        node_id: NodeId("W".to_string()),
+        work: WorkOutput {
+            summary: "wrote output.txt".to_string(),
+        },
+    });
+
+    assert_eq!(
+        h.validation_passed(),
+        Some(true),
+        "validation_passed must be Some(true) after AlwaysPassValidator"
+    );
+}
+
+#[test]
+fn validation_failure_sets_validation_passed_false() {
+    let (_temp, artifact) = fixture("vp-fail-false");
+
+    let runner = FileWritingRunner {
+        path: "output.txt".to_string(),
+        content: "hello\n".to_string(),
+    };
+    let h = SchedulerHandler::with_artifact(runner, artifact)
+        .with_validator(Rc::new(AlwaysFailValidator));
+
+    h.handle_effect(SchedulerEffect::RunNode {
+        node_id: NodeId("W".to_string()),
+        kind: NodeKind::Work,
+        objective: "write a file".to_string(),
+        target_files: vec![],
+        model_tier: ModelTier::Cheap,
+        attempt: 0,
+    });
+
+    h.handle_effect(SchedulerEffect::IntegrateWork {
+        node_id: NodeId("W".to_string()),
+        work: WorkOutput {
+            summary: "wrote output.txt".to_string(),
+        },
+    });
+
+    assert_eq!(
+        h.validation_passed(),
+        Some(false),
+        "validation_passed must be Some(false) after AlwaysFailValidator"
+    );
+}
+
+#[test]
+fn no_update_leaves_validation_passed_none() {
+    let (_temp, artifact) = fixture("vp-no-update-none");
+
+    let h = SchedulerHandler::with_artifact(StaticNodeRunner, artifact);
+
+    h.handle_effect(SchedulerEffect::RunNode {
+        node_id: NodeId("W".to_string()),
+        kind: NodeKind::Work,
+        objective: "do some work".to_string(),
+        target_files: vec![],
+        model_tier: ModelTier::Cheap,
+        attempt: 0,
+    });
+
+    h.handle_effect(SchedulerEffect::IntegrateWork {
+        node_id: NodeId("W".to_string()),
+        work: WorkOutput {
+            summary: "no files".to_string(),
+        },
+    });
+
+    assert_eq!(
+        h.validation_passed(),
+        None,
+        "validation_passed must remain None when no artifact update was pending"
+    );
+}
+
+#[test]
+fn validation_passed_true_even_when_integration_conflicts() {
+    let (_temp, artifact) = fixture("vp-true-on-cas-conflict");
+    let repo_path = artifact.repo_path.clone();
+
+    let runner = FileWritingRunner {
+        path: "output.txt".to_string(),
+        content: "hello\n".to_string(),
+    };
+    let h = SchedulerHandler::with_artifact(runner, artifact);
+
+    h.handle_effect(SchedulerEffect::RunNode {
+        node_id: NodeId("W".to_string()),
+        kind: NodeKind::Work,
+        objective: "write a file".to_string(),
+        target_files: vec![],
+        model_tier: ModelTier::Cheap,
+        attempt: 0,
+    });
+
+    // Advance the branch externally so the integrate() CAS check fails.
+    advance_branch_in_bare(&repo_path, "main");
+
+    let event = h.handle_effect(SchedulerEffect::IntegrateWork {
+        node_id: NodeId("W".to_string()),
+        work: WorkOutput {
+            summary: "wrote output.txt".to_string(),
+        },
+    });
+
+    assert!(
+        matches!(
+            event,
+            SchedulerEvent::IntegrationReturned {
+                outcome: IntegrationOutcome::Failed(_),
+                ..
+            }
+        ),
+        "CAS conflict must produce IntegrationOutcome::Failed; got: {event:#?}"
+    );
+    assert_eq!(
+        h.validation_passed(),
+        Some(true),
+        "validation_passed must be Some(true) even when CAS integration fails after validation"
+    );
+}
+
+#[test]
+fn validation_failure_does_not_leave_artifact_changed() {
+    let (_temp, artifact) = fixture("validation-no-history-change");
+    let original_sha = artifact.commit_sha.clone();
+    let repo_path = artifact.repo_path.clone();
+
+    let runner = FileWritingRunner {
+        path: "output.txt".to_string(),
+        content: "hello\n".to_string(),
+    };
+    let h = SchedulerHandler::with_artifact(runner, artifact)
+        .with_validator(Rc::new(AlwaysFailValidator));
+
+    h.handle_effect(SchedulerEffect::RunNode {
+        node_id: NodeId("W".to_string()),
+        kind: NodeKind::Work,
+        objective: "write a file".to_string(),
+        target_files: vec![],
+        model_tier: ModelTier::Cheap,
+        attempt: 0,
+    });
+
+    h.handle_effect(SchedulerEffect::IntegrateWork {
+        node_id: NodeId("W".to_string()),
+        work: WorkOutput {
+            summary: "wrote output.txt".to_string(),
+        },
+    });
+
+    let sha_after = git_output(&repo_path, &["rev-parse", "HEAD"]);
+    assert_eq!(
+        sha_after, original_sha,
+        "artifact commit history must remain unchanged after validation failure"
+    );
+
+    let log_count = git_output(&repo_path, &["rev-list", "--count", "HEAD"]);
+    assert_eq!(
+        log_count, "1",
+        "commit history must contain only the initial commit after validation failure"
+    );
+}
+
+#[test]
+fn timeout_blocks_commit() {
+    use crate::validation::CommandValidator;
+    use std::time::Duration;
+
+    let (_temp, artifact) = fixture("timeout-blocks-commit");
+    let original_sha = artifact.commit_sha.clone();
+    let repo_path = artifact.repo_path.clone();
+
+    let runner = FileWritingRunner {
+        path: "output.txt".to_string(),
+        content: "hello\n".to_string(),
+    };
+    // Validator times out immediately — sleep 5 with a 1-second budget.
+    let validator = CommandValidator::new(
+        vec![crate::validation::CommandSpec {
+            program: "sleep".to_string(),
+            args: vec!["5".to_string()],
+        }],
+        Duration::from_secs(1),
+    );
+    let h = SchedulerHandler::with_artifact(runner, artifact).with_validator(Rc::new(validator));
+
+    h.handle_effect(SchedulerEffect::RunNode {
+        node_id: NodeId("W".to_string()),
+        kind: NodeKind::Work,
+        objective: "write a file".to_string(),
+        target_files: vec![],
+        model_tier: ModelTier::Cheap,
+        attempt: 0,
+    });
+
+    let event = h.handle_effect(SchedulerEffect::IntegrateWork {
+        node_id: NodeId("W".to_string()),
+        work: WorkOutput {
+            summary: "wrote output.txt".to_string(),
+        },
+    });
+
+    assert!(
+        matches!(
+            event,
+            SchedulerEvent::IntegrationReturned {
+                outcome: IntegrationOutcome::Failed(_),
+                ..
+            }
+        ),
+        "timed-out validator must block integration; got: {event:#?}"
+    );
+
+    let sha_after = git_output(&repo_path, &["rev-parse", "HEAD"]);
+    assert_eq!(
+        sha_after, original_sha,
+        "artifact commit must not change when validation times out"
+    );
+}
