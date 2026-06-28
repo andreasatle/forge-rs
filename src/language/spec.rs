@@ -88,6 +88,7 @@ mod tests {
                 commands: vec![CommandSpec {
                     program: "cargo".to_string(),
                     args: vec!["test".to_string()],
+                    when_files_present: vec![],
                 }],
             },
         };

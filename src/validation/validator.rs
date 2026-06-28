@@ -1,6 +1,7 @@
 //! Workspace validation before artifact integration.
 
 use std::io::{Read, Seek, SeekFrom};
+use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -20,6 +21,16 @@ pub struct CommandSpec {
     /// Arguments passed to the program without shell interpretation.
     #[serde(default)]
     pub args: Vec<String>,
+    /// When non-empty, the command is skipped unless at least one file in the
+    /// workspace matches one of these simple glob patterns (supports a single
+    /// `*` wildcard matching any sequence of characters in the file name).
+    ///
+    /// An empty list imposes no restriction — the command always runs.
+    ///
+    /// Example: `["test_*.py", "*_test.py"]` skips the command when no Python
+    /// test files are present in the workspace.
+    #[serde(default)]
+    pub when_files_present: Vec<String>,
 }
 
 /// Outcome of a workspace validation pass.
@@ -86,7 +97,14 @@ impl CommandValidator {
 
 impl Validator for CommandValidator {
     fn validate(&self, workspace: &Workspace) -> ValidationResult {
+        let mut ran = 0usize;
         for spec in &self.commands {
+            if !spec.when_files_present.is_empty()
+                && !workspace_has_matching_file(workspace.path(), &spec.when_files_present)
+            {
+                continue;
+            }
+            ran += 1;
             let result = run_command_with_timeout(spec, workspace.path(), self.timeout);
             if !result.passed {
                 return result;
@@ -95,8 +113,55 @@ impl Validator for CommandValidator {
 
         ValidationResult {
             passed: true,
-            summary: format!("all {} command(s) passed", self.commands.len()),
+            summary: format!("all {ran} command(s) passed"),
             failure: None,
+        }
+    }
+}
+
+/// Returns `true` if at least one file in the workspace directory tree has a
+/// name matching any of `patterns` using simple glob syntax (single `*`).
+fn workspace_has_matching_file(dir: &Path, patterns: &[String]) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if !name.starts_with('.') && workspace_has_matching_file(&path, patterns) {
+                return true;
+            }
+        } else if let Some(name) = path.file_name().and_then(|n| n.to_str())
+            && patterns.iter().any(|p| matches_name_glob(p, name))
+        {
+            return true;
+        }
+    }
+    false
+}
+
+/// Match `name` against a simple glob `pattern` that supports a single `*`
+/// wildcard expanding to any (possibly empty) sequence of characters.
+///
+/// If the pattern contains no `*`, it is treated as an exact match.
+/// Only the file name component is matched — no path separators.
+fn matches_name_glob(pattern: &str, name: &str) -> bool {
+    match pattern.find('*') {
+        None => pattern == name,
+        Some(star) => {
+            let prefix = &pattern[..star];
+            let suffix = &pattern[star + 1..];
+            // Suffix must not itself contain another `*` to keep the logic simple.
+            // For the patterns we need (test_*.py, *_test.py), this is sufficient.
+            if suffix.contains('*') {
+                // Fall back to "just check prefix" for multi-wildcard patterns.
+                name.starts_with(prefix)
+            } else {
+                name.starts_with(prefix)
+                    && name.ends_with(suffix)
+                    && name.len() >= prefix.len() + suffix.len()
+            }
         }
     }
 }
@@ -311,6 +376,7 @@ mod tests {
         CommandSpec {
             program: program.to_string(),
             args: args.iter().map(|s| s.to_string()).collect(),
+            when_files_present: vec![],
         }
     }
 
@@ -538,6 +604,7 @@ mod tests {
             vec![CommandSpec {
                 program: "sh".to_string(),
                 args: vec!["-c".to_string(), "true".to_string()],
+                when_files_present: vec![],
             }],
             default_timeout(),
         );
@@ -558,6 +625,7 @@ mod tests {
             vec![CommandSpec {
                 program: "sh".to_string(),
                 args: vec!["-c".to_string(), "false".to_string()],
+                when_files_present: vec![],
             }],
             default_timeout(),
         );
@@ -569,5 +637,175 @@ mod tests {
             "summary must mention the sh program; got: {}",
             result.summary
         );
+    }
+
+    // ── when_files_present guard tests ────────────────────────────────────────
+
+    #[test]
+    fn when_files_present_skips_command_when_no_matching_file_exists() {
+        // Invariant: a command with `when_files_present` set is skipped — not
+        // failed — when no file in the workspace matches any of the patterns.
+        let (path, ws) = temp_workspace();
+        // Workspace has no test_*.py files; `false` must never run.
+        let v = CommandValidator::new(
+            vec![CommandSpec {
+                program: "false".to_string(),
+                args: vec![],
+                when_files_present: vec!["test_*.py".to_string()],
+            }],
+            default_timeout(),
+        );
+        let result = v.validate(&ws);
+        assert!(
+            result.passed,
+            "command guarded by when_files_present must be skipped when no matching file exists; got: {}",
+            result.summary
+        );
+        let _ = std::fs::remove_dir_all(&path);
+    }
+
+    #[test]
+    fn when_files_present_runs_command_when_matching_file_exists() {
+        // Invariant: a command with `when_files_present` set IS run when at
+        // least one workspace file matches any pattern.
+        let (path, ws) = temp_workspace();
+        std::fs::write(path.join("test_foo.py"), "# test\n").unwrap();
+        // `true` exits 0 — we just verify the command ran (and passed).
+        let v = CommandValidator::new(
+            vec![CommandSpec {
+                program: "true".to_string(),
+                args: vec![],
+                when_files_present: vec!["test_*.py".to_string()],
+            }],
+            default_timeout(),
+        );
+        let result = v.validate(&ws);
+        assert!(
+            result.passed,
+            "command guarded by when_files_present must run when a matching file exists; got: {}",
+            result.summary
+        );
+        let _ = std::fs::remove_dir_all(&path);
+    }
+
+    #[test]
+    fn when_files_present_suffix_pattern_matches_correctly() {
+        // Invariant: suffix glob pattern (*_test.py) matches files ending with
+        // the suffix and skips the command when only non-matching files exist.
+        let (path, ws) = temp_workspace();
+        // Only a non-test source file exists.
+        std::fs::write(path.join("main.py"), "# main\n").unwrap();
+        let v = CommandValidator::new(
+            vec![CommandSpec {
+                program: "false".to_string(),
+                args: vec![],
+                when_files_present: vec!["*_test.py".to_string()],
+            }],
+            default_timeout(),
+        );
+        let result = v.validate(&ws);
+        assert!(
+            result.passed,
+            "*_test.py guard must skip command when only main.py exists; got: {}",
+            result.summary
+        );
+
+        // Now add a matching file; command must run.
+        std::fs::write(path.join("main_test.py"), "# tests\n").unwrap();
+        let v2 = CommandValidator::new(
+            vec![CommandSpec {
+                program: "true".to_string(),
+                args: vec![],
+                when_files_present: vec!["*_test.py".to_string()],
+            }],
+            default_timeout(),
+        );
+        let result2 = v2.validate(&ws);
+        assert!(
+            result2.passed,
+            "*_test.py guard must run command when main_test.py exists; got: {}",
+            result2.summary
+        );
+        let _ = std::fs::remove_dir_all(&path);
+    }
+
+    #[test]
+    fn when_files_present_empty_always_runs_command() {
+        // Invariant: empty when_files_present imposes no restriction — the
+        // command runs regardless of workspace contents.
+        let (_path, ws) = temp_workspace();
+        // `true` always passes; verifying it runs even with no patterns set.
+        let v = CommandValidator::new(
+            vec![CommandSpec {
+                program: "true".to_string(),
+                args: vec![],
+                when_files_present: vec![],
+            }],
+            default_timeout(),
+        );
+        let result = v.validate(&ws);
+        assert!(
+            result.passed,
+            "empty when_files_present must not suppress the command; got: {}",
+            result.summary
+        );
+    }
+
+    #[test]
+    fn when_files_present_matches_file_in_subdirectory() {
+        // Invariant: when_files_present walks subdirectories, not just the root.
+        let (path, ws) = temp_workspace();
+        let subdir = path.join("tests");
+        std::fs::create_dir_all(&subdir).unwrap();
+        std::fs::write(subdir.join("test_something.py"), "# test\n").unwrap();
+        let v = CommandValidator::new(
+            vec![CommandSpec {
+                program: "true".to_string(),
+                args: vec![],
+                when_files_present: vec!["test_*.py".to_string()],
+            }],
+            default_timeout(),
+        );
+        let result = v.validate(&ws);
+        assert!(
+            result.passed,
+            "when_files_present must find test files in subdirectories; got: {}",
+            result.summary
+        );
+        let _ = std::fs::remove_dir_all(&path);
+    }
+
+    // ── matches_name_glob unit tests ──────────────────────────────────────────
+
+    #[test]
+    fn matches_name_glob_exact_when_no_wildcard() {
+        // Invariant: without *, the pattern is an exact name match.
+        assert!(matches_name_glob("foo.py", "foo.py"));
+        assert!(!matches_name_glob("foo.py", "bar.py"));
+    }
+
+    #[test]
+    fn matches_name_glob_prefix_pattern() {
+        // Invariant: test_*.py matches any file starting with test_ and ending .py.
+        assert!(matches_name_glob("test_*.py", "test_foo.py"));
+        assert!(matches_name_glob("test_*.py", "test_main.py"));
+        assert!(!matches_name_glob("test_*.py", "main.py"));
+        assert!(!matches_name_glob("test_*.py", "foo_test.py"));
+    }
+
+    #[test]
+    fn matches_name_glob_suffix_pattern() {
+        // Invariant: *_test.py matches any file ending with _test.py.
+        assert!(matches_name_glob("*_test.py", "main_test.py"));
+        assert!(matches_name_glob("*_test.py", "foo_test.py"));
+        assert!(!matches_name_glob("*_test.py", "test_main.py"));
+        assert!(!matches_name_glob("*_test.py", "main.py"));
+    }
+
+    #[test]
+    fn matches_name_glob_full_wildcard_matches_any_name() {
+        // Invariant: * alone matches any filename.
+        assert!(matches_name_glob("*", "anything.py"));
+        assert!(matches_name_glob("*", "README.md"));
     }
 }

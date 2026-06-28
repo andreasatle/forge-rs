@@ -195,6 +195,7 @@ mod tests {
                                 "-c".to_string(),
                                 "printf 'configured artifact\\n' > generated.txt".to_string(),
                             ],
+                            when_files_present: vec![],
                         },
                         CommandSpec {
                             program: "sh".to_string(),
@@ -209,6 +210,7 @@ mod tests {
                                 )
                                 .to_string(),
                             ],
+                            when_files_present: vec![],
                         },
                     ],
                 },

@@ -432,6 +432,7 @@ fn timeout_blocks_commit() {
         vec![crate::validation::CommandSpec {
             program: "sleep".to_string(),
             args: vec!["5".to_string()],
+            when_files_present: vec![],
         }],
         Duration::from_secs(1),
     );

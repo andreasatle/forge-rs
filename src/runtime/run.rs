@@ -341,6 +341,7 @@ fn make_validator(
                 .map(|cmd| CommandSpec {
                     program: "sh".to_string(),
                     args: vec!["-c".to_string(), cmd.clone()],
+                    when_files_present: vec![],
                 })
                 .collect();
             Ok(Rc::new(CommandValidator::new(specs, timeout)))
