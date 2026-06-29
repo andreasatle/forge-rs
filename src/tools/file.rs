@@ -860,6 +860,58 @@ mod tests {
     }
 
     #[test]
+    fn parsed_write_file_multiline_content_writes_real_newlines() {
+        let (_temp, view) = make_view("write-json-multiline");
+        let mut executor = workspace_executor(&view, FileToolPolicy::default());
+        let request = parse_tool_request(
+            r#"{"tool":"write_file","path":"output.txt","content":"first line\nsecond line\n"}"#,
+        )
+        .unwrap();
+
+        let response = executor.execute(request);
+
+        assert!(
+            matches!(response, FileToolResponse::UpdateRecorded { .. }),
+            "expected UpdateRecorded, got {response:?}"
+        );
+        assert_eq!(
+            executor.execute(FileToolRequest::ReadFile {
+                path: "output.txt".to_owned(),
+            }),
+            FileToolResponse::FileContents {
+                path: "output.txt".to_owned(),
+                content: "first line\nsecond line\n".to_owned(),
+            }
+        );
+    }
+
+    #[test]
+    fn parsed_write_file_escaped_backslash_n_remains_literal() {
+        let (_temp, view) = make_view("write-json-literal-backslash-n");
+        let mut executor = workspace_executor(&view, FileToolPolicy::default());
+        let request = parse_tool_request(
+            r#"{"tool":"write_file","path":"output.txt","content":"first line\\nsecond line"}"#,
+        )
+        .unwrap();
+
+        let response = executor.execute(request);
+
+        assert!(
+            matches!(response, FileToolResponse::UpdateRecorded { .. }),
+            "expected UpdateRecorded, got {response:?}"
+        );
+        assert_eq!(
+            executor.execute(FileToolRequest::ReadFile {
+                path: "output.txt".to_owned(),
+            }),
+            FileToolResponse::FileContents {
+                path: "output.txt".to_owned(),
+                content: r"first line\nsecond line".to_owned(),
+            }
+        );
+    }
+
+    #[test]
     fn replace_text_mutates_workspace() {
         let (_temp, view) = make_view("replace-workspace");
         let mut executor = workspace_executor(&view, FileToolPolicy::default());
@@ -885,6 +937,66 @@ mod tests {
             FileToolResponse::FileContents {
                 path: "output.txt".to_owned(),
                 content: "goodbye world".to_owned(),
+            }
+        );
+    }
+
+    #[test]
+    fn parsed_replace_text_multiline_content_writes_real_newlines() {
+        let (_temp, view) = make_view("replace-json-multiline");
+        let mut executor = workspace_executor(&view, FileToolPolicy::default());
+        executor.execute(FileToolRequest::WriteFile {
+            path: "output.txt".to_owned(),
+            content: "alpha\nbeta\ngamma\n".to_owned(),
+        });
+        let request = parse_tool_request(
+            r#"{"tool":"replace_text","path":"output.txt","old":"alpha\nbeta","new":"one\ntwo"}"#,
+        )
+        .unwrap();
+
+        let response = executor.execute(request);
+
+        assert!(
+            matches!(response, FileToolResponse::UpdateRecorded { .. }),
+            "expected UpdateRecorded, got {response:?}"
+        );
+        assert_eq!(
+            executor.execute(FileToolRequest::ReadFile {
+                path: "output.txt".to_owned(),
+            }),
+            FileToolResponse::FileContents {
+                path: "output.txt".to_owned(),
+                content: "one\ntwo\ngamma\n".to_owned(),
+            }
+        );
+    }
+
+    #[test]
+    fn parsed_replace_text_escaped_backslash_n_remains_literal() {
+        let (_temp, view) = make_view("replace-json-literal-backslash-n");
+        let mut executor = workspace_executor(&view, FileToolPolicy::default());
+        executor.execute(FileToolRequest::WriteFile {
+            path: "output.txt".to_owned(),
+            content: r"alpha\nbeta tail".to_owned(),
+        });
+        let request = parse_tool_request(
+            r#"{"tool":"replace_text","path":"output.txt","old":"alpha\\nbeta","new":"one\\ntwo"}"#,
+        )
+        .unwrap();
+
+        let response = executor.execute(request);
+
+        assert!(
+            matches!(response, FileToolResponse::UpdateRecorded { .. }),
+            "expected UpdateRecorded, got {response:?}"
+        );
+        assert_eq!(
+            executor.execute(FileToolRequest::ReadFile {
+                path: "output.txt".to_owned(),
+            }),
+            FileToolResponse::FileContents {
+                path: "output.txt".to_owned(),
+                content: r"one\ntwo tail".to_owned(),
             }
         );
     }
