@@ -115,6 +115,8 @@ mod tests {
                 strong_model: None,
                 strong_n_predict: None,
                 strong_timeout_seconds: None,
+                managed: None,
+                strong_managed: None,
             },
             telemetry: TelemetryConfig {
                 directory: telemetry_path.to_str().unwrap().to_string(),
@@ -145,6 +147,8 @@ mod tests {
                 strong_model: None,
                 strong_n_predict: None,
                 strong_timeout_seconds: None,
+                managed: None,
+                strong_managed: None,
             },
             telemetry: TelemetryConfig {
                 directory: telemetry_path.to_str().unwrap().to_string(),
@@ -378,6 +382,8 @@ mod tests {
                     strong_model: None,
                     strong_n_predict: None,
                     strong_timeout_seconds: None,
+                    managed: None,
+                    strong_managed: None,
                 },
                 telemetry: TelemetryConfig {
                     directory: telemetry.to_str().unwrap().to_string(),

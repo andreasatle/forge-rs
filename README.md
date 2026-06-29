@@ -76,6 +76,25 @@ validation:                     # optional
 
 Relative paths in `artifact.repo_path` and `telemetry.directory` are resolved against the directory containing `forge.yaml`, not the working directory.
 
+By default Forge connects to already-running provider servers. For llama.cpp,
+Forge can instead own a local `llama-server` process:
+
+```yaml
+provider:
+  base_url: "http://127.0.0.1:8080"
+  model: "models/qwen2.5-coder-7b-instruct.gguf"
+  n_predict: 512
+  managed:
+    llama_cpp:
+      command: "llama-server"
+      port: 8080               # or base_url: "http://127.0.0.1:8080"
+      context_size: 8192       # optional
+      startup_timeout_seconds: 60
+```
+
+Managed mode is explicit. If the configured endpoint is already reachable before
+Forge starts `llama-server`, Forge refuses to attach to it.
+
 ## CLI
 
 ```text
@@ -393,13 +412,22 @@ Initial fields (written at startup):
       "base_url": "http://localhost:8080",
       "model": "qwen2.5-coder-7b-instruct",
       "n_predict": 512,
-      "timeout_seconds": 120
+      "timeout_seconds": 120,
+      "managed": false
     },
     "strong": {
       "base_url": "http://localhost:8081",
       "model": "qwen2.5-coder-14b-instruct",
       "n_predict": 1024,
-      "timeout_seconds": 180
+      "timeout_seconds": 180,
+      "managed": true,
+      "managed_server": {
+        "kind": "llama_cpp",
+        "command": "llama-server",
+        "port": 8081,
+        "context_size": 8192,
+        "startup_timeout_seconds": 60
+      }
     }
   }
 }

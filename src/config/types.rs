@@ -61,8 +61,12 @@ fn default_provider_timeout_seconds() -> u64 {
     120
 }
 
+fn default_managed_startup_timeout_seconds() -> u64 {
+    60
+}
+
 /// LLM provider configuration.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct ProviderConfig {
     /// Base URL of the provider server (e.g. `"http://localhost:8080"`).
     pub base_url: String,
@@ -89,6 +93,40 @@ pub struct ProviderConfig {
     /// `timeout_seconds` when absent.
     #[serde(default)]
     pub strong_timeout_seconds: Option<u64>,
+    /// Optional managed local server for the cheap/default provider tier.
+    #[serde(default)]
+    pub managed: Option<ManagedProviderConfig>,
+    /// Optional managed local server for the strong provider tier.
+    #[serde(default)]
+    pub strong_managed: Option<ManagedProviderConfig>,
+}
+
+/// Managed local provider server configuration.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ManagedProviderConfig {
+    /// llama.cpp server management settings.
+    pub llama_cpp: ManagedLlamaCppConfig,
+}
+
+/// Managed llama.cpp `llama-server` process configuration.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ManagedLlamaCppConfig {
+    /// Executable path or command name for `llama-server`.
+    pub command: String,
+    /// Port for the local server. Required unless `base_url` contains an
+    /// explicit port.
+    #[serde(default)]
+    pub port: Option<u16>,
+    /// Base URL for the local server. When absent, Forge derives
+    /// `http://127.0.0.1:<port>`.
+    #[serde(default)]
+    pub base_url: Option<String>,
+    /// Optional llama.cpp context size, passed as `--ctx-size`.
+    #[serde(default)]
+    pub context_size: Option<usize>,
+    /// Seconds to wait for readiness after spawning the process.
+    #[serde(default = "default_managed_startup_timeout_seconds")]
+    pub startup_timeout_seconds: u64,
 }
 
 /// Telemetry output configuration.
@@ -160,6 +198,28 @@ fn validate_provider_model_identity(
         && strong_model.trim().is_empty()
     {
         return Err("provider.strong_model must be non-empty when set".into());
+    }
+    validate_managed_provider("provider.managed", provider.managed.as_ref())?;
+    validate_managed_provider("provider.strong_managed", provider.strong_managed.as_ref())?;
+    Ok(())
+}
+
+fn validate_managed_provider(
+    field: &str,
+    managed: Option<&ManagedProviderConfig>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let Some(managed) = managed else {
+        return Ok(());
+    };
+    let llama = &managed.llama_cpp;
+    if llama.command.trim().is_empty() {
+        return Err(format!("{field}.llama_cpp.command must be non-empty").into());
+    }
+    if llama.port.is_none() && llama.base_url.is_none() {
+        return Err(format!("{field}.llama_cpp requires port or base_url").into());
+    }
+    if llama.startup_timeout_seconds == 0 {
+        return Err(format!("{field}.llama_cpp.startup_timeout_seconds must be positive").into());
     }
     Ok(())
 }
@@ -441,6 +501,122 @@ telemetry:
         assert!(
             msg.contains("provider.model"),
             "blank provider.model error must name the field; got: {msg}"
+        );
+    }
+
+    const MANAGED_LLAMA_CPP_YAML: &str = r#"
+objective: "test"
+artifact:
+  repo_path: ".forge/artifacts/main.git"
+  branch: "main"
+provider:
+  base_url: "http://localhost:8080"
+  model: "models/coder.gguf"
+  n_predict: 512
+  managed:
+    llama_cpp:
+      command: "llama-server"
+      port: 8080
+      context_size: 8192
+      startup_timeout_seconds: 45
+telemetry:
+  directory: "runs"
+"#;
+
+    #[test]
+    fn parses_managed_llama_cpp_provider_config() {
+        let tmp = TempYaml::new(MANAGED_LLAMA_CPP_YAML);
+        let config = ForgeConfig::from_file(tmp.path()).unwrap();
+        let managed = config
+            .provider
+            .managed
+            .expect("managed provider config must parse");
+        assert_eq!(managed.llama_cpp.command, "llama-server");
+        assert_eq!(managed.llama_cpp.port, Some(8080));
+        assert_eq!(managed.llama_cpp.base_url, None);
+        assert_eq!(managed.llama_cpp.context_size, Some(8192));
+        assert_eq!(managed.llama_cpp.startup_timeout_seconds, 45);
+    }
+
+    const MANAGED_LLAMA_CPP_BASE_URL_YAML: &str = r#"
+objective: "test"
+artifact:
+  repo_path: ".forge/artifacts/main.git"
+  branch: "main"
+provider:
+  base_url: "http://localhost:8080"
+  model: "models/coder.gguf"
+  n_predict: 512
+  managed:
+    llama_cpp:
+      command: "/opt/llama.cpp/llama-server"
+      base_url: "http://127.0.0.1:8080"
+telemetry:
+  directory: "runs"
+"#;
+
+    #[test]
+    fn managed_llama_cpp_accepts_base_url_instead_of_port() {
+        let tmp = TempYaml::new(MANAGED_LLAMA_CPP_BASE_URL_YAML);
+        let config = ForgeConfig::from_file(tmp.path()).unwrap();
+        let llama = &config.provider.managed.unwrap().llama_cpp;
+        assert_eq!(llama.base_url.as_deref(), Some("http://127.0.0.1:8080"));
+        assert_eq!(llama.port, None);
+        assert_eq!(llama.startup_timeout_seconds, 60);
+    }
+
+    const MANAGED_LLAMA_CPP_MISSING_ENDPOINT_YAML: &str = r#"
+objective: "test"
+artifact:
+  repo_path: ".forge/artifacts/main.git"
+  branch: "main"
+provider:
+  base_url: "http://localhost:8080"
+  model: "models/coder.gguf"
+  n_predict: 512
+  managed:
+    llama_cpp:
+      command: "llama-server"
+telemetry:
+  directory: "runs"
+"#;
+
+    #[test]
+    fn managed_llama_cpp_requires_port_or_base_url() {
+        let tmp = TempYaml::new(MANAGED_LLAMA_CPP_MISSING_ENDPOINT_YAML);
+        let result = ForgeConfig::from_file(tmp.path());
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("port or base_url"),
+            "error must explain endpoint requirement; got: {msg}"
+        );
+    }
+
+    const MANAGED_LLAMA_CPP_BLANK_COMMAND_YAML: &str = r#"
+objective: "test"
+artifact:
+  repo_path: ".forge/artifacts/main.git"
+  branch: "main"
+provider:
+  base_url: "http://localhost:8080"
+  model: "models/coder.gguf"
+  n_predict: 512
+  managed:
+    llama_cpp:
+      command: " "
+      port: 8080
+telemetry:
+  directory: "runs"
+"#;
+
+    #[test]
+    fn managed_llama_cpp_requires_non_blank_command() {
+        let tmp = TempYaml::new(MANAGED_LLAMA_CPP_BLANK_COMMAND_YAML);
+        let result = ForgeConfig::from_file(tmp.path());
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("command"),
+            "error must explain command requirement; got: {msg}"
         );
     }
 

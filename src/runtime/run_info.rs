@@ -28,6 +28,26 @@ pub struct ProviderTierMetadata {
     pub n_predict: usize,
     /// HTTP timeout in seconds for this tier.
     pub timeout_seconds: u64,
+    /// Whether Forge owns the provider server process for this tier.
+    pub managed: bool,
+    /// Managed server metadata when `managed` is true.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub managed_server: Option<ManagedProviderServerMetadata>,
+}
+
+/// Managed provider server metadata recorded in the run manifest.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ManagedProviderServerMetadata {
+    /// Provider server implementation.
+    pub kind: String,
+    /// Executable path or command name used to start the server.
+    pub command: String,
+    /// Local port the server listens on.
+    pub port: u16,
+    /// Context size passed to the server, when configured.
+    pub context_size: Option<usize>,
+    /// Startup readiness timeout in seconds.
+    pub startup_timeout_seconds: u64,
 }
 
 /// Effective provider metadata for a run.
@@ -274,12 +294,16 @@ mod tests {
                 model: "cheap-model".to_string(),
                 n_predict: 512,
                 timeout_seconds: 120,
+                managed: false,
+                managed_server: None,
             },
             strong: ProviderTierMetadata {
                 base_url: "http://localhost:8081".to_string(),
                 model: "strong-model".to_string(),
                 n_predict: 1024,
                 timeout_seconds: 180,
+                managed: false,
+                managed_server: None,
             },
         }
     }
@@ -365,6 +389,8 @@ mod tests {
         assert_eq!(v["providers"]["cheap"]["model"], "cheap-model");
         assert_eq!(v["providers"]["cheap"]["n_predict"], 512);
         assert_eq!(v["providers"]["cheap"]["timeout_seconds"], 120);
+        assert_eq!(v["providers"]["cheap"]["managed"], false);
+        assert!(v["providers"]["cheap"]["managed_server"].is_null());
         assert_eq!(
             v["providers"]["strong"]["base_url"],
             "http://localhost:8081"
@@ -372,6 +398,8 @@ mod tests {
         assert_eq!(v["providers"]["strong"]["model"], "strong-model");
         assert_eq!(v["providers"]["strong"]["n_predict"], 1024);
         assert_eq!(v["providers"]["strong"]["timeout_seconds"], 180);
+        assert_eq!(v["providers"]["strong"]["managed"], false);
+        assert!(v["providers"]["strong"]["managed_server"].is_null());
 
         let _ = std::fs::remove_dir_all(&root);
     }

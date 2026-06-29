@@ -12,7 +12,10 @@ use std::path::Path;
 use std::process::Command;
 
 use crate::artifacts::{Artifact, ArtifactView};
-use crate::config::{ForgeConfig, ProjectConfig, ProjectKind, ProviderConfig, ValidationConfig};
+use crate::config::{
+    ForgeConfig, ManagedProviderConfig, ProjectConfig, ProjectKind, ProviderConfig,
+    ValidationConfig,
+};
 use crate::engine::run_machine_with_telemetry;
 use crate::language::registry::language_spec;
 
@@ -24,8 +27,14 @@ use crate::project::{CodingProjectAdapter, DefaultProjectAdapter, ProjectAdapter
 use crate::providers::{LlamaCppProvider, RetryingProvider};
 use crate::roles::RolePolicy;
 use crate::runtime::checkpoint::node_counts;
+use crate::runtime::managed_provider::{
+    ManagedLlamaCppRuntimeConfig, ManagedProviderServer, resolve_llama_cpp_config,
+};
 use crate::runtime::resume::find_resumable_run;
-use crate::runtime::{ProviderRunMetadata, ProviderTierMetadata, create_run, finalize_manifest};
+use crate::runtime::{
+    ManagedProviderServerMetadata, ProviderRunMetadata, ProviderTierMetadata, create_run,
+    finalize_manifest,
+};
 use crate::telemetry::{FileTelemetry, TelemetryEvent, TelemetryRecord, TelemetrySink};
 use crate::validation::{
     AlwaysPassValidator, CommandSpec, CommandValidator, ValidationPlan, ValidationScope,
@@ -49,7 +58,7 @@ impl ForgeRuntime {
             load_or_create_artifact(&config.artifact, config.project.language.as_deref())?;
 
         let runs_root = PathBuf::from(&config.telemetry.directory);
-        let provider_metadata = make_provider_run_metadata(&config.provider);
+        let provider_metadata = make_provider_run_metadata(&config.provider)?;
         let run_info = create_run(
             &runs_root,
             &config.objective,
@@ -60,20 +69,20 @@ impl ForgeRuntime {
         let sink: Rc<dyn TelemetrySink> =
             Rc::new(FileTelemetry::new(run_info.telemetry_dir.clone()));
 
-        let cheap_llama =
-            LlamaCppProvider::new(&config.provider.base_url, config.provider.timeout_seconds);
+        let _managed_provider_servers = start_managed_provider_servers(&config.provider)?;
+
+        let cheap_llama = LlamaCppProvider::new(
+            &provider_metadata.cheap.base_url,
+            config.provider.timeout_seconds,
+        );
         let cheap = RetryingProvider::new(cheap_llama, 3);
 
-        let strong_base_url = config
-            .provider
-            .strong_base_url
-            .as_deref()
-            .unwrap_or(&config.provider.base_url);
         let strong_timeout = config
             .provider
             .strong_timeout_seconds
             .unwrap_or(config.provider.timeout_seconds);
-        let strong_llama = LlamaCppProvider::new(strong_base_url, strong_timeout);
+        let strong_llama =
+            LlamaCppProvider::new(&provider_metadata.strong.base_url, strong_timeout);
         let strong = RetryingProvider::new(strong_llama, 3);
 
         let cheap_tokens = config.provider.n_predict as u32;
@@ -174,20 +183,21 @@ impl ForgeRuntime {
             },
         ));
 
-        let cheap_llama =
-            LlamaCppProvider::new(&config.provider.base_url, config.provider.timeout_seconds);
+        let provider_metadata = make_provider_run_metadata(&config.provider)?;
+        let _managed_provider_servers = start_managed_provider_servers(&config.provider)?;
+
+        let cheap_llama = LlamaCppProvider::new(
+            &provider_metadata.cheap.base_url,
+            config.provider.timeout_seconds,
+        );
         let cheap = RetryingProvider::new(cheap_llama, 3);
 
-        let strong_base_url = config
-            .provider
-            .strong_base_url
-            .as_deref()
-            .unwrap_or(&config.provider.base_url);
         let strong_timeout = config
             .provider
             .strong_timeout_seconds
             .unwrap_or(config.provider.timeout_seconds);
-        let strong_llama = LlamaCppProvider::new(strong_base_url, strong_timeout);
+        let strong_llama =
+            LlamaCppProvider::new(&provider_metadata.strong.base_url, strong_timeout);
         let strong = RetryingProvider::new(strong_llama, 3);
 
         let cheap_tokens = config.provider.n_predict as u32;
@@ -259,21 +269,51 @@ impl ForgeRuntime {
     }
 }
 
-fn make_provider_run_metadata(provider: &ProviderConfig) -> ProviderRunMetadata {
-    let strong_base_url = provider
-        .strong_base_url
-        .clone()
-        .unwrap_or_else(|| provider.base_url.clone());
+fn make_provider_run_metadata(
+    provider: &ProviderConfig,
+) -> Result<ProviderRunMetadata, Box<dyn Error>> {
+    let cheap_managed = match &provider.managed {
+        Some(managed) => Some(resolve_managed_llama_cpp(managed, &provider.model)?),
+        None => None,
+    };
     let strong_model = provider
         .strong_model
         .clone()
         .unwrap_or_else(|| provider.model.clone());
-    ProviderRunMetadata {
+    let strong_managed = match &provider.strong_managed {
+        Some(managed) => Some(resolve_managed_llama_cpp(managed, &strong_model)?),
+        None => None,
+    };
+
+    let cheap_base_url = cheap_managed
+        .as_ref()
+        .map(|managed| managed.base_url.clone())
+        .unwrap_or_else(|| provider.base_url.clone());
+    let strong_base_url = strong_managed
+        .as_ref()
+        .map(|managed| managed.base_url.clone())
+        .or_else(|| provider.strong_base_url.clone())
+        .unwrap_or_else(|| cheap_base_url.clone());
+    let cheap_managed_metadata = cheap_managed.as_ref().map(managed_server_metadata);
+    let strong_managed_metadata = strong_managed
+        .as_ref()
+        .map(managed_server_metadata)
+        .or_else(|| {
+            if provider.strong_base_url.is_none() && provider.strong_managed.is_none() {
+                cheap_managed_metadata.clone()
+            } else {
+                None
+            }
+        });
+
+    Ok(ProviderRunMetadata {
         cheap: ProviderTierMetadata {
-            base_url: provider.base_url.clone(),
+            base_url: cheap_base_url,
             model: provider.model.clone(),
             n_predict: provider.n_predict,
             timeout_seconds: provider.timeout_seconds,
+            managed: cheap_managed_metadata.is_some(),
+            managed_server: cheap_managed_metadata,
         },
         strong: ProviderTierMetadata {
             base_url: strong_base_url,
@@ -282,8 +322,46 @@ fn make_provider_run_metadata(provider: &ProviderConfig) -> ProviderRunMetadata 
             timeout_seconds: provider
                 .strong_timeout_seconds
                 .unwrap_or(provider.timeout_seconds),
+            managed: strong_managed_metadata.is_some(),
+            managed_server: strong_managed_metadata,
         },
+    })
+}
+
+fn resolve_managed_llama_cpp(
+    managed: &ManagedProviderConfig,
+    model: &str,
+) -> Result<ManagedLlamaCppRuntimeConfig, Box<dyn Error>> {
+    resolve_llama_cpp_config(&managed.llama_cpp, model)
+}
+
+fn managed_server_metadata(config: &ManagedLlamaCppRuntimeConfig) -> ManagedProviderServerMetadata {
+    ManagedProviderServerMetadata {
+        kind: "llama_cpp".to_string(),
+        command: config.command.clone(),
+        port: config.port,
+        context_size: config.context_size,
+        startup_timeout_seconds: config.startup_timeout_seconds,
     }
+}
+
+fn start_managed_provider_servers(
+    provider: &ProviderConfig,
+) -> Result<Vec<ManagedProviderServer>, Box<dyn Error>> {
+    let mut servers = Vec::new();
+    if let Some(managed) = &provider.managed {
+        let config = resolve_managed_llama_cpp(managed, &provider.model)?;
+        servers.push(ManagedProviderServer::start_llama_cpp(&config)?);
+    }
+    if let Some(managed) = &provider.strong_managed {
+        let strong_model = provider
+            .strong_model
+            .as_deref()
+            .unwrap_or(provider.model.as_str());
+        let config = resolve_managed_llama_cpp(managed, strong_model)?;
+        servers.push(ManagedProviderServer::start_llama_cpp(&config)?);
+    }
+    Ok(servers)
 }
 
 fn runtime_result_from_scheduler_output(output: SchedulerOutput) -> Result<(), Box<dyn Error>> {
@@ -519,7 +597,10 @@ mod tests {
             strong_model: None,
             strong_n_predict: None,
             strong_timeout_seconds: None,
+            managed: None,
+            strong_managed: None,
         })
+        .expect("test provider metadata must resolve")
     }
 
     fn empty_graph() -> RunGraph {
@@ -608,6 +689,8 @@ mod tests {
                 strong_model: None,
                 strong_n_predict: None,
                 strong_timeout_seconds: None,
+                managed: None,
+                strong_managed: None,
             },
             telemetry: TelemetryConfig {
                 directory: "/tmp/telemetry".to_string(),
@@ -632,6 +715,8 @@ mod tests {
             strong_model: None,
             strong_n_predict: None,
             strong_timeout_seconds: None,
+            managed: None,
+            strong_managed: None,
         };
         // When strong fields are absent, both tiers must resolve to the cheap values.
         let strong_url = config
@@ -658,9 +743,11 @@ mod tests {
             strong_model: Some("strong-model".to_string()),
             strong_n_predict: Some(1024),
             strong_timeout_seconds: Some(180),
+            managed: None,
+            strong_managed: None,
         };
 
-        let metadata = make_provider_run_metadata(&config);
+        let metadata = make_provider_run_metadata(&config).unwrap();
 
         assert_eq!(metadata.cheap.base_url, "http://localhost:8080");
         assert_eq!(metadata.cheap.model, "cheap-model");
@@ -683,9 +770,11 @@ mod tests {
             strong_model: None,
             strong_n_predict: None,
             strong_timeout_seconds: None,
+            managed: None,
+            strong_managed: None,
         };
 
-        let metadata = make_provider_run_metadata(&config);
+        let metadata = make_provider_run_metadata(&config).unwrap();
 
         assert_eq!(metadata.strong.base_url, metadata.cheap.base_url);
         assert_eq!(metadata.strong.model, metadata.cheap.model);
@@ -694,6 +783,82 @@ mod tests {
             metadata.strong.timeout_seconds,
             metadata.cheap.timeout_seconds
         );
+    }
+
+    #[test]
+    fn provider_run_metadata_records_managed_llama_cpp_server() {
+        let config = ProviderConfig {
+            base_url: "http://localhost:8080".to_string(),
+            model: "models/cheap.gguf".to_string(),
+            n_predict: 512,
+            timeout_seconds: 120,
+            strong_base_url: None,
+            strong_model: None,
+            strong_n_predict: None,
+            strong_timeout_seconds: None,
+            managed: Some(crate::config::ManagedProviderConfig {
+                llama_cpp: crate::config::ManagedLlamaCppConfig {
+                    command: "llama-server".to_string(),
+                    port: Some(18080),
+                    base_url: None,
+                    context_size: Some(8192),
+                    startup_timeout_seconds: 45,
+                },
+            }),
+            strong_managed: None,
+        };
+
+        let metadata = make_provider_run_metadata(&config).unwrap();
+
+        assert_eq!(metadata.cheap.base_url, "http://127.0.0.1:18080");
+        assert_eq!(metadata.cheap.model, "models/cheap.gguf");
+        assert!(metadata.cheap.managed);
+        let server = metadata
+            .cheap
+            .managed_server
+            .expect("managed metadata must be present");
+        assert_eq!(server.kind, "llama_cpp");
+        assert_eq!(server.command, "llama-server");
+        assert_eq!(server.port, 18080);
+        assert_eq!(server.context_size, Some(8192));
+        assert_eq!(server.startup_timeout_seconds, 45);
+        assert!(
+            metadata.strong.managed,
+            "strong tier should record the shared managed server when it falls back to cheap"
+        );
+        assert_eq!(metadata.strong.base_url, metadata.cheap.base_url);
+    }
+
+    #[test]
+    fn provider_run_metadata_records_separate_strong_managed_server() {
+        let config = ProviderConfig {
+            base_url: "http://localhost:8080".to_string(),
+            model: "models/cheap.gguf".to_string(),
+            n_predict: 512,
+            timeout_seconds: 120,
+            strong_base_url: None,
+            strong_model: Some("models/strong.gguf".to_string()),
+            strong_n_predict: Some(1024),
+            strong_timeout_seconds: Some(180),
+            managed: None,
+            strong_managed: Some(crate::config::ManagedProviderConfig {
+                llama_cpp: crate::config::ManagedLlamaCppConfig {
+                    command: "/opt/llama-server".to_string(),
+                    port: Some(28080),
+                    base_url: None,
+                    context_size: None,
+                    startup_timeout_seconds: 60,
+                },
+            }),
+        };
+
+        let metadata = make_provider_run_metadata(&config).unwrap();
+
+        assert!(!metadata.cheap.managed);
+        assert_eq!(metadata.cheap.base_url, "http://localhost:8080");
+        assert!(metadata.strong.managed);
+        assert_eq!(metadata.strong.base_url, "http://127.0.0.1:28080");
+        assert_eq!(metadata.strong.model, "models/strong.gguf");
     }
 
     #[test]

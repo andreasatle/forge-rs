@@ -2,6 +2,7 @@
 
 pub mod checkpoint;
 mod history;
+mod managed_provider;
 mod repo;
 mod reset;
 pub mod resume;
@@ -14,6 +15,7 @@ pub use repo::load_or_create_artifact;
 pub use reset::run_reset;
 pub use run::ForgeRuntime;
 pub use run_info::{
-    ProviderRunMetadata, ProviderTierMetadata, RunInfo, create_run, finalize_manifest,
+    ManagedProviderServerMetadata, ProviderRunMetadata, ProviderTierMetadata, RunInfo, create_run,
+    finalize_manifest,
 };
 pub use show::run_show;
