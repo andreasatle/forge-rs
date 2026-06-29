@@ -156,7 +156,7 @@ fn work_semantic_validation_failure_retries_with_artifact_feedback() {
 }
 
 #[test]
-fn invalid_staged_update_failure_recovers_with_retry() {
+fn invalid_work_attempt_update_failure_recovers_with_retry() {
     let mut graph = RunGraph {
         nodes: vec![work_node("W", "modify src/lib.rs", &[])],
         next_id: 0,
@@ -173,9 +173,9 @@ fn invalid_staged_update_failure_recovers_with_retry() {
             node_id: NodeId("W".to_string()),
             outcome: NodeOutcome::Failed(NodeFailure {
                 kind: FailureKind::WorkSemanticValidationFailure,
-                message: "artifact update could not be applied to the staged view: replacement target not found".to_string(),
+                message: "WorkAttempt workspace update could not be validated: replacement target not found".to_string(),
                 recovery: RecoveryAction::Retry {
-                    message: "retryable work semantic validation failure: artifact update could not be applied. Re-read the target file(s), then use file tools such as read_file, write_file, replace_text, or delete_file before returning accepted output.".to_string(),
+                    message: "retryable work semantic validation failure: WorkAttempt workspace update could not be validated. Re-read the target file(s), then use file tools such as read_file, write_file, replace_text, or delete_file before returning accepted output.".to_string(),
                 },
             }),
         },
@@ -190,10 +190,10 @@ fn invalid_staged_update_failure_recovers_with_retry() {
     assert_eq!(retry.status, NodeStatus::Pending);
     assert!(matches!(retry.origin, NodeOrigin::Retry { .. }));
     assert!(
-        retry.objective.contains("could not be applied")
+        retry.objective.contains("could not be validated")
             && retry.objective.contains("Re-read")
             && retry.objective.contains("replace_text"),
-        "retry objective must tell Producer how to recover from invalid artifact update; got:\n{}",
+        "retry objective must tell Producer how to recover from invalid WorkAttempt update; got:\n{}",
         retry.objective
     );
 }

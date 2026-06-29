@@ -173,10 +173,9 @@ pub enum TelemetryEvent {
     },
     /// The tool loop reached its hard step limit without a final role result.
     ToolLoopLimitReached,
-    /// A reviewer staged artifact view could not be constructed from the
-    /// accumulated model-produced artifact update.
-    StagedViewConstructionFailed {
-        /// Role that needed the staged view.
+    /// A reviewer WorkAttempt workspace view could not be constructed.
+    WorkAttemptViewConstructionFailed {
+        /// Role that needed the workspace view.
         role: String,
         /// Human-readable failure reason.
         reason: String,
@@ -277,8 +276,8 @@ impl TelemetryEvent {
             TelemetryEvent::ToolRequested { .. } => "tool-requested",
             TelemetryEvent::ToolReturned { .. } => "tool-returned",
             TelemetryEvent::ToolLoopLimitReached => "tool-loop-limit-reached",
-            TelemetryEvent::StagedViewConstructionFailed { .. } => {
-                "staged-view-construction-failed"
+            TelemetryEvent::WorkAttemptViewConstructionFailed { .. } => {
+                "work-attempt-view-construction-failed"
             }
             TelemetryEvent::PlannerOutputParsed { .. } => "planner-output-parsed",
             TelemetryEvent::PlannerOutputFallback => "planner-output-fallback",
@@ -380,8 +379,8 @@ impl TelemetryEvent {
                 format!("kind: ToolReturned\ntool: {tool}\nresult: {result}\n")
             }
             TelemetryEvent::ToolLoopLimitReached => "kind: ToolLoopLimitReached\n".to_string(),
-            TelemetryEvent::StagedViewConstructionFailed { role, reason } => {
-                format!("kind: StagedViewConstructionFailed\nrole: {role}\nreason: {reason}\n")
+            TelemetryEvent::WorkAttemptViewConstructionFailed { role, reason } => {
+                format!("kind: WorkAttemptViewConstructionFailed\nrole: {role}\nreason: {reason}\n")
             }
             TelemetryEvent::PlannerOutputParsed {
                 task_count,

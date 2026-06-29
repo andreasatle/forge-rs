@@ -94,7 +94,7 @@ Producer:
 
 Critic and Referee:
 
-* receive staged Producer state
+* receive Producer state from the WorkAttempt workspace
 
 Target information is carried as structured metadata (target_files), not parsed from prompts.
 

@@ -31,7 +31,7 @@ impl<R: RoleRunner> DeliberationHandler<R> {
                         Ok(context) => context,
                         Err(error) => {
                             let reason = format!(
-                                "artifact update could not be applied to the staged view for \
+                                "WorkAttempt workspace view could not be constructed for \
                                  {role:?}: {error}. Re-read the target file(s) and modify them \
                                  with file tools such as read_file, write_file, replace_text, or \
                                  delete_file before accepting."
@@ -39,7 +39,7 @@ impl<R: RoleRunner> DeliberationHandler<R> {
                             telemetry.record(TelemetryRecord::new_with_subsource(
                                 "DeliberationHandler",
                                 format!("{role:?}"),
-                                TelemetryEvent::StagedViewConstructionFailed {
+                                TelemetryEvent::WorkAttemptViewConstructionFailed {
                                     role: format!("{role:?}"),
                                     reason: reason.clone(),
                                 },

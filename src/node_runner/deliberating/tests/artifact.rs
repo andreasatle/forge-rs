@@ -41,7 +41,7 @@ fn deliberating_artifact_work_writes_work_attempt_workspace() {
 
 #[test]
 fn reviewer_can_read_work_attempt_target_file_with_relative_path() {
-    let temp = TempDir::new("reviewer-staged-target");
+    let temp = TempDir::new("reviewer-work-attempt-target");
     let view = make_artifact_view(&temp, "main.py", "print('old')\n");
     let work_attempt = work_attempt_for_view(&view);
     let workspace = work_attempt.workspace.clone();
@@ -50,9 +50,9 @@ fn reviewer_can_read_work_attempt_target_file_with_relative_path() {
         r#"{"tool":"write_file","path":"main.py","content":"print('new')\n"}"#,
         r#"{"status":"accepted","content":"updated main.py"}"#,
         r#"{"tool":"read_file","path":"main.py"}"#,
-        r#"{"status":"accepted","content":"main.py contains the staged update"}"#,
+        r#"{"status":"accepted","content":"main.py contains the WorkAttempt update"}"#,
         r#"{"tool":"read_file","path":"main.py"}"#,
-        r#"{"status":"accepted","content":"approved staged main.py"}"#,
+        r#"{"status":"accepted","content":"approved WorkAttempt main.py"}"#,
     ]);
     let runner = DeliberatingNodeRunner::new(&provider, &provider);
     let request = NodeRunRequest {

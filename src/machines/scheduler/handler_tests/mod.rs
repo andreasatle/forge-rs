@@ -20,7 +20,7 @@ use crate::machines::scheduler::state::{
 };
 use crate::node_runner::runner::NodeRunner;
 use crate::node_runner::types::{NodeRunRequest, NodeRunResult};
-use crate::node_runner::{NodeRunWorkResult, StaticNodeRunner};
+use crate::node_runner::{DeliberatingNodeRunner, NodeRunWorkResult, StaticNodeRunner};
 use crate::telemetry::{TelemetryEvent, TelemetrySink, VecTelemetry};
 
 // ── test helpers ──────────────────────────────────────────────────────────

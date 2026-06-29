@@ -192,7 +192,7 @@ The final output is always the Producer content. Critic and Referee do not repla
 `RoleResult` distinguishes:
 
 - `Accepted` — role completed successfully.
-- `Rejected` — role completed but rejected the content. Triggers a revision loop for the Referee (if revisions remain), terminal failure for Producer and Critic.
+- `Rejected` — role completed but rejected the content. Producer rejection is terminal. Critic rejection is advisory and proceeds to the Referee. Referee rejection triggers a revision loop while budget remains, otherwise it terminates the node.
 - `Failed` — role could not execute. Always terminal; never enters the revision loop.
 
 The role layer handles protocol retries when a provider response cannot be parsed as valid JSON.

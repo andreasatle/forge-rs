@@ -102,6 +102,35 @@ impl NodeRunner for DirtyThenRetryRunner {
     }
 }
 
+struct SchedulerScriptedProvider {
+    responses: RefCell<std::collections::VecDeque<String>>,
+}
+
+impl SchedulerScriptedProvider {
+    fn from_strs(responses: &[&str]) -> Self {
+        Self {
+            responses: RefCell::new(responses.iter().map(|s| s.to_string()).collect()),
+        }
+    }
+}
+
+impl crate::providers::ProviderClient for SchedulerScriptedProvider {
+    fn call(
+        &self,
+        _request: crate::providers::ProviderRequest,
+    ) -> Result<crate::providers::ProviderResponse, crate::providers::ProviderError> {
+        let content = self
+            .responses
+            .borrow_mut()
+            .pop_front()
+            .expect("SchedulerScriptedProvider: responses exhausted");
+        Ok(crate::providers::ProviderResponse {
+            content,
+            finish_reason: None,
+        })
+    }
+}
+
 #[test]
 fn scheduler_handler_passes_artifact_view_to_node_runner() {
     let (_temp, artifact) = fixture("passes-view");
@@ -270,6 +299,156 @@ fn rejected_work_attempt_records_evidence_and_retry_starts_clean() {
     assert!(evidence.1.contains(&"dirty.txt".to_string()));
     assert!(evidence.2.contains("failed attempt contents"));
     assert_eq!(evidence.3, "transient failure after dirtying worktree");
+}
+
+#[test]
+fn revision_exhaustion_records_final_work_attempt_evidence_before_cleanup() {
+    let (_temp, artifact) = fixture("revision-exhaustion-evidence");
+    let original_sha = artifact.commit_sha.clone();
+    let repo_path = artifact.repo_path.clone();
+    let telemetry = Rc::new(VecTelemetry::new());
+    let provider = SchedulerScriptedProvider::from_strs(&[
+        // Round 1: write v1, review it, and request a revision.
+        r#"{"tool":"write_file","path":"output.txt","content":"draft v1\n"}"#,
+        r#"{"status":"accepted","content":"draft v1"}"#,
+        r#"{"tool":"read_file","path":"output.txt"}"#,
+        r#"{"status":"accepted","content":"reviewed draft v1"}"#,
+        r#"{"tool":"read_file","path":"output.txt"}"#,
+        r#"{"status":"rejected","reason":"needs a stronger ending"}"#,
+        // Round 2: revise the same WorkAttempt workspace, then reject terminally.
+        r#"{"tool":"write_file","path":"output.txt","content":"draft v2\n"}"#,
+        r#"{"status":"accepted","content":"draft v2"}"#,
+        r#"{"tool":"read_file","path":"output.txt"}"#,
+        r#"{"status":"accepted","content":"reviewed draft v2"}"#,
+        r#"{"tool":"read_file","path":"output.txt"}"#,
+        r#"{"status":"rejected","reason":"still not acceptable"}"#,
+    ]);
+    let runner = DeliberatingNodeRunner::new(&provider, &provider);
+    let mut node = work_node("W", "revise until the referee rejects");
+    // Force scheduler recovery exhaustion so the final referee rejection remains
+    // terminal at the scheduler boundary while still exercising one node run.
+    node.attempt = 3;
+    let state = SchedulerState::Running {
+        graph: RunGraph {
+            nodes: vec![node],
+            next_id: 0,
+        },
+    };
+
+    let output = run_machine(
+        SchedulerHandler::with_artifact(runner, artifact).with_telemetry(telemetry.clone()),
+        state,
+    );
+
+    let SchedulerOutput::Failed { graph, reason } = output else {
+        panic!("expected terminal scheduler failure after revision exhaustion");
+    };
+    assert!(
+        reason.contains("exhausted"),
+        "scheduler failure should mention exhausted recovery attempts; got: {reason}"
+    );
+    assert_eq!(graph.nodes.len(), 1);
+    assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
+    assert_eq!(graph.nodes[0].attempt, 3);
+    assert_eq!(
+        git_output(&repo_path, &["rev-parse", "HEAD"]),
+        original_sha,
+        "terminally rejected WorkAttempt must not advance the artifact commit"
+    );
+
+    let records = telemetry.records();
+    let evidence = records
+        .iter()
+        .find_map(|record| match &record.event {
+            TelemetryEvent::WorkAttemptDiscarded {
+                attempt_id,
+                changed_files,
+                git_diff,
+                reason,
+                ..
+            } => Some((attempt_id, changed_files, git_diff, reason)),
+            _ => None,
+        })
+        .expect("terminally rejected revision attempt must record evidence before cleanup");
+
+    assert_eq!(evidence.0, "W:3");
+    assert!(evidence.1.contains(&"output.txt".to_string()));
+    assert!(
+        evidence.2.contains("draft v2"),
+        "evidence diff must include the final revised workspace state; got:\n{}",
+        evidence.2
+    );
+    assert!(
+        !evidence.2.contains("draft v1"),
+        "evidence diff should reflect the final accumulated workspace state, not the overwritten draft; got:\n{}",
+        evidence.2
+    );
+    assert!(
+        evidence.3.contains("revision limit exhausted")
+            && evidence.3.contains("still not acceptable"),
+        "evidence reason must preserve terminal referee rejection; got: {}",
+        evidence.3
+    );
+}
+
+#[test]
+fn deliberation_revision_stays_inside_single_scheduler_attempt_until_acceptance() {
+    let (_temp, artifact) = fixture("revision-single-attempt");
+    let repo_path = artifact.repo_path.clone();
+    let provider = SchedulerScriptedProvider::from_strs(&[
+        // Round 1: write v1, then Referee requests an internal deliberation revision.
+        r#"{"tool":"write_file","path":"output.txt","content":"draft v1\n"}"#,
+        r#"{"status":"accepted","content":"draft v1"}"#,
+        r#"{"tool":"read_file","path":"output.txt"}"#,
+        r#"{"status":"accepted","content":"reviewed draft v1"}"#,
+        r#"{"tool":"read_file","path":"output.txt"}"#,
+        r#"{"status":"rejected","reason":"needs revision"}"#,
+        // Round 2: revise and accept without creating a scheduler retry node.
+        r#"{"tool":"write_file","path":"output.txt","content":"draft v2\n"}"#,
+        r#"{"status":"accepted","content":"draft v2"}"#,
+        r#"{"tool":"read_file","path":"output.txt"}"#,
+        r#"{"status":"accepted","content":"reviewed draft v2"}"#,
+        r#"{"tool":"read_file","path":"output.txt"}"#,
+        r#"{"status":"accepted","content":"approved"}"#,
+    ]);
+    let runner = DeliberatingNodeRunner::new(&provider, &provider);
+    let state = SchedulerState::Running {
+        graph: RunGraph {
+            nodes: vec![work_node("W", "revise then accept")],
+            next_id: 0,
+        },
+    };
+
+    let output = run_machine(SchedulerHandler::with_artifact(runner, artifact), state);
+
+    let SchedulerOutput::Complete {
+        graph,
+        recovery_summary,
+    } = output
+    else {
+        panic!("expected revised Work node to complete in one scheduler attempt");
+    };
+    assert!(
+        !recovery_summary.recovered,
+        "internal deliberation revision must not count as scheduler recovery"
+    );
+    assert_eq!(
+        graph.nodes.len(),
+        1,
+        "internal deliberation revision must not create retry or elevated nodes"
+    );
+    let node = &graph.nodes[0];
+    assert_eq!(node.status, NodeStatus::Completed);
+    assert_eq!(node.attempt, 0);
+    assert!(matches!(node.origin, NodeOrigin::Root));
+    assert_eq!(node.summary.as_deref(), Some("draft v2"));
+
+    let head = git_output(&repo_path, &["rev-parse", "HEAD"]);
+    let output_content = git_output(&repo_path, &["show", &format!("{head}:output.txt")]);
+    assert_eq!(
+        output_content, "draft v2",
+        "integrated artifact must contain the revised workspace state"
+    );
 }
 
 // ── handler boundary tests ─────────────────────────────────────────────────
