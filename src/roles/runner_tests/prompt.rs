@@ -223,6 +223,112 @@ fn referee_prompt_explains_missing_planned_test_target_from_metadata() {
 }
 
 #[test]
+fn coding_reviewer_prompts_forbid_rejecting_unstated_preferences() {
+    use crate::project::{CodingProjectAdapter, ProjectAdapter as _};
+
+    let provider = ScriptedProvider::from_strs(&[
+        r#"{"status":"rejected","reason":"reviewed contract issue"}"#,
+        r#"{"status":"rejected","reason":"reviewed contract issue"}"#,
+    ]);
+    let runner = ProviderRoleRunner::new_with_policy(&provider, CodingProjectAdapter.role_policy());
+
+    runner.run_role(
+        critic_request(
+            "Create a reusable fibonacci(n: int) function.",
+            "implemented recursive fibonacci",
+        ),
+        &crate::telemetry::NoopTelemetry,
+    );
+    runner.run_role(
+        referee_request(
+            "Create a reusable fibonacci(n: int) function.",
+            "implemented recursive fibonacci",
+            "critic review",
+        ),
+        &crate::telemetry::NoopTelemetry,
+    );
+
+    let requests = provider.requests.borrow();
+    for (label, prompt) in [
+        ("critic", requests[0].prompt.as_str()),
+        ("referee", requests[1].prompt.as_str()),
+    ] {
+        assert!(
+            prompt.contains("Ground every rejection in the explicit objective"),
+            "{label} prompt must ground rejection in explicit contract; got:\n{prompt}"
+        );
+        assert!(
+            prompt.contains(
+                "Do not reject solely for unstated preferences about style, algorithm, architecture, or performance"
+            ),
+            "{label} prompt must forbid rejection on unstated preferences; got:\n{prompt}"
+        );
+        assert!(
+            prompt.contains("mention it in accepted content as advisory only"),
+            "{label} prompt must make non-contract preference concerns advisory-only; got:\n{prompt}"
+        );
+    }
+}
+
+#[test]
+fn coding_reviewer_prompt_does_not_allow_rejecting_recursive_fibonacci_by_preference() {
+    use crate::project::{CodingProjectAdapter, ProjectAdapter as _};
+
+    let provider = ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"approved"}"#]);
+    let runner = ProviderRoleRunner::new_with_policy(&provider, CodingProjectAdapter.role_policy());
+
+    runner.run_role(
+        referee_request(
+            "Create a reusable fibonacci(n: int) function and unit tests.",
+            "main.py implements fibonacci recursively; tests cover base and recursive cases",
+            "critic says iterative might be faster",
+        ),
+        &crate::telemetry::NoopTelemetry,
+    );
+
+    let prompt = &provider.requests.borrow()[0].prompt;
+    assert!(
+        prompt.contains("Create a reusable fibonacci(n: int) function")
+            && !prompt.contains("must be iterative"),
+        "test objective must not itself require iterative implementation; got:\n{prompt}"
+    );
+    assert!(
+        prompt.contains(
+            "do not reject recursive code solely because an iterative version might be faster"
+        ),
+        "referee prompt must not permit rejecting recursive Fibonacci solely for iterative preference; got:\n{prompt}"
+    );
+}
+
+#[test]
+fn coding_reviewer_prompt_preserves_explicit_iterative_requirement() {
+    use crate::project::{CodingProjectAdapter, ProjectAdapter as _};
+
+    let provider =
+        ScriptedProvider::from_strs(&[r#"{"status":"rejected","reason":"not iterative"}"#]);
+    let runner = ProviderRoleRunner::new_with_policy(&provider, CodingProjectAdapter.role_policy());
+
+    runner.run_role(
+        referee_request(
+            "Create fibonacci(n: int) using an iterative implementation for performance.",
+            "main.py implements fibonacci recursively",
+            "critic says objective requested iterative implementation",
+        ),
+        &crate::telemetry::NoopTelemetry,
+    );
+
+    let prompt = &provider.requests.borrow()[0].prompt;
+    assert!(
+        prompt.contains("using an iterative implementation for performance"),
+        "explicit iterative/performance contract must remain visible in prompt; got:\n{prompt}"
+    );
+    assert!(
+        prompt.contains("unless the contract requires iteration or a performance bound"),
+        "reviewer prompt must allow rejection when iteration/performance is explicit; got:\n{prompt}"
+    );
+}
+
+#[test]
 fn planner_prompt_omits_tool_section() {
     // When node_kind is Plan and tool_context is None, no tool section appears.
     let tasks_json = r#"{"tasks":[{"id":"t1","objective":"do the work","operation":"modify","targets":["work.txt"],"depends_on":[]}]}"#;

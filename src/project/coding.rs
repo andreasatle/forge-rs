@@ -45,12 +45,26 @@ Critic accepts with a review or rejects with a reason. \
 Referee accepts approval or rejects with revision feedback. \
 Execution failures are handled by the framework, not the model.";
 
-const CODING_PLANNER_CRITIC_SYSTEM: &str = "You are a software planning review agent. \
+macro_rules! reviewer_contract_guidance {
+    () => {
+        "Ground every rejection in the explicit objective, \
+declared target files, plan metadata, adapter policy, validation contract, or observable artifact correctness. \
+Do not reject solely for unstated preferences about style, algorithm, architecture, or performance. \
+For example, do not reject recursive code solely because an iterative version might be faster unless the contract requires iteration or a performance bound. \
+If you have a style or performance concern outside the contract, mention it in accepted content as advisory only."
+    };
+}
+
+const CODING_PLANNER_CRITIC_SYSTEM: &str = concat!(
+    "You are a software planning review agent. \
 Evaluate the proposed task graph, not the final implementation artifact. \
 Judge whether the graph covers the objective, tasks are bounded, each task addresses one concern, dependencies are sensible, task objectives are actionable, and worker nodes have enough detail. \
 Reject any task that does not identify a concrete file target or produce a verifiable artifact change. \
 Reject pure-reasoning tasks such as \"define content\", \"decide design\", \"analyze approach\", or \"plan implementation\" unless they are embedded in an artifact-changing task. \
 Do not judge whether files already changed, final code compiles, or the final artifact already exists. \
+",
+    reviewer_contract_guidance!(),
+    " \
 Accept with a plan review summary or reject with a specific, actionable plan revision reason.\n\
 Return exactly one JSON object. No markdown. No code fence. \
 No explanation. No text before or after the JSON.\n\
@@ -60,9 +74,11 @@ Do not copy example values. Replace them with task-specific content.\n\
 Producer returns accepted content. \
 Critic accepts with a review or rejects with a reason. \
 Referee accepts approval or rejects with revision feedback. \
-Execution failures are handled by the framework, not the model.";
+Execution failures are handled by the framework, not the model."
+);
 
-const CODING_WORKER_CRITIC_SYSTEM: &str = "You are a software review agent. \
+const CODING_WORKER_CRITIC_SYSTEM: &str = concat!(
+    "You are a software review agent. \
 Evaluate the producer output for correctness and completeness. \
 Identify missing work, unsupported claims, and incomplete implementation. \
 Check for missed edge cases and unnecessary complexity. \
@@ -70,6 +86,9 @@ For code changes, verify corresponding tests were created or updated. \
 Use read_file to inspect the specific files the producer was expected to modify. \
 Do not accept based only on the producer summary or on file existence from list_files. \
 Verify actual file contents satisfy the objective. \
+",
+    reviewer_contract_guidance!(),
+    " \
 Accept with a review summary or reject with a specific, actionable reason.\n\
 Return exactly one JSON object. No markdown. No code fence. \
 No explanation. No text before or after the JSON.\n\
@@ -79,15 +98,20 @@ Do not copy example values. Replace them with task-specific content.\n\
 Producer returns accepted content. \
 Critic accepts with a review or rejects with a reason. \
 Referee accepts approval or rejects with revision feedback. \
-Execution failures are handled by the framework, not the model.";
+Execution failures are handled by the framework, not the model."
+);
 
-const CODING_PLANNER_REFEREE_SYSTEM: &str = "You are a software planning acceptance agent. \
+const CODING_PLANNER_REFEREE_SYSTEM: &str = concat!(
+    "You are a software planning acceptance agent. \
 Decide whether the proposed task graph is a structurally valid, schedulable plan. \
 Accept when tasks collectively cover the objective, dependencies make sense, and the graph is suitable for scheduling. \
 A schedulable coding task must have an observable artifact outcome: it must create, modify, or delete named files. \
 Reject plans containing tasks that cannot be verified through file changes or artifact inspection. \
 Reject with plan revision feedback when a necessary task is omitted, task objectives are too vague, dependencies are wrong or missing, tasks are too large, or any task is a pure-reasoning step with no artifact target. \
 Do not reject because final code has not been written, artifact files do not yet exist, or final output is not yet visible.\n\
+",
+    reviewer_contract_guidance!(),
+    "\n\
 Return exactly one JSON object. No markdown. No code fence. \
 No explanation. No text before or after the JSON.\n\
 Accepted: {\"status\":\"accepted\",\"content\":\"$RESPONSE_SUMMARY\"}\n\
@@ -96,9 +120,11 @@ Do not copy example values. Replace them with task-specific content.\n\
 Producer returns accepted content. \
 Critic accepts with a review or rejects with a reason. \
 Referee accepts approval or rejects with revision feedback. \
-Execution failures are handled by the framework, not the model.";
+Execution failures are handled by the framework, not the model."
+);
 
-const CODING_WORKER_REFEREE_SYSTEM: &str = "You are a software acceptance agent. \
+const CODING_WORKER_REFEREE_SYSTEM: &str = concat!(
+    "You are a software acceptance agent. \
 Decide whether the work satisfies the objective and acceptance criteria. \
 Perform a final completeness check: every requirement must be addressed, not just the last task. \
 Before accepting, use read_file to inspect the specific files the producer was expected to modify. \
@@ -106,6 +132,9 @@ Reject code changes that do not include corresponding tests. \
 Do not rely on list_files to verify completion — file existence is not evidence of correct content. \
 Reject if the artifact contents do not satisfy the objective, even if the producer or critic claims they do. \
 Accept only when the work is complete and correct. \
+",
+    reviewer_contract_guidance!(),
+    " \
 Reject with specific revision feedback otherwise.\n\
 Return exactly one JSON object. No markdown. No code fence. \
 No explanation. No text before or after the JSON.\n\
@@ -115,7 +144,8 @@ Do not copy example values. Replace them with task-specific content.\n\
 Producer returns accepted content. \
 Critic accepts with a review or rejects with a reason. \
 Referee accepts approval or rejects with revision feedback. \
-Execution failures are handled by the framework, not the model.";
+Execution failures are handled by the framework, not the model."
+);
 
 fn is_code_file(target: &str) -> bool {
     let extension = target
@@ -642,6 +672,78 @@ mod tests {
             "worker_critic_system must require verifying actual file contents; got:\n{}",
             policy.worker_critic_system
         );
+    }
+
+    #[test]
+    fn coding_reviewers_must_ground_rejections_in_explicit_contract() {
+        let policy = CodingProjectAdapter.role_policy();
+        for (label, system) in [
+            ("planner critic", policy.planner_critic_system.as_str()),
+            ("worker critic", policy.worker_critic_system.as_str()),
+            ("planner referee", policy.planner_referee_system.as_str()),
+            ("worker referee", policy.worker_referee_system.as_str()),
+        ] {
+            assert!(
+                system.contains("Ground every rejection in the explicit objective"),
+                "{label} must ground rejections in explicit contract; got:\n{system}"
+            );
+            assert!(
+                system.contains("declared target files")
+                    && system.contains("validation contract")
+                    && system.contains("observable artifact correctness"),
+                "{label} must name allowed rejection grounds; got:\n{system}"
+            );
+            assert!(
+                system.contains(
+                    "Do not reject solely for unstated preferences about style, algorithm, architecture, or performance"
+                ),
+                "{label} must forbid rejection on unstated preferences; got:\n{system}"
+            );
+            assert!(
+                system.contains("mention it in accepted content as advisory only"),
+                "{label} must allow non-contract style/performance concerns only as accepted-content advisory; got:\n{system}"
+            );
+        }
+    }
+
+    #[test]
+    fn recursive_fibonacci_is_not_rejectable_for_unstated_iterative_preference() {
+        let policy = CodingProjectAdapter.role_policy();
+        for (label, system) in [
+            ("worker critic", policy.worker_critic_system.as_str()),
+            ("worker referee", policy.worker_referee_system.as_str()),
+        ] {
+            assert!(
+                system.contains(
+                    "do not reject recursive code solely because an iterative version might be faster"
+                ),
+                "{label} must not reject recursive Fibonacci solely for iterative-performance preference; got:\n{system}"
+            );
+            assert!(
+                system.contains("unless the contract requires iteration or a performance bound"),
+                "{label} must limit iterative/performance rejection to explicit requirements; got:\n{system}"
+            );
+        }
+    }
+
+    #[test]
+    fn explicit_performance_or_iterative_requirement_remains_rejectable() {
+        let policy = CodingProjectAdapter.role_policy();
+        for (label, system) in [
+            ("worker critic", policy.worker_critic_system.as_str()),
+            ("worker referee", policy.worker_referee_system.as_str()),
+        ] {
+            assert!(
+                system.contains("unless the contract requires iteration or a performance bound"),
+                "{label} must permit rejection when iteration or performance is explicit; got:\n{system}"
+            );
+            assert!(
+                system.contains("objective")
+                    && system.contains("adapter policy")
+                    && system.contains("validation contract"),
+                "{label} must preserve explicit objective/policy/validation grounds; got:\n{system}"
+            );
+        }
     }
 
     #[test]
