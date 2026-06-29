@@ -4,10 +4,15 @@ artifact:
   branch: "main"
 provider:
   cheap:
-    unmanaged:
-      base_url: "http://localhost:8080"
-      model: lm-kit/qwen-3-8b-instruct-gguf:Q4_K_M
-      n_predict: 512
+    managed:
+      llama_cpp:
+        command: "llama-server"
+        model:
+          hf: lm-kit/qwen-3-8b-instruct-gguf:Q4_K_M
+        host: "127.0.0.1"
+        port: 8080
+        startup_timeout_seconds: 60
+        n_predict: 512
 telemetry:
   directory: "runs"
 project:

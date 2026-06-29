@@ -146,8 +146,8 @@ pub struct ManagedProviderConfig {
 pub struct ManagedLlamaCppConfig {
     /// Executable path or command name for `llama-server`.
     pub command: String,
-    /// Model path/identifier passed to `llama-server --model`.
-    pub model: String,
+    /// Model source passed to `llama-server`.
+    pub model: ManagedLlamaCppModelConfig,
     /// Host passed to `llama-server --host`.
     pub host: String,
     /// Port passed to `llama-server --port`.
@@ -160,6 +160,62 @@ pub struct ManagedLlamaCppConfig {
     pub startup_timeout_seconds: u64,
     /// Maximum tokens to predict per completion call.
     pub n_predict: usize,
+}
+
+/// Managed llama.cpp model source.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ManagedLlamaCppModelConfig {
+    /// Local GGUF model path passed as `--model <path>`.
+    Path(String),
+    /// Hugging Face llama.cpp reference passed as `-hf <repo:quant>`.
+    HuggingFace(String),
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ManagedLlamaCppModelConfigDef {
+    #[serde(default)]
+    path: Option<String>,
+    #[serde(default)]
+    hf: Option<String>,
+}
+
+impl<'de> Deserialize<'de> for ManagedLlamaCppModelConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum ModelDef {
+            LocalPathString(String),
+            Source(ManagedLlamaCppModelConfigDef),
+        }
+
+        match ModelDef::deserialize(deserializer)? {
+            ModelDef::LocalPathString(path) => Ok(Self::Path(path)),
+            ModelDef::Source(def) => match (def.path, def.hf) {
+                (Some(path), None) => Ok(Self::Path(path)),
+                (None, Some(hf)) => Ok(Self::HuggingFace(hf)),
+                (Some(_), Some(_)) => Err(serde::de::Error::custom(
+                    "managed llama.cpp model must specify exactly one of path or hf",
+                )),
+                (None, None) => Err(serde::de::Error::custom(
+                    "managed llama.cpp model must specify path or hf",
+                )),
+            },
+        }
+    }
+}
+
+impl ManagedLlamaCppModelConfig {
+    /// User-facing model identity used in run metadata.
+    pub fn identity(&self) -> &str {
+        match self {
+            Self::Path(path) => path,
+            Self::HuggingFace(hf) => hf,
+        }
+    }
 }
 
 /// Telemetry output configuration.
@@ -257,8 +313,18 @@ fn validate_provider_tier(
             if llama.command.trim().is_empty() {
                 return Err(format!("{field}.managed.llama_cpp.command must be non-empty").into());
             }
-            if llama.model.trim().is_empty() {
-                return Err(format!("{field}.managed.llama_cpp.model must be non-empty").into());
+            match &llama.model {
+                ManagedLlamaCppModelConfig::Path(path) if path.trim().is_empty() => {
+                    return Err(
+                        format!("{field}.managed.llama_cpp.model.path must be non-empty").into(),
+                    );
+                }
+                ManagedLlamaCppModelConfig::HuggingFace(hf) if hf.trim().is_empty() => {
+                    return Err(
+                        format!("{field}.managed.llama_cpp.model.hf must be non-empty").into(),
+                    );
+                }
+                _ => {}
             }
             if llama.host.trim().is_empty() {
                 return Err(format!("{field}.managed.llama_cpp.host must be non-empty").into());
@@ -581,7 +647,8 @@ provider:
     managed:
       llama_cpp:
         command: "llama-server"
-        model: "models/coder.gguf"
+        model:
+          path: "models/coder.gguf"
         host: "127.0.0.1"
         port: 8080
         context_size: 8192
@@ -599,12 +666,49 @@ telemetry:
             panic!("managed provider config must parse");
         };
         assert_eq!(managed.llama_cpp.command, "llama-server");
-        assert_eq!(managed.llama_cpp.model, "models/coder.gguf");
+        assert_eq!(
+            managed.llama_cpp.model,
+            ManagedLlamaCppModelConfig::Path("models/coder.gguf".to_string())
+        );
         assert_eq!(managed.llama_cpp.host, "127.0.0.1");
         assert_eq!(managed.llama_cpp.port, 8080);
         assert_eq!(managed.llama_cpp.context_size, Some(8192));
         assert_eq!(managed.llama_cpp.startup_timeout_seconds, 45);
         assert_eq!(managed.llama_cpp.n_predict, 512);
+    }
+
+    const MANAGED_LLAMA_CPP_HF_YAML: &str = r#"
+objective: "test"
+artifact:
+  repo_path: ".forge/artifacts/main.git"
+  branch: "main"
+provider:
+  cheap:
+    managed:
+      llama_cpp:
+        command: "llama-server"
+        model:
+          hf: "lm-kit/qwen-3-8b-instruct-gguf:Q4_K_M"
+        host: "127.0.0.1"
+        port: 8080
+        n_predict: 512
+telemetry:
+  directory: "runs"
+"#;
+
+    #[test]
+    fn parses_managed_llama_cpp_hf_model_config() {
+        let tmp = TempYaml::new(MANAGED_LLAMA_CPP_HF_YAML);
+        let config = ForgeConfig::from_file(tmp.path()).unwrap();
+        let ProviderTierConfig::Managed(managed) = config.provider.cheap else {
+            panic!("managed provider config must parse");
+        };
+        assert_eq!(
+            managed.llama_cpp.model,
+            ManagedLlamaCppModelConfig::HuggingFace(
+                "lm-kit/qwen-3-8b-instruct-gguf:Q4_K_M".to_string()
+            )
+        );
     }
 
     const MIXED_PROVIDER_YAML: &str = r#"
@@ -621,7 +725,8 @@ provider:
     managed:
       llama_cpp:
         command: "/opt/llama.cpp/llama-server"
-        model: "models/coder.gguf"
+        model:
+          path: "models/coder.gguf"
         host: "127.0.0.1"
         port: 8080
         n_predict: 512
@@ -646,7 +751,8 @@ provider:
     managed:
       llama_cpp:
         command: "llama-server"
-        model: "models/coder.gguf"
+        model:
+          path: "models/coder.gguf"
         port: 8080
         n_predict: 512
 telemetry:
@@ -674,7 +780,8 @@ provider:
     managed:
       llama_cpp:
         command: " "
-        model: "models/coder.gguf"
+        model:
+          path: "models/coder.gguf"
         host: "127.0.0.1"
         port: 8080
         n_predict: 512

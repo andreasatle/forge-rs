@@ -4,15 +4,15 @@ use std::error::Error;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use crate::config::ManagedLlamaCppConfig;
+use crate::config::{ManagedLlamaCppConfig, ManagedLlamaCppModelConfig};
 
 /// Resolved managed llama.cpp server launch settings.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ManagedLlamaCppRuntimeConfig {
     /// Executable path or command name.
     pub command: String,
-    /// Model path/identifier passed to `llama-server --model`.
-    pub model: String,
+    /// Model source passed to `llama-server`.
+    pub model: ManagedLlamaCppModelConfig,
     /// HTTP base URL used by Forge provider clients.
     pub base_url: String,
     /// Host passed to `llama-server --host`.
@@ -43,9 +43,8 @@ impl ManagedProviderServer {
         }
 
         let mut command = Command::new(&config.command);
+        append_model_args(&mut command, &config.model);
         command
-            .arg("--model")
-            .arg(&config.model)
             .arg("--host")
             .arg(&config.host)
             .arg("--port")
@@ -120,6 +119,17 @@ pub fn resolve_llama_cpp_config(config: &ManagedLlamaCppConfig) -> ManagedLlamaC
     }
 }
 
+fn append_model_args(command: &mut Command, model: &ManagedLlamaCppModelConfig) {
+    match model {
+        ManagedLlamaCppModelConfig::Path(path) => {
+            command.arg("--model").arg(path);
+        }
+        ManagedLlamaCppModelConfig::HuggingFace(hf) => {
+            command.arg("-hf").arg(hf);
+        }
+    }
+}
+
 fn endpoint_ready(base_url: &str, timeout: Duration) -> bool {
     let agent = ureq::AgentBuilder::new().timeout(timeout).build();
     let url = format!("{}/health", normalize_base_url(base_url));
@@ -137,7 +147,7 @@ mod tests {
     fn managed_config() -> ManagedLlamaCppConfig {
         ManagedLlamaCppConfig {
             command: "llama-server".to_string(),
-            model: "model.gguf".to_string(),
+            model: ManagedLlamaCppModelConfig::Path("model.gguf".to_string()),
             host: "127.0.0.1".to_string(),
             port: 18080,
             context_size: Some(4096),
@@ -150,7 +160,10 @@ mod tests {
     fn resolves_port_to_local_base_url() {
         let resolved = resolve_llama_cpp_config(&managed_config());
         assert_eq!(resolved.command, "llama-server");
-        assert_eq!(resolved.model, "model.gguf");
+        assert_eq!(
+            resolved.model,
+            ManagedLlamaCppModelConfig::Path("model.gguf".to_string())
+        );
         assert_eq!(resolved.base_url, "http://127.0.0.1:18080");
         assert_eq!(resolved.host, "127.0.0.1");
         assert_eq!(resolved.port, 18080);
@@ -165,5 +178,35 @@ mod tests {
         assert_eq!(resolved.base_url, "http://localhost:18080");
         assert_eq!(resolved.host, "localhost");
         assert_eq!(resolved.port, 18080);
+    }
+
+    #[test]
+    fn local_model_uses_model_argument() {
+        let mut command = Command::new("llama-server");
+        append_model_args(
+            &mut command,
+            &ManagedLlamaCppModelConfig::Path("models/local.gguf".to_string()),
+        );
+        let args: Vec<_> = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(args, vec!["--model", "models/local.gguf"]);
+    }
+
+    #[test]
+    fn hf_model_uses_hf_argument() {
+        let mut command = Command::new("llama-server");
+        append_model_args(
+            &mut command,
+            &ManagedLlamaCppModelConfig::HuggingFace(
+                "lm-kit/qwen-3-8b-instruct-gguf:Q4_K_M".to_string(),
+            ),
+        );
+        let args: Vec<_> = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(args, vec!["-hf", "lm-kit/qwen-3-8b-instruct-gguf:Q4_K_M"]);
     }
 }

@@ -89,7 +89,8 @@ provider:
     managed:
       llama_cpp:
         command: "llama-server"
-        model: "models/qwen2.5-coder-7b-instruct.gguf"
+        model:
+          path: "models/qwen2.5-coder-7b-instruct.gguf"
         host: "127.0.0.1"
         port: 8080
         context_size: 8192       # optional

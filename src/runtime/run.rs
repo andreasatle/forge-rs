@@ -295,7 +295,7 @@ fn resolve_provider_tier(tier: &ProviderTierConfig, timeout_seconds: u64) -> Pro
             let config = resolve_managed_llama_cpp(managed);
             ProviderTierMetadata {
                 base_url: config.base_url.clone(),
-                model: config.model.clone(),
+                model: config.model.identity().to_string(),
                 n_predict: managed.llama_cpp.n_predict,
                 timeout_seconds,
                 managed: true,
@@ -588,7 +588,7 @@ mod tests {
         ProviderTierConfig::Managed(crate::config::ManagedProviderConfig {
             llama_cpp: crate::config::ManagedLlamaCppConfig {
                 command: command.to_string(),
-                model: model.to_string(),
+                model: crate::config::ManagedLlamaCppModelConfig::Path(model.to_string()),
                 host: host.to_string(),
                 port,
                 context_size,
