@@ -1,10 +1,14 @@
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 use serde::Deserialize;
 
 use crate::artifacts::file_ops::validate_relative_path;
-use crate::artifacts::{ArtifactError, ArtifactRead, ArtifactUpdate, FileChange};
+use crate::artifacts::{
+    ArtifactError, ArtifactRead, ArtifactUpdate, FileChange, Workspace, WorkspaceFileOps,
+};
 use crate::services::extract_json_object;
 
 /// Policy controlling what a [`FileToolExecutor`] may do.
@@ -116,9 +120,11 @@ enum OverlayEntry {
 /// disappears when the executor is consumed; only [`ArtifactUpdate`] survives.
 pub struct FileToolExecutor {
     view: Box<dyn ArtifactRead>,
+    workspace: Option<Rc<RefCell<Workspace>>>,
     update: ArtifactUpdate,
     policy: FileToolPolicy,
     overlay: HashMap<PathBuf, OverlayEntry>,
+    changed: bool,
 }
 
 impl FileToolExecutor {
@@ -132,14 +138,35 @@ impl FileToolExecutor {
     pub fn with_policy(view: impl ArtifactRead + 'static, policy: FileToolPolicy) -> Self {
         Self {
             view: Box::new(view),
+            workspace: None,
             update: ArtifactUpdate::default(),
             policy,
             overlay: HashMap::new(),
+            changed: false,
+        }
+    }
+
+    /// Creates an executor that writes directly into an attempt workspace.
+    pub fn with_workspace(
+        view: impl ArtifactRead + 'static,
+        workspace: Rc<RefCell<Workspace>>,
+        policy: FileToolPolicy,
+    ) -> Self {
+        Self {
+            view: Box::new(view),
+            workspace: Some(workspace),
+            update: ArtifactUpdate::default(),
+            policy,
+            overlay: HashMap::new(),
+            changed: false,
         }
     }
 
     /// Reads a file, consulting the overlay before falling back to the artifact view.
     fn overlay_read_content(&self, path: &str) -> Result<String, ArtifactError> {
+        if let Some(workspace) = &self.workspace {
+            return workspace.borrow().read_file(path);
+        }
         match self.overlay.get(Path::new(path)) {
             Some(OverlayEntry::Written(content)) => Ok(content.clone()),
             Some(OverlayEntry::Deleted) => Err(ArtifactError::FileNotFound),
@@ -150,6 +177,9 @@ impl FileToolExecutor {
     /// Lists files, overlaying pending writes (additions) and deletes (removals)
     /// on top of the committed artifact view.
     fn overlay_list_files(&self) -> Result<Vec<PathBuf>, ArtifactError> {
+        if let Some(workspace) = &self.workspace {
+            return Ok(workspace.borrow().list_files());
+        }
         let mut paths = self.view.list_files()?;
         for (overlay_path, entry) in &self.overlay {
             match entry {
@@ -250,11 +280,22 @@ impl FileToolExecutor {
                     return FileToolResponse::Failed { reason };
                 }
                 let description = format!("write {path}");
-                self.overlay
-                    .insert(PathBuf::from(&path), OverlayEntry::Written(content.clone()));
-                self.update
-                    .changes
-                    .push(FileChange::Write { path, content });
+                if let Some(workspace) = &self.workspace {
+                    match workspace.borrow_mut().write_file(&path, &content) {
+                        Ok(()) => self.changed = true,
+                        Err(e) => {
+                            return FileToolResponse::Failed {
+                                reason: e.to_string(),
+                            };
+                        }
+                    }
+                } else {
+                    self.overlay
+                        .insert(PathBuf::from(&path), OverlayEntry::Written(content.clone()));
+                    self.update
+                        .changes
+                        .push(FileChange::Write { path, content });
+                }
                 FileToolResponse::UpdateRecorded { description }
             }
 
@@ -306,12 +347,23 @@ impl FileToolExecutor {
                 updated.push_str(&content[..start]);
                 updated.push_str(&new);
                 updated.push_str(&content[start + old.len()..]);
-                self.overlay
-                    .insert(PathBuf::from(&path), OverlayEntry::Written(updated));
                 let description = format!("replace text in {path}");
-                self.update
-                    .changes
-                    .push(FileChange::Replace { path, old, new });
+                if let Some(workspace) = &self.workspace {
+                    match workspace.borrow_mut().write_file(&path, &updated) {
+                        Ok(()) => self.changed = true,
+                        Err(e) => {
+                            return FileToolResponse::Failed {
+                                reason: e.to_string(),
+                            };
+                        }
+                    }
+                } else {
+                    self.overlay
+                        .insert(PathBuf::from(&path), OverlayEntry::Written(updated));
+                    self.update
+                        .changes
+                        .push(FileChange::Replace { path, old, new });
+                }
                 FileToolResponse::UpdateRecorded { description }
             }
 
@@ -325,12 +377,28 @@ impl FileToolExecutor {
                     return FileToolResponse::Failed { reason };
                 }
                 let description = format!("delete {path}");
-                self.overlay
-                    .insert(PathBuf::from(&path), OverlayEntry::Deleted);
-                self.update.changes.push(FileChange::Delete { path });
+                if let Some(workspace) = &self.workspace {
+                    match workspace.borrow_mut().delete_file(&path) {
+                        Ok(()) => self.changed = true,
+                        Err(e) => {
+                            return FileToolResponse::Failed {
+                                reason: e.to_string(),
+                            };
+                        }
+                    }
+                } else {
+                    self.overlay
+                        .insert(PathBuf::from(&path), OverlayEntry::Deleted);
+                    self.update.changes.push(FileChange::Delete { path });
+                }
                 FileToolResponse::UpdateRecorded { description }
             }
         }
+    }
+
+    /// Returns whether this executor wrote to its backing state.
+    pub fn changed(&self) -> bool {
+        self.changed || !self.update.changes.is_empty()
     }
 
     /// Consumes the executor and returns all accumulated pending changes.

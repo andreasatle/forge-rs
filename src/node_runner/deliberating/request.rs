@@ -100,7 +100,7 @@ fn build_handler<'a, P: ProviderClient>(
             policy.clone(),
         )
     } else {
-        ProviderBackedDeliberationHandler::new_with_view(
+        ProviderBackedDeliberationHandler::new_with_work_attempt(
             provider,
             request.artifact_view.clone(),
             max_tokens,
@@ -108,6 +108,7 @@ fn build_handler<'a, P: ProviderClient>(
             policy.clone(),
             plan_validation_context,
             request.test_plan_context.clone(),
+            request.work_attempt.clone(),
         )
     }
 }

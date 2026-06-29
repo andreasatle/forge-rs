@@ -4,7 +4,10 @@
 //! parse JSON, retry on protocol failure. The deliberation layer above sees only
 //! `RoleRequest` in and `RoleResult` out.
 
-use crate::artifacts::{ArtifactRead, ArtifactUpdate};
+use std::cell::RefCell;
+use std::rc::Rc;
+
+use crate::artifacts::{ArtifactRead, ArtifactUpdate, Workspace};
 #[cfg(doc)]
 use crate::artifacts::{ArtifactView, StagedArtifactView};
 use crate::machines::deliberation::event::RoleResult;
@@ -29,7 +32,7 @@ use super::prompt::{
 };
 use super::protocol_state::ProtocolState;
 use super::tooling::{
-    ToolDispatchOutcome, dispatch_tool_step, extract_update, file_tool_policy_for_request,
+    ToolDispatchOutcome, dispatch_tool_step, extract_artifact_state, file_tool_policy_for_request,
 };
 
 #[cfg(test)]
@@ -47,6 +50,8 @@ pub struct RoleToolContext {
     /// May be a plain [`ArtifactView`] (for Producer) or a [`StagedArtifactView`]
     /// that includes the Producer's pending writes (for Critic and Referee).
     pub artifact_view: Box<dyn ArtifactRead>,
+    /// Optional live workspace for artifact-producing Work attempts.
+    pub writable_workspace: Option<Rc<RefCell<Workspace>>>,
 }
 
 impl std::fmt::Debug for RoleToolContext {
@@ -101,6 +106,8 @@ pub struct RoleRunOutput {
     /// provided. Non-empty changes are returned even on protocol failure so
     /// that callers can decide what to do with partial work.
     pub artifact_update: Option<ArtifactUpdate>,
+    /// Whether any file tool changed artifact state.
+    pub artifact_changed: bool,
 }
 
 /// Execute one role invocation end-to-end and return its result.
@@ -192,9 +199,13 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
             core_prompt.clone()
         };
 
-        let mut executor: Option<FileToolExecutor> = request
-            .tool_context
-            .map(|ctx| FileToolExecutor::with_policy(ctx.artifact_view, policy));
+        let mut executor: Option<FileToolExecutor> = request.tool_context.map(|ctx| {
+            if let Some(workspace) = ctx.writable_workspace {
+                FileToolExecutor::with_workspace(ctx.artifact_view, workspace, policy)
+            } else {
+                FileToolExecutor::with_policy(ctx.artifact_view, policy)
+            }
+        });
 
         let mut current_prompt = base_prompt.clone();
         // Accumulated observation sections, tracked separately so the prompt can be
@@ -245,12 +256,14 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                         }
                         ProviderErrorKind::Terminal => FailureKind::ProviderTerminalFailure,
                     };
+                    let (artifact_update, artifact_changed) = extract_artifact_state(&mut executor);
                     return RoleRunOutput {
                         result: RoleResult::Failed {
                             kind,
                             reason: format!("provider error ({:?}): {}", err.kind, err.message),
                         },
-                        artifact_update: extract_update(&mut executor),
+                        artifact_update,
+                        artifact_changed,
                     };
                 }
             };
@@ -282,9 +295,12 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                 ) {
                     ToolDispatchOutcome::Continue => continue,
                     ToolDispatchOutcome::Fail(result) => {
+                        let (artifact_update, artifact_changed) =
+                            extract_artifact_state(&mut executor);
                         return RoleRunOutput {
                             result,
-                            artifact_update: extract_update(&mut executor),
+                            artifact_update,
+                            artifact_changed,
                         };
                     }
                 }
@@ -307,9 +323,12 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                             ));
                             let canonical = serde_json::to_string(&planner_out)
                                 .expect("validated PlannerOutput must serialize");
+                            let (artifact_update, artifact_changed) =
+                                extract_artifact_state(&mut executor);
                             return RoleRunOutput {
                                 result: RoleResult::Accepted { content: canonical },
-                                artifact_update: extract_update(&mut executor),
+                                artifact_update,
+                                artifact_changed,
                             };
                         }
                         Err(e) => {
@@ -324,12 +343,15 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                                 },
                             ));
                             if !proto.allow_model_call() {
+                                let (artifact_update, artifact_changed) =
+                                    extract_artifact_state(&mut executor);
                                 return RoleRunOutput {
                                     result: RoleResult::Failed {
                                         kind: FailureKind::PlannerValidationFailure,
                                         reason: err,
                                     },
-                                    artifact_update: extract_update(&mut executor),
+                                    artifact_update,
+                                    artifact_changed,
                                 };
                             }
                             proto.record_protocol_failure();
@@ -355,12 +377,15 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                             },
                         ));
                         if !proto.allow_model_call() {
+                            let (artifact_update, artifact_changed) =
+                                extract_artifact_state(&mut executor);
                             return RoleRunOutput {
                                 result: RoleResult::Failed {
                                     kind: FailureKind::ProtocolFailure,
                                     reason: parse_error,
                                 },
-                                artifact_update: extract_update(&mut executor),
+                                artifact_update,
+                                artifact_changed,
                             };
                         }
                         proto.record_protocol_failure();
@@ -412,12 +437,15 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                             // cannot call tools and would only generate further protocol errors.
                             // Fail directly with a clear reason in that case.
                             if proto.reviewer_accept_must_fail_immediately() {
+                                let (artifact_update, artifact_changed) =
+                                    extract_artifact_state(&mut executor);
                                 return RoleRunOutput {
                                     result: RoleResult::Failed {
                                         kind: FailureKind::ProtocolFailure,
                                         reason: parse_error,
                                     },
-                                    artifact_update: extract_update(&mut executor),
+                                    artifact_update,
+                                    artifact_changed,
                                 };
                             }
                             proto.record_protocol_failure();
@@ -440,9 +468,12 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                                 attempt_count: proto.current_attempt(),
                             },
                         ));
+                        let (artifact_update, artifact_changed) =
+                            extract_artifact_state(&mut executor);
                         return RoleRunOutput {
                             result,
-                            artifact_update: extract_update(&mut executor),
+                            artifact_update,
+                            artifact_changed,
                         };
                     }
                     Err(parse_error) => {
@@ -473,12 +504,15 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                             } else {
                                 effective_error
                             };
+                            let (artifact_update, artifact_changed) =
+                                extract_artifact_state(&mut executor);
                             return RoleRunOutput {
                                 result: RoleResult::Failed {
                                     kind: FailureKind::ProtocolFailure,
                                     reason: terminal_reason,
                                 },
-                                artifact_update: extract_update(&mut executor),
+                                artifact_update,
+                                artifact_changed,
                             };
                         }
                         proto.record_protocol_failure();

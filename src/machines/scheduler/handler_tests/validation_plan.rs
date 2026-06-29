@@ -58,6 +58,7 @@ fn integration_executes_nodes_passing_validation_plan() {
         work: WorkOutput {
             summary: "wrote output.txt".to_string(),
         },
+        attempt: 0,
         target_files: vec![],
         validation_plan: Some(passing_plan()),
     });
@@ -102,6 +103,7 @@ fn integration_executes_nodes_failing_validation_plan() {
         work: WorkOutput {
             summary: "wrote output.txt".to_string(),
         },
+        attempt: 0,
         target_files: vec![],
         validation_plan: Some(failing_plan()),
     });
@@ -164,6 +166,7 @@ fn integration_executes_validation_plan_with_target_file_scope() {
         work: WorkOutput {
             summary: "wrote scoped.py".to_string(),
         },
+        attempt: 0,
         target_files: vec!["scoped.py".to_string()],
         validation_plan: Some(plan),
     });
@@ -219,6 +222,7 @@ fn preconditioned_step_skipped_when_file_absent() {
         work: WorkOutput {
             summary: "wrote output.txt".to_string(),
         },
+        attempt: 0,
         target_files: vec![],
         validation_plan: Some(guarded_failing_plan),
     });

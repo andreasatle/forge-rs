@@ -19,11 +19,22 @@ impl<R: RoleRunner> DeliberationHandler<R> {
             config,
             telemetry,
             || {
-                self.artifact_view.as_ref().map(|base| RoleToolContext {
-                    artifact_view: Box::new(base.clone()),
-                })
+                if let Some(attempt) = &self.work_attempt {
+                    Some(RoleToolContext {
+                        artifact_view: Box::new(attempt.workspace.clone()),
+                        writable_workspace: Some(attempt.workspace.clone()),
+                    })
+                } else {
+                    self.artifact_view.as_ref().map(|base| RoleToolContext {
+                        artifact_view: Box::new(base.clone()),
+                        writable_workspace: None,
+                    })
+                }
             },
-            |output| match validate_work_output(output.artifact_update.as_ref()) {
+            |output| match validate_work_output(
+                output.artifact_update.as_ref(),
+                output.artifact_changed,
+            ) {
                 Ok(()) => ProducerSemanticValidationDecision::Valid,
                 Err(e) => ProducerSemanticValidationDecision::Retry(ValidationRetry {
                     feedback_reason: work_validation_feedback(&e),

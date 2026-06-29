@@ -23,14 +23,16 @@ pub(super) enum ToolDispatchOutcome {
     Fail(RoleResult),
 }
 
-/// Consumes the executor and returns its pending update, or `None` when empty.
-pub(super) fn extract_update(executor: &mut Option<FileToolExecutor>) -> Option<ArtifactUpdate> {
-    executor.take().and_then(|e| {
+pub(super) fn extract_artifact_state(
+    executor: &mut Option<FileToolExecutor>,
+) -> (Option<ArtifactUpdate>, bool) {
+    executor.take().map_or((None, false), |e| {
+        let changed = e.changed();
         let update = e.into_update();
         if update.changes.is_empty() {
-            None
+            (None, changed)
         } else {
-            Some(update)
+            (Some(update), changed)
         }
     })
 }

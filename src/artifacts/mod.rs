@@ -16,6 +16,7 @@ pub use file_ops::{ArtifactError, WorkspaceFileOps};
 pub use integration::{IntegrationError, integrate};
 pub use staged::{ArtifactRead, StagedArtifactView, StagedEntry};
 pub use update::{ArtifactUpdate, FileChange};
+pub(crate) use workspace::git_command;
 pub use workspace::{Workspace, create_temporary_workspace, create_workspace};
 
 #[cfg(test)]

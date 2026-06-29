@@ -126,6 +126,7 @@ fn plan_request(objective: &str) -> NodeRunRequest {
         model_tier: ModelTier::Cheap,
         attempt: 0,
         artifact_view: None,
+        work_attempt: None,
     }
 }
 
@@ -138,6 +139,7 @@ fn work_request(objective: &str) -> NodeRunRequest {
         model_tier: ModelTier::Cheap,
         attempt: 0,
         artifact_view: None,
+        work_attempt: None,
     }
 }
 
@@ -150,6 +152,7 @@ fn strong_work_request(objective: &str) -> NodeRunRequest {
         model_tier: ModelTier::Strong,
         attempt: 0,
         artifact_view: None,
+        work_attempt: None,
     }
 }
 
@@ -234,6 +237,7 @@ fn work_request_with_artifact(objective: &str, temp: &TempDir) -> NodeRunRequest
         model_tier: ModelTier::Cheap,
         attempt: 0,
         artifact_view: Some(make_artifact_view(temp, "hello.txt", "world\n")),
+        work_attempt: None,
     }
 }
 
@@ -246,6 +250,7 @@ fn strong_work_request_with_artifact(objective: &str, temp: &TempDir) -> NodeRun
         model_tier: ModelTier::Strong,
         attempt: 0,
         artifact_view: Some(make_artifact_view(temp, "hello.txt", "world\n")),
+        work_attempt: None,
     }
 }
 

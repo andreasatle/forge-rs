@@ -22,6 +22,7 @@ fn fast_plan_bypasses_provider_and_emits_telemetry() {
             model_tier: ModelTier::Cheap,
             attempt: 0,
             artifact_view: None,
+            work_attempt: None,
         },
         &telemetry,
     );
@@ -72,6 +73,7 @@ fn fast_plan_with_tests_required_adds_test_task_and_emits_telemetry() {
             model_tier: ModelTier::Cheap,
             attempt: 0,
             artifact_view: None,
+            work_attempt: None,
         },
         &telemetry,
     );
@@ -134,6 +136,7 @@ fn multi_file_objective_falls_through_to_llm_planner() {
             model_tier: ModelTier::Cheap,
             attempt: 0,
             artifact_view: None,
+            work_attempt: None,
         },
         &NoopTelemetry,
     );

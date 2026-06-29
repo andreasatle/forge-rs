@@ -18,7 +18,7 @@ pub mod types;
 
 pub use deliberating::DeliberatingNodeRunner;
 pub use runner::{NodeRunner, StaticNodeRunner};
-pub use types::{NodeRunRequest, NodeRunResult, NodeRunWorkResult};
+pub use types::{NodeRunRequest, NodeRunResult, NodeRunWorkResult, WorkAttempt};
 
 /// Shared type for the adapter-provided test-target derivation function.
 ///

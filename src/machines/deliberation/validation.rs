@@ -121,7 +121,11 @@ impl std::fmt::Display for WorkSemanticValidationError {
 
 pub(super) fn validate_work_output(
     artifact_update: Option<&ArtifactUpdate>,
+    artifact_changed: bool,
 ) -> Result<(), WorkSemanticValidationError> {
+    if artifact_changed {
+        return Ok(());
+    }
     match artifact_update {
         None => Err(WorkSemanticValidationError::MissingArtifactUpdate),
         Some(update) if update.changes.is_empty() => {

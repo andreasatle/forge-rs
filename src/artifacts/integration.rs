@@ -1,7 +1,6 @@
 use std::fmt;
-use std::process::Command;
 
-use super::{Artifact, Workspace};
+use super::{Artifact, Workspace, git_command};
 
 /// Errors that can occur while committing and pushing a workspace to the artifact repository.
 #[derive(Debug)]
@@ -128,7 +127,7 @@ fn push_with_lease(
         "--force-with-lease=refs/heads/{}:{}",
         artifact.branch, workspace.base_commit
     );
-    let push = Command::new("git")
+    let push = git_command()
         .args(["push", "--quiet", &lease_arg])
         .arg(&artifact.repo_path)
         .arg(&branch_ref)
@@ -164,7 +163,7 @@ fn push_with_lease(
 fn read_branch_tip(artifact: &Artifact) -> Result<String, IntegrationError> {
     let refname = format!("refs/heads/{}", artifact.branch);
     let op = format!("rev-parse {refname}");
-    let output = Command::new("git")
+    let output = git_command()
         .args(["rev-parse", &refname])
         .current_dir(&artifact.repo_path)
         .output()
@@ -188,7 +187,7 @@ fn read_branch_tip(artifact: &Artifact) -> Result<String, IntegrationError> {
 
 fn check_bare_repository(artifact: &Artifact) -> Result<(), IntegrationError> {
     let op = "rev-parse --is-bare-repository".to_owned();
-    let output = Command::new("git")
+    let output = git_command()
         .args(["rev-parse", "--is-bare-repository"])
         .current_dir(&artifact.repo_path)
         .output()
@@ -218,7 +217,7 @@ fn check_bare_repository(artifact: &Artifact) -> Result<(), IntegrationError> {
 
 fn run_git(workspace: &Workspace, args: &[&str]) -> Result<(), IntegrationError> {
     let op = args.join(" ");
-    let output = Command::new("git")
+    let output = git_command()
         .args(args)
         .current_dir(workspace.path())
         .output()
@@ -237,7 +236,7 @@ fn run_git(workspace: &Workspace, args: &[&str]) -> Result<(), IntegrationError>
 
 fn git_stdout(workspace: &Workspace, args: &[&str]) -> Result<String, IntegrationError> {
     let op = args.join(" ");
-    let output = Command::new("git")
+    let output = git_command()
         .args(args)
         .current_dir(workspace.path())
         .output()

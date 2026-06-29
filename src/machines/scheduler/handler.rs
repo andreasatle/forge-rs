@@ -168,7 +168,7 @@ impl<R: NodeRunner> Machine for SchedulerHandler<R> {
                 attempt,
             } => {
                 let command = RunNodeDispatch {
-                    node_id,
+                    node_id: node_id.clone(),
                     kind,
                     objective,
                     target_files,
@@ -176,27 +176,53 @@ impl<R: NodeRunner> Machine for SchedulerHandler<R> {
                     model_tier,
                     attempt,
                 };
+                let work_attempt = if command.kind == crate::machines::scheduler::NodeKind::Work {
+                    self.integration
+                        .prepare_work_attempt(command.node_id.clone(), command.attempt)
+                } else {
+                    None
+                };
                 let result = dispatch_run_node(
                     &self.runner,
                     self.telemetry.as_ref(),
                     command,
                     self.integration.artifact(),
+                    work_attempt.clone(),
                 );
-                if let SchedulerEvent::NodeReturned { node_id, .. } = &result.event
-                    && let Some(update) = result.artifact_update
+                if let (Some(attempt), Some(update)) = (&work_attempt, result.artifact_update)
+                    && let Err(err) = update.apply(&mut attempt.workspace.borrow_mut())
                 {
-                    self.integration.stage_update(node_id.clone(), update);
+                    self.integration.record_work_attempt_failure(
+                        &node_id,
+                        attempt.attempt,
+                        format!("artifact update apply error: {err}"),
+                    );
+                }
+                if let SchedulerEvent::NodeReturned { node_id, outcome } = &result.event
+                    && !matches!(
+                        outcome,
+                        crate::machines::scheduler::NodeOutcome::WorkAccepted(_)
+                    )
+                    && let Some(attempt) = work_attempt
+                {
+                    self.integration
+                        .discard_work_attempt(node_id, attempt.attempt);
                 }
                 result.event
             }
             SchedulerEffect::IntegrateWork {
                 node_id,
                 work,
+                attempt,
                 target_files,
                 validation_plan,
-            } => self
-                .integration
-                .integrate_work(node_id, work, target_files, validation_plan),
+            } => self.integration.integrate_work(
+                node_id,
+                work,
+                attempt,
+                target_files,
+                validation_plan,
+            ),
             SchedulerEffect::ReturnComplete { .. } | SchedulerEffect::ReturnFailed { .. } => {
                 unreachable!("return effects are never dispatched to the effect handler")
             }

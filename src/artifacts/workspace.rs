@@ -13,9 +13,31 @@ use super::Artifact;
 #[derive(Debug)]
 pub struct Workspace {
     path: PathBuf,
-    _cleanup: Option<TempDir>,
+    _cleanup: Option<WorkspaceCleanup>,
     /// Commit from which the workspace was created.
     pub base_commit: String,
+}
+
+#[derive(Debug)]
+enum WorkspaceCleanup {
+    GitWorktree {
+        _temp: TempDir,
+        repo_path: PathBuf,
+        path: PathBuf,
+    },
+}
+
+impl Drop for WorkspaceCleanup {
+    fn drop(&mut self) {
+        let WorkspaceCleanup::GitWorktree {
+            repo_path, path, ..
+        } = self;
+        let _ = git_command()
+            .args(["worktree", "remove", "--force"])
+            .arg(path)
+            .current_dir(repo_path)
+            .output();
+    }
 }
 
 impl Workspace {
@@ -46,23 +68,46 @@ pub fn create_workspace(artifact: &Artifact, workspace_path: PathBuf) -> Workspa
     Workspace::at_path(workspace_path, artifact.commit_sha.clone())
 }
 
-/// Creates a mutable clone in a freshly allocated temporary directory.
+/// Creates a detached git worktree in a freshly allocated temporary directory.
 ///
-/// The directory is deleted automatically when the returned [`Workspace`] is
-/// dropped. Even if apply, validation, or integration fails, the directory is
-/// removed as long as the `Workspace` value is dropped.
+/// The worktree is removed and the temporary parent directory is deleted when
+/// the returned [`Workspace`] is dropped. Even if validation or integration
+/// fails, the directory is removed as long as the `Workspace` value is dropped.
 pub fn create_temporary_workspace(artifact: &Artifact) -> Result<Workspace, Box<dyn Error>> {
     let temp = TempDir::new()?;
-    git_clone_artifact(artifact, temp.path())?;
+    let workspace_path = temp.path().join("worktree");
+    git_worktree_artifact(artifact, &workspace_path)?;
     Ok(Workspace {
-        path: temp.path().to_path_buf(),
-        _cleanup: Some(temp),
+        path: workspace_path.clone(),
+        _cleanup: Some(WorkspaceCleanup::GitWorktree {
+            _temp: temp,
+            repo_path: artifact.repo_path.clone(),
+            path: workspace_path,
+        }),
         base_commit: artifact.commit_sha.clone(),
     })
 }
 
+fn git_worktree_artifact(artifact: &Artifact, workspace_path: &Path) -> Result<(), Box<dyn Error>> {
+    let add = git_command()
+        .args(["worktree", "add", "--quiet", "--detach"])
+        .arg(workspace_path)
+        .arg(&artifact.commit_sha)
+        .current_dir(&artifact.repo_path)
+        .output()
+        .map_err(|e| format!("failed to run git worktree add: {e}"))?;
+    if !add.status.success() {
+        return Err(format!(
+            "git worktree add failed while creating workspace: {}",
+            String::from_utf8_lossy(&add.stderr).trim()
+        )
+        .into());
+    }
+    Ok(())
+}
+
 fn git_clone_artifact(artifact: &Artifact, workspace_path: &Path) -> Result<(), Box<dyn Error>> {
-    let clone = Command::new("git")
+    let clone = git_command()
         .args(["clone", "--quiet", "--no-checkout"])
         .arg(&artifact.repo_path)
         .arg(workspace_path)
@@ -76,7 +121,7 @@ fn git_clone_artifact(artifact: &Artifact, workspace_path: &Path) -> Result<(), 
         .into());
     }
 
-    let checkout = Command::new("git")
+    let checkout = git_command()
         .args(["checkout", "--quiet", "--detach"])
         .arg(&artifact.commit_sha)
         .current_dir(workspace_path)
@@ -91,4 +136,14 @@ fn git_clone_artifact(artifact: &Artifact, workspace_path: &Path) -> Result<(), 
     }
 
     Ok(())
+}
+
+pub(crate) fn git_command() -> Command {
+    let mut command = Command::new("git");
+    command
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
+        .env_remove("GIT_PREFIX");
+    command
 }

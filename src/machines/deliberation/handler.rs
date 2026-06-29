@@ -9,6 +9,7 @@ use std::cell::RefCell;
 
 use crate::artifacts::{ArtifactView, FileChange};
 use crate::machines::scheduler::{NodeKind, TestPlanContext};
+use crate::node_runner::WorkAttempt;
 use crate::roles::policy::RolePolicy;
 use crate::roles::runner::ProviderRoleRunner;
 
@@ -36,6 +37,8 @@ pub struct DeliberationHandler<R> {
     pub(crate) runner: R,
     /// Artifact view made available to roles as file tool context.
     pub(crate) artifact_view: Option<ArtifactView>,
+    /// Live candidate workspace for artifact-producing Work.
+    pub(crate) work_attempt: Option<WorkAttempt>,
     /// Whether this deliberation is for a plan node or a work node.
     /// Forwarded to every Producer RoleRequest to select the correct policy field.
     pub(crate) node_kind: NodeKind,
@@ -64,6 +67,7 @@ impl<P> DeliberationHandler<ProviderRoleRunner<P>> {
         Self {
             runner: ProviderRoleRunner::new(provider),
             artifact_view: None,
+            work_attempt: None,
             node_kind: NodeKind::Work,
             work_requires_artifact_update: false,
             test_plan_context: TestPlanContext::default(),
@@ -82,6 +86,7 @@ impl<P> DeliberationHandler<ProviderRoleRunner<P>> {
             runner: ProviderRoleRunner::new_with_max_tokens(provider, max_tokens)
                 .with_policy(policy),
             artifact_view: None,
+            work_attempt: None,
             node_kind: NodeKind::Work,
             work_requires_artifact_update: false,
             test_plan_context: TestPlanContext::default(),
@@ -95,6 +100,7 @@ impl<P> DeliberationHandler<ProviderRoleRunner<P>> {
     /// used to select the matching plan/work system prompt from the policy,
     /// the role policy to inject into the runner, and an optional context used
     /// to reject planner tasks that violate structured plan rules.
+    #[cfg(test)]
     pub(crate) fn new_with_view(
         provider: P,
         artifact_view: Option<ArtifactView>,
@@ -103,6 +109,29 @@ impl<P> DeliberationHandler<ProviderRoleRunner<P>> {
         policy: RolePolicy,
         plan_validation_context: Option<PlanValidationContext>,
         test_plan_context: TestPlanContext,
+    ) -> Self {
+        Self::new_with_work_attempt(
+            provider,
+            artifact_view,
+            max_tokens,
+            node_kind,
+            policy,
+            plan_validation_context,
+            test_plan_context,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new_with_work_attempt(
+        provider: P,
+        artifact_view: Option<ArtifactView>,
+        max_tokens: u32,
+        node_kind: NodeKind,
+        policy: RolePolicy,
+        plan_validation_context: Option<PlanValidationContext>,
+        test_plan_context: TestPlanContext,
+        work_attempt: Option<WorkAttempt>,
     ) -> Self {
         assert!(
             node_kind != NodeKind::Work || artifact_view.is_some(),
@@ -113,6 +142,7 @@ impl<P> DeliberationHandler<ProviderRoleRunner<P>> {
             runner: ProviderRoleRunner::new_with_max_tokens(provider, max_tokens)
                 .with_policy(policy),
             artifact_view,
+            work_attempt,
             work_requires_artifact_update: node_kind == NodeKind::Work,
             test_plan_context,
             node_kind,

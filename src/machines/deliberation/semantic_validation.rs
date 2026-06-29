@@ -41,16 +41,24 @@ impl<R: RoleRunner> DeliberationHandler<R> {
     ) -> DeliberationEvent {
         let mut feedback = config.initial_feedback;
         let base_target_views: Vec<TargetView> = if self.node_kind == NodeKind::Work {
-            self.artifact_view
-                .as_ref()
-                .map(|base| {
-                    crate::project::build_file_text_target_views(
-                        base,
-                        &config.target_files,
-                        TARGET_VIEW_BUDGET,
-                    )
-                })
-                .unwrap_or_default()
+            if let Some(attempt) = &self.work_attempt {
+                crate::project::build_file_text_target_views(
+                    &attempt.workspace,
+                    &config.target_files,
+                    TARGET_VIEW_BUDGET,
+                )
+            } else {
+                self.artifact_view
+                    .as_ref()
+                    .map(|base| {
+                        crate::project::build_file_text_target_views(
+                            base,
+                            &config.target_files,
+                            TARGET_VIEW_BUDGET,
+                        )
+                    })
+                    .unwrap_or_default()
+            }
         } else {
             vec![]
         };

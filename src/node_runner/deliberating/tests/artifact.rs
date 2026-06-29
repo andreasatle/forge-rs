@@ -24,6 +24,7 @@ fn deliberating_work_result_includes_tool_artifact_update() {
         model_tier: ModelTier::Cheap,
         attempt: 0,
         artifact_view: Some(view),
+        work_attempt: None,
     };
     let result = runner.run_node(request, &NoopTelemetry);
 
@@ -73,6 +74,7 @@ fn reviewer_can_read_staged_target_file_with_relative_path() {
         model_tier: ModelTier::Cheap,
         attempt: 0,
         artifact_view: Some(view),
+        work_attempt: None,
     };
 
     let result = runner.run_node(request, &NoopTelemetry);

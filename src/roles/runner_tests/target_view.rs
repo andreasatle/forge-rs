@@ -23,6 +23,7 @@ fn producer_prompt_for_targets(
             node_kind: NodeKind::Work,
             tool_context: Some(RoleToolContext {
                 artifact_view: Box::new(view),
+                writable_workspace: None,
             }),
         },
         &crate::telemetry::NoopTelemetry,

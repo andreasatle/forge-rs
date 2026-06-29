@@ -34,6 +34,7 @@ impl ScriptedRoleRunner {
                     .map(|result| RoleRunOutput {
                         result,
                         artifact_update: None,
+                        artifact_changed: false,
                     })
                     .collect(),
             ),
@@ -153,6 +154,7 @@ fn role_output(result: RoleResult, artifact_update: Option<ArtifactUpdate>) -> R
     RoleRunOutput {
         result,
         artifact_update,
+        artifact_changed: false,
     }
 }
 
@@ -205,6 +207,7 @@ fn deliberation_handler_delegates_run_role_to_role_runner() {
     let handler = DeliberationHandler {
         runner,
         artifact_view: None,
+        work_attempt: None,
         node_kind: NodeKind::Work,
         work_requires_artifact_update: false,
         test_plan_context: TestPlanContext::default(),
@@ -246,6 +249,7 @@ fn structured_targets_flow_to_worker_role_request() {
     let handler = DeliberationHandler {
         runner,
         artifact_view: None,
+        work_attempt: None,
         node_kind: NodeKind::Work,
         work_requires_artifact_update: false,
         test_plan_context: TestPlanContext::default(),
@@ -358,6 +362,7 @@ fn planner_handler_passes_no_tool_context_for_plan_nodes() {
     let handler = DeliberationHandler {
         runner,
         artifact_view: Some(dummy_view()),
+        work_attempt: None,
         node_kind: NodeKind::Plan,
         work_requires_artifact_update: false,
         test_plan_context: TestPlanContext::default(),
@@ -390,6 +395,7 @@ fn worker_handler_passes_tool_context_when_view_available() {
     let handler = DeliberationHandler {
         runner,
         artifact_view: Some(dummy_view()),
+        work_attempt: None,
         node_kind: NodeKind::Work,
         work_requires_artifact_update: true,
         test_plan_context: TestPlanContext::default(),
@@ -421,6 +427,7 @@ fn planner_handler_no_tool_context_without_view() {
     let handler = DeliberationHandler {
         runner,
         artifact_view: None,
+        work_attempt: None,
         node_kind: NodeKind::Plan,
         work_requires_artifact_update: false,
         test_plan_context: TestPlanContext::default(),
@@ -453,6 +460,7 @@ fn handler_with_validation(results: Vec<RoleResult>) -> DeliberationHandler<Scri
     DeliberationHandler {
         runner: ScriptedRoleRunner::new(results),
         artifact_view: None,
+        work_attempt: None,
         node_kind: NodeKind::Plan,
         work_requires_artifact_update: false,
         test_plan_context: TestPlanContext::default(),
@@ -471,6 +479,7 @@ fn handler_with_work_validation(
     DeliberationHandler {
         runner: ScriptedRoleRunner::with_outputs(outputs),
         artifact_view: Some(dummy_view()),
+        work_attempt: None,
         node_kind: NodeKind::Work,
         work_requires_artifact_update: true,
         test_plan_context: TestPlanContext::default(),
@@ -1042,6 +1051,7 @@ impl RoleRunner for ScriptedRoleRunnerWithUpdates {
         RoleRunOutput {
             result,
             artifact_update,
+            artifact_changed: false,
         }
     }
 }
@@ -1052,6 +1062,7 @@ fn staged_handler(
     DeliberationHandler {
         runner: ScriptedRoleRunnerWithUpdates::new(responses),
         artifact_view: Some(dummy_view()),
+        work_attempt: None,
         node_kind: NodeKind::Work,
         work_requires_artifact_update: true,
         test_plan_context: TestPlanContext::default(),

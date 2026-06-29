@@ -3,7 +3,7 @@
 use crate::artifacts::{Artifact, ArtifactUpdate, ArtifactView};
 use crate::machines::scheduler::event::{NodeOutcome, SchedulerEvent};
 use crate::machines::scheduler::state::{ModelTier, NodeId, NodeKind, TestPlanContext};
-use crate::node_runner::{NodeRunRequest, NodeRunResult, NodeRunner};
+use crate::node_runner::{NodeRunRequest, NodeRunResult, NodeRunner, WorkAttempt};
 use crate::telemetry::{ConsoleTelemetry, TelemetrySink};
 
 pub(crate) struct RunNodeDispatch {
@@ -26,6 +26,7 @@ pub(crate) fn dispatch_run_node<R: NodeRunner>(
     telemetry: &dyn TelemetrySink,
     command: RunNodeDispatch,
     artifact_snapshot: Option<Artifact>,
+    work_attempt: Option<WorkAttempt>,
 ) -> DispatchResult {
     eprintln!(
         "[scheduler] dispatch {} {:?}",
@@ -49,10 +50,10 @@ pub(crate) fn dispatch_run_node<R: NodeRunner>(
         model_tier: command.model_tier,
         attempt: command.attempt,
         artifact_view,
+        work_attempt,
     };
     let console_tel = ConsoleTelemetry::new(telemetry, label);
     let result = runner.run_node(request, &console_tel);
-
     let artifact_update = match &result {
         NodeRunResult::WorkAccepted(work_result) => work_result.artifact_update.clone(),
         _ => None,

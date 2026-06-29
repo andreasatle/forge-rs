@@ -61,6 +61,7 @@ fn scheduler_handler_maps_integration_error_to_failed_outcome() {
         work: WorkOutput {
             summary: "wrote output.txt".to_string(),
         },
+        attempt: 0,
         target_files: vec![],
         validation_plan: None,
     });
@@ -119,6 +120,7 @@ fn scheduler_handler_maps_integration_conflict_to_failed_outcome() {
         work: WorkOutput {
             summary: "wrote cas-output.txt".to_string(),
         },
+        attempt: 0,
         target_files: vec![],
         validation_plan: None,
     });

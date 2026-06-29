@@ -1,6 +1,9 @@
 //! Request and result types for the NodeRunner boundary.
 
-use crate::artifacts::{ArtifactUpdate, ArtifactView};
+use std::cell::RefCell;
+use std::rc::Rc;
+
+use crate::artifacts::{ArtifactUpdate, ArtifactView, Workspace};
 use crate::machines::scheduler::{
     ModelTier, NodeFailure, NodeKind, PlanOutput, TestPlanContext, WorkOutput,
 };
@@ -27,6 +30,21 @@ pub struct NodeRunRequest {
     /// When present, runners may use file listings and content as context for
     /// deliberation. Absence means no artifact is associated with this node.
     pub artifact_view: Option<ArtifactView>,
+    /// Attempt-local artifact workspace for live artifact-producing Work.
+    ///
+    /// Producer tools mutate this workspace directly. Reviewer tools read the
+    /// same workspace. Integration is responsible for validating and
+    /// publishing it.
+    pub work_attempt: Option<WorkAttempt>,
+}
+
+/// Candidate artifact state for one Work node attempt.
+#[derive(Clone)]
+pub struct WorkAttempt {
+    /// Zero-based scheduler attempt number this workspace belongs to.
+    pub attempt: u32,
+    /// Mutable checkout owned by the attempt.
+    pub workspace: Rc<RefCell<Workspace>>,
 }
 
 /// The output of a completed work node, paired with any artifact changes it produced.

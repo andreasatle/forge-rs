@@ -90,6 +90,7 @@ mod tests {
             model_tier: ModelTier::Cheap,
             attempt: 0,
             artifact_view: None,
+            work_attempt: None,
         }
     }
 
@@ -102,6 +103,7 @@ mod tests {
             model_tier: ModelTier::Cheap,
             attempt: 0,
             artifact_view: None,
+            work_attempt: None,
         }
     }
 
@@ -115,6 +117,7 @@ mod tests {
             model_tier: ModelTier::Strong,
             attempt: 2,
             artifact_view: None,
+            work_attempt: None,
         };
         assert_eq!(req.kind, NodeKind::Work);
         assert_eq!(req.objective, "test objective");
@@ -136,6 +139,7 @@ mod tests {
             model_tier: ModelTier::Cheap,
             attempt: 0,
             artifact_view: Some(view),
+            work_attempt: None,
         };
         let stored = req.artifact_view.expect("artifact_view should be Some");
         assert_eq!(stored.commit_sha, "deadbeef");

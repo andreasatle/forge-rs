@@ -21,7 +21,13 @@ impl<R> DeliberationHandler<R> {
         };
 
         let view: Box<dyn ArtifactRead> = match role {
+            DeliberationRole::Producer if self.work_attempt.is_some() => {
+                Box::new(self.work_attempt.as_ref().unwrap().workspace.clone())
+            }
             DeliberationRole::Producer => Box::new(base.clone()),
+            DeliberationRole::Critic | DeliberationRole::Referee if self.work_attempt.is_some() => {
+                Box::new(self.work_attempt.as_ref().unwrap().workspace.clone())
+            }
             DeliberationRole::Critic | DeliberationRole::Referee => {
                 let changes = self.accumulated_update.borrow().clone();
                 let update = ArtifactUpdate { changes };
@@ -35,6 +41,13 @@ impl<R> DeliberationHandler<R> {
         Ok((
             Some(RoleToolContext {
                 artifact_view: view,
+                writable_workspace: match role {
+                    DeliberationRole::Producer => self
+                        .work_attempt
+                        .as_ref()
+                        .map(|attempt| attempt.workspace.clone()),
+                    DeliberationRole::Critic | DeliberationRole::Referee => None,
+                },
             }),
             target_views,
         ))

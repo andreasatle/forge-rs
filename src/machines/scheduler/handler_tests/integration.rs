@@ -231,6 +231,7 @@ fn integrate_work_commits_pending_artifact_update() {
         work: WorkOutput {
             summary: "wrote output.txt".to_string(),
         },
+        attempt: 0,
         target_files: vec![],
         validation_plan: None,
     });
@@ -279,6 +280,7 @@ fn artifact_update_apply_failure_returns_integration_failure() {
         work: WorkOutput {
             summary: "done".to_string(),
         },
+        attempt: 0,
         target_files: vec![],
         validation_plan: None,
     });
@@ -329,6 +331,7 @@ fn second_work_node_sees_first_only_after_integration() {
         work: WorkOutput {
             summary: "wrote step1.txt".to_string(),
         },
+        attempt: 0,
         target_files: vec![],
         validation_plan: None,
     });
@@ -369,6 +372,7 @@ fn work_node_without_update_integrates_without_commit() {
         work: WorkOutput {
             summary: "completed".to_string(),
         },
+        attempt: 0,
         target_files: vec![],
         validation_plan: None,
     });

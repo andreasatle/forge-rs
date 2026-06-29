@@ -1,8 +1,11 @@
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
+use super::Workspace;
 use super::artifact::ArtifactView;
-use super::file_ops::{ArtifactError, validate_relative_path};
+use super::file_ops::{ArtifactError, WorkspaceFileOps, validate_relative_path};
 use super::update::{ArtifactUpdate, FileChange};
 
 /// Read-only interface for artifact file access.
@@ -37,6 +40,17 @@ impl ArtifactRead for ArtifactView {
 
     fn list_files(&self) -> Result<Vec<PathBuf>, ArtifactError> {
         ArtifactView::list_files(self)
+    }
+}
+
+/// Read committed files from an attempt workspace.
+impl ArtifactRead for Rc<RefCell<Workspace>> {
+    fn read_file(&self, path: &str) -> Result<String, ArtifactError> {
+        self.borrow().read_file(path)
+    }
+
+    fn list_files(&self) -> Result<Vec<PathBuf>, ArtifactError> {
+        Ok(self.borrow().list_files())
     }
 }
 

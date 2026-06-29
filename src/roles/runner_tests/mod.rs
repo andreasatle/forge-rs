@@ -222,6 +222,7 @@ fn plan_request(objective: &str) -> RoleRequest {
 fn with_tool_context(mut request: RoleRequest, view: ArtifactView) -> RoleRequest {
     request.tool_context = Some(RoleToolContext {
         artifact_view: Box::new(view),
+        writable_workspace: None,
     });
     request
 }
