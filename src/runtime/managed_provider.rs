@@ -106,36 +106,18 @@ impl Drop for ManagedProviderServer {
 }
 
 /// Resolve managed llama.cpp config into concrete launch settings.
-pub fn resolve_llama_cpp_config(
-    config: &ManagedLlamaCppConfig,
-    model: &str,
-) -> Result<ManagedLlamaCppRuntimeConfig, Box<dyn Error>> {
-    let base_url = match (&config.base_url, config.port) {
-        (Some(base_url), _) => normalize_base_url(base_url),
-        (None, Some(port)) => format!("http://127.0.0.1:{port}"),
-        (None, None) => {
-            return Err("managed llama.cpp requires port or base_url".into());
-        }
-    };
-    let endpoint = parse_http_endpoint(&base_url)?;
-    if let Some(port) = config.port
-        && port != endpoint.port
-    {
-        return Err(format!(
-            "managed llama.cpp port ({port}) must match base_url port ({}) when both are set",
-            endpoint.port
-        )
-        .into());
-    }
-    Ok(ManagedLlamaCppRuntimeConfig {
+pub fn resolve_llama_cpp_config(config: &ManagedLlamaCppConfig) -> ManagedLlamaCppRuntimeConfig {
+    let host = config.host.trim().to_string();
+    let base_url = format!("http://{}:{}", host, config.port);
+    ManagedLlamaCppRuntimeConfig {
         command: config.command.clone(),
-        model: model.to_string(),
+        model: config.model.clone(),
         base_url,
-        host: endpoint.host,
-        port: endpoint.port,
+        host,
+        port: config.port,
         context_size: config.context_size,
         startup_timeout_seconds: config.startup_timeout_seconds,
-    })
+    }
 }
 
 fn endpoint_ready(base_url: &str, timeout: Duration) -> bool {
@@ -148,33 +130,6 @@ fn normalize_base_url(base_url: &str) -> String {
     base_url.trim().trim_end_matches('/').to_string()
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct HttpEndpoint {
-    host: String,
-    port: u16,
-}
-
-fn parse_http_endpoint(base_url: &str) -> Result<HttpEndpoint, Box<dyn Error>> {
-    let rest = base_url
-        .strip_prefix("http://")
-        .or_else(|| base_url.strip_prefix("https://"))
-        .ok_or("managed llama.cpp base_url must start with http:// or https://")?;
-    let authority = rest.split('/').next().unwrap_or(rest);
-    let (host, port_str) = authority
-        .rsplit_once(':')
-        .ok_or("managed llama.cpp base_url must include an explicit port")?;
-    if host.is_empty() {
-        return Err("managed llama.cpp base_url host must be non-empty".into());
-    }
-    let port = port_str
-        .parse::<u16>()
-        .map_err(|e| format!("managed llama.cpp base_url port is invalid: {e}"))?;
-    Ok(HttpEndpoint {
-        host: host.to_string(),
-        port,
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -182,16 +137,18 @@ mod tests {
     fn managed_config() -> ManagedLlamaCppConfig {
         ManagedLlamaCppConfig {
             command: "llama-server".to_string(),
-            port: Some(18080),
-            base_url: None,
+            model: "model.gguf".to_string(),
+            host: "127.0.0.1".to_string(),
+            port: 18080,
             context_size: Some(4096),
             startup_timeout_seconds: 10,
+            n_predict: 512,
         }
     }
 
     #[test]
     fn resolves_port_to_local_base_url() {
-        let resolved = resolve_llama_cpp_config(&managed_config(), "model.gguf").unwrap();
+        let resolved = resolve_llama_cpp_config(&managed_config());
         assert_eq!(resolved.command, "llama-server");
         assert_eq!(resolved.model, "model.gguf");
         assert_eq!(resolved.base_url, "http://127.0.0.1:18080");
@@ -201,40 +158,12 @@ mod tests {
     }
 
     #[test]
-    fn base_url_overrides_derived_base_url() {
+    fn resolves_host_to_base_url() {
         let mut config = managed_config();
-        config.base_url = Some("http://localhost:18080/".to_string());
-        let resolved = resolve_llama_cpp_config(&config, "model.gguf").unwrap();
+        config.host = "localhost".to_string();
+        let resolved = resolve_llama_cpp_config(&config);
         assert_eq!(resolved.base_url, "http://localhost:18080");
         assert_eq!(resolved.host, "localhost");
         assert_eq!(resolved.port, 18080);
-    }
-
-    #[test]
-    fn base_url_and_port_must_match_when_both_are_set() {
-        let mut config = managed_config();
-        config.base_url = Some("http://localhost:28080/".to_string());
-        let err = resolve_llama_cpp_config(&config, "model.gguf").unwrap_err();
-        assert!(err.to_string().contains("must match"));
-    }
-
-    #[test]
-    fn base_url_port_used_when_port_absent() {
-        let mut config = managed_config();
-        config.port = None;
-        config.base_url = Some("http://localhost:28080".to_string());
-        let resolved = resolve_llama_cpp_config(&config, "model.gguf").unwrap();
-        assert_eq!(resolved.base_url, "http://localhost:28080");
-        assert_eq!(resolved.host, "localhost");
-        assert_eq!(resolved.port, 28080);
-    }
-
-    #[test]
-    fn missing_port_and_base_url_fails() {
-        let mut config = managed_config();
-        config.port = None;
-        config.base_url = None;
-        let err = resolve_llama_cpp_config(&config, "model.gguf").unwrap_err();
-        assert!(err.to_string().contains("port or base_url"));
     }
 }

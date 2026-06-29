@@ -3,5 +3,6 @@
 mod types;
 pub use types::{
     ArtifactConfig, ForgeConfig, ManagedLlamaCppConfig, ManagedProviderConfig, ProjectConfig,
-    ProjectKind, ProviderConfig, TelemetryConfig, ValidationConfig,
+    ProjectKind, ProviderConfig, ProviderTierConfig, TelemetryConfig, UnmanagedProviderConfig,
+    ValidationConfig,
 };

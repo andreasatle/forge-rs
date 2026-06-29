@@ -57,13 +57,17 @@ artifact:
   repo_path: ".forge/artifacts/main.git"
   branch: "main"
 provider:
-  base_url: "http://localhost:8080"
-  model: "qwen2.5-coder-7b-instruct"
-  n_predict: 512
+  cheap:
+    unmanaged:
+      base_url: "http://localhost:8080"
+      model: "qwen2.5-coder-7b-instruct"
+      n_predict: 512
+  strong:                       # optional; fallback to cheap
+    unmanaged:
+      base_url: "http://localhost:8081"
+      model: "qwen2.5-coder-14b-instruct"
+      n_predict: 1024
   timeout_seconds: 120          # optional; default 120
-  strong_base_url: "http://localhost:8081"  # optional; fallback to base_url
-  strong_model: "qwen2.5-coder-14b-instruct" # optional; fallback to model
-  strong_n_predict: 1024        # optional; fallback to n_predict
   strong_timeout_seconds: 180   # optional; fallback to timeout_seconds
 telemetry:
   directory: "runs"
@@ -81,15 +85,16 @@ Forge can instead own a local `llama-server` process:
 
 ```yaml
 provider:
-  base_url: "http://127.0.0.1:8080"
-  model: "models/qwen2.5-coder-7b-instruct.gguf"
-  n_predict: 512
-  managed:
-    llama_cpp:
-      command: "llama-server"
-      port: 8080               # or base_url: "http://127.0.0.1:8080"
-      context_size: 8192       # optional
-      startup_timeout_seconds: 60
+  cheap:
+    managed:
+      llama_cpp:
+        command: "llama-server"
+        model: "models/qwen2.5-coder-7b-instruct.gguf"
+        host: "127.0.0.1"
+        port: 8080
+        context_size: 8192       # optional
+        startup_timeout_seconds: 60 # optional; default 60
+        n_predict: 512
 ```
 
 Managed mode is explicit. If the configured endpoint is already reachable before
@@ -356,8 +361,8 @@ Role responses use structured JSON output hints (`output_schema: Some(Json)`). T
 
 The runtime builds two provider stacks from a single `ProviderConfig`:
 
-- **Cheap tier** — uses `base_url`, `n_predict`, and `timeout_seconds`.
-- **Strong tier** — uses `strong_base_url` (fallback `base_url`), `strong_n_predict` (fallback `n_predict`), and `strong_timeout_seconds` (fallback `timeout_seconds`).
+- **Cheap tier** — uses `provider.cheap`, which is either `unmanaged` or `managed`.
+- **Strong tier** — uses `provider.strong` when present, otherwise falls back to `provider.cheap`; `strong_timeout_seconds` falls back to `timeout_seconds`.
 
 The scheduler's `ElevateModel` recovery action upgrades a retried node to the strong tier.
 

@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 
 /// Selects which project adapter governs role prompt policy for a run.
 #[derive(Debug, Deserialize, Default, PartialEq)]
@@ -67,42 +67,74 @@ fn default_managed_startup_timeout_seconds() -> u64 {
 
 /// LLM provider configuration.
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ProviderConfig {
+    /// Cheap/default provider tier.
+    pub cheap: ProviderTierConfig,
+    /// Optional strong provider tier. When absent, strong falls back to cheap.
+    #[serde(default)]
+    pub strong: Option<ProviderTierConfig>,
+    /// HTTP request timeout in seconds. Absent configs default to 120.
+    #[serde(default = "default_provider_timeout_seconds")]
+    pub timeout_seconds: u64,
+    /// Timeout for strong-tier completions in seconds. Falls back to
+    /// `timeout_seconds` when absent.
+    #[serde(default)]
+    pub strong_timeout_seconds: Option<u64>,
+}
+
+/// Configuration for one provider tier.
+#[derive(Debug, Clone)]
+pub enum ProviderTierConfig {
+    /// Forge connects to an already-running provider server.
+    Unmanaged(UnmanagedProviderConfig),
+    /// Forge owns the local provider server process.
+    Managed(ManagedProviderConfig),
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProviderTierConfigDef {
+    #[serde(default)]
+    unmanaged: Option<UnmanagedProviderConfig>,
+    #[serde(default)]
+    managed: Option<ManagedProviderConfig>,
+}
+
+impl<'de> Deserialize<'de> for ProviderTierConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let def = ProviderTierConfigDef::deserialize(deserializer)?;
+        match (def.unmanaged, def.managed) {
+            (Some(config), None) => Ok(Self::Unmanaged(config)),
+            (None, Some(config)) => Ok(Self::Managed(config)),
+            (Some(_), Some(_)) => Err(serde::de::Error::custom(
+                "provider tier must specify exactly one of unmanaged or managed",
+            )),
+            (None, None) => Err(serde::de::Error::custom(
+                "provider tier must specify unmanaged or managed",
+            )),
+        }
+    }
+}
+
+/// Already-running provider server configuration.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UnmanagedProviderConfig {
     /// Base URL of the provider server (e.g. `"http://localhost:8080"`).
     pub base_url: String,
     /// Expected model served by the provider at `base_url`.
     pub model: String,
     /// Maximum tokens to predict per completion call.
     pub n_predict: usize,
-    /// HTTP request timeout in seconds. Absent configs default to 120.
-    #[serde(default = "default_provider_timeout_seconds")]
-    pub timeout_seconds: u64,
-    /// Base URL for the strong-tier provider. When absent, the strong tier
-    /// falls back to `base_url`.
-    #[serde(default)]
-    pub strong_base_url: Option<String>,
-    /// Expected model served by the strong-tier provider. Falls back to `model`
-    /// when absent.
-    #[serde(default)]
-    pub strong_model: Option<String>,
-    /// Maximum tokens for strong-tier completions. Falls back to `n_predict`
-    /// when absent.
-    #[serde(default)]
-    pub strong_n_predict: Option<usize>,
-    /// Timeout for strong-tier completions in seconds. Falls back to
-    /// `timeout_seconds` when absent.
-    #[serde(default)]
-    pub strong_timeout_seconds: Option<u64>,
-    /// Optional managed local server for the cheap/default provider tier.
-    #[serde(default)]
-    pub managed: Option<ManagedProviderConfig>,
-    /// Optional managed local server for the strong provider tier.
-    #[serde(default)]
-    pub strong_managed: Option<ManagedProviderConfig>,
 }
 
 /// Managed local provider server configuration.
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ManagedProviderConfig {
     /// llama.cpp server management settings.
     pub llama_cpp: ManagedLlamaCppConfig,
@@ -110,23 +142,24 @@ pub struct ManagedProviderConfig {
 
 /// Managed llama.cpp `llama-server` process configuration.
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ManagedLlamaCppConfig {
     /// Executable path or command name for `llama-server`.
     pub command: String,
-    /// Port for the local server. Required unless `base_url` contains an
-    /// explicit port.
-    #[serde(default)]
-    pub port: Option<u16>,
-    /// Base URL for the local server. When absent, Forge derives
-    /// `http://127.0.0.1:<port>`.
-    #[serde(default)]
-    pub base_url: Option<String>,
+    /// Model path/identifier passed to `llama-server --model`.
+    pub model: String,
+    /// Host passed to `llama-server --host`.
+    pub host: String,
+    /// Port passed to `llama-server --port`.
+    pub port: u16,
     /// Optional llama.cpp context size, passed as `--ctx-size`.
     #[serde(default)]
     pub context_size: Option<usize>,
     /// Seconds to wait for readiness after spawning the process.
     #[serde(default = "default_managed_startup_timeout_seconds")]
     pub startup_timeout_seconds: u64,
+    /// Maximum tokens to predict per completion call.
+    pub n_predict: usize,
 }
 
 /// Telemetry output configuration.
@@ -191,35 +224,52 @@ impl ForgeConfig {
 fn validate_provider_model_identity(
     provider: &ProviderConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    if provider.model.trim().is_empty() {
-        return Err("provider.model must be non-empty".into());
+    validate_provider_tier("provider.cheap", &provider.cheap)?;
+    if let Some(strong) = &provider.strong {
+        validate_provider_tier("provider.strong", strong)?;
     }
-    if let Some(strong_model) = &provider.strong_model
-        && strong_model.trim().is_empty()
+    if provider.timeout_seconds == 0 {
+        return Err("provider.timeout_seconds must be positive".into());
+    }
+    if let Some(timeout) = provider.strong_timeout_seconds
+        && timeout == 0
     {
-        return Err("provider.strong_model must be non-empty when set".into());
+        return Err("provider.strong_timeout_seconds must be positive when set".into());
     }
-    validate_managed_provider("provider.managed", provider.managed.as_ref())?;
-    validate_managed_provider("provider.strong_managed", provider.strong_managed.as_ref())?;
     Ok(())
 }
 
-fn validate_managed_provider(
+fn validate_provider_tier(
     field: &str,
-    managed: Option<&ManagedProviderConfig>,
+    tier: &ProviderTierConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let Some(managed) = managed else {
-        return Ok(());
-    };
-    let llama = &managed.llama_cpp;
-    if llama.command.trim().is_empty() {
-        return Err(format!("{field}.llama_cpp.command must be non-empty").into());
-    }
-    if llama.port.is_none() && llama.base_url.is_none() {
-        return Err(format!("{field}.llama_cpp requires port or base_url").into());
-    }
-    if llama.startup_timeout_seconds == 0 {
-        return Err(format!("{field}.llama_cpp.startup_timeout_seconds must be positive").into());
+    match tier {
+        ProviderTierConfig::Unmanaged(config) => {
+            if config.base_url.trim().is_empty() {
+                return Err(format!("{field}.unmanaged.base_url must be non-empty").into());
+            }
+            if config.model.trim().is_empty() {
+                return Err(format!("{field}.unmanaged.model must be non-empty").into());
+            }
+        }
+        ProviderTierConfig::Managed(managed) => {
+            let llama = &managed.llama_cpp;
+            if llama.command.trim().is_empty() {
+                return Err(format!("{field}.managed.llama_cpp.command must be non-empty").into());
+            }
+            if llama.model.trim().is_empty() {
+                return Err(format!("{field}.managed.llama_cpp.model must be non-empty").into());
+            }
+            if llama.host.trim().is_empty() {
+                return Err(format!("{field}.managed.llama_cpp.host must be non-empty").into());
+            }
+            if llama.startup_timeout_seconds == 0 {
+                return Err(format!(
+                    "{field}.managed.llama_cpp.startup_timeout_seconds must be positive"
+                )
+                .into());
+            }
+        }
     }
     Ok(())
 }
@@ -278,9 +328,11 @@ artifact:
   repo_path: ".forge/artifacts/main.git"
   branch: "main"
 provider:
-  base_url: "http://localhost:8080"
-  model: "llama-test"
-  n_predict: 512
+  cheap:
+    unmanaged:
+      base_url: "http://localhost:8080"
+      model: "llama-test"
+      n_predict: 512
 telemetry:
   directory: "runs"
 "#;
@@ -312,9 +364,12 @@ telemetry:
     fn parses_provider_config() {
         let tmp = TempYaml::new(EXAMPLE_YAML);
         let config = ForgeConfig::from_file(tmp.path()).unwrap();
-        assert_eq!(config.provider.base_url, "http://localhost:8080");
-        assert_eq!(config.provider.model, "llama-test");
-        assert_eq!(config.provider.n_predict, 512);
+        let ProviderTierConfig::Unmanaged(cheap) = &config.provider.cheap else {
+            panic!("cheap provider must parse as unmanaged");
+        };
+        assert_eq!(cheap.base_url, "http://localhost:8080");
+        assert_eq!(cheap.model, "llama-test");
+        assert_eq!(cheap.n_predict, 512);
     }
 
     #[test]
@@ -341,9 +396,11 @@ artifact:
   repo_path: ".forge/artifacts/main.git"
   branch: "main"
 provider:
-  base_url: "http://localhost:8080"
-  model: "llama-test"
-  n_predict: 512
+  cheap:
+    unmanaged:
+      base_url: "http://localhost:8080"
+      model: "llama-test"
+      n_predict: 512
   timeout_seconds: 30
 telemetry:
   directory: "runs"
@@ -377,9 +434,11 @@ artifact:
   repo_path: ".forge/artifacts/main.git"
   branch: "main"
 provider:
-  base_url: "http://localhost:8080"
-  model: "llama-test"
-  n_predict: 512
+  cheap:
+    unmanaged:
+      base_url: "http://localhost:8080"
+      model: "llama-test"
+      n_predict: 512
 telemetry:
   directory: "runs"
 validation:
@@ -421,12 +480,16 @@ artifact:
   repo_path: ".forge/artifacts/main.git"
   branch: "main"
 provider:
-  base_url: "http://localhost:8080"
-  model: "llama-test"
-  n_predict: 512
-  strong_base_url: "http://localhost:8081"
-  strong_model: "llama-strong-test"
-  strong_n_predict: 1024
+  cheap:
+    unmanaged:
+      base_url: "http://localhost:8080"
+      model: "llama-test"
+      n_predict: 512
+  strong:
+    unmanaged:
+      base_url: "http://localhost:8081"
+      model: "llama-strong-test"
+      n_predict: 1024
   strong_timeout_seconds: 180
 telemetry:
   directory: "runs"
@@ -436,15 +499,17 @@ telemetry:
     fn config_parses_optional_strong_provider_fields() {
         let tmp = TempYaml::new(STRONG_PROVIDER_YAML);
         let config = ForgeConfig::from_file(tmp.path()).unwrap();
-        assert_eq!(
-            config.provider.strong_base_url.as_deref(),
-            Some("http://localhost:8081")
-        );
-        assert_eq!(
-            config.provider.strong_model.as_deref(),
-            Some("llama-strong-test")
-        );
-        assert_eq!(config.provider.strong_n_predict, Some(1024));
+        let ProviderTierConfig::Unmanaged(strong) = config
+            .provider
+            .strong
+            .as_ref()
+            .expect("strong tier must parse")
+        else {
+            panic!("strong provider must parse as unmanaged");
+        };
+        assert_eq!(strong.base_url, "http://localhost:8081");
+        assert_eq!(strong.model, "llama-strong-test");
+        assert_eq!(strong.n_predict, 1024);
         assert_eq!(config.provider.strong_timeout_seconds, Some(180));
     }
 
@@ -452,9 +517,7 @@ telemetry:
     fn strong_provider_fields_absent_defaults_to_none() {
         let tmp = TempYaml::new(EXAMPLE_YAML);
         let config = ForgeConfig::from_file(tmp.path()).unwrap();
-        assert!(config.provider.strong_base_url.is_none());
-        assert!(config.provider.strong_model.is_none());
-        assert!(config.provider.strong_n_predict.is_none());
+        assert!(config.provider.strong.is_none());
         assert!(config.provider.strong_timeout_seconds.is_none());
     }
 
@@ -464,8 +527,10 @@ artifact:
   repo_path: ".forge/artifacts/main.git"
   branch: "main"
 provider:
-  base_url: "http://localhost:8080"
-  n_predict: 512
+  cheap:
+    unmanaged:
+      base_url: "http://localhost:8080"
+      n_predict: 512
 telemetry:
   directory: "runs"
 "#;
@@ -476,7 +541,7 @@ telemetry:
         let result = ForgeConfig::from_file(tmp.path());
         assert!(
             result.is_err(),
-            "provider.model is required so run metadata can identify the expected model"
+            "provider.cheap.unmanaged.model is required so run metadata can identify the expected model"
         );
     }
 
@@ -486,9 +551,11 @@ artifact:
   repo_path: ".forge/artifacts/main.git"
   branch: "main"
 provider:
-  base_url: "http://localhost:8080"
-  model: "  "
-  n_predict: 512
+  cheap:
+    unmanaged:
+      base_url: "http://localhost:8080"
+      model: "  "
+      n_predict: 512
 telemetry:
   directory: "runs"
 "#;
@@ -499,8 +566,8 @@ telemetry:
         let result = ForgeConfig::from_file(tmp.path());
         let msg = result.unwrap_err().to_string();
         assert!(
-            msg.contains("provider.model"),
-            "blank provider.model error must name the field; got: {msg}"
+            msg.contains("provider.cheap.unmanaged.model"),
+            "blank provider model error must name the field; got: {msg}"
         );
     }
 
@@ -510,15 +577,16 @@ artifact:
   repo_path: ".forge/artifacts/main.git"
   branch: "main"
 provider:
-  base_url: "http://localhost:8080"
-  model: "models/coder.gguf"
-  n_predict: 512
-  managed:
-    llama_cpp:
-      command: "llama-server"
-      port: 8080
-      context_size: 8192
-      startup_timeout_seconds: 45
+  cheap:
+    managed:
+      llama_cpp:
+        command: "llama-server"
+        model: "models/coder.gguf"
+        host: "127.0.0.1"
+        port: 8080
+        context_size: 8192
+        startup_timeout_seconds: 45
+        n_predict: 512
 telemetry:
   directory: "runs"
 "#;
@@ -527,68 +595,72 @@ telemetry:
     fn parses_managed_llama_cpp_provider_config() {
         let tmp = TempYaml::new(MANAGED_LLAMA_CPP_YAML);
         let config = ForgeConfig::from_file(tmp.path()).unwrap();
-        let managed = config
-            .provider
-            .managed
-            .expect("managed provider config must parse");
+        let ProviderTierConfig::Managed(managed) = config.provider.cheap else {
+            panic!("managed provider config must parse");
+        };
         assert_eq!(managed.llama_cpp.command, "llama-server");
-        assert_eq!(managed.llama_cpp.port, Some(8080));
-        assert_eq!(managed.llama_cpp.base_url, None);
+        assert_eq!(managed.llama_cpp.model, "models/coder.gguf");
+        assert_eq!(managed.llama_cpp.host, "127.0.0.1");
+        assert_eq!(managed.llama_cpp.port, 8080);
         assert_eq!(managed.llama_cpp.context_size, Some(8192));
         assert_eq!(managed.llama_cpp.startup_timeout_seconds, 45);
+        assert_eq!(managed.llama_cpp.n_predict, 512);
     }
 
-    const MANAGED_LLAMA_CPP_BASE_URL_YAML: &str = r#"
+    const MIXED_PROVIDER_YAML: &str = r#"
 objective: "test"
 artifact:
   repo_path: ".forge/artifacts/main.git"
   branch: "main"
 provider:
-  base_url: "http://localhost:8080"
-  model: "models/coder.gguf"
-  n_predict: 512
-  managed:
-    llama_cpp:
-      command: "/opt/llama.cpp/llama-server"
-      base_url: "http://127.0.0.1:8080"
+  cheap:
+    unmanaged:
+      base_url: "http://localhost:8080"
+      model: "models/coder.gguf"
+      n_predict: 512
+    managed:
+      llama_cpp:
+        command: "/opt/llama.cpp/llama-server"
+        model: "models/coder.gguf"
+        host: "127.0.0.1"
+        port: 8080
+        n_predict: 512
 telemetry:
   directory: "runs"
 "#;
 
     #[test]
-    fn managed_llama_cpp_accepts_base_url_instead_of_port() {
-        let tmp = TempYaml::new(MANAGED_LLAMA_CPP_BASE_URL_YAML);
-        let config = ForgeConfig::from_file(tmp.path()).unwrap();
-        let llama = &config.provider.managed.unwrap().llama_cpp;
-        assert_eq!(llama.base_url.as_deref(), Some("http://127.0.0.1:8080"));
-        assert_eq!(llama.port, None);
-        assert_eq!(llama.startup_timeout_seconds, 60);
+    fn provider_tier_rejects_mixed_managed_and_unmanaged_fields() {
+        let tmp = TempYaml::new(MIXED_PROVIDER_YAML);
+        let result = ForgeConfig::from_file(tmp.path());
+        assert!(result.is_err(), "mixed provider variants must not parse");
     }
 
-    const MANAGED_LLAMA_CPP_MISSING_ENDPOINT_YAML: &str = r#"
+    const MANAGED_LLAMA_CPP_MISSING_HOST_YAML: &str = r#"
 objective: "test"
 artifact:
   repo_path: ".forge/artifacts/main.git"
   branch: "main"
 provider:
-  base_url: "http://localhost:8080"
-  model: "models/coder.gguf"
-  n_predict: 512
-  managed:
-    llama_cpp:
-      command: "llama-server"
+  cheap:
+    managed:
+      llama_cpp:
+        command: "llama-server"
+        model: "models/coder.gguf"
+        port: 8080
+        n_predict: 512
 telemetry:
   directory: "runs"
 "#;
 
     #[test]
-    fn managed_llama_cpp_requires_port_or_base_url() {
-        let tmp = TempYaml::new(MANAGED_LLAMA_CPP_MISSING_ENDPOINT_YAML);
+    fn managed_llama_cpp_requires_host() {
+        let tmp = TempYaml::new(MANAGED_LLAMA_CPP_MISSING_HOST_YAML);
         let result = ForgeConfig::from_file(tmp.path());
         let msg = result.unwrap_err().to_string();
         assert!(
-            msg.contains("port or base_url"),
-            "error must explain endpoint requirement; got: {msg}"
+            msg.contains("host"),
+            "error must explain host requirement; got: {msg}"
         );
     }
 
@@ -598,13 +670,14 @@ artifact:
   repo_path: ".forge/artifacts/main.git"
   branch: "main"
 provider:
-  base_url: "http://localhost:8080"
-  model: "models/coder.gguf"
-  n_predict: 512
-  managed:
-    llama_cpp:
-      command: " "
-      port: 8080
+  cheap:
+    managed:
+      llama_cpp:
+        command: " "
+        model: "models/coder.gguf"
+        host: "127.0.0.1"
+        port: 8080
+        n_predict: 512
 telemetry:
   directory: "runs"
 "#;
@@ -626,9 +699,11 @@ artifact:
   repo_path: "/absolute/path/main.git"
   branch: "main"
 provider:
-  base_url: "http://localhost:8080"
-  model: "llama-test"
-  n_predict: 512
+  cheap:
+    unmanaged:
+      base_url: "http://localhost:8080"
+      model: "llama-test"
+      n_predict: 512
 telemetry:
   directory: "/absolute/telemetry"
 "#;
@@ -693,9 +768,11 @@ artifact:
   repo_path: ".forge/artifacts/main.git"
   branch: "main"
 provider:
-  base_url: "http://localhost:8080"
-  model: "llama-test"
-  n_predict: 512
+  cheap:
+    unmanaged:
+      base_url: "http://localhost:8080"
+      model: "llama-test"
+      n_predict: 512
 telemetry:
   directory: "runs"
 project:
@@ -732,9 +809,11 @@ artifact:
   repo_path: ".forge/artifacts/main.git"
   branch: "main"
 provider:
-  base_url: "http://localhost:8080"
-  model: "llama-test"
-  n_predict: 512
+  cheap:
+    unmanaged:
+      base_url: "http://localhost:8080"
+      model: "llama-test"
+      n_predict: 512
 telemetry:
   directory: "runs"
 project:
@@ -768,9 +847,11 @@ artifact:
   repo_path: ".forge/artifacts/main.git"
   branch: "main"
 provider:
-  base_url: "http://localhost:8080"
-  model: "llama-test"
-  n_predict: 512
+  cheap:
+    unmanaged:
+      base_url: "http://localhost:8080"
+      model: "llama-test"
+      n_predict: 512
 telemetry:
   directory: "runs"
 project:
@@ -794,9 +875,11 @@ artifact:
   repo_path: ".forge/artifacts/main.git"
   branch: "main"
 provider:
-  base_url: "http://localhost:8080"
-  model: "llama-test"
-  n_predict: 512
+  cheap:
+    unmanaged:
+      base_url: "http://localhost:8080"
+      model: "llama-test"
+      n_predict: 512
 telemetry:
   directory: "runs"
 project:
@@ -825,9 +908,11 @@ artifact:
   repo_path: ".forge/artifacts/main.git"
   branch: "main"
 provider:
-  base_url: "http://localhost:8080"
-  model: "llama-test"
-  n_predict: 512
+  cheap:
+    unmanaged:
+      base_url: "http://localhost:8080"
+      model: "llama-test"
+      n_predict: 512
 telemetry:
   directory: "runs"
 project:

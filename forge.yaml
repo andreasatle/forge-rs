@@ -1,10 +1,13 @@
-objective: "Create a simple Python program in main.py that prints a short haiku about Python state machines."
+objective: "Create a simple Python program in main.py that implements a Fibonacci number generator. The program should expose a reusable fibonacci(n: int) function and include corresponding unit tests."
 artifact:
   repo_path: ".forge/artifacts/main.git"
   branch: "main"
 provider:
-  base_url: "http://localhost:8080"
-  n_predict: 512
+  cheap:
+    unmanaged:
+      base_url: "http://localhost:8080"
+      model: lm-kit/qwen-3-8b-instruct-gguf:Q4_K_M
+      n_predict: 512
 telemetry:
   directory: "runs"
 project:

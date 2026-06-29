@@ -99,7 +99,10 @@ mod tests {
     }
 
     fn make_forge_config(repo_path: &PathBuf, telemetry_path: &PathBuf) -> ForgeConfig {
-        use crate::config::{ArtifactConfig, ProjectConfig, ProviderConfig, TelemetryConfig};
+        use crate::config::{
+            ArtifactConfig, ProjectConfig, ProviderConfig, ProviderTierConfig, TelemetryConfig,
+            UnmanagedProviderConfig,
+        };
         ForgeConfig {
             objective: "test".to_string(),
             artifact: ArtifactConfig {
@@ -107,16 +110,14 @@ mod tests {
                 branch: "main".to_string(),
             },
             provider: ProviderConfig {
-                base_url: "http://localhost:8080".to_string(),
-                model: "llama-test".to_string(),
-                n_predict: 512,
+                cheap: ProviderTierConfig::Unmanaged(UnmanagedProviderConfig {
+                    base_url: "http://localhost:8080".to_string(),
+                    model: "llama-test".to_string(),
+                    n_predict: 512,
+                }),
+                strong: None,
                 timeout_seconds: 120,
-                strong_base_url: None,
-                strong_model: None,
-                strong_n_predict: None,
                 strong_timeout_seconds: None,
-                managed: None,
-                strong_managed: None,
             },
             telemetry: TelemetryConfig {
                 directory: telemetry_path.to_str().unwrap().to_string(),
@@ -131,7 +132,10 @@ mod tests {
         telemetry_path: &PathBuf,
         language: &str,
     ) -> ForgeConfig {
-        use crate::config::{ArtifactConfig, ProjectConfig, ProviderConfig, TelemetryConfig};
+        use crate::config::{
+            ArtifactConfig, ProjectConfig, ProviderConfig, ProviderTierConfig, TelemetryConfig,
+            UnmanagedProviderConfig,
+        };
         ForgeConfig {
             objective: "test".to_string(),
             artifact: ArtifactConfig {
@@ -139,16 +143,14 @@ mod tests {
                 branch: "main".to_string(),
             },
             provider: ProviderConfig {
-                base_url: "http://localhost:8080".to_string(),
-                model: "llama-test".to_string(),
-                n_predict: 512,
+                cheap: ProviderTierConfig::Unmanaged(UnmanagedProviderConfig {
+                    base_url: "http://localhost:8080".to_string(),
+                    model: "llama-test".to_string(),
+                    n_predict: 512,
+                }),
+                strong: None,
                 timeout_seconds: 120,
-                strong_base_url: None,
-                strong_model: None,
-                strong_n_predict: None,
                 strong_timeout_seconds: None,
-                managed: None,
-                strong_managed: None,
             },
             telemetry: TelemetryConfig {
                 directory: telemetry_path.to_str().unwrap().to_string(),
@@ -366,7 +368,10 @@ mod tests {
 
         // Use a non-default branch name to prove reset uses the config, not "main".
         let config = {
-            use crate::config::{ArtifactConfig, ProjectConfig, ProviderConfig, TelemetryConfig};
+            use crate::config::{
+                ArtifactConfig, ProjectConfig, ProviderConfig, ProviderTierConfig, TelemetryConfig,
+                UnmanagedProviderConfig,
+            };
             ForgeConfig {
                 objective: "test".to_string(),
                 artifact: ArtifactConfig {
@@ -374,16 +379,14 @@ mod tests {
                     branch: "artifact".to_string(),
                 },
                 provider: ProviderConfig {
-                    base_url: "http://localhost:8080".to_string(),
-                    model: "llama-test".to_string(),
-                    n_predict: 512,
+                    cheap: ProviderTierConfig::Unmanaged(UnmanagedProviderConfig {
+                        base_url: "http://localhost:8080".to_string(),
+                        model: "llama-test".to_string(),
+                        n_predict: 512,
+                    }),
+                    strong: None,
                     timeout_seconds: 120,
-                    strong_base_url: None,
-                    strong_model: None,
-                    strong_n_predict: None,
                     strong_timeout_seconds: None,
-                    managed: None,
-                    strong_managed: None,
                 },
                 telemetry: TelemetryConfig {
                     directory: telemetry.to_str().unwrap().to_string(),
