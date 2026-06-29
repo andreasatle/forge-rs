@@ -11,7 +11,6 @@ fn plan_child_depth_limit_fails_scheduler() {
     let t = do_transition(
         SchedulerState::Waiting {
             graph: running(graph, "P"),
-            running: NodeId("P".to_string()),
         },
         SchedulerEvent::NodeReturned {
             node_id: NodeId("P".to_string()),
@@ -71,10 +70,7 @@ fn plan_expansion_respects_graph_size_limit() {
     let graph = running(graph, "P");
 
     let t = do_transition(
-        SchedulerState::Waiting {
-            graph,
-            running: NodeId("P".to_string()),
-        },
+        SchedulerState::Waiting { graph },
         SchedulerEvent::NodeReturned {
             node_id: NodeId("P".to_string()),
             outcome: NodeOutcome::PlanAccepted(PlanOutput {
@@ -158,7 +154,6 @@ fn recovery_respects_graph_size_limit() {
         let t = do_transition(
             SchedulerState::Waiting {
                 graph: running(graph, "W"),
-                running: NodeId("W".to_string()),
             },
             SchedulerEvent::NodeReturned {
                 node_id: NodeId("W".to_string()),
@@ -208,7 +203,6 @@ fn split_depth_limit_fails_scheduler() {
     let t = do_transition(
         SchedulerState::Waiting {
             graph: running(graph, "W"),
-            running: NodeId("W".to_string()),
         },
         SchedulerEvent::NodeReturned {
             node_id: NodeId("W".to_string()),
@@ -347,10 +341,10 @@ fn graph_validation_does_not_parse_node_ids() {
     };
     let t = do_transition(SchedulerState::Running { graph }, SchedulerEvent::Start);
 
-    let SchedulerState::Waiting { graph, running } = t.state else {
+    let SchedulerState::Waiting { graph } = t.state else {
         panic!("expected Waiting, got {:#?}", t.state);
     };
-    assert_eq!(running, NodeId("root".to_string()));
+    assert_eq!(active_node_id(&graph), Some(NodeId("root".to_string())));
     assert_eq!(graph.next_id, 0);
     assert!(matches!(
         t.effects.as_slice(),

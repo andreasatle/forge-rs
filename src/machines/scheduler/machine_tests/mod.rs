@@ -76,6 +76,14 @@ fn running(mut graph: RunGraph, id: &str) -> RunGraph {
     graph
 }
 
+fn active_node_id(graph: &RunGraph) -> Option<NodeId> {
+    graph
+        .nodes
+        .iter()
+        .find(|n| matches!(n.status, NodeStatus::Running | NodeStatus::Integrating))
+        .map(|n| n.id.clone())
+}
+
 fn graph_with_filler_nodes(first: Node, total_nodes: usize) -> RunGraph {
     let mut nodes = vec![first];
     for i in 1..total_nodes {

@@ -6,7 +6,6 @@ fn work_node_accepted_marks_integrating_and_emits_integrate_work() {
     let t = do_transition(
         SchedulerState::Waiting {
             graph: running(graph, "A"),
-            running: NodeId("A".to_string()),
         },
         SchedulerEvent::NodeReturned {
             node_id: NodeId("A".to_string()),
@@ -16,10 +15,10 @@ fn work_node_accepted_marks_integrating_and_emits_integrate_work() {
         },
     );
 
-    let SchedulerState::Waiting { graph, running } = t.state else {
+    let SchedulerState::Waiting { graph } = t.state else {
         panic!("expected Waiting")
     };
-    assert_eq!(running, NodeId("A".to_string()));
+    assert_eq!(active_node_id(&graph), Some(NodeId("A".to_string())));
     assert_eq!(graph.nodes[0].status, NodeStatus::Integrating);
     assert!(matches!(
         t.effects.as_slice(),
@@ -35,7 +34,6 @@ fn work_accepted_emits_integration_and_does_not_complete_node() {
     let t = do_transition(
         SchedulerState::Waiting {
             graph: running(graph, "A"),
-            running: node_id.clone(),
         },
         SchedulerEvent::NodeReturned {
             node_id: node_id.clone(),
@@ -45,14 +43,10 @@ fn work_accepted_emits_integration_and_does_not_complete_node() {
         },
     );
 
-    let SchedulerState::Waiting {
-        ref graph,
-        ref running,
-    } = t.state
-    else {
+    let SchedulerState::Waiting { ref graph } = t.state else {
         panic!("expected Waiting, got {:#?}", t.state);
     };
-    assert_eq!(*running, node_id);
+    assert_eq!(active_node_id(graph), Some(node_id.clone()));
     assert_ne!(
         graph.nodes[0].status,
         NodeStatus::Completed,
@@ -89,10 +83,7 @@ fn scheduler_output_includes_integration_failure_reason() {
     };
 
     let t = do_transition(
-        SchedulerState::Waiting {
-            graph,
-            running: NodeId("W".to_string()),
-        },
+        SchedulerState::Waiting { graph },
         SchedulerEvent::IntegrationReturned {
             node_id: NodeId("W".to_string()),
             outcome: IntegrationOutcome::Failed(IntegrationFailure {
@@ -134,10 +125,7 @@ fn integration_failure_retry_routes_to_replacement() {
     graph.nodes[1].status = NodeStatus::Integrating;
 
     let t = do_transition(
-        SchedulerState::Waiting {
-            graph,
-            running: NodeId("B".to_string()),
-        },
+        SchedulerState::Waiting { graph },
         SchedulerEvent::IntegrationReturned {
             node_id: NodeId("B".to_string()),
             outcome: IntegrationOutcome::Failed(IntegrationFailure {
@@ -197,10 +185,7 @@ fn integration_failure_elevate_routes_to_strong_replacement() {
     let b_attempt = graph.nodes[1].attempt;
 
     let t = do_transition(
-        SchedulerState::Waiting {
-            graph,
-            running: NodeId("B".to_string()),
-        },
+        SchedulerState::Waiting { graph },
         SchedulerEvent::IntegrationReturned {
             node_id: NodeId("B".to_string()),
             outcome: IntegrationOutcome::Failed(IntegrationFailure {
@@ -256,10 +241,7 @@ fn integration_failure_split_routes_to_plan_replacement() {
     graph.nodes[1].status = NodeStatus::Integrating;
 
     let t = do_transition(
-        SchedulerState::Waiting {
-            graph,
-            running: NodeId("B".to_string()),
-        },
+        SchedulerState::Waiting { graph },
         SchedulerEvent::IntegrationReturned {
             node_id: NodeId("B".to_string()),
             outcome: IntegrationOutcome::Failed(IntegrationFailure {

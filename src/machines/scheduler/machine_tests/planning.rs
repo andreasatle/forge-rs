@@ -29,7 +29,6 @@ fn plan_node_creates_work_child() {
     let t = do_transition(
         SchedulerState::Waiting {
             graph: running(graph, "P"),
-            running: NodeId("P".to_string()),
         },
         SchedulerEvent::NodeReturned {
             node_id: NodeId("P".to_string()),
@@ -67,7 +66,6 @@ fn plan_with_unknown_dependency_fails_scheduler() {
     let t = do_transition(
         SchedulerState::Waiting {
             graph: graph_before.clone(),
-            running: NodeId("P".to_string()),
         },
         SchedulerEvent::NodeReturned {
             node_id: NodeId("P".to_string()),
@@ -114,7 +112,6 @@ fn plan_with_valid_dependencies_still_succeeds() {
     let t = do_transition(
         SchedulerState::Waiting {
             graph: running(graph, "P"),
-            running: NodeId("P".to_string()),
         },
         SchedulerEvent::NodeReturned {
             node_id: NodeId("P".to_string()),
@@ -152,7 +149,6 @@ fn sibling_dependencies_are_resolved_to_graph_ids() {
     let t = do_transition(
         SchedulerState::Waiting {
             graph: running(graph, "P"),
-            running: NodeId("P".to_string()),
         },
         SchedulerEvent::NodeReturned {
             node_id: NodeId("P".to_string()),
@@ -231,10 +227,7 @@ fn planner_can_create_two_work_nodes_with_dependency() {
 
     // Root plan returns two tasks: write-tests (no deps) and implement (depends on write-tests).
     let t = do_transition(
-        SchedulerState::Waiting {
-            graph,
-            running: NodeId("root".to_string()),
-        },
+        SchedulerState::Waiting { graph },
         SchedulerEvent::NodeReturned {
             node_id: NodeId("root".to_string()),
             outcome: NodeOutcome::PlanAccepted(PlanOutput {
@@ -292,10 +285,7 @@ fn planner_can_create_two_work_nodes_with_dependency() {
 
     // write-tests completes → Integrating.
     let t = do_transition(
-        SchedulerState::Waiting {
-            graph,
-            running: write_tests_id.clone(),
-        },
+        SchedulerState::Waiting { graph },
         SchedulerEvent::NodeReturned {
             node_id: write_tests_id.clone(),
             outcome: NodeOutcome::WorkAccepted(WorkOutput {
@@ -309,10 +299,7 @@ fn planner_can_create_two_work_nodes_with_dependency() {
 
     // Integration succeeds → Running.
     let t = do_transition(
-        SchedulerState::Waiting {
-            graph,
-            running: write_tests_id.clone(),
-        },
+        SchedulerState::Waiting { graph },
         SchedulerEvent::IntegrationReturned {
             node_id: write_tests_id.clone(),
             outcome: crate::machines::scheduler::event::IntegrationOutcome::Succeeded(
@@ -341,10 +328,7 @@ fn planner_can_create_two_work_nodes_with_dependency() {
 
     // implement completes → Integrating.
     let t = do_transition(
-        SchedulerState::Waiting {
-            graph,
-            running: implement_id.clone(),
-        },
+        SchedulerState::Waiting { graph },
         SchedulerEvent::NodeReturned {
             node_id: implement_id.clone(),
             outcome: NodeOutcome::WorkAccepted(WorkOutput {
@@ -358,10 +342,7 @@ fn planner_can_create_two_work_nodes_with_dependency() {
 
     // Integration succeeds → Running.
     let t = do_transition(
-        SchedulerState::Waiting {
-            graph,
-            running: implement_id.clone(),
-        },
+        SchedulerState::Waiting { graph },
         SchedulerEvent::IntegrationReturned {
             node_id: implement_id.clone(),
             outcome: crate::machines::scheduler::event::IntegrationOutcome::Succeeded(
@@ -408,10 +389,10 @@ fn source_work_dispatch_includes_planned_dependent_test_targets() {
 
     let t = do_transition(SchedulerState::Running { graph }, SchedulerEvent::Start);
 
-    let SchedulerState::Waiting { running, .. } = t.state else {
+    let SchedulerState::Waiting { graph } = t.state else {
         panic!("expected Waiting")
     };
-    assert_eq!(running, NodeId("source".to_string()));
+    assert_eq!(active_node_id(&graph), Some(NodeId("source".to_string())));
     let [
         SchedulerEffect::RunNode {
             test_plan_context, ..
@@ -472,7 +453,6 @@ fn ordinary_missing_dependency_still_reports_unknown_node() {
     let t = do_transition(
         SchedulerState::Waiting {
             graph: running(graph, "P"),
-            running: NodeId("P".to_string()),
         },
         SchedulerEvent::NodeReturned {
             node_id: NodeId("P".to_string()),

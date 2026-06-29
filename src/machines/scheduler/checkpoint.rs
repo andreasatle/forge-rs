@@ -43,7 +43,7 @@ impl CheckpointService {
             return;
         }
         let graph = match state {
-            SchedulerState::Running { graph } | SchedulerState::Waiting { graph, .. } => graph,
+            SchedulerState::Running { graph } | SchedulerState::Waiting { graph } => graph,
             _ => return,
         };
         let (node_count, completed_count) = node_counts(graph);

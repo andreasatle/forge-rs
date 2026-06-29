@@ -34,7 +34,6 @@ fn plan_expansion_stamps_validation_plan_onto_work_children() {
     let t = do_transition(
         SchedulerState::Waiting {
             graph: running(graph, "P"),
-            running: NodeId("P".to_string()),
         },
         SchedulerEvent::NodeReturned {
             node_id: NodeId("P".to_string()),
@@ -117,7 +116,6 @@ fn retry_preserves_validation_plan() {
     let t = do_transition(
         SchedulerState::Waiting {
             graph: running(graph, "W"),
-            running: NodeId("W".to_string()),
         },
         SchedulerEvent::NodeReturned {
             node_id: NodeId("W".to_string()),

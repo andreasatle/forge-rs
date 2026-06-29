@@ -253,15 +253,15 @@ pub enum SchedulerState {
         /// The run graph to scan and advance.
         graph: RunGraph,
     },
-    /// One node has been dispatched and the scheduler is waiting for its result.
-    /// No further dispatch happens until `NodeReturned` or `IntegrationReturned`
-    /// arrives. If the node reported `WorkAccepted`, the node will be in
-    /// `Integrating` status and the scheduler awaits `IntegrationReturned`.
+    /// One node in the graph has been dispatched and the scheduler is waiting
+    /// for its result. No further dispatch happens until `NodeReturned` or
+    /// `IntegrationReturned` arrives. The active node is derived from the
+    /// single node whose status is `Running` or `Integrating`. If the node
+    /// reported `WorkAccepted`, it will be in `Integrating` status and the
+    /// scheduler awaits `IntegrationReturned`.
     Waiting {
         /// The run graph with the dispatched node marked `Running` or `Integrating`.
         graph: RunGraph,
-        /// The ID of the node currently executing or being integrated.
-        running: NodeId,
     },
     /// All nodes have reached a terminal status (`Completed`, `Failed`, or
     /// `Cancelled`) with no failures that halted the run. The graph is the

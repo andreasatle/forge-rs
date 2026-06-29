@@ -432,24 +432,13 @@ pub(super) fn validate_origin_sources(
     Ok(())
 }
 
-pub(super) fn validate_waiting_state(graph: &RunGraph, running: &NodeId) -> Result<(), String> {
-    let running_node = match graph.nodes.iter().find(|n| &n.id == running) {
-        None => {
-            return Err(format!(
-                "invalid waiting state: running node missing node id {}",
-                running.0
-            ));
-        }
-        Some(n) => n,
-    };
-
+pub(super) fn active_node(graph: &RunGraph) -> Result<&Node, String> {
     let active = active_nodes(graph);
 
     if active.is_empty() {
-        return Err(format!(
-            "invalid waiting state: expected active node for {}; found none (status: {:?})",
-            running.0, running_node.status
-        ));
+        return Err(
+            "invalid waiting state: expected exactly one active node; found none".to_string(),
+        );
     }
 
     if active.len() > 1 {
@@ -460,14 +449,7 @@ pub(super) fn validate_waiting_state(graph: &RunGraph, running: &NodeId) -> Resu
         ));
     }
 
-    if active[0].id != *running {
-        return Err(format!(
-            "invalid waiting state: active node is {} but waiting.running is {}",
-            active[0].id.0, running.0
-        ));
-    }
-
-    Ok(())
+    Ok(active[0])
 }
 
 pub(super) fn diagnose_no_ready(graph: &RunGraph) -> String {

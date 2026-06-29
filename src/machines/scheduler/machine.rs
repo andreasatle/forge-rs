@@ -232,10 +232,7 @@ impl SchedulerMachine {
                         };
                         let graph = graph::mark_node(graph, &node_id, NodeStatus::Running);
                         Transition {
-                            state: SchedulerState::Waiting {
-                                graph,
-                                running: node_id,
-                            },
+                            state: SchedulerState::Waiting { graph },
                             effects: vec![effect],
                         }
                     }
@@ -248,17 +245,18 @@ impl SchedulerMachine {
             // single-threaded runner but would be catastrophic if it did: a result for
             // a node that was never dispatched.
             (
-                SchedulerState::Waiting { graph, running },
+                SchedulerState::Waiting { graph },
                 SchedulerEvent::NodeReturned { node_id, outcome },
             ) => {
-                if let Err(reason) = graph::validate_waiting_state(&graph, &running) {
-                    return recovery::failed_transition(graph, reason);
-                }
+                let active_node = match graph::active_node(&graph) {
+                    Ok(node) => node.id.clone(),
+                    Err(reason) => return recovery::failed_transition(graph, reason),
+                };
 
-                if running != node_id {
+                if active_node != node_id {
                     let reason = format!(
                         "protocol violation: expected result for node {} but received {}",
-                        running.0, node_id.0
+                        active_node.0, node_id.0
                     );
                     return recovery::failed_transition(graph, reason);
                 }
@@ -343,10 +341,7 @@ impl SchedulerMachine {
                         };
                         let graph = graph::mark_node(graph, &node_id, NodeStatus::Integrating);
                         Transition {
-                            state: SchedulerState::Waiting {
-                                graph,
-                                running: node_id.clone(),
-                            },
+                            state: SchedulerState::Waiting { graph },
                             effects: vec![SchedulerEffect::IntegrateWork {
                                 node_id,
                                 work,
@@ -376,17 +371,18 @@ impl SchedulerMachine {
             // resumes scanning; failure routes through the same recovery
             // machinery as execution failure.
             (
-                SchedulerState::Waiting { graph, running },
+                SchedulerState::Waiting { graph },
                 SchedulerEvent::IntegrationReturned { node_id, outcome },
             ) => {
-                if let Err(reason) = graph::validate_waiting_state(&graph, &running) {
-                    return recovery::failed_transition(graph, reason);
-                }
+                let active_node = match graph::active_node(&graph) {
+                    Ok(node) => node.id.clone(),
+                    Err(reason) => return recovery::failed_transition(graph, reason),
+                };
 
-                if running != node_id {
+                if active_node != node_id {
                     let reason = format!(
                         "protocol violation: expected integration result for node {} but received {}",
-                        running.0, node_id.0
+                        active_node.0, node_id.0
                     );
                     return recovery::failed_transition(graph, reason);
                 }
@@ -444,7 +440,7 @@ impl SchedulerMachine {
                 )
             }
 
-            (SchedulerState::Waiting { graph, .. }, SchedulerEvent::Start) => {
+            (SchedulerState::Waiting { graph }, SchedulerEvent::Start) => {
                 recovery::failed_transition(
                     graph,
                     "protocol violation: state Waiting cannot consume Start".to_string(),

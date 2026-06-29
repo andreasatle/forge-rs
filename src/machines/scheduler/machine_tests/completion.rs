@@ -97,10 +97,10 @@ fn running_start_dispatches_ready_node_and_waits() {
         SchedulerEvent::Start,
     );
 
-    let SchedulerState::Waiting { graph, running } = t.state else {
+    let SchedulerState::Waiting { graph } = t.state else {
         panic!("expected Waiting")
     };
-    assert_eq!(running.0, "A");
+    assert_eq!(active_node_id(&graph), Some(NodeId("A".to_string())));
     assert_eq!(graph.nodes[0].status, NodeStatus::Running);
     assert!(matches!(
         t.effects.as_slice(),
@@ -156,10 +156,7 @@ fn scheduler_output_includes_node_failure_reason() {
     };
 
     let t = do_transition(
-        SchedulerState::Waiting {
-            graph,
-            running: NodeId("T".to_string()),
-        },
+        SchedulerState::Waiting { graph },
         SchedulerEvent::NodeReturned {
             node_id: NodeId("T".to_string()),
             outcome: NodeOutcome::Failed(NodeFailure {
@@ -225,10 +222,7 @@ fn split_remaps_downstream_dependencies_and_chain_completes() {
 
     // A completes: WorkAccepted → Integrating.
     let t = do_transition(
-        SchedulerState::Waiting {
-            graph,
-            running: NodeId("A".to_string()),
-        },
+        SchedulerState::Waiting { graph },
         SchedulerEvent::NodeReturned {
             node_id: NodeId("A".to_string()),
             outcome: NodeOutcome::WorkAccepted(WorkOutput {
@@ -236,16 +230,13 @@ fn split_remaps_downstream_dependencies_and_chain_completes() {
             }),
         },
     );
-    let SchedulerState::Waiting { graph, running: _ } = t.state else {
+    let SchedulerState::Waiting { graph } = t.state else {
         panic!("expected Waiting after A WorkAccepted")
     };
 
     // Integration succeeds → Running.
     let t = do_transition(
-        SchedulerState::Waiting {
-            graph,
-            running: NodeId("A".to_string()),
-        },
+        SchedulerState::Waiting { graph },
         SchedulerEvent::IntegrationReturned {
             node_id: NodeId("A".to_string()),
             outcome: IntegrationOutcome::Succeeded(IntegrationOutput {
@@ -265,10 +256,7 @@ fn split_remaps_downstream_dependencies_and_chain_completes() {
 
     // B fails with Split.
     let t = do_transition(
-        SchedulerState::Waiting {
-            graph,
-            running: NodeId("B".to_string()),
-        },
+        SchedulerState::Waiting { graph },
         SchedulerEvent::NodeReturned {
             node_id: NodeId("B".to_string()),
             outcome: NodeOutcome::Failed(NodeFailure {
@@ -317,10 +305,7 @@ fn split_remaps_downstream_dependencies_and_chain_completes() {
 
     // P completes as a Plan with no children.
     let t = do_transition(
-        SchedulerState::Waiting {
-            graph,
-            running: split_id.clone(),
-        },
+        SchedulerState::Waiting { graph },
         SchedulerEvent::NodeReturned {
             node_id: split_id.clone(),
             outcome: NodeOutcome::PlanAccepted(PlanOutput { children: vec![] }),
@@ -338,10 +323,7 @@ fn split_remaps_downstream_dependencies_and_chain_completes() {
 
     // C completes: WorkAccepted → Integrating.
     let t = do_transition(
-        SchedulerState::Waiting {
-            graph,
-            running: NodeId("C".to_string()),
-        },
+        SchedulerState::Waiting { graph },
         SchedulerEvent::NodeReturned {
             node_id: NodeId("C".to_string()),
             outcome: NodeOutcome::WorkAccepted(WorkOutput {
@@ -349,16 +331,13 @@ fn split_remaps_downstream_dependencies_and_chain_completes() {
             }),
         },
     );
-    let SchedulerState::Waiting { graph, running: _ } = t.state else {
+    let SchedulerState::Waiting { graph } = t.state else {
         panic!("expected Waiting after C WorkAccepted")
     };
 
     // Integration succeeds → Running.
     let t = do_transition(
-        SchedulerState::Waiting {
-            graph,
-            running: NodeId("C".to_string()),
-        },
+        SchedulerState::Waiting { graph },
         SchedulerEvent::IntegrationReturned {
             node_id: NodeId("C".to_string()),
             outcome: IntegrationOutcome::Succeeded(IntegrationOutput {

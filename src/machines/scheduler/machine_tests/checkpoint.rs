@@ -9,7 +9,6 @@ fn plan_node_rejects_work_accepted() {
     let t = do_transition(
         SchedulerState::Waiting {
             graph: running(graph, "P"),
-            running: NodeId("P".to_string()),
         },
         SchedulerEvent::NodeReturned {
             node_id: NodeId("P".to_string()),
@@ -42,7 +41,6 @@ fn work_node_rejects_plan_accepted() {
     let t = do_transition(
         SchedulerState::Waiting {
             graph: running(graph, "A"),
-            running: NodeId("A".to_string()),
         },
         SchedulerEvent::NodeReturned {
             node_id: NodeId("A".to_string()),
@@ -69,7 +67,7 @@ fn work_node_rejects_plan_accepted() {
 
 #[test]
 fn node_returned_rejects_integrating_node() {
-    // Waiting { running: B } with B status = Integrating.
+    // Waiting with B status = Integrating.
     // NodeReturned must be rejected: it is for the execution phase only.
     let mut graph = RunGraph {
         nodes: vec![work_node("B", "do work", &[])],
@@ -78,10 +76,7 @@ fn node_returned_rejects_integrating_node() {
     graph.nodes[0].status = NodeStatus::Integrating;
 
     let t = do_transition(
-        SchedulerState::Waiting {
-            graph,
-            running: NodeId("B".to_string()),
-        },
+        SchedulerState::Waiting { graph },
         SchedulerEvent::NodeReturned {
             node_id: NodeId("B".to_string()),
             outcome: NodeOutcome::WorkAccepted(WorkOutput {
@@ -122,7 +117,6 @@ fn integration_returned_rejects_non_integrating_work() {
     let t = do_transition(
         SchedulerState::Waiting {
             graph: running(graph, "A"),
-            running: NodeId("A".to_string()),
         },
         SchedulerEvent::IntegrationReturned {
             node_id: NodeId("A".to_string()),
@@ -154,7 +148,6 @@ fn integration_returned_rejects_plan_node() {
     let t = do_transition(
         SchedulerState::Waiting {
             graph: running(graph, "P"),
-            running: NodeId("P".to_string()),
         },
         SchedulerEvent::IntegrationReturned {
             node_id: NodeId("P".to_string()),
@@ -188,7 +181,6 @@ fn node_returned_wrong_node_fails_scheduler() {
     let t = do_transition(
         SchedulerState::Waiting {
             graph: running(graph, "A"),
-            running: NodeId("A".to_string()),
         },
         SchedulerEvent::NodeReturned {
             node_id: NodeId("B".to_string()),
@@ -228,10 +220,7 @@ fn integration_returned_wrong_node_fails_scheduler() {
     graph.nodes[0].status = NodeStatus::Integrating;
 
     let t = do_transition(
-        SchedulerState::Waiting {
-            graph,
-            running: NodeId("A".to_string()),
-        },
+        SchedulerState::Waiting { graph },
         SchedulerEvent::IntegrationReturned {
             node_id: NodeId("B".to_string()),
             outcome: IntegrationOutcome::Succeeded(IntegrationOutput {
@@ -332,13 +321,7 @@ fn running_rejects_integration_returned() {
 #[test]
 fn waiting_rejects_start() {
     let graph = single_work_graph();
-    let t = do_transition(
-        SchedulerState::Waiting {
-            graph,
-            running: NodeId("A".to_string()),
-        },
-        SchedulerEvent::Start,
-    );
+    let t = do_transition(SchedulerState::Waiting { graph }, SchedulerEvent::Start);
 
     let SchedulerState::Failed { reason, .. } = t.state else {
         panic!("expected Failed, got {:#?}", t.state);
@@ -364,13 +347,10 @@ fn waiting_rejects_start() {
 // ── Waiting-state invariant validation tests ──────────────────────────────
 
 #[test]
-fn waiting_with_missing_running_node_fails() {
+fn waiting_with_no_active_node_fails_before_matching_returned_node() {
     let graph = single_work_graph();
     let t = do_transition(
-        SchedulerState::Waiting {
-            graph,
-            running: NodeId("missing".to_string()),
-        },
+        SchedulerState::Waiting { graph },
         SchedulerEvent::NodeReturned {
             node_id: NodeId("missing".to_string()),
             outcome: NodeOutcome::WorkAccepted(WorkOutput {
@@ -387,8 +367,8 @@ fn waiting_with_missing_running_node_fails() {
         "reason should contain 'invalid waiting state', got: {reason:?}"
     );
     assert!(
-        reason.contains("missing"),
-        "reason should contain the missing node id, got: {reason:?}"
+        reason.contains("found none"),
+        "reason should mention that no active node exists, got: {reason:?}"
     );
     assert!(matches!(
         t.effects.as_slice(),
@@ -397,7 +377,7 @@ fn waiting_with_missing_running_node_fails() {
 }
 
 #[test]
-fn waiting_with_completed_running_node_fails() {
+fn waiting_with_only_completed_nodes_fails() {
     let mut graph = RunGraph {
         nodes: vec![
             work_node("A", "done", &[]),
@@ -409,10 +389,7 @@ fn waiting_with_completed_running_node_fails() {
     graph.nodes[1].status = NodeStatus::Completed;
 
     let t = do_transition(
-        SchedulerState::Waiting {
-            graph,
-            running: NodeId("B".to_string()),
-        },
+        SchedulerState::Waiting { graph },
         SchedulerEvent::NodeReturned {
             node_id: NodeId("B".to_string()),
             outcome: NodeOutcome::WorkAccepted(WorkOutput {
@@ -429,8 +406,8 @@ fn waiting_with_completed_running_node_fails() {
         "reason should contain 'invalid waiting state', got: {reason:?}"
     );
     assert!(
-        reason.contains("Completed"),
-        "reason should contain the actual status, got: {reason:?}"
+        reason.contains("found none"),
+        "reason should mention that no active node exists, got: {reason:?}"
     );
     assert!(matches!(
         t.effects.as_slice(),
@@ -444,7 +421,6 @@ fn waiting_with_running_node_still_works() {
     let t = do_transition(
         SchedulerState::Waiting {
             graph: running(graph, "A"),
-            running: NodeId("A".to_string()),
         },
         SchedulerEvent::NodeReturned {
             node_id: NodeId("A".to_string()),
@@ -531,10 +507,7 @@ fn waiting_state_rejects_no_active_nodes() {
         next_id: 0,
     };
     let t = do_transition(
-        SchedulerState::Waiting {
-            graph,
-            running: NodeId("B".to_string()),
-        },
+        SchedulerState::Waiting { graph },
         SchedulerEvent::NodeReturned {
             node_id: NodeId("B".to_string()),
             outcome: NodeOutcome::WorkAccepted(WorkOutput {
@@ -571,10 +544,7 @@ fn waiting_state_rejects_multiple_active_nodes() {
     graph.nodes[1].status = NodeStatus::Running;
 
     let t = do_transition(
-        SchedulerState::Waiting {
-            graph,
-            running: NodeId("B".to_string()),
-        },
+        SchedulerState::Waiting { graph },
         SchedulerEvent::NodeReturned {
             node_id: NodeId("B".to_string()),
             outcome: NodeOutcome::WorkAccepted(WorkOutput {
@@ -605,8 +575,8 @@ fn waiting_state_rejects_multiple_active_nodes() {
 }
 
 #[test]
-fn waiting_state_rejects_active_node_that_differs_from_running() {
-    // C is active, B is non-active — the active node doesn't match waiting.running.
+fn waiting_state_rejects_return_for_non_active_node() {
+    // C is active; a return for B is a protocol violation.
     let mut graph = RunGraph {
         nodes: vec![work_node("B", "do B", &[]), work_node("C", "do C", &[])],
         next_id: 0,
@@ -614,10 +584,7 @@ fn waiting_state_rejects_active_node_that_differs_from_running() {
     graph.nodes[1].status = NodeStatus::Running;
 
     let t = do_transition(
-        SchedulerState::Waiting {
-            graph,
-            running: NodeId("B".to_string()),
-        },
+        SchedulerState::Waiting { graph },
         SchedulerEvent::NodeReturned {
             node_id: NodeId("B".to_string()),
             outcome: NodeOutcome::WorkAccepted(WorkOutput {
@@ -630,12 +597,12 @@ fn waiting_state_rejects_active_node_that_differs_from_running() {
         panic!("expected Failed, got {:#?}", t.state);
     };
     assert!(
-        reason.contains("invalid waiting state"),
-        "reason should contain 'invalid waiting state', got: {reason:?}"
+        reason.contains("protocol violation"),
+        "reason should contain 'protocol violation', got: {reason:?}"
     );
     assert!(
         reason.contains('B'),
-        "reason should contain waiting.running id B, got: {reason:?}"
+        "reason should contain returned node id B, got: {reason:?}"
     );
     assert!(
         reason.contains('C'),

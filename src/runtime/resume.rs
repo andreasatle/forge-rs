@@ -113,7 +113,7 @@ fn manifest_status_is_running(manifest_path: &Path) -> bool {
 
 /// Convert a checkpointed state into one safe to hand to the engine loop.
 ///
-/// - `Waiting { graph, .. }` becomes `Running { graph }` because the engine
+/// - `Waiting { graph }` becomes `Running { graph }` because the engine
 ///   boots with `Start` events; `Waiting + Start` would be a protocol violation.
 /// - Any node in `Running` or `Integrating` status is reset to `Pending` so the
 ///   scheduler re-dispatches it. All other statuses are unchanged.
@@ -122,7 +122,7 @@ pub fn normalize_for_resume(state: SchedulerState) -> SchedulerState {
         SchedulerState::Running { graph } => SchedulerState::Running {
             graph: reset_active_nodes(graph),
         },
-        SchedulerState::Waiting { graph, .. } => SchedulerState::Running {
+        SchedulerState::Waiting { graph } => SchedulerState::Running {
             graph: reset_active_nodes(graph),
         },
         other => other,
@@ -346,10 +346,7 @@ mod tests {
             ],
             next_id: 0,
         };
-        let state = SchedulerState::Waiting {
-            graph,
-            running: NodeId("B".to_string()),
-        };
+        let state = SchedulerState::Waiting { graph };
         let normalized = normalize_for_resume(state);
         assert!(
             matches!(normalized, SchedulerState::Running { .. }),

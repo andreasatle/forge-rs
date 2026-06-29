@@ -118,10 +118,7 @@ mod tests {
         let dir = temp_dir("state-waiting-round-trip");
         let mut graph = sample_graph();
         graph.nodes[1].status = NodeStatus::Integrating;
-        let state = SchedulerState::Waiting {
-            graph,
-            running: NodeId("B".to_string()),
-        };
+        let state = SchedulerState::Waiting { graph };
         save_checkpoint(&dir, &state).unwrap();
         let loaded = load_checkpoint(&dir).unwrap();
         assert_eq!(state, loaded);

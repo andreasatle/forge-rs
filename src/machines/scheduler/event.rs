@@ -230,7 +230,8 @@ pub enum SchedulerEvent {
     Start,
     /// A previously-dispatched node has finished and is reporting its outcome.
     NodeReturned {
-        /// The ID of the node that finished, used to verify it matches `running`.
+        /// The ID of the node that finished, used to verify it matches the
+        /// graph's single active node.
         node_id: NodeId,
         /// What the node produced and how the scheduler should react.
         outcome: NodeOutcome,
