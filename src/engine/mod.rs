@@ -11,8 +11,7 @@
 //!
 //! The engine is intentionally domain-free. It knows nothing about scheduler
 //! nodes, agents, providers, tools, git, or any other Forge concept. All
-//! concrete behavior belongs in [`machines`](crate::machines) and
-//! [`handlers`](crate::handlers).
+//! concrete behavior belongs in [`machines`](crate::machines).
 //!
 //! # The execution protocol
 //!
