@@ -47,8 +47,9 @@ Execution failures are handled by the framework, not the model.";
 
 macro_rules! reviewer_contract_guidance {
     () => {
-        "Ground every rejection in the explicit objective, \
-declared target files, plan metadata, adapter policy, validation contract, or observable artifact correctness. \
+        "Evaluate the current node contract, not the entire project state. \
+Distinguish current node deliverables, planned follow-up deliverables, and overall project completion. \
+Ground every rejection in the current node objective, declared target files, plan metadata, adapter policy, validation contract, or observable artifact correctness. \
 Do not reject solely for unstated preferences about style, algorithm, architecture, or performance. \
 For example, do not reject recursive code solely because an iterative version might be faster unless the contract requires iteration or a performance bound. \
 If you have a style or performance concern outside the contract, mention it in accepted content as advisory only."
@@ -82,7 +83,7 @@ const CODING_WORKER_CRITIC_SYSTEM: &str = concat!(
 Evaluate the producer output for correctness and completeness. \
 Identify missing work, unsupported claims, and incomplete implementation. \
 Check for missed edge cases and unnecessary complexity. \
-For code changes, verify corresponding tests were created or updated. \
+Apply the rendered node review contract for current-node test and follow-up acceptance scope. \
 Use read_file to inspect the specific files the producer was expected to modify. \
 Do not accept based only on the producer summary or on file existence from list_files. \
 Verify actual file contents satisfy the objective. \
@@ -128,7 +129,7 @@ const CODING_WORKER_REFEREE_SYSTEM: &str = concat!(
 Decide whether the work satisfies the objective and acceptance criteria. \
 Perform a final completeness check: every requirement must be addressed, not just the last task. \
 Before accepting, use read_file to inspect the specific files the producer was expected to modify. \
-Reject code changes that do not include corresponding tests. \
+Apply the rendered node review contract for current-node test and follow-up acceptance scope. \
 Do not rely on list_files to verify completion — file existence is not evidence of correct content. \
 Reject if the artifact contents do not satisfy the objective, even if the producer or critic claims they do. \
 Accept only when the work is complete and correct. \
@@ -684,11 +685,19 @@ mod tests {
             ("worker referee", policy.worker_referee_system.as_str()),
         ] {
             assert!(
-                system.contains("Ground every rejection in the explicit objective"),
-                "{label} must ground rejections in explicit contract; got:\n{system}"
+                system.contains("Evaluate the current node contract")
+                    && system.contains("not the entire project state"),
+                "{label} must scope review to the current node contract; got:\n{system}"
             );
             assert!(
-                system.contains("declared target files")
+                system.contains("current node deliverables")
+                    && system.contains("planned follow-up deliverables")
+                    && system.contains("overall project completion"),
+                "{label} must distinguish current, follow-up, and project-completion scopes; got:\n{system}"
+            );
+            assert!(
+                system.contains("Ground every rejection in the current node objective")
+                    && system.contains("declared target files")
                     && system.contains("validation contract")
                     && system.contains("observable artifact correctness"),
                 "{label} must name allowed rejection grounds; got:\n{system}"
@@ -738,7 +747,7 @@ mod tests {
                 "{label} must permit rejection when iteration or performance is explicit; got:\n{system}"
             );
             assert!(
-                system.contains("objective")
+                system.contains("current node objective")
                     && system.contains("adapter policy")
                     && system.contains("validation contract"),
                 "{label} must preserve explicit objective/policy/validation grounds; got:\n{system}"
@@ -919,15 +928,25 @@ mod tests {
     }
 
     #[test]
-    fn coding_worker_referee_rejects_code_changes_without_tests() {
+    fn coding_worker_reviewers_defer_test_scope_to_node_review_contract() {
         let policy = CodingProjectAdapter.role_policy();
-        assert!(
-            policy
-                .worker_referee_system
-                .contains("Reject code changes that do not include corresponding tests"),
-            "worker_referee_system must reject code changes without tests; got:\n{}",
-            policy.worker_referee_system
-        );
+        for (label, system) in [
+            ("worker critic", policy.worker_critic_system.as_str()),
+            ("worker referee", policy.worker_referee_system.as_str()),
+        ] {
+            assert!(
+                system.contains(
+                    "Apply the rendered node review contract for current-node test and follow-up acceptance scope"
+                ),
+                "{label} must defer test/follow-up scope to the typed review contract; got:\n{system}"
+            );
+            assert!(
+                !system.contains("Reject code changes that do not include corresponding tests")
+                    && !system.contains("Reject code changes that omit corresponding tests")
+                    && !system.contains("do not reject the current source-only node solely because those test files do not exist yet"),
+                "{label} must not duplicate concrete test acceptance rules outside the review contract; got:\n{system}"
+            );
+        }
     }
 
     #[test]

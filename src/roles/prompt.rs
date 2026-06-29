@@ -1,7 +1,7 @@
 //! Prompt rendering functions for role invocations.
 
 use crate::machines::deliberation::state::{DeliberationRole, RevisionFeedback};
-use crate::machines::scheduler::TestPlanContext;
+use crate::machines::scheduler::{NodeKind, TestPlanContext};
 use crate::roles::{TargetView, TargetViewKind};
 use crate::services::extract_json_object;
 use crate::tools::{FileToolPolicy, FileToolResponse, parse_tool_request};
@@ -242,6 +242,57 @@ pub(super) fn render_completion_pressure_retry_prompt(
     )
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct NodeReviewContract {
+    pub(super) target_files: Vec<String>,
+    pub(super) required_test_targets: Vec<String>,
+    pub(super) planned_follow_up_targets: Vec<String>,
+    pub(super) covered_test_targets: Vec<String>,
+    pub(super) missing_test_targets: Vec<String>,
+    pub(super) requires_file_inspection: bool,
+}
+
+impl NodeReviewContract {
+    pub(super) fn for_role(
+        role: &DeliberationRole,
+        node_kind: &NodeKind,
+        target_files: &[String],
+        test_plan_context: &TestPlanContext,
+        has_tools: bool,
+    ) -> Option<Self> {
+        if !matches!(role, DeliberationRole::Critic | DeliberationRole::Referee) {
+            return None;
+        }
+
+        let planned_set = test_plan_context
+            .planned_test_targets
+            .iter()
+            .map(String::as_str)
+            .collect::<std::collections::HashSet<_>>();
+        let covered_test_targets = test_plan_context
+            .required_test_targets
+            .iter()
+            .filter(|target| planned_set.contains(target.as_str()))
+            .cloned()
+            .collect::<Vec<_>>();
+        let missing_test_targets = test_plan_context
+            .required_test_targets
+            .iter()
+            .filter(|target| !planned_set.contains(target.as_str()))
+            .cloned()
+            .collect::<Vec<_>>();
+
+        Some(Self {
+            target_files: target_files.to_vec(),
+            required_test_targets: test_plan_context.required_test_targets.clone(),
+            planned_follow_up_targets: test_plan_context.planned_test_targets.clone(),
+            covered_test_targets,
+            missing_test_targets,
+            requires_file_inspection: *node_kind == NodeKind::Work && has_tools,
+        })
+    }
+}
+
 /// Build a prompt for a single role invocation.
 #[cfg(test)]
 pub(super) fn render_role_prompt(
@@ -262,6 +313,7 @@ pub(super) fn render_role_prompt(
         feedback,
         target_views,
         test_plan_context: &TestPlanContext::default(),
+        review_contract: None,
     })
 }
 
@@ -274,6 +326,7 @@ pub(super) struct RolePromptRender<'a> {
     pub(super) feedback: &'a [RevisionFeedback],
     pub(super) target_views: &'a [TargetView],
     pub(super) test_plan_context: &'a TestPlanContext,
+    pub(super) review_contract: Option<&'a NodeReviewContract>,
 }
 
 pub(super) fn render_role_prompt_with_test_plan_context(input: RolePromptRender<'_>) -> String {
@@ -283,7 +336,9 @@ pub(super) fn render_role_prompt_with_test_plan_context(input: RolePromptRender<
     if !input.target_views.is_empty() {
         parts.push(render_target_state_view(input.target_views));
     }
-    if !input.test_plan_context.required_test_targets.is_empty() {
+    if let Some(contract) = input.review_contract {
+        parts.push(render_node_review_contract(contract));
+    } else if !input.test_plan_context.required_test_targets.is_empty() {
         parts.push(render_test_plan_context(input.test_plan_context));
     }
     if let Some(pc) = input.producer_content {
@@ -298,6 +353,73 @@ pub(super) fn render_role_prompt_with_test_plan_context(input: RolePromptRender<
     }
     parts.push(input.system.to_string());
     parts.join("\n")
+}
+
+pub(super) fn render_node_review_contract(contract: &NodeReviewContract) -> String {
+    let mut lines = vec![
+        "Node review contract (typed role-boundary metadata):".to_string(),
+        "Evaluate the current node contract, not the entire project state.".to_string(),
+        format!(
+            "Current node target files: {}",
+            render_list_or_none(&contract.target_files)
+        ),
+        format!(
+            "Adapter-required test targets for current target files: {}",
+            render_list_or_none(&contract.required_test_targets)
+        ),
+        format!(
+            "Declared follow-up/dependent target files: {}",
+            render_list_or_none(&contract.planned_follow_up_targets)
+        ),
+    ];
+
+    if !contract.covered_test_targets.is_empty() {
+        lines.push(format!(
+            "Required test targets covered by declared follow-up work: {}",
+            contract.covered_test_targets.join(", ")
+        ));
+        lines.push(
+            "Acceptance guidance: accept a correct source-only current node even when these covered test files do not exist yet."
+                .to_string(),
+        );
+        lines.push(
+            "Do not reject this current node solely because covered tests are planned separately."
+                .to_string(),
+        );
+    }
+
+    if !contract.missing_test_targets.is_empty() {
+        lines.push(format!(
+            "Required test targets not covered by declared follow-up work: {}",
+            contract.missing_test_targets.join(", ")
+        ));
+        lines.push(
+            "Acceptance guidance: if this current node changes code and no declared follow-up covers these tests, missing tests remain a valid rejection."
+                .to_string(),
+        );
+    }
+
+    if contract.requires_file_inspection {
+        lines.push(
+            "Inspection requirement: before accepting, inspect the current node target files with read_file."
+                .to_string(),
+        );
+    }
+
+    lines.push(
+        "Overall project completion is checked separately by the scheduler and validation; do not turn planned follow-up work into a current-node rejection."
+            .to_string(),
+    );
+
+    lines.join("\n")
+}
+
+fn render_list_or_none(items: &[String]) -> String {
+    if items.is_empty() {
+        "none".to_string()
+    } else {
+        items.join(", ")
+    }
 }
 
 pub(super) fn render_test_plan_context(context: &TestPlanContext) -> String {
@@ -322,32 +444,37 @@ pub(super) fn render_test_plan_context(context: &TestPlanContext) -> String {
 
     let mut lines = vec![
         "Test target plan context (built from structured target/dependency metadata):".to_string(),
-        format!("Required test targets for this node: {required}"),
+        "Review scope: judge the current node's declared deliverables, while accounting for declared follow-up work.".to_string(),
+        format!("Adapter-required test targets for the current node's target files: {required}"),
     ];
     if context.planned_test_targets.is_empty() {
-        lines.push("Planned dependent/follow-up targets: none".to_string());
+        lines.push("Declared dependent/follow-up target files: none".to_string());
     } else {
         lines.push(format!(
-            "Planned dependent/follow-up targets: {}",
+            "Declared dependent/follow-up target files: {}",
             context.planned_test_targets.join(", ")
         ));
     }
     if missing.is_empty() {
         lines.push(format!(
-            "Required test targets covered by planned follow-up work: {}",
+            "Adapter-required test targets covered by declared follow-up work: {}",
             covered.join(", ")
         ));
         lines.push(
-            "Do not reject this source-only node solely because those tests are planned separately."
+            "Acceptance is allowed for a correct source-only current node even though those planned test files do not exist yet."
+                .to_string(),
+        );
+        lines.push(
+            "Do not reject this current node solely because covered tests are planned separately."
                 .to_string(),
         );
     } else {
         lines.push(format!(
-            "Required test targets not covered by planned follow-up work: {}",
+            "Adapter-required test targets not covered by declared follow-up work: {}",
             missing.join(", ")
         ));
         lines.push(
-            "A source change still requires corresponding tests unless covered by structured follow-up work."
+            "If this current node changes code and no declared follow-up covers these tests, missing tests remain a valid rejection."
                 .to_string(),
         );
     }

@@ -178,16 +178,16 @@ fn reviewer_prompt_explains_tests_planned_separately() {
 
     let prompt = &provider.requests.borrow()[0].prompt;
     assert!(
-        prompt.contains("Test target plan context"),
-        "critic prompt must include structured test planning context; got:\n{prompt}"
+        prompt.contains("Node review contract (typed role-boundary metadata)"),
+        "critic prompt must include typed node review contract; got:\n{prompt}"
     );
     assert!(
-        prompt.contains("Required test targets covered by planned follow-up work: test_main.py"),
+        prompt.contains("Required test targets covered by declared follow-up work: test_main.py"),
         "critic prompt must identify planned downstream test coverage; got:\n{prompt}"
     );
     assert!(
         prompt.contains(
-            "Do not reject this source-only node solely because those tests are planned separately"
+            "Do not reject this current node solely because covered tests are planned separately"
         ),
         "critic prompt must explain the graph-aware exception; got:\n{prompt}"
     );
@@ -213,12 +213,125 @@ fn referee_prompt_explains_missing_planned_test_target_from_metadata() {
     let prompt = &provider.requests.borrow()[0].prompt;
     assert!(
         prompt
-            .contains("Required test targets not covered by planned follow-up work: test_main.py"),
+            .contains("Required test targets not covered by declared follow-up work: test_main.py"),
         "referee prompt must use structured planned targets, not objective text; got:\n{prompt}"
     );
     assert!(
-        prompt.contains("Planned dependent/follow-up targets: none"),
+        prompt.contains("Declared follow-up/dependent target files: none"),
         "referee prompt must report no planned test target despite objective prose; got:\n{prompt}"
+    );
+}
+
+#[test]
+fn source_only_node_with_planned_test_node_has_consistent_reviewer_contract() {
+    use crate::project::{CodingProjectAdapter, ProjectAdapter as _};
+
+    let provider = ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"review ok"}"#]);
+    let runner = ProviderRoleRunner::new_with_policy(&provider, CodingProjectAdapter.role_policy());
+    let mut request = critic_request(
+        "Implement fibonacci(n: int) in main.py.",
+        "main.py implements fibonacci correctly",
+    );
+    request.target_files = vec!["main.py".to_string()];
+    request.test_plan_context = TestPlanContext {
+        required_test_targets: vec!["test_main.py".to_string()],
+        planned_test_targets: vec!["test_main.py".to_string()],
+    };
+
+    runner.run_role(request, &crate::telemetry::NoopTelemetry);
+
+    let prompt = &provider.requests.borrow()[0].prompt;
+    assert!(
+        prompt.contains("Node review contract (typed role-boundary metadata)")
+            && prompt.contains("Declared follow-up/dependent target files: test_main.py"),
+        "prompt must distinguish current source deliverable from planned test deliverable; got:\n{prompt}"
+    );
+    assert!(
+        prompt.contains(
+            "Acceptance guidance: accept a correct source-only current node even when these covered test files do not exist yet"
+        ),
+        "source-only node with planned tests must be allowed to accept when implementation is correct; got:\n{prompt}"
+    );
+    assert!(
+        !prompt.contains("Reject code changes that omit corresponding tests"),
+        "reviewer system guidance must not duplicate concrete test rejection rules; got:\n{prompt}"
+    );
+}
+
+#[test]
+fn implementation_and_tests_node_can_still_reject_missing_tests() {
+    use crate::project::{CodingProjectAdapter, ProjectAdapter as _};
+
+    let provider =
+        ScriptedProvider::from_strs(&[r#"{"status":"rejected","reason":"missing tests"}"#]);
+    let runner = ProviderRoleRunner::new_with_policy(&provider, CodingProjectAdapter.role_policy());
+    let mut request = referee_request(
+        "Implement fibonacci(n: int) in main.py and add tests in test_main.py.",
+        "main.py changed but test_main.py was not created",
+        "critic says tests are missing",
+    );
+    request.target_files = vec!["main.py".to_string(), "test_main.py".to_string()];
+    request.test_plan_context = TestPlanContext {
+        required_test_targets: vec!["test_main.py".to_string()],
+        planned_test_targets: vec![],
+    };
+
+    runner.run_role(request, &crate::telemetry::NoopTelemetry);
+
+    let prompt = &provider.requests.borrow()[0].prompt;
+    assert!(
+        prompt.contains("target: main.py") || prompt.contains("Target files: main.py"),
+        "prompt must preserve implementation target context; got:\n{prompt}"
+    );
+    assert!(
+        prompt.contains("test_main.py"),
+        "prompt must preserve test target context; got:\n{prompt}"
+    );
+    assert!(
+        prompt.contains(
+            "Acceptance guidance: if this current node changes code and no declared follow-up covers these tests, missing tests remain a valid rejection"
+        ),
+        "implementation+tests node must still allow rejection for missing tests; got:\n{prompt}"
+    );
+    assert!(
+        !prompt.contains("Reject code changes that omit corresponding tests"),
+        "reviewer system prompt must not duplicate missing-test rejection outside the contract; got:\n{prompt}"
+    );
+}
+
+#[test]
+fn reviewer_prompt_has_no_test_guidance_contradiction_when_tests_are_planned() {
+    use crate::project::{CodingProjectAdapter, ProjectAdapter as _};
+
+    let provider = ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"approved"}"#]);
+    let runner = ProviderRoleRunner::new_with_policy(&provider, CodingProjectAdapter.role_policy());
+    let mut request = referee_request(
+        "Implement fibonacci(n: int) in main.py.",
+        "main.py implements fibonacci correctly",
+        "critic says source is correct",
+    );
+    request.target_files = vec!["main.py".to_string()];
+    request.test_plan_context = TestPlanContext {
+        required_test_targets: vec!["test_main.py".to_string()],
+        planned_test_targets: vec!["test_main.py".to_string()],
+    };
+
+    runner.run_role(request, &crate::telemetry::NoopTelemetry);
+
+    let prompt = &provider.requests.borrow()[0].prompt;
+    assert!(
+        prompt.contains(
+            "Do not reject this current node solely because covered tests are planned separately"
+        ),
+        "prompt must include planned-test allowance; got:\n{prompt}"
+    );
+    assert!(
+        !prompt.contains("Reject code changes that do not include corresponding tests"),
+        "prompt must not include old unconditional missing-test rejection; got:\n{prompt}"
+    );
+    assert!(
+        !prompt.contains("Reject code changes that omit corresponding tests"),
+        "prompt must not duplicate concrete missing-test rejection outside the contract; got:\n{prompt}"
     );
 }
 
@@ -254,7 +367,7 @@ fn coding_reviewer_prompts_forbid_rejecting_unstated_preferences() {
         ("referee", requests[1].prompt.as_str()),
     ] {
         assert!(
-            prompt.contains("Ground every rejection in the explicit objective"),
+            prompt.contains("Ground every rejection in the current node objective"),
             "{label} prompt must ground rejection in explicit contract; got:\n{prompt}"
         );
         assert!(

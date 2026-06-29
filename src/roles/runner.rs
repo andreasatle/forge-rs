@@ -23,10 +23,10 @@ use super::parser::{strip_code_fence, try_parse_role_response};
 #[cfg(test)]
 use super::prompt::render_role_prompt;
 use super::prompt::{
-    RolePromptRender, detect_placeholder_tool_echo, render_completion_pressure_retry_prompt,
-    render_objective_for_prompt, render_planner_retry_prompt, render_retry_prompt,
-    render_reviewer_must_read_prompt, render_role_prompt_with_test_plan_context,
-    render_tool_section, role_subsource,
+    NodeReviewContract, RolePromptRender, detect_placeholder_tool_echo,
+    render_completion_pressure_retry_prompt, render_objective_for_prompt,
+    render_planner_retry_prompt, render_retry_prompt, render_reviewer_must_read_prompt,
+    render_role_prompt_with_test_plan_context, render_tool_section, role_subsource,
 };
 use super::protocol_state::ProtocolState;
 use super::tooling::{
@@ -176,6 +176,13 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
 
         let rendered_objective =
             render_objective_for_prompt(&request.objective, &request.target_files);
+        let review_contract = NodeReviewContract::for_role(
+            &request.role,
+            &request.node_kind,
+            &request.target_files,
+            &request.test_plan_context,
+            has_tools,
+        );
         let core_prompt = render_role_prompt_with_test_plan_context(RolePromptRender {
             system,
             role: &request.role,
@@ -185,6 +192,7 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
             feedback: &request.feedback,
             target_views: &request.target_views,
             test_plan_context: &request.test_plan_context,
+            review_contract: review_contract.as_ref(),
         });
         let base_prompt = if has_tools {
             format!("{core_prompt}\n\n{}", render_tool_section(&policy))
