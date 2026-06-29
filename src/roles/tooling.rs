@@ -1,6 +1,5 @@
 //! Tool dispatch and policy helpers for role execution.
 
-use crate::artifacts::ArtifactUpdate;
 use crate::machines::deliberation::event::RoleResult;
 use crate::machines::deliberation::state::DeliberationRole;
 use crate::machines::scheduler::{FailureKind, NodeKind};
@@ -23,18 +22,8 @@ pub(super) enum ToolDispatchOutcome {
     Fail(RoleResult),
 }
 
-pub(super) fn extract_artifact_state(
-    executor: &mut Option<FileToolExecutor>,
-) -> (Option<ArtifactUpdate>, bool) {
-    executor.take().map_or((None, false), |e| {
-        let changed = e.changed();
-        let update = e.into_update();
-        if update.changes.is_empty() {
-            (None, changed)
-        } else {
-            (Some(update), changed)
-        }
-    })
+pub(super) fn extract_artifact_changed(executor: &mut Option<FileToolExecutor>) -> bool {
+    executor.take().is_some_and(|e| e.changed())
 }
 
 pub(super) fn tool_name_of(req: &FileToolRequest) -> String {
@@ -76,8 +65,7 @@ pub(super) fn file_tool_policy_for_request(
 /// Processes a single tool request within the role loop.
 ///
 /// Handles pressure-mode violations, tool execution, fingerprinting, and prompt
-/// updates. Returns `Continue` to keep the loop running or `Fail` to exit early;
-/// the caller wraps a `Fail` result with `extract_update` to produce `RoleRunOutput`.
+/// updates. Returns `Continue` to keep the loop running or `Fail` to exit early.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn dispatch_tool_step(
     tool_req: FileToolRequest,

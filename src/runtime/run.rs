@@ -691,7 +691,7 @@ mod tests {
 
     #[test]
     fn relative_repo_path_canonicalized_and_integrates_from_temp_workspace() {
-        use crate::artifacts::{ArtifactUpdate, FileChange, create_workspace, integrate};
+        use crate::artifacts::{WorkspaceFileOps, create_workspace, integrate};
 
         let seq = NEXT_ID.fetch_add(1, Ordering::Relaxed);
         let rel = format!("target/forge-relative-test-{}-{seq}", std::process::id());
@@ -713,14 +713,9 @@ mod tests {
             std::env::temp_dir().join(format!("forge-rel-workspace-{}-{seq}", std::process::id()));
         let mut workspace = create_workspace(&artifact, workspace_path.clone());
 
-        ArtifactUpdate {
-            changes: vec![FileChange::Write {
-                path: "result.txt".to_string(),
-                content: "from relative repo\n".to_string(),
-            }],
-        }
-        .apply(&mut workspace)
-        .unwrap();
+        workspace
+            .write_file("result.txt", "from relative repo\n")
+            .unwrap();
 
         let integrated = integrate(&artifact, &workspace).unwrap();
 
@@ -941,7 +936,7 @@ mod tests {
 
     #[test]
     fn runtime_summary_uses_post_integration_artifact_commit() {
-        use crate::artifacts::{ArtifactUpdate, FileChange};
+        use crate::artifacts::WorkspaceFileOps;
         use crate::machines::scheduler::{
             NodeId, NodeKind, NodeRequest, PlanOutput, RunRequest, SchedulerHandler,
             SchedulerMachine, WorkOutput,
@@ -951,9 +946,9 @@ mod tests {
         use std::fs;
         use std::process::Command;
 
-        // Returns PlanAccepted for Plan nodes and WorkAccepted (with an
-        // ArtifactUpdate) for Work nodes, so the full RunNode → IntegrateWork
-        // path is exercised and the artifact commit actually advances.
+        // Returns PlanAccepted for Plan nodes and mutates the WorkAttempt
+        // workspace for Work nodes, so the full RunNode → IntegrateWork path
+        // is exercised and the artifact commit actually advances.
         struct FileWritingRunner;
         impl NodeRunner for FileWritingRunner {
             fn run_node(
@@ -973,17 +968,20 @@ mod tests {
                             validation_plan: None,
                         }],
                     }),
-                    NodeKind::Work => NodeRunResult::WorkAccepted(NodeRunWorkResult {
-                        work: WorkOutput {
-                            summary: "wrote result.txt".to_string(),
-                        },
-                        artifact_update: Some(ArtifactUpdate {
-                            changes: vec![FileChange::Write {
-                                path: "result.txt".to_string(),
-                                content: "generated\n".to_string(),
-                            }],
-                        }),
-                    }),
+                    NodeKind::Work => {
+                        request
+                            .work_attempt
+                            .expect("artifact Work must receive a WorkAttempt")
+                            .workspace
+                            .borrow_mut()
+                            .write_file("result.txt", "generated\n")
+                            .expect("test runner must write result.txt");
+                        NodeRunResult::WorkAccepted(NodeRunWorkResult {
+                            work: WorkOutput {
+                                summary: "wrote result.txt".to_string(),
+                            },
+                        })
+                    }
                 }
             }
         }
@@ -1125,7 +1123,7 @@ mod tests {
 
     #[test]
     fn successful_validated_run_sets_validation_passed_true() {
-        use crate::artifacts::{ArtifactUpdate, FileChange};
+        use crate::artifacts::WorkspaceFileOps;
         use crate::machines::scheduler::{
             NodeId, NodeKind, NodeRequest, PlanOutput, RunRequest, SchedulerHandler,
             SchedulerMachine, WorkOutput,
@@ -1153,17 +1151,20 @@ mod tests {
                             validation_plan: None,
                         }],
                     }),
-                    NodeKind::Work => NodeRunResult::WorkAccepted(NodeRunWorkResult {
-                        work: WorkOutput {
-                            summary: "wrote result.txt".to_string(),
-                        },
-                        artifact_update: Some(ArtifactUpdate {
-                            changes: vec![FileChange::Write {
-                                path: "result.txt".to_string(),
-                                content: "generated\n".to_string(),
-                            }],
-                        }),
-                    }),
+                    NodeKind::Work => {
+                        request
+                            .work_attempt
+                            .expect("artifact Work must receive a WorkAttempt")
+                            .workspace
+                            .borrow_mut()
+                            .write_file("result.txt", "generated\n")
+                            .expect("test runner must write result.txt");
+                        NodeRunResult::WorkAccepted(NodeRunWorkResult {
+                            work: WorkOutput {
+                                summary: "wrote result.txt".to_string(),
+                            },
+                        })
+                    }
                 }
             }
         }
@@ -1199,8 +1200,7 @@ mod tests {
 
     #[test]
     fn validation_failure_sets_validation_passed_false_in_manifest() {
-        use crate::artifacts::Workspace;
-        use crate::artifacts::{ArtifactUpdate, FileChange};
+        use crate::artifacts::{Workspace, WorkspaceFileOps};
         use crate::machines::scheduler::{
             NodeId, NodeKind, NodeRequest, PlanOutput, RunRequest, SchedulerHandler,
             SchedulerMachine, WorkOutput,
@@ -1229,17 +1229,20 @@ mod tests {
                             validation_plan: None,
                         }],
                     }),
-                    NodeKind::Work => NodeRunResult::WorkAccepted(NodeRunWorkResult {
-                        work: WorkOutput {
-                            summary: "wrote result.txt".to_string(),
-                        },
-                        artifact_update: Some(ArtifactUpdate {
-                            changes: vec![FileChange::Write {
-                                path: "result.txt".to_string(),
-                                content: "generated\n".to_string(),
-                            }],
-                        }),
-                    }),
+                    NodeKind::Work => {
+                        request
+                            .work_attempt
+                            .expect("artifact Work must receive a WorkAttempt")
+                            .workspace
+                            .borrow_mut()
+                            .write_file("result.txt", "generated\n")
+                            .expect("test runner must write result.txt");
+                        NodeRunResult::WorkAccepted(NodeRunWorkResult {
+                            work: WorkOutput {
+                                summary: "wrote result.txt".to_string(),
+                            },
+                        })
+                    }
                 }
             }
         }

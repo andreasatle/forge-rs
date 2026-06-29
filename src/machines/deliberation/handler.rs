@@ -5,9 +5,7 @@
 //! `RoleReturned` event. All prompt rendering, provider calls, JSON parsing,
 //! protocol retries, and file tool loops live in the runner layer.
 
-use std::cell::RefCell;
-
-use crate::artifacts::{ArtifactView, FileChange};
+use crate::artifacts::ArtifactView;
 use crate::machines::scheduler::{NodeKind, TestPlanContext};
 use crate::node_runner::WorkAttempt;
 use crate::roles::policy::RolePolicy;
@@ -29,10 +27,6 @@ pub(crate) const TARGET_VIEW_BUDGET: usize = 16 * 1024;
 /// Executes `DeliberationEffect` values by delegating role execution to a
 /// [`RoleRunner`](crate::roles::runner::RoleRunner).
 ///
-/// Accumulates any [`ArtifactUpdate`](crate::artifacts::ArtifactUpdate) values produced by tool loops across
-/// all role invocations. Retrieve the combined update with
-/// [`take_artifact_update`](DeliberationHandler::take_artifact_update) after
-/// the machine finishes.
 pub struct DeliberationHandler<R> {
     pub(crate) runner: R,
     /// Artifact view made available to roles as file tool context.
@@ -42,12 +36,10 @@ pub struct DeliberationHandler<R> {
     /// Whether this deliberation is for a plan node or a work node.
     /// Forwarded to every Producer RoleRequest to select the correct policy field.
     pub(crate) node_kind: NodeKind,
-    /// Whether Work+Producer accepted output must include artifact file changes.
-    pub(crate) work_requires_artifact_update: bool,
+    /// Whether Work+Producer accepted output must mutate the artifact workspace.
+    pub(crate) work_requires_artifact_mutation: bool,
     /// Structured test-target planning context forwarded to role prompts.
     pub(crate) test_plan_context: TestPlanContext,
-    /// File changes accumulated across all tool loops run so far.
-    pub(crate) accumulated_update: RefCell<Vec<FileChange>>,
     /// For plan nodes: optional structured validation applied to planner
     /// output before the plan is accepted.
     pub(crate) plan_validation_context: Option<PlanValidationContext>,
@@ -69,9 +61,8 @@ impl<P> DeliberationHandler<ProviderRoleRunner<P>> {
             artifact_view: None,
             work_attempt: None,
             node_kind: NodeKind::Work,
-            work_requires_artifact_update: false,
+            work_requires_artifact_mutation: false,
             test_plan_context: TestPlanContext::default(),
-            accumulated_update: RefCell::new(Vec::new()),
             plan_validation_context: None,
         }
     }
@@ -88,9 +79,8 @@ impl<P> DeliberationHandler<ProviderRoleRunner<P>> {
             artifact_view: None,
             work_attempt: None,
             node_kind: NodeKind::Work,
-            work_requires_artifact_update: false,
+            work_requires_artifact_mutation: false,
             test_plan_context: TestPlanContext::default(),
-            accumulated_update: RefCell::new(Vec::new()),
             plan_validation_context: None,
         }
     }
@@ -143,10 +133,9 @@ impl<P> DeliberationHandler<ProviderRoleRunner<P>> {
                 .with_policy(policy),
             artifact_view,
             work_attempt,
-            work_requires_artifact_update: node_kind == NodeKind::Work,
+            work_requires_artifact_mutation: node_kind == NodeKind::Work,
             test_plan_context,
             node_kind,
-            accumulated_update: RefCell::new(Vec::new()),
             plan_validation_context,
         }
     }

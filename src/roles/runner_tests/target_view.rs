@@ -207,15 +207,9 @@ fn prompt_wording_does_not_control_allowed_paths() {
         "objective wording is still visible as prompt text; got:\n{prompt}"
     );
 
-    let update = output
-        .artifact_update
-        .expect("structured target write should be recorded");
-    assert_eq!(
-        update.changes,
-        vec![FileChange::Write {
-            path: "main.py".to_string(),
-            content: "right\n".to_string(),
-        }]
+    assert!(
+        output.artifact_changed,
+        "structured target write should mark the workspace changed"
     );
 }
 
@@ -245,7 +239,7 @@ fn structured_target_files_control_tool_permissions_not_objective_text() {
         output.result
     );
     assert!(
-        output.artifact_update.is_none(),
+        !output.artifact_changed,
         "tool permissions must reject writes to targets named only in objective text"
     );
     let retry_prompt = &provider.requests.borrow()[1].prompt;

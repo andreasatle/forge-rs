@@ -1,9 +1,9 @@
 //! Node dispatch for scheduler effects.
 
-use crate::artifacts::{Artifact, ArtifactUpdate, ArtifactView};
+use crate::artifacts::{Artifact, ArtifactView};
 use crate::machines::scheduler::event::{NodeOutcome, SchedulerEvent};
 use crate::machines::scheduler::state::{ModelTier, NodeId, NodeKind, TestPlanContext};
-use crate::node_runner::{NodeRunRequest, NodeRunResult, NodeRunner, WorkAttempt};
+use crate::node_runner::{NodeRunRequest, NodeRunner, WorkAttempt};
 use crate::telemetry::{ConsoleTelemetry, TelemetrySink};
 
 pub(crate) struct RunNodeDispatch {
@@ -18,7 +18,6 @@ pub(crate) struct RunNodeDispatch {
 
 pub(crate) struct DispatchResult {
     pub(crate) event: SchedulerEvent,
-    pub(crate) artifact_update: Option<ArtifactUpdate>,
 }
 
 pub(crate) fn dispatch_run_node<R: NodeRunner>(
@@ -54,16 +53,10 @@ pub(crate) fn dispatch_run_node<R: NodeRunner>(
     };
     let console_tel = ConsoleTelemetry::new(telemetry, label);
     let result = runner.run_node(request, &console_tel);
-    let artifact_update = match &result {
-        NodeRunResult::WorkAccepted(work_result) => work_result.artifact_update.clone(),
-        _ => None,
-    };
-
     DispatchResult {
         event: SchedulerEvent::NodeReturned {
             node_id: command.node_id,
             outcome: NodeOutcome::from(result),
         },
-        artifact_update,
     }
 }

@@ -31,10 +31,7 @@ impl<R: RoleRunner> DeliberationHandler<R> {
                     })
                 }
             },
-            |output| match validate_work_output(
-                output.artifact_update.as_ref(),
-                output.artifact_changed,
-            ) {
+            |output| match validate_work_output(output.artifact_changed) {
                 Ok(()) => ProducerSemanticValidationDecision::Valid,
                 Err(e) => ProducerSemanticValidationDecision::Retry(ValidationRetry {
                     feedback_reason: work_validation_feedback(&e),

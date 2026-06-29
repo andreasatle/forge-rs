@@ -1,21 +1,19 @@
 //! Git-backed artifact data-plane prototype.
 //!
 //! Artifacts identify committed state in bare repositories. Workspaces are
-//! mutable non-bare clones of that state, updates replace complete file
-//! contents, and integration commits and pushes a new immutable version.
+//! mutable non-bare clones of that state, and integration commits and pushes
+//! a new immutable version.
 
 mod artifact;
 pub(crate) mod file_ops;
 mod integration;
-mod staged;
-mod update;
+mod read;
 mod workspace;
 
 pub use artifact::{Artifact, ArtifactView};
 pub use file_ops::{ArtifactError, WorkspaceFileOps};
 pub use integration::{IntegrationError, integrate};
-pub use staged::{ArtifactRead, StagedArtifactView, StagedEntry};
-pub use update::{ArtifactUpdate, FileChange};
+pub use read::ArtifactRead;
 pub(crate) use workspace::git_command;
 pub use workspace::{Workspace, create_temporary_workspace, create_workspace};
 
@@ -90,15 +88,6 @@ mod tests {
             .status()
             .expect("failed to create bare test repository");
         assert!(status.success(), "git clone --bare failed");
-    }
-
-    fn write_update(path: &str, content: &str) -> ArtifactUpdate {
-        ArtifactUpdate {
-            changes: vec![FileChange::Write {
-                path: path.to_owned(),
-                content: content.to_owned(),
-            }],
-        }
     }
 
     fn git(path: &Path, args: &[&str]) {
@@ -248,12 +237,12 @@ mod tests {
     }
 
     #[test]
-    fn apply_update_changes_file_contents() {
-        let (temp, artifact) = fixture("apply-update");
+    fn workspace_write_changes_file_contents() {
+        let (temp, artifact) = fixture("workspace-write");
         let mut workspace = create_workspace(&artifact, temp.join("workspace"));
 
-        write_update("nested/artifact.txt", "replacement\n")
-            .apply(&mut workspace)
+        workspace
+            .write_file("nested/artifact.txt", "replacement\n")
             .unwrap();
 
         assert_eq!(
@@ -266,8 +255,8 @@ mod tests {
     fn integrate_creates_new_commit() {
         let (temp, artifact) = fixture("integrate");
         let mut workspace = create_workspace(&artifact, temp.join("workspace"));
-        write_update("artifact.txt", "version two\n")
-            .apply(&mut workspace)
+        workspace
+            .write_file("artifact.txt", "version two\n")
             .unwrap();
 
         let integrated = integrate(&artifact, &workspace).unwrap();
@@ -283,8 +272,8 @@ mod tests {
     fn artifact_preserves_branch() {
         let (temp, artifact) = fixture("preserve-branch");
         let mut workspace = create_workspace(&artifact, temp.join("workspace"));
-        write_update("artifact.txt", "version two\n")
-            .apply(&mut workspace)
+        workspace
+            .write_file("artifact.txt", "version two\n")
             .unwrap();
 
         let integrated = integrate(&artifact, &workspace).unwrap();
@@ -296,14 +285,14 @@ mod tests {
     fn two_integrations_produce_two_versions() {
         let (temp, first) = fixture("two-integrations");
         let mut first_workspace = create_workspace(&first, temp.join("workspace-one"));
-        write_update("artifact.txt", "version two\n")
-            .apply(&mut first_workspace)
+        first_workspace
+            .write_file("artifact.txt", "version two\n")
             .unwrap();
         let second = integrate(&first, &first_workspace).unwrap();
 
         let mut second_workspace = create_workspace(&second, temp.join("workspace-two"));
-        write_update("artifact.txt", "version three\n")
-            .apply(&mut second_workspace)
+        second_workspace
+            .write_file("artifact.txt", "version three\n")
             .unwrap();
         let third = integrate(&second, &second_workspace).unwrap();
 
@@ -344,116 +333,6 @@ mod tests {
     }
 
     #[test]
-    fn apply_write_change() {
-        let (temp, artifact) = fixture("apply-write");
-        let mut workspace = create_workspace(&artifact, temp.join("workspace"));
-
-        ArtifactUpdate {
-            changes: vec![FileChange::Write {
-                path: "new.txt".to_owned(),
-                content: "created\n".to_owned(),
-            }],
-        }
-        .apply(&mut workspace)
-        .unwrap();
-
-        assert_eq!(workspace.read_file("new.txt").unwrap(), "created\n");
-    }
-
-    #[test]
-    fn apply_replace_change() {
-        let (temp, artifact) = fixture("apply-replace");
-        let mut workspace = create_workspace(&artifact, temp.join("workspace"));
-
-        ArtifactUpdate {
-            changes: vec![FileChange::Replace {
-                path: "artifact.txt".to_owned(),
-                old: "version one".to_owned(),
-                new: "version two".to_owned(),
-            }],
-        }
-        .apply(&mut workspace)
-        .unwrap();
-
-        assert_eq!(
-            workspace.read_file("artifact.txt").unwrap(),
-            "version two\n"
-        );
-    }
-
-    #[test]
-    fn apply_delete_change() {
-        let (temp, artifact) = fixture("apply-delete");
-        let mut workspace = create_workspace(&artifact, temp.join("workspace"));
-
-        ArtifactUpdate {
-            changes: vec![FileChange::Delete {
-                path: "artifact.txt".to_owned(),
-            }],
-        }
-        .apply(&mut workspace)
-        .unwrap();
-
-        assert!(!workspace.path().join("artifact.txt").exists());
-    }
-
-    #[test]
-    fn multiple_changes_apply_in_order() {
-        let (temp, artifact) = fixture("multiple-changes");
-        let mut workspace = create_workspace(&artifact, temp.join("workspace"));
-        workspace.write_file("bar.txt", "bar\n").unwrap();
-
-        ArtifactUpdate {
-            changes: vec![
-                FileChange::Write {
-                    path: "foo.txt".to_owned(),
-                    content: "hello\n".to_owned(),
-                },
-                FileChange::Replace {
-                    path: "foo.txt".to_owned(),
-                    old: "hello".to_owned(),
-                    new: "world".to_owned(),
-                },
-                FileChange::Delete {
-                    path: "bar.txt".to_owned(),
-                },
-            ],
-        }
-        .apply(&mut workspace)
-        .unwrap();
-
-        assert_eq!(workspace.read_file("foo.txt").unwrap(), "world\n");
-        assert!(!workspace.path().join("bar.txt").exists());
-    }
-
-    #[test]
-    fn update_stops_on_first_error() {
-        let (temp, artifact) = fixture("stops-on-error");
-        let mut workspace = create_workspace(&artifact, temp.join("workspace"));
-
-        let result = ArtifactUpdate {
-            changes: vec![
-                FileChange::Write {
-                    path: "foo.txt".to_owned(),
-                    content: "hello\n".to_owned(),
-                },
-                FileChange::Replace {
-                    path: "foo.txt".to_owned(),
-                    old: "not present".to_owned(),
-                    new: "replacement".to_owned(),
-                },
-                FileChange::Delete {
-                    path: "foo.txt".to_owned(),
-                },
-            ],
-        }
-        .apply(&mut workspace);
-
-        assert_eq!(result, Err(ArtifactError::ReplaceTargetMissing));
-        assert!(workspace.path().join("foo.txt").exists());
-    }
-
-    #[test]
     fn artifact_view_reads_committed_file() {
         let (_temp, artifact) = fixture("view-reads-committed");
         let view = ArtifactView {
@@ -483,8 +362,8 @@ mod tests {
     fn artifact_view_sees_new_commit_after_integration() {
         let (temp, artifact) = fixture("view-after-integration");
         let mut workspace = create_workspace(&artifact, temp.join("workspace"));
-        write_update("artifact.txt", "version two\n")
-            .apply(&mut workspace)
+        workspace
+            .write_file("artifact.txt", "version two\n")
             .unwrap();
         let integrated = integrate(&artifact, &workspace).unwrap();
         let view = ArtifactView {
@@ -544,22 +423,6 @@ mod tests {
     }
 
     #[test]
-    fn path_outside_workspace_propagates() {
-        let (temp, artifact) = fixture("path-outside");
-        let mut workspace = create_workspace(&artifact, temp.join("workspace"));
-
-        let result = ArtifactUpdate {
-            changes: vec![FileChange::Write {
-                path: "../outside.txt".to_owned(),
-                content: "bad\n".to_owned(),
-            }],
-        }
-        .apply(&mut workspace);
-
-        assert_eq!(result, Err(ArtifactError::PathOutsideWorkspace));
-    }
-
-    #[test]
     fn temporary_workspace_removed_after_drop() {
         let (_temp, artifact) = fixture("temp-removed-drop");
         let workspace =
@@ -584,30 +447,6 @@ mod tests {
         assert!(
             result.is_err(),
             "workspace creation from nonexistent repo must return an error"
-        );
-    }
-
-    #[test]
-    fn temporary_workspace_removed_after_update_apply_failure() {
-        let (_temp, artifact) = fixture("temp-removed-apply-fail");
-        let mut workspace =
-            create_temporary_workspace(&artifact).expect("failed to create temporary workspace");
-        let path = workspace.path().to_path_buf();
-
-        let result = ArtifactUpdate {
-            changes: vec![FileChange::Replace {
-                path: "artifact.txt".to_owned(),
-                old: "this text does not exist".to_owned(),
-                new: "replacement".to_owned(),
-            }],
-        }
-        .apply(&mut workspace);
-
-        assert!(result.is_err(), "apply must fail on missing replace target");
-        drop(workspace);
-        assert!(
-            !path.exists(),
-            "temporary workspace must be removed even after apply failure"
         );
     }
 
@@ -719,8 +558,8 @@ mod tests {
     fn integrate_succeeds_when_branch_still_at_workspace_base() {
         let (temp, artifact) = fixture("cas-succeed");
         let mut workspace = create_workspace(&artifact, temp.join("workspace"));
-        write_update("artifact.txt", "cas version\n")
-            .apply(&mut workspace)
+        workspace
+            .write_file("artifact.txt", "cas version\n")
             .unwrap();
 
         let result = integrate(&artifact, &workspace);

@@ -67,7 +67,7 @@ pub fn run_reset(config: ForgeConfig) -> Result<(), Box<dyn Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::artifacts::{ArtifactUpdate, FileChange, create_workspace, integrate};
+    use crate::artifacts::{WorkspaceFileOps, create_workspace, integrate};
     use crate::config::ArtifactConfig;
     use crate::language::{LanguageInitSpec, LanguageSpec, LanguageValidationSpec};
     use crate::validation::CommandSpec;
@@ -288,14 +288,7 @@ mod tests {
 
         let workspace_path = base.join("workspace");
         let mut workspace = create_workspace(&artifact, workspace_path);
-        ArtifactUpdate {
-            changes: vec![FileChange::Write {
-                path: "extra.txt".to_string(),
-                content: "extra\n".to_string(),
-            }],
-        }
-        .apply(&mut workspace)
-        .unwrap();
+        workspace.write_file("extra.txt", "extra\n").unwrap();
         let artifact = integrate(&artifact, &workspace).unwrap();
 
         assert_eq!(
@@ -342,14 +335,9 @@ mod tests {
         let artifact = crate::runtime::load_or_create_artifact(&artifact_config, None).unwrap();
         let workspace_path = base.join("workspace-post-reset");
         let mut workspace = create_workspace(&artifact, workspace_path);
-        ArtifactUpdate {
-            changes: vec![FileChange::Write {
-                path: "result.txt".to_string(),
-                content: "post-reset run\n".to_string(),
-            }],
-        }
-        .apply(&mut workspace)
-        .unwrap();
+        workspace
+            .write_file("result.txt", "post-reset run\n")
+            .unwrap();
         let final_artifact = integrate(&artifact, &workspace).unwrap();
 
         assert_eq!(

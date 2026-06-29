@@ -3,7 +3,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::artifacts::{ArtifactUpdate, ArtifactView, Workspace};
+use crate::artifacts::{ArtifactView, Workspace};
 use crate::machines::scheduler::{
     ModelTier, NodeFailure, NodeKind, PlanOutput, TestPlanContext, WorkOutput,
 };
@@ -47,17 +47,10 @@ pub struct WorkAttempt {
     pub workspace: Rc<RefCell<Workspace>>,
 }
 
-/// The output of a completed work node, paired with any artifact changes it produced.
+/// The output of a completed work node.
 pub struct NodeRunWorkResult {
     /// The work summary returned by the node.
     pub work: WorkOutput,
-    /// File changes the node produced, if any.
-    ///
-    /// `None` means the node produced no artifact changes.
-    ///
-    /// The scheduler does not understand artifacts yet. Callers converting to
-    /// [`NodeOutcome`](crate::machines::scheduler::NodeOutcome) must discard this field.
-    pub artifact_update: Option<ArtifactUpdate>,
 }
 
 /// The outcome of running a single scheduler node.
@@ -67,10 +60,10 @@ pub struct NodeRunWorkResult {
 pub enum NodeRunResult {
     /// A plan node completed and produced child nodes to insert.
     PlanAccepted(PlanOutput),
-    /// A work node completed and produced a summary with optional artifact changes.
+    /// A work node completed and produced a summary.
     ///
-    /// The scheduler does not understand artifact changes yet; when converting to
-    /// `NodeOutcome` the `artifact_update` inside [`NodeRunWorkResult`] is discarded.
+    /// Artifact-backed Work publishes only the state in its WorkAttempt
+    /// workspace.
     WorkAccepted(NodeRunWorkResult),
     /// The node could not complete. The embedded failure says how to recover.
     Failed(NodeFailure),

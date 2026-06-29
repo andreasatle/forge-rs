@@ -84,9 +84,16 @@ fn successful_mutation_tool_observation_instructs_final_response() {
     ] {
         let provider = ScriptedProvider::from_strs(&[tool_response, final_response]);
         let runner = ProviderRoleRunner::new(&provider);
+        let (_temp, view) = make_view_with_entries(
+            &format!("completion-pressure-{case}"),
+            &[
+                ("hello.txt", b"hello world\n".as_slice()),
+                ("old.txt", b"delete me\n".as_slice()),
+            ],
+        );
 
         runner.run_role(
-            with_dummy_tool_context(producer_request(objective)),
+            with_tool_context(producer_request(objective), view),
             &crate::telemetry::NoopTelemetry,
         );
 
@@ -237,10 +244,10 @@ fn worker_can_return_accepted_after_completion_pressure() {
         "worker must be able to return Accepted after CP; got {:?}",
         output.result
     );
-    let update = output
-        .artifact_update
-        .expect("write_file must produce an artifact update");
-    assert_eq!(update.changes.len(), 1);
+    assert!(
+        output.artifact_changed,
+        "write_file must mark the WorkAttempt workspace as changed"
+    );
 }
 
 #[test]

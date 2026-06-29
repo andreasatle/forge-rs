@@ -2,10 +2,11 @@ use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::process::Command;
+use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::*;
-use crate::artifacts::{ArtifactView, FileChange};
+use crate::artifacts::{Artifact, ArtifactView, create_temporary_workspace};
 use crate::machines::scheduler::{NodeKind, TestPlanContext};
 use crate::providers::types::{ProviderError, ProviderErrorKind, ProviderResponse};
 use crate::providers::{ProviderClient, ProviderRequest};
@@ -171,13 +172,6 @@ fn make_view_with_n_files(label: &str, n: usize) -> (TempDir, ArtifactView) {
     )
 }
 
-fn dummy_view() -> ArtifactView {
-    ArtifactView {
-        repo_path: PathBuf::from("/nonexistent"),
-        commit_sha: "deadbeef".to_string(),
-    }
-}
-
 fn make_role_request(role: DeliberationRole, objective: &str) -> RoleRequest {
     RoleRequest {
         role,
@@ -220,15 +214,29 @@ fn plan_request(objective: &str) -> RoleRequest {
 }
 
 fn with_tool_context(mut request: RoleRequest, view: ArtifactView) -> RoleRequest {
+    let writable_workspace = if matches!(request.role, DeliberationRole::Producer) {
+        let artifact = Artifact {
+            repo_path: view.repo_path.clone(),
+            branch: "main".to_string(),
+            commit_sha: view.commit_sha.clone(),
+        };
+        Some(Rc::new(RefCell::new(
+            create_temporary_workspace(&artifact).expect("failed to create test workspace"),
+        )))
+    } else {
+        None
+    };
     request.tool_context = Some(RoleToolContext {
         artifact_view: Box::new(view),
-        writable_workspace: None,
+        writable_workspace,
     });
     request
 }
 
 fn with_dummy_tool_context(request: RoleRequest) -> RoleRequest {
-    with_tool_context(request, dummy_view())
+    let (temp, view) = make_view("dummy-context");
+    std::mem::forget(temp);
+    with_tool_context(request, view)
 }
 
 fn with_target_files(mut request: RoleRequest, target_files: &[&str]) -> RoleRequest {

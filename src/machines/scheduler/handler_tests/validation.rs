@@ -220,8 +220,74 @@ fn validation_failure_telemetry_keeps_full_diagnostics() {
 }
 
 #[test]
-fn validator_runs_after_update_apply() {
-    let (_temp, artifact) = fixture("validator-after-apply");
+fn validation_failure_records_attempt_evidence_before_cleanup() {
+    let (_temp, artifact) = fixture("validation-fail-evidence");
+    let telemetry = Rc::new(VecTelemetry::new());
+    let runner = FileWritingRunner {
+        path: "output.txt".to_string(),
+        content: "hello from failed attempt\n".to_string(),
+    };
+    let h = SchedulerHandler::with_artifact(runner, artifact)
+        .with_validator(Rc::new(AlwaysFailValidator))
+        .with_telemetry(telemetry.clone());
+
+    h.handle_effect(SchedulerEffect::RunNode {
+        node_id: NodeId("W".to_string()),
+        kind: NodeKind::Work,
+        objective: "write a file".to_string(),
+        target_files: vec![],
+        test_plan_context: TestPlanContext::default(),
+        model_tier: ModelTier::Cheap,
+        attempt: 0,
+    });
+
+    h.handle_effect(SchedulerEffect::IntegrateWork {
+        node_id: NodeId("W".to_string()),
+        work: WorkOutput {
+            summary: "wrote output.txt".to_string(),
+        },
+        attempt: 0,
+        target_files: vec![],
+        validation_plan: None,
+    });
+
+    let records = telemetry.records();
+    let evidence = records
+        .iter()
+        .find_map(|record| match &record.event {
+            TelemetryEvent::WorkAttemptDiscarded {
+                attempt_id,
+                node_id,
+                attempt,
+                base_commit,
+                changed_files,
+                git_diff,
+                reason,
+            } => Some((
+                attempt_id,
+                node_id,
+                attempt,
+                base_commit,
+                changed_files,
+                git_diff,
+                reason,
+            )),
+            _ => None,
+        })
+        .expect("discarded failed attempt evidence must be recorded");
+
+    assert_eq!(evidence.0, "W:0");
+    assert_eq!(evidence.1, "W");
+    assert_eq!(*evidence.2, 0);
+    assert!(!evidence.3.is_empty(), "base commit must be recorded");
+    assert!(evidence.4.contains(&"output.txt".to_string()));
+    assert!(evidence.5.contains("hello from failed attempt"));
+    assert!(evidence.6.contains("validator stderr"));
+}
+
+#[test]
+fn validator_runs_after_workspace_mutation() {
+    let (_temp, artifact) = fixture("validator-after-workspace-mutation");
 
     let runner = FileWritingRunner {
         path: "applied.txt".to_string(),
@@ -258,12 +324,12 @@ fn validator_runs_after_update_apply() {
 
     assert!(
         *found.borrow(),
-        "validator must see applied.txt in the workspace after update apply"
+        "validator must see applied.txt in the WorkAttempt workspace"
     );
 }
 
 #[test]
-fn no_update_does_not_run_validator() {
+fn no_diff_fails_before_running_validator() {
     let (_temp, artifact) = fixture("no-update-no-validator");
 
     let h = SchedulerHandler::with_artifact(StaticNodeRunner, artifact)
@@ -279,7 +345,8 @@ fn no_update_does_not_run_validator() {
         attempt: 0,
     });
 
-    // StaticNodeRunner produces no artifact update, so validator must not be called.
+    // StaticNodeRunner does not mutate the WorkAttempt, so integration fails
+    // semantically before project validation.
     let event = h.handle_effect(SchedulerEffect::IntegrateWork {
         node_id: NodeId("W".to_string()),
         work: WorkOutput {
@@ -294,11 +361,14 @@ fn no_update_does_not_run_validator() {
         matches!(
             event,
             SchedulerEvent::IntegrationReturned {
-                outcome: IntegrationOutcome::Succeeded(_),
+                outcome: IntegrationOutcome::Failed(IntegrationFailure {
+                    kind: FailureKind::WorkSemanticValidationFailure,
+                    ..
+                }),
                 ..
             }
         ),
-        "integration with no pending update must succeed without calling validator; got: {event:#?}"
+        "no-diff integration must fail without calling validator; got: {event:#?}"
     );
 }
 
@@ -383,7 +453,7 @@ fn validation_failure_sets_validation_passed_false() {
 }
 
 #[test]
-fn no_update_leaves_validation_passed_none() {
+fn no_diff_leaves_validation_passed_none() {
     let (_temp, artifact) = fixture("vp-no-update-none");
 
     let h = SchedulerHandler::with_artifact(StaticNodeRunner, artifact);

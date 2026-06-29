@@ -1,6 +1,5 @@
 //! Conversion from deliberation terminal output into node-run results.
 
-use crate::artifacts::ArtifactUpdate;
 use crate::machines::deliberation::DeliberationTerminalOutput;
 use crate::machines::scheduler::{FailureKind, NodeFailure, NodeKind, RecoveryAction, WorkOutput};
 use crate::telemetry::{TelemetryEvent, TelemetryRecord, TelemetrySink};
@@ -11,7 +10,6 @@ use crate::node_runner::types::{NodeRunResult, NodeRunWorkResult};
 pub(crate) fn map_output(
     output: DeliberationTerminalOutput,
     kind: NodeKind,
-    tool_artifact_update: Option<ArtifactUpdate>,
     telemetry: &dyn TelemetrySink,
 ) -> NodeRunResult {
     match output {
@@ -21,7 +19,6 @@ pub(crate) fn map_output(
                 work: WorkOutput {
                     summary: out.content,
                 },
-                artifact_update: tool_artifact_update,
             }),
         },
         DeliberationTerminalOutput::Failed { kind, reason } => {

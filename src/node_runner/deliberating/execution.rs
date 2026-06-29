@@ -35,7 +35,6 @@ pub(crate) fn run_with_provider<P: ProviderClient>(
         handler: prepared.handler,
         telemetry,
     };
-    let (output, machine) = run_machine_with_telemetry(machine, prepared.initial_state, telemetry);
-    let tool_artifact_update = machine.take_artifact_update();
-    map_output(output, request.kind, tool_artifact_update, telemetry)
+    let (output, _) = run_machine_with_telemetry(machine, prepared.initial_state, telemetry);
+    map_output(output, request.kind, telemetry)
 }

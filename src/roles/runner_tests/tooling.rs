@@ -36,7 +36,7 @@ fn role_runner_executes_read_file_tool_then_accepts() {
 }
 
 #[test]
-fn role_runner_records_write_file_tool_update() {
+fn role_runner_records_workspace_write() {
     let provider = ScriptedProvider::from_strs(&[
         r#"{"tool":"write_file","path":"output.txt","content":"hello"}"#,
         r#"{"status":"accepted","content":"wrote the file"}"#,
@@ -53,17 +53,10 @@ fn role_runner_records_write_file_tool_update() {
         "expected Accepted, got {:?}",
         output.result
     );
-    let update = output
-        .artifact_update
-        .expect("write_file must produce an artifact_update");
-    assert_eq!(update.changes.len(), 1);
-    match &update.changes[0] {
-        FileChange::Write { path, content } => {
-            assert_eq!(path, "output.txt");
-            assert_eq!(content, "hello");
-        }
-        other => panic!("expected Write change, got {other:?}"),
-    }
+    assert!(
+        output.artifact_changed,
+        "write_file must mark the WorkAttempt workspace as changed"
+    );
 }
 
 #[test]
@@ -274,10 +267,9 @@ fn critic_write_request_produces_error_observation() {
         second_prompt.contains("not permitted"),
         "second prompt must include write-permission error; got:\n{second_prompt}"
     );
-    // No artifact update must be recorded.
     assert!(
-        output.artifact_update.is_none(),
-        "critic write must not produce an artifact update"
+        !output.artifact_changed,
+        "critic write must not mark the workspace changed"
     );
 }
 
@@ -388,8 +380,8 @@ fn read_only_role_write_request_still_rejected() {
         "executor must reject write even when prompt omits write tools; got:\n{second_prompt}"
     );
     assert!(
-        output.artifact_update.is_none(),
-        "rejected write must not produce an artifact update"
+        !output.artifact_changed,
+        "rejected write must not mark the workspace changed"
     );
 }
 

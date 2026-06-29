@@ -1,4 +1,3 @@
-use crate::artifacts::{ArtifactUpdate, FileChange};
 use crate::machines::deliberation::state::DeliberationRole;
 use crate::machines::scheduler::{FailureKind, NodeKind};
 use crate::roles::runner::{RoleRequest, RoleRunner};
@@ -68,14 +67,13 @@ impl<R: RoleRunner> DeliberationHandler<R> {
                             critic_content,
                             initial_feedback: feedback,
                             max_retries: MAX_PLAN_VALIDATION_RETRIES,
-                            accumulate_artifact_update_on_pass: false,
                         },
                         telemetry,
                     );
                 }
 
                 if self.node_kind == NodeKind::Work
-                    && self.work_requires_artifact_update
+                    && self.work_requires_artifact_mutation
                     && matches!(role, DeliberationRole::Producer)
                 {
                     return self.run_work_producer_with_validation(
@@ -87,7 +85,6 @@ impl<R: RoleRunner> DeliberationHandler<R> {
                             critic_content,
                             initial_feedback: feedback,
                             max_retries: MAX_WORK_SEMANTIC_VALIDATION_RETRIES,
-                            accumulate_artifact_update_on_pass: true,
                         },
                         telemetry,
                     );
@@ -106,7 +103,6 @@ impl<R: RoleRunner> DeliberationHandler<R> {
                     tool_context,
                 };
                 let output = self.runner.run_role(request, telemetry);
-                self.accumulate_artifact_update(output.artifact_update);
                 DeliberationEvent::RoleReturned {
                     role,
                     result: output.result,
@@ -124,18 +120,6 @@ impl<R: RoleRunner> DeliberationHandler<R> {
                      run_machine returns before dispatching it"
                 )
             }
-        }
-    }
-
-    /// Returns and clears the artifact update accumulated by tool loops across
-    /// all role invocations in this handler. Returns `None` when no tool calls
-    /// produced file changes.
-    pub fn take_artifact_update(&self) -> Option<ArtifactUpdate> {
-        let changes: Vec<FileChange> = self.accumulated_update.borrow_mut().drain(..).collect();
-        if changes.is_empty() {
-            None
-        } else {
-            Some(ArtifactUpdate { changes })
         }
     }
 }

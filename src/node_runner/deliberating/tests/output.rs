@@ -42,37 +42,6 @@ fn deliberating_runner_work_returns_work_output() {
 }
 
 #[test]
-fn failed_deliberation_with_invalid_update_does_not_return_work_output() {
-    let update = crate::artifacts::ArtifactUpdate {
-        changes: vec![FileChange::Replace {
-            path: "main.py".to_string(),
-            old: "missing target".to_string(),
-            new: "replacement".to_string(),
-        }],
-    };
-    let result = super::super::output::map_output(
-        crate::machines::deliberation::DeliberationTerminalOutput::Failed {
-            kind: FailureKind::WorkSemanticValidationFailure,
-            reason: "artifact update could not be applied to the staged view".to_string(),
-        },
-        NodeKind::Work,
-        Some(update),
-        &NoopTelemetry,
-    );
-
-    assert!(
-        matches!(
-            result,
-            NodeRunResult::Failed(crate::machines::scheduler::NodeFailure {
-                kind: FailureKind::WorkSemanticValidationFailure,
-                ..
-            })
-        ),
-        "failed deliberation must not expose an invalid WorkOutput to integration"
-    );
-}
-
-#[test]
 fn deliberating_runner_revision_uses_latest_producer_content() {
     let temp = TempDir::new("revision-latest");
     let provider = ScriptedProvider::from_strs(&[
@@ -101,7 +70,7 @@ fn deliberating_runner_revision_uses_latest_producer_content() {
 }
 
 #[test]
-fn non_artifact_worker_without_tool_update_succeeds_without_artifact_update() {
+fn non_artifact_worker_without_tools_succeeds() {
     let provider = ScriptedProvider::from_strs(&[
         r#"{"status":"accepted","content":"output content"}"#,
         r#"{"status":"accepted","content":"output content"}"#,
@@ -113,10 +82,6 @@ fn non_artifact_worker_without_tool_update_succeeds_without_artifact_update() {
         panic!("expected WorkAccepted");
     };
     assert_eq!(work_result.work.summary, "output content");
-    assert!(
-        work_result.artifact_update.is_none(),
-        "explicit non-artifact Work must not synthesize an artifact update"
-    );
 }
 
 #[test]

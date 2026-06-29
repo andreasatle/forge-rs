@@ -3,7 +3,6 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 
 use super::*;
-use crate::artifacts::{ArtifactUpdate, FileChange};
 use crate::engine::{Machine, Transition, run_machine, run_machine_with_telemetry};
 use crate::machines::deliberation::effect::DeliberationEffect;
 use crate::machines::deliberation::event::{DeliberationEvent, RoleResult};
@@ -16,7 +15,7 @@ use crate::machines::scheduler::{FailureKind, NodeKind, TestPlanContext};
 use crate::providers::types::{ProviderError, ProviderResponse};
 use crate::providers::{ProviderClient, ProviderRequest};
 use crate::roles::runner::{RoleRequest, RoleRunOutput, RoleRunner};
-use crate::telemetry::{NoopTelemetry, TelemetryEvent, TelemetrySink, VecTelemetry};
+use crate::telemetry::{NoopTelemetry, TelemetrySink};
 
 // --- fake RoleRunner for delegation tests ---
 
@@ -33,7 +32,6 @@ impl ScriptedRoleRunner {
                     .into_iter()
                     .map(|result| RoleRunOutput {
                         result,
-                        artifact_update: None,
                         artifact_changed: false,
                     })
                     .collect(),
@@ -150,68 +148,34 @@ fn ready(objective: &str, max_revisions: usize) -> DeliberationState {
     }
 }
 
-fn role_output(result: RoleResult, artifact_update: Option<ArtifactUpdate>) -> RoleRunOutput {
+fn role_output(result: RoleResult, artifact_changed: bool) -> RoleRunOutput {
     RoleRunOutput {
         result,
-        artifact_update,
-        artifact_changed: false,
+        artifact_changed,
     }
 }
 
-fn accepted_output(content: &str, artifact_update: Option<ArtifactUpdate>) -> RoleRunOutput {
+fn accepted_output(content: &str, artifact_changed: bool) -> RoleRunOutput {
     role_output(
         RoleResult::Accepted {
             content: content.to_string(),
         },
-        artifact_update,
+        artifact_changed,
     )
-}
-
-fn write_update(path: &str) -> ArtifactUpdate {
-    ArtifactUpdate {
-        changes: vec![FileChange::Write {
-            path: path.to_string(),
-            content: "changed\n".to_string(),
-        }],
-    }
-}
-
-fn empty_update() -> ArtifactUpdate {
-    ArtifactUpdate { changes: vec![] }
-}
-
-fn invalid_replace_update() -> ArtifactUpdate {
-    ArtifactUpdate {
-        changes: vec![
-            FileChange::Write {
-                path: "main.py".to_string(),
-                content: "print('hello')\n".to_string(),
-            },
-            FileChange::Replace {
-                path: "main.py".to_string(),
-                old: "missing target".to_string(),
-                new: "replacement".to_string(),
-            },
-        ],
-    }
 }
 
 // --- delegation test ---
 
 #[test]
 fn deliberation_handler_delegates_run_role_to_role_runner() {
-    let runner = ScriptedRoleRunner::with_outputs(vec![accepted_output(
-        "generated",
-        Some(write_update("generated.txt")),
-    )]);
+    let runner = ScriptedRoleRunner::with_outputs(vec![accepted_output("generated", false)]);
     let handler = DeliberationHandler {
         runner,
         artifact_view: None,
         work_attempt: None,
         node_kind: NodeKind::Work,
-        work_requires_artifact_update: false,
+        work_requires_artifact_mutation: false,
         test_plan_context: TestPlanContext::default(),
-        accumulated_update: RefCell::new(Vec::new()),
         plan_validation_context: None,
     };
 
@@ -245,15 +209,14 @@ fn deliberation_handler_delegates_run_role_to_role_runner() {
 
 #[test]
 fn structured_targets_flow_to_worker_role_request() {
-    let runner = ScriptedRoleRunner::with_outputs(vec![accepted_output("generated", None)]);
+    let runner = ScriptedRoleRunner::with_outputs(vec![accepted_output("generated", false)]);
     let handler = DeliberationHandler {
         runner,
         artifact_view: None,
         work_attempt: None,
         node_kind: NodeKind::Work,
-        work_requires_artifact_update: false,
+        work_requires_artifact_mutation: false,
         test_plan_context: TestPlanContext::default(),
-        accumulated_update: RefCell::new(Vec::new()),
         plan_validation_context: None,
     };
 
@@ -283,21 +246,12 @@ fn structured_targets_flow_to_worker_role_request() {
 #[test]
 fn run_machine_with_provider_handler_success() {
     let machine = ProvidedMachine {
-        handler: ProviderBackedDeliberationHandler::new_with_view(
+        handler: ProviderBackedDeliberationHandler::new_non_artifact_work(
             ScriptedProvider::from_strs(&[
-                r#"{"tool":"write_file","path":"output.txt","content":"draft output\n"}"#,
                 r#"{"status":"accepted","content":"draft output"}"#,
-                r#"{"tool":"read_file","path":"output.txt"}"#,
                 r#"{"status":"accepted","content":"review done"}"#,
-                r#"{"tool":"read_file","path":"output.txt"}"#,
                 r#"{"status":"accepted","content":"approved"}"#,
             ]),
-            Some(dummy_view()),
-            1024,
-            NodeKind::Work,
-            crate::roles::policy::RolePolicy::default(),
-            None,
-            TestPlanContext::default(),
         ),
     };
     let output = run_machine(machine, ready("write a poem", 0));
@@ -312,27 +266,15 @@ fn run_machine_with_provider_handler_success() {
 #[test]
 fn run_machine_with_provider_handler_revision() {
     let machine = ProvidedMachine {
-        handler: ProviderBackedDeliberationHandler::new_with_view(
+        handler: ProviderBackedDeliberationHandler::new_non_artifact_work(
             ScriptedProvider::from_strs(&[
-                r#"{"tool":"write_file","path":"output.txt","content":"draft v1\n"}"#,
                 r#"{"status":"accepted","content":"draft v1"}"#,
-                r#"{"tool":"read_file","path":"output.txt"}"#,
                 r#"{"status":"accepted","content":"review done"}"#,
-                r#"{"tool":"read_file","path":"output.txt"}"#,
                 r#"{"status":"rejected","reason":"needs changes"}"#,
-                r#"{"tool":"write_file","path":"output.txt","content":"draft v2\n"}"#,
                 r#"{"status":"accepted","content":"draft v2"}"#,
-                r#"{"tool":"read_file","path":"output.txt"}"#,
                 r#"{"status":"accepted","content":"review ok"}"#,
-                r#"{"tool":"read_file","path":"output.txt"}"#,
                 r#"{"status":"accepted","content":"approved"}"#,
             ]),
-            Some(dummy_view()),
-            1024,
-            NodeKind::Work,
-            crate::roles::policy::RolePolicy::default(),
-            None,
-            TestPlanContext::default(),
         ),
     };
     let output = run_machine(machine, ready("write a poem", 1));
@@ -364,9 +306,8 @@ fn planner_handler_passes_no_tool_context_for_plan_nodes() {
         artifact_view: Some(dummy_view()),
         work_attempt: None,
         node_kind: NodeKind::Plan,
-        work_requires_artifact_update: false,
+        work_requires_artifact_mutation: false,
         test_plan_context: TestPlanContext::default(),
-        accumulated_update: RefCell::new(Vec::new()),
         plan_validation_context: None,
     };
 
@@ -388,18 +329,14 @@ fn planner_handler_passes_no_tool_context_for_plan_nodes() {
 
 #[test]
 fn worker_handler_passes_tool_context_when_view_available() {
-    let runner = ScriptedRoleRunner::with_outputs(vec![accepted_output(
-        "work done",
-        Some(write_update("work.txt")),
-    )]);
+    let runner = ScriptedRoleRunner::with_outputs(vec![accepted_output("work done", true)]);
     let handler = DeliberationHandler {
         runner,
         artifact_view: Some(dummy_view()),
         work_attempt: None,
         node_kind: NodeKind::Work,
-        work_requires_artifact_update: true,
+        work_requires_artifact_mutation: true,
         test_plan_context: TestPlanContext::default(),
-        accumulated_update: RefCell::new(Vec::new()),
         plan_validation_context: None,
     };
 
@@ -429,9 +366,8 @@ fn planner_handler_no_tool_context_without_view() {
         artifact_view: None,
         work_attempt: None,
         node_kind: NodeKind::Plan,
-        work_requires_artifact_update: false,
+        work_requires_artifact_mutation: false,
         test_plan_context: TestPlanContext::default(),
-        accumulated_update: RefCell::new(Vec::new()),
         plan_validation_context: None,
     };
 
@@ -462,9 +398,8 @@ fn handler_with_validation(results: Vec<RoleResult>) -> DeliberationHandler<Scri
         artifact_view: None,
         work_attempt: None,
         node_kind: NodeKind::Plan,
-        work_requires_artifact_update: false,
+        work_requires_artifact_mutation: false,
         test_plan_context: TestPlanContext::default(),
-        accumulated_update: RefCell::new(Vec::new()),
         plan_validation_context: Some(PlanValidationContext {
             top_objective: "create foo.rs".to_string(),
             existing_files: vec![],
@@ -481,9 +416,8 @@ fn handler_with_work_validation(
         artifact_view: Some(dummy_view()),
         work_attempt: None,
         node_kind: NodeKind::Work,
-        work_requires_artifact_update: true,
+        work_requires_artifact_mutation: true,
         test_plan_context: TestPlanContext::default(),
-        accumulated_update: RefCell::new(Vec::new()),
         plan_validation_context: None,
     }
 }
@@ -785,10 +719,7 @@ fn semantic_validation_failure_ends_run_before_critic_or_referee() {
 
 #[test]
 fn accepted_work_with_one_file_change_passes_semantic_validation() {
-    let handler = handler_with_work_validation(vec![accepted_output(
-        "implemented change",
-        Some(write_update("src/lib.rs")),
-    )]);
+    let handler = handler_with_work_validation(vec![accepted_output("implemented change", true)]);
     let event = handler.handle_effect(run_role_effect(
         DeliberationRole::Producer,
         "implement the change",
@@ -812,21 +743,13 @@ fn accepted_work_with_one_file_change_passes_semantic_validation() {
         ),
         "valid work must produce Accepted; got {event:?}"
     );
-    assert_eq!(
-        handler
-            .take_artifact_update()
-            .expect("valid work update must be retained")
-            .changes
-            .len(),
-        1
-    );
 }
 
 #[test]
-fn accepted_work_with_no_artifact_update_triggers_revision_feedback() {
+fn accepted_work_with_no_artifact_mutation_triggers_revision_feedback() {
     let handler = handler_with_work_validation(vec![
-        accepted_output("summary without changes", None),
-        accepted_output("implemented change", Some(write_update("src/lib.rs"))),
+        accepted_output("summary without changes", false),
+        accepted_output("implemented change", true),
     ]);
     let event = handler.handle_effect(run_role_effect(
         DeliberationRole::Producer,
@@ -839,7 +762,7 @@ fn accepted_work_with_no_artifact_update_triggers_revision_feedback() {
     assert_eq!(
         handler.runner.requests.borrow().len(),
         2,
-        "missing artifact update must trigger one retry"
+        "missing artifact mutation must trigger one retry"
     );
     let second_feedback = &handler.runner.requests.borrow()[1].feedback;
     assert!(
@@ -903,18 +826,14 @@ fn explicit_non_artifact_work_does_not_use_artifact_semantic_validation() {
         ),
         "non-artifact work must accept summary-only Producer output; got {event:?}"
     );
-    assert!(
-        handler.take_artifact_update().is_none(),
-        "non-artifact work must not synthesize an artifact update"
-    );
 }
 
 #[test]
 fn repeated_empty_work_exhausts_semantic_validation_retries() {
     let handler = handler_with_work_validation(vec![
-        accepted_output("empty work 1", Some(empty_update())),
-        accepted_output("empty work 2", Some(empty_update())),
-        accepted_output("empty work 3", Some(empty_update())),
+        accepted_output("empty work 1", false),
+        accepted_output("empty work 2", false),
+        accepted_output("empty work 3", false),
     ]);
     let event = handler.handle_effect(run_role_effect(
         DeliberationRole::Producer,
@@ -949,9 +868,9 @@ fn repeated_empty_work_exhausts_semantic_validation_retries() {
 fn critic_and_referee_are_not_invoked_while_work_semantic_validation_fails() {
     let machine = ScriptedMachine {
         handler: handler_with_work_validation(vec![
-            accepted_output("empty work 1", Some(empty_update())),
-            accepted_output("empty work 2", Some(empty_update())),
-            accepted_output("empty work 3", Some(empty_update())),
+            accepted_output("empty work 1", false),
+            accepted_output("empty work 2", false),
+            accepted_output("empty work 3", false),
         ]),
     };
     let (output, machine) =
@@ -990,10 +909,10 @@ fn critic_and_referee_are_not_invoked_while_work_semantic_validation_fails() {
 fn valid_revised_work_proceeds_to_critic_and_referee() {
     let machine = ScriptedMachine {
         handler: handler_with_work_validation(vec![
-            accepted_output("summary without changes", None),
-            accepted_output("implemented change", Some(write_update("src/lib.rs"))),
-            accepted_output("review passed", None),
-            accepted_output("approved", None),
+            accepted_output("summary without changes", false),
+            accepted_output("implemented change", true),
+            accepted_output("review passed", false),
+            accepted_output("approved", false),
         ]),
     };
     let (output, machine) =
@@ -1023,357 +942,14 @@ fn valid_revised_work_proceeds_to_critic_and_referee() {
     );
 }
 
-// --- staged read view: reviewer visibility of producer writes ---
-
-/// A [`RoleRunner`] variant that can return per-invocation artifact updates.
-struct ScriptedRoleRunnerWithUpdates {
-    responses: RefCell<VecDeque<(RoleResult, Option<ArtifactUpdate>)>>,
-    requests: RefCell<Vec<RoleRequest>>,
-}
-
-impl ScriptedRoleRunnerWithUpdates {
-    fn new(responses: Vec<(RoleResult, Option<ArtifactUpdate>)>) -> Self {
-        Self {
-            responses: RefCell::new(responses.into()),
-            requests: RefCell::new(Vec::new()),
-        }
-    }
-}
-
-impl RoleRunner for ScriptedRoleRunnerWithUpdates {
-    fn run_role(&self, request: RoleRequest, _telemetry: &dyn TelemetrySink) -> RoleRunOutput {
-        self.requests.borrow_mut().push(request);
-        let (result, artifact_update) = self
-            .responses
-            .borrow_mut()
-            .pop_front()
-            .expect("ScriptedRoleRunnerWithUpdates: responses exhausted");
-        RoleRunOutput {
-            result,
-            artifact_update,
-            artifact_changed: false,
-        }
-    }
-}
-
-fn staged_handler(
-    responses: Vec<(RoleResult, Option<ArtifactUpdate>)>,
-) -> DeliberationHandler<ScriptedRoleRunnerWithUpdates> {
-    DeliberationHandler {
-        runner: ScriptedRoleRunnerWithUpdates::new(responses),
-        artifact_view: Some(dummy_view()),
-        work_attempt: None,
-        node_kind: NodeKind::Work,
-        work_requires_artifact_update: true,
-        test_plan_context: TestPlanContext::default(),
-        accumulated_update: RefCell::new(Vec::new()),
-        plan_validation_context: None,
-    }
-}
-
-struct StagedScriptedMachine {
-    handler: DeliberationHandler<ScriptedRoleRunnerWithUpdates>,
-}
-
-impl Machine for StagedScriptedMachine {
-    type State = DeliberationState;
-    type Event = DeliberationEvent;
-    type Effect = DeliberationEffect;
-    type Output = DeliberationTerminalOutput;
-
-    fn start_event(&self) -> DeliberationEvent {
-        DeliberationEvent::Start
-    }
-
-    fn transition(
-        &self,
-        state: DeliberationState,
-        event: DeliberationEvent,
-    ) -> Transition<DeliberationState, DeliberationEffect> {
-        DeliberationMachine.transition(state, event)
-    }
-
-    fn handle_effect(&self, effect: DeliberationEffect) -> DeliberationEvent {
-        self.handler.handle_effect(effect)
-    }
-
-    fn output(&self, state: &DeliberationState) -> Option<DeliberationTerminalOutput> {
-        DeliberationMachine.output(state)
-    }
-}
-
-#[test]
-fn critic_sees_producer_staged_write_before_integration() {
-    let producer_update = ArtifactUpdate {
-        changes: vec![FileChange::Write {
-            path: "main.py".to_owned(),
-            content: "def main():\n    pass\n".to_owned(),
-        }],
-    };
-    let handler = staged_handler(vec![
-        (
-            RoleResult::Accepted {
-                content: "wrote main.py".to_owned(),
-            },
-            Some(producer_update),
-        ),
-        (
-            RoleResult::Accepted {
-                content: "looks good".to_owned(),
-            },
-            None,
-        ),
-    ]);
-
-    handler.handle_effect(run_role_effect(
-        DeliberationRole::Producer,
-        "create main.py",
-        None,
-        None,
-        vec![],
-    ));
-    handler.handle_effect(run_role_effect(
-        DeliberationRole::Critic,
-        "create main.py",
-        Some("wrote main.py"),
-        None,
-        vec![],
-    ));
-
-    let requests = handler.runner.requests.borrow();
-    let critic_ctx = requests[1]
-        .tool_context
-        .as_ref()
-        .expect("Critic must receive tool context");
-    assert_eq!(
-        critic_ctx.artifact_view.read_file("main.py").unwrap(),
-        "def main():\n    pass\n",
-        "Critic must see the Producer's staged write for main.py"
-    );
-}
-
-#[test]
-fn referee_sees_producer_staged_write_before_integration() {
-    let producer_update = ArtifactUpdate {
-        changes: vec![FileChange::Write {
-            path: "main.py".to_owned(),
-            content: "def main():\n    pass\n".to_owned(),
-        }],
-    };
-    let handler = staged_handler(vec![
-        (
-            RoleResult::Accepted {
-                content: "wrote main.py".to_owned(),
-            },
-            Some(producer_update),
-        ),
-        (
-            RoleResult::Accepted {
-                content: "looks good".to_owned(),
-            },
-            None,
-        ),
-        (
-            RoleResult::Accepted {
-                content: "approved".to_owned(),
-            },
-            None,
-        ),
-    ]);
-
-    handler.handle_effect(run_role_effect(
-        DeliberationRole::Producer,
-        "create main.py",
-        None,
-        None,
-        vec![],
-    ));
-    handler.handle_effect(run_role_effect(
-        DeliberationRole::Critic,
-        "create main.py",
-        Some("wrote main.py"),
-        None,
-        vec![],
-    ));
-    handler.handle_effect(run_role_effect(
-        DeliberationRole::Referee,
-        "create main.py",
-        Some("wrote main.py"),
-        Some("looks good"),
-        vec![],
-    ));
-
-    let requests = handler.runner.requests.borrow();
-    let referee_ctx = requests[2]
-        .tool_context
-        .as_ref()
-        .expect("Referee must receive tool context");
-    assert_eq!(
-        referee_ctx.artifact_view.read_file("main.py").unwrap(),
-        "def main():\n    pass\n",
-        "Referee must see the Producer's staged write for main.py"
-    );
-}
-
-#[test]
-fn reviewer_staged_view_does_not_see_new_file_without_producer_write() {
-    // Sanity check: without a Producer write, a new file is not visible.
-    let handler = staged_handler(vec![(
-        RoleResult::Accepted {
-            content: "ok".to_owned(),
-        },
-        None,
-    )]);
-
-    handler.handle_effect(run_role_effect(
-        DeliberationRole::Critic,
-        "create main.py",
-        Some("done"),
-        None,
-        vec![],
-    ));
-
-    let requests = handler.runner.requests.borrow();
-    let critic_ctx = requests[0]
-        .tool_context
-        .as_ref()
-        .expect("Critic must receive tool context");
-    assert!(
-        critic_ctx.artifact_view.read_file("main.py").is_err(),
-        "Critic must not see main.py when Producer did not write it"
-    );
-}
-
-#[test]
-fn invalid_replace_text_accumulated_update_does_not_panic() {
-    let handler = staged_handler(vec![
-        (
-            RoleResult::Accepted {
-                content: "updated main.py".to_owned(),
-            },
-            Some(invalid_replace_update()),
-        ),
-        (
-            RoleResult::Accepted {
-                content: "this critic response must not be used".to_owned(),
-            },
-            None,
-        ),
-    ]);
-    let telemetry = VecTelemetry::new();
-
-    handler.handle_effect_with_telemetry(
-        run_role_effect(
-            DeliberationRole::Producer,
-            "update main.py",
-            None,
-            None,
-            vec![],
-        ),
-        &telemetry,
-    );
-    let event = handler.handle_effect_with_telemetry(
-        run_role_effect(
-            DeliberationRole::Critic,
-            "update main.py",
-            Some("updated main.py"),
-            None,
-            vec![],
-        ),
-        &telemetry,
-    );
-
-    assert!(
-        matches!(
-            event,
-            DeliberationEvent::RoleReturned {
-                role: DeliberationRole::Critic,
-                result: RoleResult::Failed {
-                    kind: FailureKind::WorkSemanticValidationFailure,
-                    ..
-                },
-            }
-        ),
-        "invalid staged update must become a typed recoverable role failure; got {event:?}"
-    );
-    assert!(
-        telemetry.records().iter().any(|record| matches!(
-            record.event,
-            TelemetryEvent::StagedViewConstructionFailed { .. }
-        )),
-        "staged view construction failure must be visible in telemetry"
-    );
-}
-
-#[test]
-fn critic_and_referee_are_not_invoked_when_staged_view_cannot_be_constructed() {
-    let machine = StagedScriptedMachine {
-        handler: staged_handler(vec![
-            (
-                RoleResult::Accepted {
-                    content: "updated main.py".to_owned(),
-                },
-                Some(invalid_replace_update()),
-            ),
-            (
-                RoleResult::Accepted {
-                    content: "critic should not run".to_owned(),
-                },
-                None,
-            ),
-            (
-                RoleResult::Accepted {
-                    content: "referee should not run".to_owned(),
-                },
-                None,
-            ),
-        ]),
-    };
-
-    let (output, machine) =
-        run_machine_with_telemetry(machine, ready("update main.py", 1), &NoopTelemetry);
-
-    assert!(
-        matches!(
-            output,
-            DeliberationTerminalOutput::Failed {
-                kind: FailureKind::WorkSemanticValidationFailure,
-                ..
-            }
-        ),
-        "invalid staged update must fail deliberation before review; got {output:?}"
-    );
-    let roles: Vec<_> = machine
-        .handler
-        .runner
-        .requests
-        .borrow()
-        .iter()
-        .map(|request| request.role.clone())
-        .collect();
-    assert_eq!(
-        roles,
-        vec![DeliberationRole::Producer],
-        "Critic/Referee runner must not be invoked when staged view construction fails"
-    );
-}
-
 // --- verify NoopTelemetry path still compiles ---
 
 #[test]
 fn handle_effect_without_telemetry_compiles() {
-    let handler = ProviderBackedDeliberationHandler::new_with_view(
-        ScriptedProvider::from_strs(&[
-            r#"{"tool":"write_file","path":"output.txt","content":"completed\n"}"#,
+    let handler =
+        ProviderBackedDeliberationHandler::new_non_artifact_work(ScriptedProvider::from_strs(&[
             r#"{"status":"accepted","content":"completed"}"#,
-        ]),
-        Some(dummy_view()),
-        1024,
-        NodeKind::Work,
-        crate::roles::policy::RolePolicy::default(),
-        None,
-        TestPlanContext::default(),
-    );
+        ]));
     let event = handler.handle_effect(run_role_effect(
         DeliberationRole::Producer,
         "test",

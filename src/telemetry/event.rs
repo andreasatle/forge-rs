@@ -230,6 +230,26 @@ pub enum TelemetryEvent {
         /// Number of work tasks in the generated plan.
         task_count: usize,
     },
+    /// A work attempt workspace is about to be discarded.
+    ///
+    /// The payload captures the state needed to audit failed or rejected work
+    /// after the temporary worktree has been cleaned up.
+    WorkAttemptDiscarded {
+        /// Stable attempt identifier, derived from node id and attempt number.
+        attempt_id: String,
+        /// Scheduler node id that owned the attempt.
+        node_id: String,
+        /// Zero-based scheduler attempt number.
+        attempt: u32,
+        /// Commit from which the attempt workspace was created.
+        base_commit: String,
+        /// Paths changed in the attempt workspace before cleanup.
+        changed_files: Vec<String>,
+        /// Git diff of the attempt workspace, including untracked files.
+        git_diff: String,
+        /// Human-readable terminal failure or rejection reason.
+        reason: String,
+    },
 }
 
 impl TelemetryEvent {
@@ -269,6 +289,7 @@ impl TelemetryEvent {
             TelemetryEvent::CheckpointSaved { .. } => "checkpoint-saved",
             TelemetryEvent::CheckpointLoaded { .. } => "checkpoint-loaded",
             TelemetryEvent::FastPlanUsed { .. } => "fast-plan-used",
+            TelemetryEvent::WorkAttemptDiscarded { .. } => "work-attempt-discarded",
         }
     }
 
@@ -389,6 +410,24 @@ impl TelemetryEvent {
             ),
             TelemetryEvent::FastPlanUsed { task_count } => {
                 format!("kind: FastPlanUsed\ntask_count: {task_count}\n")
+            }
+            TelemetryEvent::WorkAttemptDiscarded {
+                attempt_id,
+                node_id,
+                attempt,
+                base_commit,
+                changed_files,
+                git_diff,
+                reason,
+            } => {
+                let changed_files = if changed_files.is_empty() {
+                    "(none)".to_string()
+                } else {
+                    changed_files.join("\n")
+                };
+                format!(
+                    "kind: WorkAttemptDiscarded\nattempt_id: {attempt_id}\nnode_id: {node_id}\nattempt: {attempt}\nbase_commit: {base_commit}\nreason: {reason}\nchanged_files:\n{changed_files}\ngit_diff:\n{git_diff}\n"
+                )
             }
         }
     }

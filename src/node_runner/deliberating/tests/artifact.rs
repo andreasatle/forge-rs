@@ -1,9 +1,9 @@
 use super::*;
+use crate::artifacts::WorkspaceFileOps;
 
 #[test]
-fn deliberating_work_result_includes_tool_artifact_update() {
+fn deliberating_artifact_work_writes_work_attempt_workspace() {
     let temp = TempDir::new("tool-artifact-update");
-    let view = make_artifact_view(&temp, "hello.txt", "world\n");
 
     // Producer: first call returns write_file, second returns accepted.
     // Critic and Referee must call read_file before accepting (enforcement).
@@ -16,16 +16,13 @@ fn deliberating_work_result_includes_tool_artifact_update() {
         r#"{"status":"accepted","content":"approved"}"#,
     ]);
     let runner = DeliberatingNodeRunner::new(&provider, &provider);
-    let request = NodeRunRequest {
-        kind: NodeKind::Work,
-        objective: "write a result file".to_string(),
-        target_files: vec![],
-        test_plan_context: TestPlanContext::default(),
-        model_tier: ModelTier::Cheap,
-        attempt: 0,
-        artifact_view: Some(view),
-        work_attempt: None,
-    };
+    let request = work_request_with_artifact("write a result file", &temp);
+    let workspace = request
+        .work_attempt
+        .as_ref()
+        .expect("artifact Work request must carry WorkAttempt")
+        .workspace
+        .clone();
     let result = runner.run_node(request, &NoopTelemetry);
 
     let NodeRunResult::WorkAccepted(work_result) = result else {
@@ -35,27 +32,19 @@ fn deliberating_work_result_includes_tool_artifact_update() {
         work_result.work.summary, "I wrote result.txt",
         "summary must be the accepted content, not the tool request"
     );
-    let update = work_result
-        .artifact_update
-        .expect("tool write_file must produce an artifact_update");
-    assert_eq!(
-        update.changes.len(),
-        1,
-        "must have exactly one pending change"
-    );
-    match &update.changes[0] {
-        FileChange::Write { path, content } => {
-            assert_eq!(path, "result.txt");
-            assert_eq!(content, "done");
-        }
-        other => panic!("expected Write change from tool, got {other:?}"),
-    }
+    let content = workspace
+        .borrow()
+        .read_file("result.txt")
+        .expect("result.txt must be written into the WorkAttempt workspace");
+    assert_eq!(content, "done");
 }
 
 #[test]
-fn reviewer_can_read_staged_target_file_with_relative_path() {
+fn reviewer_can_read_work_attempt_target_file_with_relative_path() {
     let temp = TempDir::new("reviewer-staged-target");
     let view = make_artifact_view(&temp, "main.py", "print('old')\n");
+    let work_attempt = work_attempt_for_view(&view);
+    let workspace = work_attempt.workspace.clone();
 
     let provider = ScriptedProvider::from_strs(&[
         r#"{"tool":"write_file","path":"main.py","content":"print('new')\n"}"#,
@@ -74,20 +63,17 @@ fn reviewer_can_read_staged_target_file_with_relative_path() {
         model_tier: ModelTier::Cheap,
         attempt: 0,
         artifact_view: Some(view),
-        work_attempt: None,
+        work_attempt: Some(work_attempt),
     };
 
     let result = runner.run_node(request, &NoopTelemetry);
 
-    let NodeRunResult::WorkAccepted(work) = result else {
+    let NodeRunResult::WorkAccepted(_) = result else {
         panic!("expected WorkAccepted");
     };
-    let update = work
-        .artifact_update
-        .expect("producer write_file must produce artifact update");
-    assert!(
-        matches!(&update.changes[0], FileChange::Write { path, .. } if path == "main.py"),
-        "staged target write must be preserved; got {:?}",
-        update.changes
-    );
+    let content = workspace
+        .borrow()
+        .read_file("main.py")
+        .expect("main.py must be readable from WorkAttempt workspace");
+    assert_eq!(content, "print('new')\n");
 }

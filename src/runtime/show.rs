@@ -47,7 +47,7 @@ fn artifact_contents(artifact: &Artifact) -> Result<String, Box<dyn Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::artifacts::{ArtifactUpdate, FileChange, create_workspace, integrate};
+    use crate::artifacts::{WorkspaceFileOps, create_workspace, integrate};
     use crate::config::ArtifactConfig;
     use std::path::{Path, PathBuf};
     use std::process::Command;
@@ -174,14 +174,9 @@ mod tests {
 
         let workspace_path = base.join("workspace");
         let mut workspace = create_workspace(&artifact, workspace_path);
-        ArtifactUpdate {
-            changes: vec![FileChange::Write {
-                path: "output.txt".to_string(),
-                content: "hello from show\n".to_string(),
-            }],
-        }
-        .apply(&mut workspace)
-        .unwrap();
+        workspace
+            .write_file("output.txt", "hello from show\n")
+            .unwrap();
         let integrated = integrate(&artifact, &workspace).unwrap();
 
         let output = artifact_contents(&integrated).unwrap();

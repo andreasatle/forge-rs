@@ -215,16 +215,6 @@ Path containment is enforced on all operations. Symlink safety is enforced on to
 
 `replace_text` fails if the target string is absent or appears more than once.
 
-### ArtifactUpdate
-
-Represents intended changes as an ordered list of `FileChange` variants:
-
-- `Write { path, content }` — create or overwrite a file.
-- `Replace { path, old, new }` — replace a unique substring.
-- `Delete { path }` — remove a file.
-
-Changes are applied in order. The first error stops application.
-
 ### Integration
 
 Commits workspace changes into the artifact's bare repository using a CAS-safe push.
@@ -244,16 +234,17 @@ ArtifactView
   ↓
 NodeRunner
   ↓
-ArtifactUpdate
+WorkAttempt workspace
 ```
 
 The `SchedulerHandler` connects the scheduler to the runner. For each `RunNode` effect it:
 
 1. Builds an `ArtifactView` from the current `Artifact` snapshot.
-2. Passes the view to the runner via `NodeRunRequest`.
-3. If the runner returns `WorkAccepted` with an `ArtifactUpdate`, runs the configured validator against a temporary workspace.
-4. If validation passes, applies the update and calls `integrate`, advancing the artifact.
-5. If validation fails, the node is marked failed and the artifact is not advanced.
+2. Creates a `WorkAttempt` workspace for artifact-producing Work.
+3. Passes the view and workspace to the runner via `NodeRunRequest`.
+4. If the runner returns `WorkAccepted`, runs the configured validator against that workspace.
+5. If validation passes, calls `integrate`, advancing the artifact.
+6. If validation fails, the node is marked failed and the artifact is not advanced.
 
 ### DeliberatingNodeRunner
 
@@ -264,7 +255,7 @@ When the request carries an `ArtifactView`, a brief context block — file listi
 Mapping from deliberation output to `NodeRunResult`:
 
 - Plan node: `PlanAccepted` with one child work node whose objective is the Producer content.
-- Work node: `WorkAccepted` with the Producer content as summary and an `ArtifactUpdate` writing `output.txt`.
+- Work node: `WorkAccepted` with the Producer content as summary; artifact changes are already in the `WorkAttempt` workspace.
 - Deliberation failure: `Failed` with `RecoveryAction::Terminal`.
 
 ## Tool system
@@ -290,17 +281,9 @@ Critic    — read-only  (list_files, read_file)
 Referee   — read-only  (list_files, read_file)
 ```
 
-Write operations issued by Critic or Referee receive an error observation and no update is recorded.
+Write operations issued by Critic or Referee receive an error observation and do not mutate the workspace.
 
-### Read-after-write overlay
-
-`FileToolExecutor` maintains an in-memory overlay of pending writes and deletes. Reads consult the overlay before falling back to the committed artifact view. This means:
-
-- A file written in one tool call is immediately visible to a subsequent `read_file` in the same session.
-- A file deleted in one tool call is hidden from subsequent reads.
-- The overlay is local to one executor instance and is discarded after the role completes.
-
-The overlay does not mutate the artifact. Only the `ArtifactUpdate` produced at the end of the role loop is eligible for integration.
+Producer write operations mutate the shared `WorkAttempt` workspace directly. Later reads in the same Work path, including reviewer reads, observe that workspace state.
 
 ## Validation
 

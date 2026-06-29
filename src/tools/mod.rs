@@ -2,9 +2,9 @@
 //!
 //! The LLM receives no direct filesystem access. Instead it issues typed
 //! [`FileToolRequest`] values that are interpreted by [`FileToolExecutor`].
-//! Read operations are satisfied immediately from an `ArtifactView`; write
-//! operations are accumulated as pending `ArtifactUpdate` changes and
-//! committed later by the integration layer.
+//! Read operations are satisfied immediately from an artifact view or a
+//! WorkAttempt workspace. In artifact Work, writes mutate the workspace
+//! directly.
 
 mod file;
 

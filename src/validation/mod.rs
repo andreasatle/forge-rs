@@ -1,8 +1,7 @@
-//! Workspace validation gate between artifact update apply and integration commit.
+//! Workspace validation gate between WorkAttempt mutation and integration commit.
 //!
-//! Validation runs after an [`ArtifactUpdate`](crate::artifacts::ArtifactUpdate)
-//! has been applied to a mutable workspace but before that workspace is
-//! committed. A failing validator blocks the commit and returns
+//! Validation runs after provider-backed Work mutates a mutable workspace but
+//! before that workspace is committed. A failing validator blocks the commit and returns
 //! `IntegrationReturned::Failed` without changing artifact history.
 
 mod plan;

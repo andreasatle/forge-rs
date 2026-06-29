@@ -14,7 +14,6 @@ impl NodeRunner for ViewCapturingRunner {
             work: WorkOutput {
                 summary: "captured".to_string(),
             },
-            artifact_update: None,
         })
     }
 }
@@ -33,28 +32,73 @@ impl NodeRunner for TwoStepRunner {
             *c
         };
         match count {
-            1 => NodeRunResult::WorkAccepted(NodeRunWorkResult {
-                work: WorkOutput {
-                    summary: "step one".to_string(),
-                },
-                artifact_update: Some(ArtifactUpdate {
-                    changes: vec![FileChange::Write {
-                        path: "step1.txt".to_string(),
-                        content: "written by node one\n".to_string(),
-                    }],
-                }),
-            }),
+            1 => {
+                request
+                    .work_attempt
+                    .expect("work node must receive an attempt workspace")
+                    .workspace
+                    .borrow_mut()
+                    .write_file("step1.txt", "written by node one\n")
+                    .expect("test runner must write step1.txt");
+                NodeRunResult::WorkAccepted(NodeRunWorkResult {
+                    work: WorkOutput {
+                        summary: "step one".to_string(),
+                    },
+                })
+            }
             2 => {
                 *self.second_view.borrow_mut() = request.artifact_view;
+                request
+                    .work_attempt
+                    .expect("work node must receive an attempt workspace")
+                    .workspace
+                    .borrow_mut()
+                    .write_file("step2.txt", "written by node two\n")
+                    .expect("test runner must write step2.txt");
                 NodeRunResult::WorkAccepted(NodeRunWorkResult {
                     work: WorkOutput {
                         summary: "step two".to_string(),
                     },
-                    artifact_update: None,
                 })
             }
             n => panic!("unexpected call count: {n}"),
         }
+    }
+}
+
+struct DirtyThenRetryRunner {
+    saw_clean_retry: Rc<RefCell<bool>>,
+}
+
+impl NodeRunner for DirtyThenRetryRunner {
+    fn run_node(&self, request: NodeRunRequest, _telemetry: &dyn TelemetrySink) -> NodeRunResult {
+        let attempt = request
+            .work_attempt
+            .expect("work node must receive an attempt workspace");
+        let dirty_path = attempt.workspace.borrow().path().join("dirty.txt");
+        if request.attempt == 0 {
+            fs::write(&dirty_path, "failed attempt contents\n")
+                .expect("failed to dirty attempt workspace");
+            return NodeRunResult::Failed(NodeFailure {
+                kind: FailureKind::ProviderFailure,
+                message: "transient failure after dirtying worktree".to_string(),
+                recovery: RecoveryAction::Retry {
+                    message: "retry after transient failure".to_string(),
+                },
+            });
+        }
+
+        *self.saw_clean_retry.borrow_mut() = !dirty_path.exists();
+        attempt
+            .workspace
+            .borrow_mut()
+            .write_file("clean.txt", "clean retry contents\n")
+            .expect("retry attempt must write clean.txt");
+        NodeRunResult::WorkAccepted(NodeRunWorkResult {
+            work: WorkOutput {
+                summary: "clean retry".to_string(),
+            },
+        })
     }
 }
 
@@ -91,7 +135,7 @@ fn scheduler_handler_passes_artifact_view_to_node_runner() {
 }
 
 #[test]
-fn work_node_artifact_update_creates_new_commit() {
+fn work_node_workspace_mutation_creates_new_commit() {
     let (_temp, artifact) = fixture("creates-commit");
     let original_sha = artifact.commit_sha.clone();
     let repo_path = artifact.repo_path.clone();
@@ -161,9 +205,13 @@ fn work_node_without_update_preserves_commit() {
             next_id: 0,
         },
     };
-    run_machine(
+    let output = run_machine(
         SchedulerHandler::with_artifact(StaticNodeRunner, artifact),
         state,
+    );
+    assert!(
+        matches!(output, SchedulerOutput::Failed { .. }),
+        "no-diff artifact Work must fail semantically; got {output:#?}"
     );
 
     let sha_after = git_output(&repo_path, &["rev-parse", "HEAD"]);
@@ -173,10 +221,61 @@ fn work_node_without_update_preserves_commit() {
     );
 }
 
+#[test]
+fn rejected_work_attempt_records_evidence_and_retry_starts_clean() {
+    let (_temp, artifact) = fixture("rejected-evidence-clean-retry");
+    let telemetry = Rc::new(VecTelemetry::new());
+    let saw_clean_retry = Rc::new(RefCell::new(false));
+    let runner = DirtyThenRetryRunner {
+        saw_clean_retry: saw_clean_retry.clone(),
+    };
+    let state = SchedulerState::Running {
+        graph: RunGraph {
+            nodes: vec![work_node("W", "dirty then retry")],
+            next_id: 0,
+        },
+    };
+
+    let output = run_machine(
+        SchedulerHandler::with_artifact(runner, artifact).with_telemetry(telemetry.clone()),
+        state,
+    );
+
+    let SchedulerOutput::Complete { graph, .. } = output else {
+        panic!("expected retry to complete, got {output:#?}");
+    };
+    assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
+    assert_eq!(graph.nodes[1].status, NodeStatus::Completed);
+    assert!(
+        *saw_clean_retry.borrow(),
+        "retry must start from a clean worktree"
+    );
+
+    let records = telemetry.records();
+    let evidence = records
+        .iter()
+        .find_map(|record| match &record.event {
+            TelemetryEvent::WorkAttemptDiscarded {
+                attempt_id,
+                changed_files,
+                git_diff,
+                reason,
+                ..
+            } => Some((attempt_id, changed_files, git_diff, reason)),
+            _ => None,
+        })
+        .expect("rejected attempt evidence must be recorded before cleanup");
+
+    assert_eq!(evidence.0, "W:0");
+    assert!(evidence.1.contains(&"dirty.txt".to_string()));
+    assert!(evidence.2.contains("failed attempt contents"));
+    assert_eq!(evidence.3, "transient failure after dirtying worktree");
+}
+
 // ── handler boundary tests ─────────────────────────────────────────────────
 
 #[test]
-fn run_node_does_not_commit_artifact_update() {
+fn run_node_does_not_commit_workspace_mutation() {
     let (_temp, artifact) = fixture("no-commit-on-run");
     let original_sha = artifact.commit_sha.clone();
     let repo_path = artifact.repo_path.clone();
@@ -205,7 +304,7 @@ fn run_node_does_not_commit_artifact_update() {
 }
 
 #[test]
-fn integrate_work_commits_pending_artifact_update() {
+fn integrate_work_commits_pending_workspace_mutation() {
     let (_temp, artifact) = fixture("commit-on-integrate");
     let original_sha = artifact.commit_sha.clone();
     let repo_path = artifact.repo_path.clone();
@@ -257,43 +356,6 @@ fn integrate_work_commits_pending_artifact_update() {
     assert_eq!(
         output_content, "hello from work node",
         "output.txt must exist in the integrated commit"
-    );
-}
-
-#[test]
-fn artifact_update_apply_failure_returns_integration_failure() {
-    let (_temp, artifact) = fixture("apply-fail");
-    let h = SchedulerHandler::with_artifact(BadReplaceRunner, artifact);
-
-    h.handle_effect(SchedulerEffect::RunNode {
-        node_id: NodeId("W".to_string()),
-        kind: NodeKind::Work,
-        objective: "do work".to_string(),
-        target_files: vec![],
-        test_plan_context: TestPlanContext::default(),
-        model_tier: ModelTier::Cheap,
-        attempt: 0,
-    });
-
-    let event = h.handle_effect(SchedulerEffect::IntegrateWork {
-        node_id: NodeId("W".to_string()),
-        work: WorkOutput {
-            summary: "done".to_string(),
-        },
-        attempt: 0,
-        target_files: vec![],
-        validation_plan: None,
-    });
-
-    assert!(
-        matches!(
-            event,
-            SchedulerEvent::IntegrationReturned {
-                outcome: IntegrationOutcome::Failed(_),
-                ..
-            }
-        ),
-        "IntegrateWork must return Failed when apply errors; got: {event:#?}"
     );
 }
 
@@ -350,7 +412,7 @@ fn second_work_node_sees_first_only_after_integration() {
 }
 
 #[test]
-fn work_node_without_update_integrates_without_commit() {
+fn work_node_without_update_fails_without_commit() {
     let (_temp, artifact) = fixture("no-update-no-commit");
     let original_sha = artifact.commit_sha.clone();
     let repo_path = artifact.repo_path.clone();
@@ -381,11 +443,14 @@ fn work_node_without_update_integrates_without_commit() {
         matches!(
             event,
             SchedulerEvent::IntegrationReturned {
-                outcome: IntegrationOutcome::Succeeded(_),
+                outcome: IntegrationOutcome::Failed(IntegrationFailure {
+                    kind: FailureKind::WorkSemanticValidationFailure,
+                    ..
+                }),
                 ..
             }
         ),
-        "IntegrateWork with no pending update must return Succeeded"
+        "IntegrateWork with no workspace diff must fail semantically"
     );
 
     let sha_after = git_output(&repo_path, &["rev-parse", "HEAD"]);

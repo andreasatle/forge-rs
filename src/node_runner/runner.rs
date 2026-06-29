@@ -24,8 +24,7 @@ pub trait NodeRunner {
 /// Rules:
 /// - If `objective` contains `"fail"`, return `Failed` with `Terminal` recovery.
 /// - If `kind` is `Plan`, return `PlanAccepted` with one child work node.
-/// - If `kind` is `Work`, return `WorkAccepted` with a summary derived from the objective
-///   and `artifact_update = None` (static runner produces no artifact changes).
+/// - If `kind` is `Work`, return `WorkAccepted` with a summary derived from the objective.
 pub struct StaticNodeRunner;
 
 impl NodeRunner for StaticNodeRunner {
@@ -55,7 +54,6 @@ impl NodeRunner for StaticNodeRunner {
                 work: WorkOutput {
                     summary: format!("completed: {}", request.objective),
                 },
-                artifact_update: None,
             }),
         }
     }
@@ -65,7 +63,6 @@ impl From<NodeRunResult> for NodeOutcome {
     fn from(result: NodeRunResult) -> Self {
         match result {
             NodeRunResult::PlanAccepted(plan) => NodeOutcome::PlanAccepted(plan),
-            // artifact_update is intentionally discarded: scheduler does not understand artifacts yet.
             NodeRunResult::WorkAccepted(work_result) => NodeOutcome::WorkAccepted(work_result.work),
             NodeRunResult::Failed(failure) => NodeOutcome::Failed(failure),
         }
@@ -77,7 +74,7 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
-    use crate::artifacts::{ArtifactUpdate, ArtifactView, FileChange};
+    use crate::artifacts::ArtifactView;
     use crate::machines::scheduler::{ModelTier, RecoveryAction, TestPlanContext};
     use crate::telemetry::NoopTelemetry;
 
@@ -166,18 +163,6 @@ mod tests {
     }
 
     #[test]
-    fn static_work_result_has_no_artifact_update() {
-        let result = StaticNodeRunner.run_node(work_request("do some work"), &NoopTelemetry);
-        let NodeRunResult::WorkAccepted(work_result) = result else {
-            panic!("expected WorkAccepted");
-        };
-        assert!(
-            work_result.artifact_update.is_none(),
-            "StaticNodeRunner must not produce artifact changes"
-        );
-    }
-
-    #[test]
     fn static_runner_fail_returns_node_failure() {
         let result = StaticNodeRunner.run_node(work_request("do a failing task"), &NoopTelemetry);
         assert!(matches!(result, NodeRunResult::Failed(_)));
@@ -199,7 +184,6 @@ mod tests {
             work: WorkOutput {
                 summary: "done".to_string(),
             },
-            artifact_update: None,
         });
         assert!(matches!(
             NodeOutcome::from(work_result),
@@ -217,26 +201,5 @@ mod tests {
             NodeOutcome::from(fail_result),
             NodeOutcome::Failed(_)
         ));
-    }
-
-    #[test]
-    fn node_run_result_conversion_discards_artifact_update_for_scheduler() {
-        let work_result = NodeRunWorkResult {
-            work: WorkOutput {
-                summary: "result".to_string(),
-            },
-            artifact_update: Some(ArtifactUpdate {
-                changes: vec![FileChange::Write {
-                    path: "output.txt".to_owned(),
-                    content: "hello".to_owned(),
-                }],
-            }),
-        };
-        let node_result = NodeRunResult::WorkAccepted(work_result);
-        let outcome = NodeOutcome::from(node_result);
-        let NodeOutcome::WorkAccepted(work) = outcome else {
-            panic!("expected WorkAccepted NodeOutcome");
-        };
-        assert_eq!(work.summary, "result");
     }
 }

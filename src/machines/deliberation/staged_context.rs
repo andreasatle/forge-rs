@@ -1,4 +1,4 @@
-use crate::artifacts::{ArtifactError, ArtifactRead, ArtifactUpdate, StagedArtifactView};
+use crate::artifacts::{ArtifactError, ArtifactRead};
 use crate::machines::deliberation::state::DeliberationRole;
 use crate::machines::scheduler::NodeKind;
 use crate::roles::TargetView;
@@ -28,11 +28,7 @@ impl<R> DeliberationHandler<R> {
             DeliberationRole::Critic | DeliberationRole::Referee if self.work_attempt.is_some() => {
                 Box::new(self.work_attempt.as_ref().unwrap().workspace.clone())
             }
-            DeliberationRole::Critic | DeliberationRole::Referee => {
-                let changes = self.accumulated_update.borrow().clone();
-                let update = ArtifactUpdate { changes };
-                Box::new(StagedArtifactView::from_update(base.clone(), &update)?)
-            }
+            DeliberationRole::Critic | DeliberationRole::Referee => Box::new(base.clone()),
         };
 
         let target_views =

@@ -6,11 +6,12 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::*;
-use crate::artifacts::{Artifact, ArtifactUpdate, ArtifactView, FileChange};
+use crate::artifacts::{Artifact, ArtifactView, WorkspaceFileOps};
 use crate::engine::{Machine, run_machine};
 use crate::machines::scheduler::effect::SchedulerEffect;
 use crate::machines::scheduler::event::{
-    IntegrationOutcome, NodeOutcome, SchedulerEvent, WorkOutput,
+    FailureKind, IntegrationFailure, IntegrationOutcome, NodeFailure, NodeOutcome, RecoveryAction,
+    SchedulerEvent, WorkOutput,
 };
 use crate::machines::scheduler::machine::{SchedulerMachine, SchedulerOutput};
 use crate::machines::scheduler::state::{
@@ -157,38 +158,19 @@ struct FileWritingRunner {
 }
 
 impl NodeRunner for FileWritingRunner {
-    fn run_node(&self, _request: NodeRunRequest, _telemetry: &dyn TelemetrySink) -> NodeRunResult {
+    fn run_node(&self, request: NodeRunRequest, _telemetry: &dyn TelemetrySink) -> NodeRunResult {
+        let attempt = request
+            .work_attempt
+            .expect("artifact Work tests must receive a WorkAttempt workspace");
+        attempt
+            .workspace
+            .borrow_mut()
+            .write_file(&self.path, &self.content)
+            .expect("test runner must write attempt workspace");
         NodeRunResult::WorkAccepted(NodeRunWorkResult {
             work: WorkOutput {
                 summary: format!("wrote {}", self.path),
             },
-            artifact_update: Some(ArtifactUpdate {
-                changes: vec![FileChange::Write {
-                    path: self.path.clone(),
-                    content: self.content.clone(),
-                }],
-            }),
-        })
-    }
-}
-
-/// Returns a work node result with a Replace update that will fail because
-/// the target text is absent from the fixture file.
-struct BadReplaceRunner;
-
-impl NodeRunner for BadReplaceRunner {
-    fn run_node(&self, _request: NodeRunRequest, _telemetry: &dyn TelemetrySink) -> NodeRunResult {
-        NodeRunResult::WorkAccepted(NodeRunWorkResult {
-            work: WorkOutput {
-                summary: "will fail on integrate".to_string(),
-            },
-            artifact_update: Some(ArtifactUpdate {
-                changes: vec![FileChange::Replace {
-                    path: "artifact.txt".to_string(),
-                    old: "this text does not exist in the file".to_string(),
-                    new: "replacement".to_string(),
-                }],
-            }),
         })
     }
 }
@@ -291,6 +273,14 @@ impl NodeRunner for FixOnValidationRetryRunner {
         } else {
             "ok\n"
         };
+        request
+            .work_attempt
+            .as_ref()
+            .expect("validation retry work must receive a workspace")
+            .workspace
+            .borrow_mut()
+            .write_file("main.py", content)
+            .expect("test runner must write main.py");
         self.requests.borrow_mut().push(CapturedRequest {
             objective: request.objective,
             target_files: request.target_files,
@@ -300,12 +290,6 @@ impl NodeRunner for FixOnValidationRetryRunner {
             work: WorkOutput {
                 summary: "wrote main.py".to_string(),
             },
-            artifact_update: Some(ArtifactUpdate {
-                changes: vec![FileChange::Write {
-                    path: "main.py".to_string(),
-                    content: content.to_string(),
-                }],
-            }),
         })
     }
 }

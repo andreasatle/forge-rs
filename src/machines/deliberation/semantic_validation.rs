@@ -1,4 +1,3 @@
-use crate::artifacts::ArtifactUpdate;
 use crate::machines::deliberation::event::RoleResult;
 use crate::machines::deliberation::state::{DeliberationRole, RevisionFeedback};
 use crate::machines::scheduler::{FailureKind, NodeKind};
@@ -17,7 +16,6 @@ pub(crate) struct ProducerSemanticValidationConfig {
     pub(crate) critic_content: Option<String>,
     pub(crate) initial_feedback: Vec<RevisionFeedback>,
     pub(crate) max_retries: usize,
-    pub(crate) accumulate_artifact_update_on_pass: bool,
 }
 
 pub(crate) enum ProducerSemanticValidationDecision {
@@ -87,9 +85,6 @@ impl<R: RoleRunner> DeliberationHandler<R> {
 
             match validate(&output) {
                 ProducerSemanticValidationDecision::Valid => {
-                    if config.accumulate_artifact_update_on_pass {
-                        self.accumulate_artifact_update(output.artifact_update);
-                    }
                     return DeliberationEvent::RoleReturned {
                         role: config.role,
                         result: output.result,
@@ -113,11 +108,5 @@ impl<R: RoleRunner> DeliberationHandler<R> {
         }
 
         unreachable!("loop exits via return in all branches")
-    }
-
-    pub(crate) fn accumulate_artifact_update(&self, update: Option<ArtifactUpdate>) {
-        if let Some(update) = update {
-            self.accumulated_update.borrow_mut().extend(update.changes);
-        }
     }
 }

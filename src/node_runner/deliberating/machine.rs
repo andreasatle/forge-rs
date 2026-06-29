@@ -1,6 +1,5 @@
 //! Machine adapter for provider-backed deliberation.
 
-use crate::artifacts::ArtifactUpdate;
 use crate::engine::{Machine, Transition};
 use crate::machines::deliberation::{
     DeliberationEffect, DeliberationEvent, DeliberationMachine, DeliberationState,
@@ -12,14 +11,6 @@ use crate::telemetry::TelemetrySink;
 pub(crate) struct DeliberatingMachine<'a, P: ProviderClient> {
     pub(crate) handler: ProviderBackedDeliberationHandler<&'a P>,
     pub(crate) telemetry: &'a dyn TelemetrySink,
-}
-
-impl<'a, P: ProviderClient> DeliberatingMachine<'a, P> {
-    /// Returns the artifact update accumulated by file tool loops during the
-    /// machine run, clearing the internal buffer.
-    pub(crate) fn take_artifact_update(&self) -> Option<ArtifactUpdate> {
-        self.handler.take_artifact_update()
-    }
 }
 
 impl<'a, P: ProviderClient> Machine for DeliberatingMachine<'a, P> {

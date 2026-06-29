@@ -92,10 +92,19 @@ impl IntegrationService {
         Some(WorkAttempt { attempt, workspace })
     }
 
-    pub(crate) fn discard_work_attempt(&self, node_id: &NodeId, attempt: u32) {
-        self.pending_attempts
+    pub(crate) fn discard_work_attempt_with_reason(
+        &self,
+        node_id: &NodeId,
+        attempt: u32,
+        reason: String,
+    ) {
+        let workspace = self
+            .pending_attempts
             .borrow_mut()
             .remove(&(node_id.clone(), attempt));
+        if let Some(workspace) = workspace {
+            self.record_attempt_evidence(node_id, attempt, &workspace.borrow(), reason);
+        }
         self.failed_attempts
             .borrow_mut()
             .remove(&(node_id.clone(), attempt));
@@ -127,7 +136,7 @@ impl IntegrationService {
             .borrow_mut()
             .remove(&(node_id.clone(), attempt));
         if let Some(error) = failed_attempt {
-            self.discard_work_attempt(&node_id, attempt);
+            self.discard_work_attempt_with_reason(&node_id, attempt, error.clone());
             return SchedulerEvent::IntegrationReturned {
                 node_id,
                 outcome: integration_failure(error),
@@ -145,8 +154,12 @@ impl IntegrationService {
             if changed_files.is_empty() {
                 return SchedulerEvent::IntegrationReturned {
                     node_id,
-                    outcome: IntegrationOutcome::Succeeded(IntegrationOutput {
-                        summary: work.summary,
+                    outcome: IntegrationOutcome::Failed(IntegrationFailure {
+                        kind: FailureKind::WorkSemanticValidationFailure,
+                        message: no_diff_work_message(),
+                        recovery: RecoveryAction::Retry {
+                            message: no_diff_work_message(),
+                        },
                     }),
                 };
             }
@@ -174,9 +187,16 @@ impl IntegrationService {
                         *self.artifact.borrow_mut() = Some(new_artifact);
                     }
                     Err(err) => {
+                        let message = err.to_string();
+                        self.record_attempt_evidence(
+                            &node_id,
+                            attempt,
+                            &workspace.borrow(),
+                            message.clone(),
+                        );
                         return SchedulerEvent::IntegrationReturned {
                             node_id,
-                            outcome: integration_failure(err.to_string()),
+                            outcome: integration_failure(message),
                         };
                     }
                 }
@@ -206,6 +226,12 @@ impl IntegrationService {
                             .map(|failure| failure.stderr.clone()),
                     },
                 ));
+                self.record_attempt_evidence(
+                    &node_id,
+                    attempt,
+                    &workspace.borrow(),
+                    diagnostic_message.clone(),
+                );
                 return SchedulerEvent::IntegrationReturned {
                     node_id,
                     outcome: IntegrationOutcome::Failed(IntegrationFailure {
@@ -225,6 +251,29 @@ impl IntegrationService {
                 summary: work.summary,
             }),
         }
+    }
+
+    fn record_attempt_evidence(
+        &self,
+        node_id: &NodeId,
+        attempt: u32,
+        workspace: &Workspace,
+        reason: String,
+    ) {
+        let changed_files = changed_paths(workspace);
+        let git_diff = workspace_diff(workspace, &changed_files);
+        self.telemetry.record(TelemetryRecord::new(
+            "Integration",
+            TelemetryEvent::WorkAttemptDiscarded {
+                attempt_id: attempt_id(node_id, attempt),
+                node_id: node_id.0.clone(),
+                attempt,
+                base_commit: workspace.base_commit.clone(),
+                changed_files,
+                git_diff,
+                reason,
+            },
+        ));
     }
 }
 
@@ -248,6 +297,70 @@ fn changed_paths(workspace: &Workspace) -> Vec<String> {
         .collect()
 }
 
+fn workspace_diff(workspace: &Workspace, changed_files: &[String]) -> String {
+    let mut diff = git_diff(workspace);
+    for path in changed_files {
+        if is_untracked(workspace, path) {
+            if !diff.is_empty() && !diff.ends_with('\n') {
+                diff.push('\n');
+            }
+            diff.push_str(&untracked_file_diff(workspace, path));
+        }
+    }
+    diff
+}
+
+fn git_diff(workspace: &Workspace) -> String {
+    let output = git_command()
+        .args(["diff", "--binary", "HEAD", "--"])
+        .current_dir(workspace.path())
+        .output();
+    let Ok(output) = output else {
+        return "(failed to collect git diff)".to_string();
+    };
+    if !output.status.success() {
+        return format!(
+            "(failed to collect git diff: {})",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    String::from_utf8_lossy(&output.stdout).into_owned()
+}
+
+fn is_untracked(workspace: &Workspace, path: &str) -> bool {
+    let output = git_command()
+        .args(["ls-files", "--error-unmatch", "--"])
+        .arg(path)
+        .current_dir(workspace.path())
+        .output();
+    matches!(output, Ok(output) if !output.status.success())
+}
+
+fn untracked_file_diff(workspace: &Workspace, path: &str) -> String {
+    let full_path = workspace.path().join(path);
+    let output = git_command()
+        .args(["diff", "--no-index", "--binary", "--"])
+        .arg("/dev/null")
+        .arg(&full_path)
+        .current_dir(workspace.path())
+        .output();
+    let Ok(output) = output else {
+        return format!("(failed to collect untracked diff for {path})\n");
+    };
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    if stdout.is_empty() && !output.status.success() && !output.stderr.is_empty() {
+        return format!(
+            "(failed to collect untracked diff for {path}: {})\n",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    stdout.into_owned()
+}
+
+fn attempt_id(node_id: &NodeId, attempt: u32) -> String {
+    format!("{}:{attempt}", node_id.0)
+}
+
 /// Run validation using the node's `ValidationPlan` when present, falling back
 /// to the handler-level `Validator` singleton otherwise.
 fn run_validation(
@@ -269,4 +382,8 @@ fn integration_failure(message: String) -> IntegrationOutcome {
         message: message.clone(),
         recovery: RecoveryAction::Terminal { message },
     })
+}
+
+fn no_diff_work_message() -> String {
+    "accepted artifact Work produced no file changes in its WorkAttempt workspace".to_string()
 }

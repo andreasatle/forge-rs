@@ -3,13 +3,15 @@ use std::collections::VecDeque;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::*;
-use crate::artifacts::{ArtifactView, FileChange};
+use crate::artifacts::{Artifact, ArtifactView, create_temporary_workspace};
 use crate::machines::scheduler::{
     FailureKind, ModelTier, NodeId, NodeKind, RecoveryAction, TestPlanContext,
 };
+use crate::node_runner::WorkAttempt;
 use crate::providers::{ProviderError, ProviderErrorKind, ProviderRequest, ProviderResponse};
 use crate::telemetry::NoopTelemetry;
 
@@ -229,6 +231,7 @@ fn make_artifact_view(temp: &TempDir, filename: &str, content: &str) -> Artifact
 }
 
 fn work_request_with_artifact(objective: &str, temp: &TempDir) -> NodeRunRequest {
+    let view = make_artifact_view(temp, "hello.txt", "world\n");
     NodeRunRequest {
         kind: NodeKind::Work,
         objective: objective.to_string(),
@@ -236,12 +239,13 @@ fn work_request_with_artifact(objective: &str, temp: &TempDir) -> NodeRunRequest
         test_plan_context: TestPlanContext::default(),
         model_tier: ModelTier::Cheap,
         attempt: 0,
-        artifact_view: Some(make_artifact_view(temp, "hello.txt", "world\n")),
-        work_attempt: None,
+        artifact_view: Some(view.clone()),
+        work_attempt: Some(work_attempt_for_view(&view)),
     }
 }
 
 fn strong_work_request_with_artifact(objective: &str, temp: &TempDir) -> NodeRunRequest {
+    let view = make_artifact_view(temp, "hello.txt", "world\n");
     NodeRunRequest {
         kind: NodeKind::Work,
         objective: objective.to_string(),
@@ -249,8 +253,22 @@ fn strong_work_request_with_artifact(objective: &str, temp: &TempDir) -> NodeRun
         test_plan_context: TestPlanContext::default(),
         model_tier: ModelTier::Strong,
         attempt: 0,
-        artifact_view: Some(make_artifact_view(temp, "hello.txt", "world\n")),
-        work_attempt: None,
+        artifact_view: Some(view.clone()),
+        work_attempt: Some(work_attempt_for_view(&view)),
+    }
+}
+
+fn work_attempt_for_view(view: &ArtifactView) -> WorkAttempt {
+    let artifact = Artifact {
+        repo_path: view.repo_path.clone(),
+        branch: "main".to_string(),
+        commit_sha: view.commit_sha.clone(),
+    };
+    let workspace = create_temporary_workspace(&artifact)
+        .expect("test artifact view must create a temporary WorkAttempt workspace");
+    WorkAttempt {
+        attempt: 0,
+        workspace: Rc::new(RefCell::new(workspace)),
     }
 }
 

@@ -31,10 +31,9 @@ use self::execution::run_with_provider;
 /// the caller should pass the same provider for both tiers.
 ///
 /// The final producer content is mapped to [`NodeRunResult`] by kind: plan nodes
-/// produce one child work node whose objective is the producer content; work nodes
-/// return the producer content as their summary and write it to `output.txt` in an
-/// [`ArtifactUpdate`](crate::artifacts::ArtifactUpdate). No JSON interpretation
-/// happens here — that boundary belongs to the deliberation role handler.
+/// produce child work nodes from structured planner output; work nodes return
+/// the producer content as their summary. Artifact-backed Work mutates the
+/// supplied [`WorkAttempt`](crate::node_runner::WorkAttempt) workspace directly.
 ///
 /// When the request carries an [`ArtifactView`](crate::artifacts::ArtifactView),
 /// a brief file listing (and `README.md` if present) is prepended to the

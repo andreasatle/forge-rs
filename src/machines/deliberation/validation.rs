@@ -2,7 +2,6 @@
 
 use std::sync::Arc;
 
-use crate::artifacts::ArtifactUpdate;
 use crate::node_runner::TestTargetsFn;
 use crate::node_runner::planner::{
     PlannerOutput, PlannerValidationError, validate_planner_explicit_targets,
@@ -102,46 +101,32 @@ pub(super) fn planner_parse_failure_feedback() -> String {
 
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum WorkSemanticValidationError {
-    MissingArtifactUpdate,
-    EmptyArtifactUpdate,
+    MissingArtifactMutation,
 }
 
 impl std::fmt::Display for WorkSemanticValidationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            WorkSemanticValidationError::MissingArtifactUpdate => {
-                write!(f, "accepted work did not produce an artifact update")
-            }
-            WorkSemanticValidationError::EmptyArtifactUpdate => {
-                write!(f, "accepted work produced an empty artifact update")
+            WorkSemanticValidationError::MissingArtifactMutation => {
+                write!(f, "accepted work did not mutate the WorkAttempt workspace")
             }
         }
     }
 }
 
 pub(super) fn validate_work_output(
-    artifact_update: Option<&ArtifactUpdate>,
     artifact_changed: bool,
 ) -> Result<(), WorkSemanticValidationError> {
     if artifact_changed {
         return Ok(());
     }
-    match artifact_update {
-        None => Err(WorkSemanticValidationError::MissingArtifactUpdate),
-        Some(update) if update.changes.is_empty() => {
-            Err(WorkSemanticValidationError::EmptyArtifactUpdate)
-        }
-        Some(_) => Ok(()),
-    }
+    Err(WorkSemanticValidationError::MissingArtifactMutation)
 }
 
 pub(super) fn work_validation_feedback(error: &WorkSemanticValidationError) -> String {
     match error {
-        WorkSemanticValidationError::MissingArtifactUpdate => {
+        WorkSemanticValidationError::MissingArtifactMutation => {
             "Accepted Work results must modify the artifact. Use a file tool such as write_file, replace_text, or delete_file before returning accepted output.".to_string()
-        }
-        WorkSemanticValidationError::EmptyArtifactUpdate => {
-            "Accepted Work results must include at least one file change. Produce a concrete artifact update before returning accepted output.".to_string()
         }
     }
 }

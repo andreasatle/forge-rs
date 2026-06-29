@@ -12,7 +12,7 @@ use crate::engine::{Machine, Transition};
 use crate::machines::scheduler::checkpoint::CheckpointService;
 use crate::machines::scheduler::dispatch::{RunNodeDispatch, dispatch_run_node};
 use crate::machines::scheduler::effect::SchedulerEffect;
-use crate::machines::scheduler::event::SchedulerEvent;
+use crate::machines::scheduler::event::{NodeOutcome, SchedulerEvent};
 use crate::machines::scheduler::integration::IntegrationService;
 use crate::machines::scheduler::machine::{SchedulerMachine, SchedulerOutput};
 use crate::machines::scheduler::progress::{is_progress_event, print_returned_progress};
@@ -189,15 +189,6 @@ impl<R: NodeRunner> Machine for SchedulerHandler<R> {
                     self.integration.artifact(),
                     work_attempt.clone(),
                 );
-                if let (Some(attempt), Some(update)) = (&work_attempt, result.artifact_update)
-                    && let Err(err) = update.apply(&mut attempt.workspace.borrow_mut())
-                {
-                    self.integration.record_work_attempt_failure(
-                        &node_id,
-                        attempt.attempt,
-                        format!("artifact update apply error: {err}"),
-                    );
-                }
                 if let SchedulerEvent::NodeReturned { node_id, outcome } = &result.event
                     && !matches!(
                         outcome,
@@ -205,8 +196,11 @@ impl<R: NodeRunner> Machine for SchedulerHandler<R> {
                     )
                     && let Some(attempt) = work_attempt
                 {
-                    self.integration
-                        .discard_work_attempt(node_id, attempt.attempt);
+                    self.integration.discard_work_attempt_with_reason(
+                        node_id,
+                        attempt.attempt,
+                        node_rejection_reason(outcome),
+                    );
                 }
                 result.event
             }
@@ -234,5 +228,12 @@ impl<R: NodeRunner> Machine for SchedulerHandler<R> {
             has_strong_tier: self.has_strong_tier,
         }
         .output(state)
+    }
+}
+
+fn node_rejection_reason(outcome: &NodeOutcome) -> String {
+    match outcome {
+        NodeOutcome::Failed(failure) => failure.message.clone(),
+        other => format!("work attempt rejected with outcome: {other:#?}"),
     }
 }
