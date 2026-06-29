@@ -12,7 +12,7 @@ use std::path::Path;
 use std::process::Command;
 
 use crate::artifacts::{Artifact, ArtifactView};
-use crate::config::{ForgeConfig, ProjectConfig, ProjectKind, ValidationConfig};
+use crate::config::{ForgeConfig, ProjectConfig, ProjectKind, ProviderConfig, ValidationConfig};
 use crate::engine::run_machine_with_telemetry;
 use crate::language::registry::language_spec;
 
@@ -25,7 +25,7 @@ use crate::providers::{LlamaCppProvider, RetryingProvider};
 use crate::roles::RolePolicy;
 use crate::runtime::checkpoint::node_counts;
 use crate::runtime::resume::find_resumable_run;
-use crate::runtime::{create_run, finalize_manifest};
+use crate::runtime::{ProviderRunMetadata, ProviderTierMetadata, create_run, finalize_manifest};
 use crate::telemetry::{FileTelemetry, TelemetryEvent, TelemetryRecord, TelemetrySink};
 use crate::validation::{
     AlwaysPassValidator, CommandSpec, CommandValidator, ValidationPlan, ValidationScope,
@@ -49,11 +49,12 @@ impl ForgeRuntime {
             load_or_create_artifact(&config.artifact, config.project.language.as_deref())?;
 
         let runs_root = PathBuf::from(&config.telemetry.directory);
+        let provider_metadata = make_provider_run_metadata(&config.provider);
         let run_info = create_run(
             &runs_root,
             &config.objective,
             &config.artifact.repo_path,
-            &config.provider.base_url,
+            &provider_metadata,
         )?;
         eprintln!("[run] started {}", run_info.run_id);
         let sink: Rc<dyn TelemetrySink> =
@@ -255,6 +256,33 @@ impl ForgeRuntime {
         }
 
         runtime_result_from_scheduler_output(output)
+    }
+}
+
+fn make_provider_run_metadata(provider: &ProviderConfig) -> ProviderRunMetadata {
+    let strong_base_url = provider
+        .strong_base_url
+        .clone()
+        .unwrap_or_else(|| provider.base_url.clone());
+    let strong_model = provider
+        .strong_model
+        .clone()
+        .unwrap_or_else(|| provider.model.clone());
+    ProviderRunMetadata {
+        cheap: ProviderTierMetadata {
+            base_url: provider.base_url.clone(),
+            model: provider.model.clone(),
+            n_predict: provider.n_predict,
+            timeout_seconds: provider.timeout_seconds,
+        },
+        strong: ProviderTierMetadata {
+            base_url: strong_base_url,
+            model: strong_model,
+            n_predict: provider.strong_n_predict.unwrap_or(provider.n_predict),
+            timeout_seconds: provider
+                .strong_timeout_seconds
+                .unwrap_or(provider.timeout_seconds),
+        },
     }
 }
 
@@ -481,6 +509,19 @@ mod tests {
         }
     }
 
+    fn test_provider_metadata() -> ProviderRunMetadata {
+        make_provider_run_metadata(&ProviderConfig {
+            base_url: "provider".to_string(),
+            model: "llama-test".to_string(),
+            n_predict: 512,
+            timeout_seconds: 120,
+            strong_base_url: None,
+            strong_model: None,
+            strong_n_predict: None,
+            strong_timeout_seconds: None,
+        })
+    }
+
     fn empty_graph() -> RunGraph {
         RunGraph {
             nodes: vec![],
@@ -560,9 +601,11 @@ mod tests {
             },
             provider: ProviderConfig {
                 base_url: "http://localhost:8080".to_string(),
+                model: "llama-test".to_string(),
                 n_predict: 512,
                 timeout_seconds: 42,
                 strong_base_url: None,
+                strong_model: None,
                 strong_n_predict: None,
                 strong_timeout_seconds: None,
             },
@@ -582,9 +625,11 @@ mod tests {
     fn strong_tier_falls_back_when_no_strong_provider_configured() {
         let config = ProviderConfig {
             base_url: "http://localhost:8080".to_string(),
+            model: "llama-test".to_string(),
             n_predict: 512,
             timeout_seconds: 120,
             strong_base_url: None,
+            strong_model: None,
             strong_n_predict: None,
             strong_timeout_seconds: None,
         };
@@ -600,6 +645,55 @@ mod tests {
         assert_eq!(strong_url, "http://localhost:8080");
         assert_eq!(strong_tokens, 512);
         assert_eq!(strong_timeout, 120);
+    }
+
+    #[test]
+    fn provider_run_metadata_uses_effective_tier_identities() {
+        let config = ProviderConfig {
+            base_url: "http://localhost:8080".to_string(),
+            model: "cheap-model".to_string(),
+            n_predict: 512,
+            timeout_seconds: 120,
+            strong_base_url: Some("http://localhost:8081".to_string()),
+            strong_model: Some("strong-model".to_string()),
+            strong_n_predict: Some(1024),
+            strong_timeout_seconds: Some(180),
+        };
+
+        let metadata = make_provider_run_metadata(&config);
+
+        assert_eq!(metadata.cheap.base_url, "http://localhost:8080");
+        assert_eq!(metadata.cheap.model, "cheap-model");
+        assert_eq!(metadata.cheap.n_predict, 512);
+        assert_eq!(metadata.cheap.timeout_seconds, 120);
+        assert_eq!(metadata.strong.base_url, "http://localhost:8081");
+        assert_eq!(metadata.strong.model, "strong-model");
+        assert_eq!(metadata.strong.n_predict, 1024);
+        assert_eq!(metadata.strong.timeout_seconds, 180);
+    }
+
+    #[test]
+    fn provider_run_metadata_falls_back_for_strong_tier() {
+        let config = ProviderConfig {
+            base_url: "http://localhost:8080".to_string(),
+            model: "cheap-model".to_string(),
+            n_predict: 512,
+            timeout_seconds: 120,
+            strong_base_url: None,
+            strong_model: None,
+            strong_n_predict: None,
+            strong_timeout_seconds: None,
+        };
+
+        let metadata = make_provider_run_metadata(&config);
+
+        assert_eq!(metadata.strong.base_url, metadata.cheap.base_url);
+        assert_eq!(metadata.strong.model, metadata.cheap.model);
+        assert_eq!(metadata.strong.n_predict, metadata.cheap.n_predict);
+        assert_eq!(
+            metadata.strong.timeout_seconds,
+            metadata.cheap.timeout_seconds
+        );
     }
 
     #[test]
@@ -1172,7 +1266,7 @@ mod tests {
         let (base, artifact, _) = make_bare_artifact("vp-manifest-true");
         let runs_root = base.join("runs");
 
-        let run_info = create_run(&runs_root, "test", "repo", "provider").unwrap();
+        let run_info = create_run(&runs_root, "test", "repo", &test_provider_metadata()).unwrap();
         let handler = SchedulerHandler::with_artifact(FileWritingRunner, artifact);
         let initial_state = SchedulerMachine::initial_state(RunRequest {
             objective: "generate a file".to_string(),
@@ -1261,7 +1355,7 @@ mod tests {
         let (base, artifact, _) = make_bare_artifact("vp-manifest-false");
         let runs_root = base.join("runs");
 
-        let run_info = create_run(&runs_root, "test", "repo", "provider").unwrap();
+        let run_info = create_run(&runs_root, "test", "repo", &test_provider_metadata()).unwrap();
         let handler = SchedulerHandler::with_artifact(FileWritingRunner, artifact)
             .with_validator(Rc::new(AlwaysFailValidator));
         let initial_state = SchedulerMachine::initial_state(RunRequest {
@@ -1316,7 +1410,7 @@ mod tests {
         let (base, artifact, _) = make_bare_artifact("vp-manifest-null");
         let runs_root = base.join("runs");
 
-        let run_info = create_run(&runs_root, "test", "repo", "provider").unwrap();
+        let run_info = create_run(&runs_root, "test", "repo", &test_provider_metadata()).unwrap();
         let handler = SchedulerHandler::with_artifact(AlwaysFailRunner, artifact);
         let initial_state = SchedulerMachine::initial_state(RunRequest {
             objective: "do something".to_string(),

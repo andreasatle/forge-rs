@@ -3,6 +3,8 @@
 use std::error::Error;
 use std::path::{Path, PathBuf};
 
+use serde::Serialize;
+
 /// Identity and paths for a single forge run.
 pub struct RunInfo {
     /// Unique human-readable run identifier (e.g. `2026-06-22-15-31-42`).
@@ -15,6 +17,28 @@ pub struct RunInfo {
     pub started_secs: f64,
 }
 
+/// Effective provider endpoint and model identity for one model tier.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ProviderTierMetadata {
+    /// Base URL of the already-running provider server.
+    pub base_url: String,
+    /// Model Forge expects that server to provide.
+    pub model: String,
+    /// Maximum generation token budget for this tier.
+    pub n_predict: usize,
+    /// HTTP timeout in seconds for this tier.
+    pub timeout_seconds: u64,
+}
+
+/// Effective provider metadata for a run.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ProviderRunMetadata {
+    /// Cheap/default model tier provider identity.
+    pub cheap: ProviderTierMetadata,
+    /// Strong model tier provider identity after fallback resolution.
+    pub strong: ProviderTierMetadata,
+}
+
 /// Create a new timestamped run directory under `runs_root`.
 ///
 /// Creates `<runs_root>/<run_id>/telemetry/`, writes `manifest.json`,
@@ -23,7 +47,7 @@ pub fn create_run(
     runs_root: &Path,
     objective: &str,
     artifact_repo: &str,
-    provider: &str,
+    providers: &ProviderRunMetadata,
 ) -> Result<RunInfo, Box<dyn Error>> {
     std::fs::create_dir_all(runs_root)?;
 
@@ -42,7 +66,7 @@ pub fn create_run(
         &run_id,
         objective,
         artifact_repo,
-        provider,
+        providers,
         started_secs,
     )?;
     update_latest(runs_root, &run_id)?;
@@ -145,7 +169,7 @@ fn write_manifest(
     run_id: &str,
     objective: &str,
     artifact_repo: &str,
-    provider: &str,
+    providers: &ProviderRunMetadata,
     started_secs: f64,
 ) -> Result<(), Box<dyn Error>> {
     let started_at = started_at_from_secs(started_secs as u64);
@@ -157,7 +181,8 @@ fn write_manifest(
         "telemetry_dir": "telemetry",
         "artifact_repo": artifact_repo,
         "objective": objective,
-        "provider": provider,
+        "provider": providers.cheap.base_url,
+        "providers": providers,
     });
 
     std::fs::write(
@@ -242,13 +267,30 @@ mod tests {
         ))
     }
 
+    fn provider_metadata() -> ProviderRunMetadata {
+        ProviderRunMetadata {
+            cheap: ProviderTierMetadata {
+                base_url: "http://localhost:8080".to_string(),
+                model: "cheap-model".to_string(),
+                n_predict: 512,
+                timeout_seconds: 120,
+            },
+            strong: ProviderTierMetadata {
+                base_url: "http://localhost:8081".to_string(),
+                model: "strong-model".to_string(),
+                n_predict: 1024,
+                timeout_seconds: 180,
+            },
+        }
+    }
+
     #[test]
     fn runtime_creates_unique_run_directories() {
         let root = temp_runs_root("unique");
         let _ = std::fs::remove_dir_all(&root);
 
-        let r1 = create_run(&root, "obj", "repo", "provider").unwrap();
-        let r2 = create_run(&root, "obj", "repo", "provider").unwrap();
+        let r1 = create_run(&root, "obj", "repo", &provider_metadata()).unwrap();
+        let r2 = create_run(&root, "obj", "repo", &provider_metadata()).unwrap();
 
         assert_ne!(r1.run_id, r2.run_id, "two runs must have distinct IDs");
         assert!(r1.run_dir.exists());
@@ -262,10 +304,10 @@ mod tests {
         let root = temp_runs_root("preserved");
         let _ = std::fs::remove_dir_all(&root);
 
-        let r1 = create_run(&root, "obj", "repo", "provider").unwrap();
+        let r1 = create_run(&root, "obj", "repo", &provider_metadata()).unwrap();
         let r1_dir = r1.run_dir.clone();
 
-        let _r2 = create_run(&root, "obj", "repo", "provider").unwrap();
+        let _r2 = create_run(&root, "obj", "repo", &provider_metadata()).unwrap();
 
         assert!(
             r1_dir.exists(),
@@ -280,8 +322,8 @@ mod tests {
         let root = temp_runs_root("latest");
         let _ = std::fs::remove_dir_all(&root);
 
-        let _r1 = create_run(&root, "obj", "repo", "provider").unwrap();
-        let r2 = create_run(&root, "obj", "repo", "provider").unwrap();
+        let _r1 = create_run(&root, "obj", "repo", &provider_metadata()).unwrap();
+        let r2 = create_run(&root, "obj", "repo", &provider_metadata()).unwrap();
 
         let latest = root.join("latest");
 
@@ -309,7 +351,7 @@ mod tests {
         let root = temp_runs_root("manifest");
         let _ = std::fs::remove_dir_all(&root);
 
-        let r = create_run(&root, "test objective", "repo.git", "http://localhost:8080").unwrap();
+        let r = create_run(&root, "test objective", "repo.git", &provider_metadata()).unwrap();
 
         let manifest_path = r.run_dir.join("manifest.json");
         assert!(manifest_path.exists(), "manifest.json must exist");
@@ -318,6 +360,18 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&content).unwrap();
         assert_eq!(v["run_id"], r.run_id.as_str());
         assert_eq!(v["telemetry_dir"], "telemetry");
+        assert_eq!(v["provider"], "http://localhost:8080");
+        assert_eq!(v["providers"]["cheap"]["base_url"], "http://localhost:8080");
+        assert_eq!(v["providers"]["cheap"]["model"], "cheap-model");
+        assert_eq!(v["providers"]["cheap"]["n_predict"], 512);
+        assert_eq!(v["providers"]["cheap"]["timeout_seconds"], 120);
+        assert_eq!(
+            v["providers"]["strong"]["base_url"],
+            "http://localhost:8081"
+        );
+        assert_eq!(v["providers"]["strong"]["model"], "strong-model");
+        assert_eq!(v["providers"]["strong"]["n_predict"], 1024);
+        assert_eq!(v["providers"]["strong"]["timeout_seconds"], 180);
 
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -327,7 +381,7 @@ mod tests {
         let root = temp_runs_root("telemetry-path");
         let _ = std::fs::remove_dir_all(&root);
 
-        let r = create_run(&root, "obj", "repo", "provider").unwrap();
+        let r = create_run(&root, "obj", "repo", &provider_metadata()).unwrap();
 
         assert!(r.telemetry_dir.starts_with(&r.run_dir));
         assert_eq!(r.telemetry_dir, r.run_dir.join("telemetry"));
@@ -341,7 +395,7 @@ mod tests {
         let root = temp_runs_root("initially-running");
         let _ = std::fs::remove_dir_all(&root);
 
-        let r = create_run(&root, "obj", "repo", "provider").unwrap();
+        let r = create_run(&root, "obj", "repo", &provider_metadata()).unwrap();
 
         let content = std::fs::read_to_string(r.run_dir.join("manifest.json")).unwrap();
         let v: serde_json::Value = serde_json::from_str(&content).unwrap();
@@ -358,7 +412,7 @@ mod tests {
         let root = temp_runs_root("finalize-success");
         let _ = std::fs::remove_dir_all(&root);
 
-        let r = create_run(&root, "obj", "repo", "provider").unwrap();
+        let r = create_run(&root, "obj", "repo", &provider_metadata()).unwrap();
         finalize_manifest(&r, "succeeded", Some("abc1234"), None, None).unwrap();
 
         let content = std::fs::read_to_string(r.run_dir.join("manifest.json")).unwrap();
@@ -383,7 +437,7 @@ mod tests {
         let root = temp_runs_root("finalize-failure");
         let _ = std::fs::remove_dir_all(&root);
 
-        let r = create_run(&root, "obj", "repo", "provider").unwrap();
+        let r = create_run(&root, "obj", "repo", &provider_metadata()).unwrap();
         finalize_manifest(&r, "failed", None, None, Some("integration conflict")).unwrap();
 
         let content = std::fs::read_to_string(r.run_dir.join("manifest.json")).unwrap();
@@ -400,7 +454,7 @@ mod tests {
         let root = temp_runs_root("manifest-failure");
         let _ = std::fs::remove_dir_all(&root);
 
-        let r = create_run(&root, "obj", "repo", "provider").unwrap();
+        let r = create_run(&root, "obj", "repo", &provider_metadata()).unwrap();
 
         // Remove run_dir to force finalize_manifest to fail.
         std::fs::remove_dir_all(&r.run_dir).unwrap();
@@ -429,11 +483,11 @@ mod tests {
         let root = temp_runs_root("no-delete");
         let _ = std::fs::remove_dir_all(&root);
 
-        let r1 = create_run(&root, "obj", "repo", "provider").unwrap();
+        let r1 = create_run(&root, "obj", "repo", &provider_metadata()).unwrap();
         let sentinel = r1.run_dir.join("telemetry").join("sentinel.txt");
         std::fs::write(&sentinel, "keep me").unwrap();
 
-        let _r2 = create_run(&root, "obj", "repo", "provider").unwrap();
+        let _r2 = create_run(&root, "obj", "repo", &provider_metadata()).unwrap();
 
         assert!(
             sentinel.exists(),

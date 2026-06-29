@@ -66,6 +66,8 @@ fn default_provider_timeout_seconds() -> u64 {
 pub struct ProviderConfig {
     /// Base URL of the provider server (e.g. `"http://localhost:8080"`).
     pub base_url: String,
+    /// Expected model served by the provider at `base_url`.
+    pub model: String,
     /// Maximum tokens to predict per completion call.
     pub n_predict: usize,
     /// HTTP request timeout in seconds. Absent configs default to 120.
@@ -75,6 +77,10 @@ pub struct ProviderConfig {
     /// falls back to `base_url`.
     #[serde(default)]
     pub strong_base_url: Option<String>,
+    /// Expected model served by the strong-tier provider. Falls back to `model`
+    /// when absent.
+    #[serde(default)]
+    pub strong_model: Option<String>,
     /// Maximum tokens for strong-tier completions. Falls back to `n_predict`
     /// when absent.
     #[serde(default)]
@@ -138,8 +144,24 @@ impl ForgeConfig {
             return Err(format!("unknown language: '{lang}'").into());
         }
 
+        validate_provider_model_identity(&config.provider)?;
+
         Ok(config)
     }
+}
+
+fn validate_provider_model_identity(
+    provider: &ProviderConfig,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if provider.model.trim().is_empty() {
+        return Err("provider.model must be non-empty".into());
+    }
+    if let Some(strong_model) = &provider.strong_model
+        && strong_model.trim().is_empty()
+    {
+        return Err("provider.strong_model must be non-empty when set".into());
+    }
+    Ok(())
 }
 
 fn resolve_relative(path_str: &str, base: &Path) -> String {
@@ -197,6 +219,7 @@ artifact:
   branch: "main"
 provider:
   base_url: "http://localhost:8080"
+  model: "llama-test"
   n_predict: 512
 telemetry:
   directory: "runs"
@@ -230,6 +253,7 @@ telemetry:
         let tmp = TempYaml::new(EXAMPLE_YAML);
         let config = ForgeConfig::from_file(tmp.path()).unwrap();
         assert_eq!(config.provider.base_url, "http://localhost:8080");
+        assert_eq!(config.provider.model, "llama-test");
         assert_eq!(config.provider.n_predict, 512);
     }
 
@@ -258,6 +282,7 @@ artifact:
   branch: "main"
 provider:
   base_url: "http://localhost:8080"
+  model: "llama-test"
   n_predict: 512
   timeout_seconds: 30
 telemetry:
@@ -293,6 +318,7 @@ artifact:
   branch: "main"
 provider:
   base_url: "http://localhost:8080"
+  model: "llama-test"
   n_predict: 512
 telemetry:
   directory: "runs"
@@ -336,8 +362,10 @@ artifact:
   branch: "main"
 provider:
   base_url: "http://localhost:8080"
+  model: "llama-test"
   n_predict: 512
   strong_base_url: "http://localhost:8081"
+  strong_model: "llama-strong-test"
   strong_n_predict: 1024
   strong_timeout_seconds: 180
 telemetry:
@@ -352,6 +380,10 @@ telemetry:
             config.provider.strong_base_url.as_deref(),
             Some("http://localhost:8081")
         );
+        assert_eq!(
+            config.provider.strong_model.as_deref(),
+            Some("llama-strong-test")
+        );
         assert_eq!(config.provider.strong_n_predict, Some(1024));
         assert_eq!(config.provider.strong_timeout_seconds, Some(180));
     }
@@ -361,8 +393,55 @@ telemetry:
         let tmp = TempYaml::new(EXAMPLE_YAML);
         let config = ForgeConfig::from_file(tmp.path()).unwrap();
         assert!(config.provider.strong_base_url.is_none());
+        assert!(config.provider.strong_model.is_none());
         assert!(config.provider.strong_n_predict.is_none());
         assert!(config.provider.strong_timeout_seconds.is_none());
+    }
+
+    const MISSING_PROVIDER_MODEL_YAML: &str = r#"
+objective: "test"
+artifact:
+  repo_path: ".forge/artifacts/main.git"
+  branch: "main"
+provider:
+  base_url: "http://localhost:8080"
+  n_predict: 512
+telemetry:
+  directory: "runs"
+"#;
+
+    #[test]
+    fn provider_model_is_required() {
+        let tmp = TempYaml::new(MISSING_PROVIDER_MODEL_YAML);
+        let result = ForgeConfig::from_file(tmp.path());
+        assert!(
+            result.is_err(),
+            "provider.model is required so run metadata can identify the expected model"
+        );
+    }
+
+    const EMPTY_PROVIDER_MODEL_YAML: &str = r#"
+objective: "test"
+artifact:
+  repo_path: ".forge/artifacts/main.git"
+  branch: "main"
+provider:
+  base_url: "http://localhost:8080"
+  model: "  "
+  n_predict: 512
+telemetry:
+  directory: "runs"
+"#;
+
+    #[test]
+    fn provider_model_must_not_be_blank() {
+        let tmp = TempYaml::new(EMPTY_PROVIDER_MODEL_YAML);
+        let result = ForgeConfig::from_file(tmp.path());
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("provider.model"),
+            "blank provider.model error must name the field; got: {msg}"
+        );
     }
 
     const ABSOLUTE_YAML: &str = r#"
@@ -372,6 +451,7 @@ artifact:
   branch: "main"
 provider:
   base_url: "http://localhost:8080"
+  model: "llama-test"
   n_predict: 512
 telemetry:
   directory: "/absolute/telemetry"
@@ -438,6 +518,7 @@ artifact:
   branch: "main"
 provider:
   base_url: "http://localhost:8080"
+  model: "llama-test"
   n_predict: 512
 telemetry:
   directory: "runs"
@@ -476,6 +557,7 @@ artifact:
   branch: "main"
 provider:
   base_url: "http://localhost:8080"
+  model: "llama-test"
   n_predict: 512
 telemetry:
   directory: "runs"
@@ -511,6 +593,7 @@ artifact:
   branch: "main"
 provider:
   base_url: "http://localhost:8080"
+  model: "llama-test"
   n_predict: 512
 telemetry:
   directory: "runs"
@@ -536,6 +619,7 @@ artifact:
   branch: "main"
 provider:
   base_url: "http://localhost:8080"
+  model: "llama-test"
   n_predict: 512
 telemetry:
   directory: "runs"
@@ -566,6 +650,7 @@ artifact:
   branch: "main"
 provider:
   base_url: "http://localhost:8080"
+  model: "llama-test"
   n_predict: 512
 telemetry:
   directory: "runs"

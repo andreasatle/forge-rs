@@ -58,9 +58,11 @@ artifact:
   branch: "main"
 provider:
   base_url: "http://localhost:8080"
+  model: "qwen2.5-coder-7b-instruct"
   n_predict: 512
   timeout_seconds: 120          # optional; default 120
   strong_base_url: "http://localhost:8081"  # optional; fallback to base_url
+  strong_model: "qwen2.5-coder-14b-instruct" # optional; fallback to model
   strong_n_predict: 1024        # optional; fallback to n_predict
   strong_timeout_seconds: 180   # optional; fallback to timeout_seconds
 telemetry:
@@ -385,7 +387,21 @@ Initial fields (written at startup):
   "telemetry_dir": "telemetry",
   "artifact_repo": ".forge/artifacts/main.git",
   "objective": "Write a short haiku about Rust state machines.",
-  "provider": "http://localhost:8080"
+  "provider": "http://localhost:8080",
+  "providers": {
+    "cheap": {
+      "base_url": "http://localhost:8080",
+      "model": "qwen2.5-coder-7b-instruct",
+      "n_predict": 512,
+      "timeout_seconds": 120
+    },
+    "strong": {
+      "base_url": "http://localhost:8081",
+      "model": "qwen2.5-coder-14b-instruct",
+      "n_predict": 1024,
+      "timeout_seconds": 180
+    }
+  }
 }
 ```
 
