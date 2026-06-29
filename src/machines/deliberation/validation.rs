@@ -126,7 +126,37 @@ pub(super) fn validate_work_output(
 pub(super) fn work_validation_feedback(error: &WorkSemanticValidationError) -> String {
     match error {
         WorkSemanticValidationError::MissingArtifactMutation => {
-            "Accepted Work results must modify the artifact. Use a file tool such as write_file, replace_text, or delete_file before returning accepted output.".to_string()
+            "Accepted Work results must modify the artifact. Use write_file by default when creating a file or replacing most or all of an existing file. Use replace_text only for small, localized edits after reading the file and providing an exact old string that occurs once; whitespace, indentation, or formatting differences will cause replace_text to fail. If a replace_text attempt could not be validated for a whole-file rewrite, switch to write_file instead of retrying another replace_text.".to_string()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn work_validation_feedback_recommends_write_file_after_failed_replacement() {
+        let feedback =
+            work_validation_feedback(&WorkSemanticValidationError::MissingArtifactMutation);
+
+        assert!(
+            feedback.contains("Use write_file by default")
+                && feedback.contains("replacing most or all of an existing file"),
+            "feedback must make write_file the default for whole-file rewrites; got: {feedback}"
+        );
+        assert!(
+            feedback.contains("Use replace_text only for small, localized edits")
+                && feedback.contains("exact old string that occurs once"),
+            "feedback must restrict replace_text to exact localized edits; got: {feedback}"
+        );
+        assert!(
+            feedback.contains("whitespace, indentation, or formatting differences"),
+            "feedback must mention exact-match whitespace sensitivity; got: {feedback}"
+        );
+        assert!(
+            feedback.contains("switch to write_file instead of retrying another replace_text"),
+            "feedback must recommend write_file after failed whole-file replace_text attempts; got: {feedback}"
+        );
     }
 }

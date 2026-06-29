@@ -32,9 +32,12 @@ impl<R: RoleRunner> DeliberationHandler<R> {
                         Err(error) => {
                             let reason = format!(
                                 "WorkAttempt workspace view could not be constructed for \
-                                 {role:?}: {error}. Re-read the target file(s) and modify them \
-                                 with file tools such as read_file, write_file, replace_text, or \
-                                 delete_file before accepting."
+                                 {role:?}: {error}. Use write_file by default when creating a \
+                                 file or replacing most or all of an existing file. Use \
+                                 replace_text only for small, localized edits after reading the \
+                                 file and providing an exact old string that occurs once; \
+                                 whitespace, indentation, or formatting differences will cause \
+                                 replace_text to fail."
                             );
                             telemetry.record(TelemetryRecord::new_with_subsource(
                                 "DeliberationHandler",

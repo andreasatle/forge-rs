@@ -234,13 +234,13 @@ Operations:
 
 - `list_files`
 - `read_file`
-- `write_file`
-- `replace_text`
+- `write_file` — create a new file or overwrite an existing file. This is the default tool when replacing most or all of a file.
+- `replace_text` — make a small, localized edit after reading the file and identifying an exact, unique old string.
 - `delete_file`
 
 Path containment is enforced on all operations. Symlink safety is enforced on top of lexical validation: all operations canonicalize the resolved path and verify it remains inside the workspace root. Broken symlinks and symlinks whose targets point outside the workspace are rejected.
 
-`replace_text` fails if the target string is absent or appears more than once.
+`replace_text` fails if the target string is absent or appears more than once. It matches exactly, so whitespace, indentation, or formatting differences cause it to fail. For whole-file rewrites, use `write_file` instead of retrying `replace_text`.
 
 ### Integration
 

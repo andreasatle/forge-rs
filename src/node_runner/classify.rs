@@ -15,10 +15,13 @@ pub fn classify_deliberation_failure(kind: FailureKind, message: &str) -> Recove
         FailureKind::WorkSemanticValidationFailure => RecoveryAction::Retry {
             message: format!(
                 "retryable work semantic validation failure: {message}. Accepted Work results \
-                 must modify the artifact in the current WorkAttempt workspace. If a workspace \
-                 mutation could not be validated, re-read the target file(s), then use file tools \
-                 such as read_file, write_file, replace_text, or delete_file before returning \
-                 accepted output."
+                 must modify the artifact in the current WorkAttempt workspace. Use write_file \
+                 by default when creating a file or replacing most or all of an existing file. \
+                 Use replace_text only for small, localized edits after reading the file and \
+                 providing an exact old string that occurs once; whitespace, indentation, or \
+                 formatting differences will cause replace_text to fail. If a workspace \
+                 mutation cannot be validated after a failed replace_text, switch to write_file \
+                 for whole-file rewrites instead of retrying another replace_text."
             ),
         },
         FailureKind::DeliberationFailure => RecoveryAction::ElevateModel {
@@ -133,11 +136,23 @@ mod tests {
             "retry message must explain artifact mutation requirement; got: {message}"
         );
         assert!(
-            message.contains("write_file"),
-            "retry message must name a file tool; got: {message}"
+            message.contains("Use write_file by default")
+                && message.contains("replacing most or all of an existing file"),
+            "retry message must recommend write_file for whole-file rewrites; got: {message}"
         );
         assert!(
-            message.contains("could not be validated") && message.contains("re-read"),
+            message.contains("Use replace_text only for small, localized edits")
+                && message.contains("exact old string that occurs once"),
+            "retry message must restrict replace_text to exact localized edits; got: {message}"
+        );
+        assert!(
+            message.contains("whitespace, indentation, or formatting differences"),
+            "retry message must explain replace_text exact matching; got: {message}"
+        );
+        assert!(
+            message.contains("cannot be validated after a failed replace_text")
+                && message.contains("switch to write_file")
+                && message.contains("instead of retrying another replace_text"),
             "retry message must tell Producer how to recover from invalid WorkAttempt updates; got: {message}"
         );
     }

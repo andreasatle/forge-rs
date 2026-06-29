@@ -114,7 +114,7 @@ fn work_semantic_validation_failure_retries_with_artifact_feedback() {
                 kind: FailureKind::WorkSemanticValidationFailure,
                 message: "work semantic validation failed: accepted work did not produce an artifact update".to_string(),
                 recovery: RecoveryAction::Retry {
-                    message: "Accepted Work results must modify the artifact. Use a file tool such as write_file, replace_text, or delete_file before returning accepted output.".to_string(),
+                    message: "Accepted Work results must modify the artifact. Use write_file by default when creating a file or replacing most or all of an existing file. Use replace_text only for small, localized edits after reading the file and providing an exact old string that occurs once; whitespace, indentation, or formatting differences will cause replace_text to fail. If a replace_text attempt could not be validated for a whole-file rewrite, switch to write_file instead of retrying another replace_text.".to_string(),
                 },
             }),
         },
@@ -175,7 +175,7 @@ fn invalid_work_attempt_update_failure_recovers_with_retry() {
                 kind: FailureKind::WorkSemanticValidationFailure,
                 message: "WorkAttempt workspace update could not be validated: replacement target not found".to_string(),
                 recovery: RecoveryAction::Retry {
-                    message: "retryable work semantic validation failure: WorkAttempt workspace update could not be validated. Re-read the target file(s), then use file tools such as read_file, write_file, replace_text, or delete_file before returning accepted output.".to_string(),
+                    message: "retryable work semantic validation failure: WorkAttempt workspace update could not be validated. Accepted Work results must modify the artifact in the current WorkAttempt workspace. Use write_file by default when creating a file or replacing most or all of an existing file. Use replace_text only for small, localized edits after reading the file and providing an exact old string that occurs once; whitespace, indentation, or formatting differences will cause replace_text to fail. If a workspace mutation cannot be validated after a failed replace_text, switch to write_file for whole-file rewrites instead of retrying another replace_text.".to_string(),
                 },
             }),
         },
@@ -191,8 +191,10 @@ fn invalid_work_attempt_update_failure_recovers_with_retry() {
     assert!(matches!(retry.origin, NodeOrigin::Retry { .. }));
     assert!(
         retry.objective.contains("could not be validated")
-            && retry.objective.contains("Re-read")
-            && retry.objective.contains("replace_text"),
+            && retry.objective.contains("switch to write_file")
+            && retry
+                .objective
+                .contains("instead of retrying another replace_text"),
         "retry objective must tell Producer how to recover from invalid WorkAttempt update; got:\n{}",
         retry.objective
     );

@@ -100,6 +100,58 @@ fn producer_prompt_uses_concrete_or_named_tool_examples() {
 }
 
 #[test]
+fn producer_prompt_distinguishes_write_file_from_replace_text() {
+    let rw = render_tool_section(&FileToolPolicy {
+        allow_writes: true,
+        ..FileToolPolicy::default()
+    });
+
+    assert!(
+        rw.contains("Use write_file by default")
+            && rw.contains("creating a file")
+            && rw.contains("replacing most or all of an existing file"),
+        "producer prompt must make write_file the default for creates and whole-file rewrites; got:\n{rw}"
+    );
+    assert!(
+        rw.contains("Use replace_text only for small, localized edits")
+            && rw.contains("after you have read the file")
+            && rw.contains("exact old string that occurs once"),
+        "producer prompt must limit replace_text to exact localized edits after reading; got:\n{rw}"
+    );
+    assert!(
+        rw.contains("whitespace, indentation, or formatting differences will cause it to fail"),
+        "producer prompt must explain exact replace_text matching failure modes; got:\n{rw}"
+    );
+}
+
+#[test]
+fn public_file_tool_docs_match_prompt_guidance() {
+    let rw = render_tool_section(&FileToolPolicy {
+        allow_writes: true,
+        ..FileToolPolicy::default()
+    });
+    let readme = include_str!("../../../README.md");
+
+    for phrase in [
+        "default tool when replacing most or all of a file",
+        "small, localized edit",
+        "exact, unique old string",
+        "whitespace, indentation, or formatting differences",
+        "use `write_file` instead of retrying `replace_text`",
+    ] {
+        assert!(
+            readme.contains(phrase),
+            "README must keep file tool guidance consistent; missing phrase: {phrase}"
+        );
+    }
+    assert!(
+        rw.contains("replacing most or all of an existing file")
+            && readme.contains("replacing most or all of a file"),
+        "prompt and README must both describe write_file as the whole-file rewrite tool"
+    );
+}
+
+#[test]
 fn role_response_examples_do_not_use_dot_placeholders() {
     let default = RolePolicy::default();
     for (role, system, pc, cc) in [

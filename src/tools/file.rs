@@ -52,6 +52,9 @@ pub enum FileToolRequest {
         path: String,
     },
     /// Record a write (create or overwrite) to be applied during integration.
+    ///
+    /// This is the default write tool when creating a file or replacing most or
+    /// all of an existing file.
     WriteFile {
         /// Path relative to the artifact root.
         path: String,
@@ -59,6 +62,10 @@ pub enum FileToolRequest {
         content: String,
     },
     /// Record a text replacement to be applied during integration.
+    ///
+    /// Intended only for small, localized edits after the caller has read the
+    /// file and can provide an exact, unique `old` string. Whitespace,
+    /// indentation, or formatting differences cause the match to fail.
     ReplaceText {
         /// Path relative to the artifact root.
         path: String,
