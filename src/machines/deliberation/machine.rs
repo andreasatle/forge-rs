@@ -14,9 +14,9 @@
 //!     → Waiting(Producer, feedback=[])
 //!     + RunRole(Producer, feedback=[])
 //!
-//! Waiting(Producer) + RoleReturned(Producer, Accepted { content })
+//! Waiting(Producer) + ProducerAccepted { content, artifact_changed }
 //!     → Waiting(Producer, producer_content=Some(content))
-//!     + ValidateProducer(content)
+//!     + ValidateProducer(content, artifact_changed)
 //!
 //! Waiting(Producer, producer_content=Some(content))
 //!     + ProducerValidationReturned(Valid)
@@ -162,27 +162,6 @@ impl Machine for DeliberationMachine {
                     },
                 },
             },
-
-            // Producer accepted → validate the accepted content before Critic sees it.
-            (
-                DeliberationState::Waiting {
-                    request,
-                    role: DeliberationRole::Producer,
-                    feedback,
-                    producer_validation,
-                    ..
-                },
-                DeliberationEvent::RoleReturned {
-                    role: DeliberationRole::Producer,
-                    result: RoleResult::Accepted { content },
-                },
-            ) => Self::producer_accepted_transition(
-                request,
-                feedback,
-                producer_validation,
-                content,
-                false,
-            ),
 
             // Producer accepted with artifact metadata from the handler.
             (

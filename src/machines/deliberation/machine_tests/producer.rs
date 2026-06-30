@@ -42,11 +42,9 @@ fn producer_acceptance_runs_validation_then_critic() {
 
     let validation = step(
         waiting,
-        DeliberationEvent::RoleReturned {
-            role: DeliberationRole::Producer,
-            result: RoleResult::Accepted {
-                content: "draft content".to_string(),
-            },
+        DeliberationEvent::ProducerAccepted {
+            content: "draft content".to_string(),
+            artifact_changed: false,
         },
     );
 
@@ -119,11 +117,9 @@ fn producer_acceptance_runs_validation_then_critic() {
 fn producer_validation_retry_runs_producer_with_validation_feedback() {
     let validating = step(
         step(ready("write a poem"), DeliberationEvent::Start).state,
-        DeliberationEvent::RoleReturned {
-            role: DeliberationRole::Producer,
-            result: RoleResult::Accepted {
-                content: "draft content".to_string(),
-            },
+        DeliberationEvent::ProducerAccepted {
+            content: "draft content".to_string(),
+            artifact_changed: false,
         },
     )
     .state;

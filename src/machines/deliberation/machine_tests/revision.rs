@@ -333,9 +333,9 @@ fn revision_then_acceptance_completes_with_revised_producer_content() {
                     } else {
                         "draft v2".to_string()
                     };
-                    DeliberationEvent::RoleReturned {
-                        role: DeliberationRole::Producer,
-                        result: RoleResult::Accepted { content },
+                    DeliberationEvent::ProducerAccepted {
+                        content,
+                        artifact_changed: false,
                     }
                 }
                 DeliberationEffect::RunRole {

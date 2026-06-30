@@ -46,11 +46,9 @@ fn producer_validation() -> ProducerValidationState {
 fn producer_accepts(state: DeliberationState, content: &str) -> DeliberationState {
     let validating = step(
         state,
-        DeliberationEvent::RoleReturned {
-            role: DeliberationRole::Producer,
-            result: RoleResult::Accepted {
-                content: content.to_string(),
-            },
+        DeliberationEvent::ProducerAccepted {
+            content: content.to_string(),
+            artifact_changed: false,
         },
     );
     assert!(matches!(

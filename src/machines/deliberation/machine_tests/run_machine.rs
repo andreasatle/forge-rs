@@ -27,11 +27,9 @@ fn run_machine_deliberation_smoke_test() {
                 DeliberationEffect::RunRole {
                     role: DeliberationRole::Producer,
                     ..
-                } => DeliberationEvent::RoleReturned {
-                    role: DeliberationRole::Producer,
-                    result: RoleResult::Accepted {
-                        content: "draft".to_string(),
-                    },
+                } => DeliberationEvent::ProducerAccepted {
+                    content: "draft".to_string(),
+                    artifact_changed: false,
                 },
                 DeliberationEffect::RunRole {
                     role: DeliberationRole::Critic,

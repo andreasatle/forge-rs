@@ -20,7 +20,7 @@
 //! ## Transitions
 //!
 //! - `Ready + Start` → `Waiting(Producer)` + `RunRole(Producer)`.
-//! - `Waiting(Producer) + RoleReturned(Producer, Accepted)` → `Waiting(Producer)` + `ValidateProducer`.
+//! - `Waiting(Producer) + ProducerAccepted` → `Waiting(Producer)` + `ValidateProducer`.
 //! - `Waiting(Producer) + ProducerValidationReturned(Valid)` → `Waiting(Critic)` + `RunRole(Critic)`.
 //! - `Waiting(Producer) + ProducerValidationReturned(Retry)` and validation retries remain
 //!   → `Waiting(Producer)` with validation feedback + `RunRole(Producer, feedback)`.
