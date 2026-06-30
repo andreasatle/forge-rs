@@ -98,7 +98,13 @@ fn referee_rejection_after_critic_rejection_exhausts_budget_when_no_revisions_re
     );
 
     assert!(
-        matches!(&t.state, DeliberationState::Failed { reason, .. } if reason.contains("revision limit exhausted")),
+        matches!(
+            &t.state,
+            DeliberationState::Failed {
+                reason: DeliberationFailureReason::RevisionLimitExhausted,
+                ..
+            }
+        ),
         "expected Failed with 'revision limit exhausted', got {:?}",
         t.state
     );
@@ -108,7 +114,10 @@ fn referee_rejection_after_critic_rejection_exhausts_budget_when_no_revisions_re
     );
     assert!(matches!(
         machine().output(&t.state),
-        Some(DeliberationTerminalOutput::Failed { reason, .. }) if reason.contains("revision limit exhausted")
+        Some(DeliberationTerminalOutput::Failed {
+            reason: DeliberationFailureReason::RevisionLimitExhausted,
+            ..
+        })
     ));
 }
 
@@ -211,7 +220,13 @@ fn referee_rejection_exhausts_revision_limit() {
     );
 
     assert!(
-        matches!(&t.state, DeliberationState::Failed { reason, .. } if reason.contains("revision limit exhausted")),
+        matches!(
+            &t.state,
+            DeliberationState::Failed {
+                reason: DeliberationFailureReason::RevisionLimitExhausted,
+                ..
+            }
+        ),
         "expected Failed with 'revision limit exhausted', got {:?}",
         t.state
     );
@@ -222,7 +237,10 @@ fn referee_rejection_exhausts_revision_limit() {
     );
     assert!(matches!(
         machine().output(&t.state),
-        Some(DeliberationTerminalOutput::Failed { reason, .. }) if reason.contains("revision limit exhausted")
+        Some(DeliberationTerminalOutput::Failed {
+            reason: DeliberationFailureReason::RevisionLimitExhausted,
+            ..
+        })
     ));
 }
 
@@ -254,7 +272,13 @@ fn max_revisions_zero_fails_on_first_referee_rejection() {
     );
 
     assert!(
-        matches!(&t.state, DeliberationState::Failed { reason, .. } if reason.contains("revision limit exhausted")),
+        matches!(
+            &t.state,
+            DeliberationState::Failed {
+                reason: DeliberationFailureReason::RevisionLimitExhausted,
+                ..
+            }
+        ),
         "expected Failed with 'revision limit exhausted', got {:?}",
         t.state
     );
@@ -265,7 +289,10 @@ fn max_revisions_zero_fails_on_first_referee_rejection() {
     );
     assert!(matches!(
         machine().output(&t.state),
-        Some(DeliberationTerminalOutput::Failed { reason, .. }) if reason.contains("revision limit exhausted")
+        Some(DeliberationTerminalOutput::Failed {
+            reason: DeliberationFailureReason::RevisionLimitExhausted,
+            ..
+        })
     ));
 }
 

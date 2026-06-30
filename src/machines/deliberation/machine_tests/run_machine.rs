@@ -133,11 +133,16 @@ fn run_machine_provider_failure_smoke_test() {
 
     let output = run_machine(FakeMachine, initial);
     match &output {
-        DeliberationTerminalOutput::Failed { reason, .. } => {
-            assert!(
-                reason.contains("timeout"),
-                "expected reason to contain 'timeout', got: {reason}"
+        DeliberationTerminalOutput::Failed {
+            reason, message, ..
+        } => {
+            assert_eq!(
+                reason,
+                &DeliberationFailureReason::RoleFailed {
+                    role: DeliberationRole::Producer
+                }
             );
+            assert_eq!(message, "timeout");
         }
         other => panic!("expected Failed, got {:?}", other),
     }
@@ -195,11 +200,11 @@ fn run_machine_producer_rejection_returns_failed_output() {
 
     let output = run_machine(FakeMachine, initial);
     match &output {
-        DeliberationTerminalOutput::Failed { reason, .. } => {
-            assert!(
-                reason.contains("bad draft"),
-                "expected reason to contain 'bad draft', got: {reason}"
-            );
+        DeliberationTerminalOutput::Failed {
+            reason, message, ..
+        } => {
+            assert_eq!(reason, &DeliberationFailureReason::ProducerRejected);
+            assert_eq!(message, "bad draft");
         }
         other => panic!("expected Failed, got {:?}", other),
     }

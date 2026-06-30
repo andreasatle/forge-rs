@@ -197,10 +197,7 @@ fn critic_missing_producer_content_fails() {
         DeliberationState::Failed { reason, .. } => reason,
         other => panic!("expected Failed, got {:?}", other),
     };
-    assert!(
-        reason.contains("invalid deliberation state"),
-        "expected 'invalid deliberation state' in reason, got: {reason}"
-    );
+    assert_eq!(reason, &DeliberationFailureReason::InvalidState);
 }
 
 #[test]
@@ -234,10 +231,7 @@ fn role_mismatch_while_waiting_critic_fails() {
         DeliberationState::Failed { reason, .. } => reason,
         other => panic!("expected Failed, got {:?}", other),
     };
-    assert!(
-        reason.contains("protocol violation"),
-        "expected 'protocol violation' in reason, got: {reason}"
-    );
+    assert_eq!(reason, &DeliberationFailureReason::ProtocolViolation);
 }
 
 #[test]
@@ -259,7 +253,16 @@ fn critic_failed_is_terminal() {
     );
 
     assert!(
-        matches!(&t.state, DeliberationState::Failed { reason, .. } if reason == "provider unavailable"),
+        matches!(
+            &t.state,
+            DeliberationState::Failed {
+                reason: DeliberationFailureReason::RoleFailed {
+                    role: DeliberationRole::Critic
+                },
+                message,
+                ..
+            } if message == "provider unavailable"
+        ),
         "expected Failed, got {:?}",
         t.state
     );
@@ -269,6 +272,12 @@ fn critic_failed_is_terminal() {
     );
     assert!(matches!(
         machine().output(&t.state),
-        Some(DeliberationTerminalOutput::Failed { reason, .. }) if reason == "provider unavailable"
+        Some(DeliberationTerminalOutput::Failed {
+            reason: DeliberationFailureReason::RoleFailed {
+                role: DeliberationRole::Critic
+            },
+            message,
+            ..
+        }) if message == "provider unavailable"
     ));
 }

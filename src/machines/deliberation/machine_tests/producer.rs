@@ -202,7 +202,9 @@ fn producer_validation_retry_exhaustion_fails() {
         DeliberationState::Failed {
             kind: FailureKind::PlannerValidationFailure,
             reason,
-        } if reason == "planner validation failed"
+            message,
+        } if *reason == DeliberationFailureReason::ProducerValidationRetriesExhausted
+            && message == "planner validation failed"
     ));
 }
 
@@ -221,7 +223,14 @@ fn producer_rejection_fails() {
     );
 
     assert!(
-        matches!(&t.state, DeliberationState::Failed { reason, .. } if reason == "out of ideas"),
+        matches!(
+            &t.state,
+            DeliberationState::Failed {
+                reason: DeliberationFailureReason::ProducerRejected,
+                message,
+                ..
+            } if message == "out of ideas"
+        ),
         "expected Failed, got {:?}",
         t.state
     );
@@ -231,7 +240,11 @@ fn producer_rejection_fails() {
     );
     assert!(matches!(
         machine().output(&t.state),
-        Some(DeliberationTerminalOutput::Failed { reason, .. }) if reason == "out of ideas"
+        Some(DeliberationTerminalOutput::Failed {
+            reason: DeliberationFailureReason::ProducerRejected,
+            message,
+            ..
+        }) if message == "out of ideas"
     ));
 }
 
@@ -263,10 +276,7 @@ fn role_mismatch_while_waiting_producer_fails() {
         DeliberationState::Failed { reason, .. } => reason,
         other => panic!("expected Failed, got {:?}", other),
     };
-    assert!(
-        reason.contains("protocol violation"),
-        "expected 'protocol violation' in reason, got: {reason}"
-    );
+    assert_eq!(reason, &DeliberationFailureReason::ProtocolViolation);
 }
 
 #[test]
@@ -285,7 +295,16 @@ fn producer_failed_is_terminal() {
     );
 
     assert!(
-        matches!(&t.state, DeliberationState::Failed { reason, .. } if reason == "timeout"),
+        matches!(
+            &t.state,
+            DeliberationState::Failed {
+                reason: DeliberationFailureReason::RoleFailed {
+                    role: DeliberationRole::Producer
+                },
+                message,
+                ..
+            } if message == "timeout"
+        ),
         "expected Failed, got {:?}",
         t.state
     );
@@ -295,6 +314,12 @@ fn producer_failed_is_terminal() {
     );
     assert!(matches!(
         machine().output(&t.state),
-        Some(DeliberationTerminalOutput::Failed { reason, .. }) if reason == "timeout"
+        Some(DeliberationTerminalOutput::Failed {
+            reason: DeliberationFailureReason::RoleFailed {
+                role: DeliberationRole::Producer
+            },
+            message,
+            ..
+        }) if message == "timeout"
     ));
 }

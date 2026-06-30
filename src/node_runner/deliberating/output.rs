@@ -21,18 +21,18 @@ pub(crate) fn map_output(
                 },
             }),
         },
-        DeliberationTerminalOutput::Failed { kind, reason } => {
-            let recovery = classify_deliberation_failure(kind, &reason);
+        DeliberationTerminalOutput::Failed { kind, message, .. } => {
+            let recovery = classify_deliberation_failure(kind, &message);
             telemetry.record(TelemetryRecord::new(
                 "DeliberatingNodeRunner",
                 TelemetryEvent::FailureClassified {
-                    reason: reason.clone(),
+                    reason: message.clone(),
                     recovery: recovery_label(&recovery).to_string(),
                 },
             ));
             NodeRunResult::Failed(NodeFailure {
                 kind,
-                message: reason,
+                message,
                 recovery,
             })
         }

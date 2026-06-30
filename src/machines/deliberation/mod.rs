@@ -59,7 +59,7 @@ pub use event::{DeliberationEvent, ProducerValidationResult, RoleResult};
 pub use handler::{DeliberationHandler, ProviderBackedDeliberationHandler};
 pub use machine::DeliberationMachine;
 pub use state::{
-    DeliberationOutput, DeliberationRequest, DeliberationRole, DeliberationState,
-    DeliberationTerminalOutput, ProducerValidationState, RevisionFeedback,
+    DeliberationFailureReason, DeliberationOutput, DeliberationRequest, DeliberationRole,
+    DeliberationState, DeliberationTerminalOutput, ProducerValidationState, RevisionFeedback,
 };
 pub(crate) use validation::PlanValidationContext;

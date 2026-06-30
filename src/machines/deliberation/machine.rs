@@ -60,7 +60,7 @@
 //!         → Waiting(Producer, feedback+[reason])
 //!         + RunRole(Producer, feedback+[reason])
 //!     feedback.len() >= max_revisions:
-//!         → Failed("revision limit exhausted")
+//!         → Failed(reason=RevisionLimitExhausted)
 //!
 //! Waiting(Referee, Some(_), Some(_)) + RoleReturned(Referee, Failed { reason })
 //!     → Failed  (execution failure — must NOT enter the revision loop)
@@ -77,8 +77,8 @@ use crate::machines::scheduler::FailureKind;
 use super::effect::DeliberationEffect;
 use super::event::{DeliberationEvent, ProducerValidationResult, RoleResult};
 use super::state::{
-    CriticAdvisory, DeliberationOutput, DeliberationRole, DeliberationState,
-    DeliberationTerminalOutput, ProducerValidationState, RevisionFeedback,
+    CriticAdvisory, DeliberationFailureReason, DeliberationOutput, DeliberationRole,
+    DeliberationState, DeliberationTerminalOutput, ProducerValidationState, RevisionFeedback,
 };
 
 /// The deliberation machine. All durable data travels in `DeliberationState`.
@@ -87,11 +87,16 @@ pub struct DeliberationMachine;
 impl DeliberationMachine {
     fn failed_transition(
         kind: FailureKind,
-        reason: String,
+        reason: DeliberationFailureReason,
+        message: String,
     ) -> Transition<DeliberationState, DeliberationEffect> {
         Transition {
             effects: vec![],
-            state: DeliberationState::Failed { kind, reason },
+            state: DeliberationState::Failed {
+                kind,
+                reason,
+                message,
+            },
         }
     }
 
@@ -282,7 +287,11 @@ impl Machine for DeliberationMachine {
                         },
                     }
                 } else {
-                    Self::failed_transition(failure_kind, failure_reason)
+                    Self::failed_transition(
+                        failure_kind,
+                        DeliberationFailureReason::ProducerValidationRetriesExhausted,
+                        failure_reason,
+                    )
                 }
             }
 
@@ -296,7 +305,11 @@ impl Machine for DeliberationMachine {
                     role: DeliberationRole::Producer,
                     result: RoleResult::Rejected { reason },
                 },
-            ) => Self::failed_transition(FailureKind::UserTaskRejection, reason),
+            ) => Self::failed_transition(
+                FailureKind::UserTaskRejection,
+                DeliberationFailureReason::ProducerRejected,
+                reason,
+            ),
 
             // Producer execution failure → terminal.
             (
@@ -308,7 +321,13 @@ impl Machine for DeliberationMachine {
                     role: DeliberationRole::Producer,
                     result: RoleResult::Failed { kind, reason },
                 },
-            ) => Self::failed_transition(kind, reason),
+            ) => Self::failed_transition(
+                kind,
+                DeliberationFailureReason::RoleFailed {
+                    role: DeliberationRole::Producer,
+                },
+                reason,
+            ),
 
             // Role mismatch while waiting for Producer → protocol violation.
             (
@@ -322,7 +341,11 @@ impl Machine for DeliberationMachine {
                     "protocol violation: expected Producer result but received {:?}",
                     role
                 );
-                Self::failed_transition(FailureKind::ProtocolFailure, reason)
+                Self::failed_transition(
+                    FailureKind::ProtocolFailure,
+                    DeliberationFailureReason::ProtocolViolation,
+                    reason,
+                )
             }
 
             // Critic returned but producer content is missing — invalid state.
@@ -337,7 +360,11 @@ impl Machine for DeliberationMachine {
                 let reason =
                     "invalid deliberation state: Critic returned but producer_content is missing"
                         .to_string();
-                Self::failed_transition(FailureKind::DeliberationFailure, reason)
+                Self::failed_transition(
+                    FailureKind::DeliberationFailure,
+                    DeliberationFailureReason::InvalidState,
+                    reason,
+                )
             }
 
             // Critic accepted → hand off to Referee.
@@ -435,7 +462,13 @@ impl Machine for DeliberationMachine {
                     role: DeliberationRole::Critic,
                     result: RoleResult::Failed { kind, reason },
                 },
-            ) => Self::failed_transition(kind, reason),
+            ) => Self::failed_transition(
+                kind,
+                DeliberationFailureReason::RoleFailed {
+                    role: DeliberationRole::Critic,
+                },
+                reason,
+            ),
 
             // Role mismatch while waiting for Critic → protocol violation.
             (
@@ -449,7 +482,11 @@ impl Machine for DeliberationMachine {
                     "protocol violation: expected Critic result but received {:?}",
                     role
                 );
-                Self::failed_transition(FailureKind::ProtocolFailure, reason)
+                Self::failed_transition(
+                    FailureKind::ProtocolFailure,
+                    DeliberationFailureReason::ProtocolViolation,
+                    reason,
+                )
             }
 
             // Referee returned but producer_content or critic_advisory is missing — invalid state.
@@ -465,7 +502,11 @@ impl Machine for DeliberationMachine {
                 let reason =
                     "invalid deliberation state: Referee returned but producer_content or critic_advisory is missing"
                         .to_string();
-                Self::failed_transition(FailureKind::DeliberationFailure, reason)
+                Self::failed_transition(
+                    FailureKind::DeliberationFailure,
+                    DeliberationFailureReason::InvalidState,
+                    reason,
+                )
             }
 
             // Referee accepted → complete with producer content (not referee content).
@@ -533,7 +574,11 @@ impl Machine for DeliberationMachine {
                     }
                 } else {
                     let fail_reason = format!("revision limit exhausted: {reason}");
-                    Self::failed_transition(FailureKind::DeliberationFailure, fail_reason)
+                    Self::failed_transition(
+                        FailureKind::DeliberationFailure,
+                        DeliberationFailureReason::RevisionLimitExhausted,
+                        fail_reason,
+                    )
                 }
             }
 
@@ -549,7 +594,13 @@ impl Machine for DeliberationMachine {
                     role: DeliberationRole::Referee,
                     result: RoleResult::Failed { kind, reason },
                 },
-            ) => Self::failed_transition(kind, reason),
+            ) => Self::failed_transition(
+                kind,
+                DeliberationFailureReason::RoleFailed {
+                    role: DeliberationRole::Referee,
+                },
+                reason,
+            ),
 
             // Role mismatch while waiting for Referee → protocol violation.
             (
@@ -563,12 +614,20 @@ impl Machine for DeliberationMachine {
                     "protocol violation: expected Referee result but received {:?}",
                     role
                 );
-                Self::failed_transition(FailureKind::ProtocolFailure, reason)
+                Self::failed_transition(
+                    FailureKind::ProtocolFailure,
+                    DeliberationFailureReason::ProtocolViolation,
+                    reason,
+                )
             }
 
             (state, event) => {
                 let reason = format!("invalid transition: state={state:?}, event={event:?}");
-                Self::failed_transition(FailureKind::ProtocolFailure, reason)
+                Self::failed_transition(
+                    FailureKind::ProtocolFailure,
+                    DeliberationFailureReason::InvalidTransition,
+                    reason,
+                )
             }
         }
     }
@@ -582,12 +641,15 @@ impl Machine for DeliberationMachine {
             DeliberationState::Complete { output } => {
                 Some(DeliberationTerminalOutput::Complete(output.clone()))
             }
-            DeliberationState::Failed { kind, reason } => {
-                Some(DeliberationTerminalOutput::Failed {
-                    kind: *kind,
-                    reason: reason.clone(),
-                })
-            }
+            DeliberationState::Failed {
+                kind,
+                reason,
+                message,
+            } => Some(DeliberationTerminalOutput::Failed {
+                kind: *kind,
+                reason: reason.clone(),
+                message: message.clone(),
+            }),
             _ => None,
         }
     }

@@ -75,7 +75,13 @@ fn referee_rejection_fails_when_no_revisions_allowed() {
     );
 
     assert!(
-        matches!(&t.state, DeliberationState::Failed { reason, .. } if reason.contains("revision limit exhausted")),
+        matches!(
+            &t.state,
+            DeliberationState::Failed {
+                reason: DeliberationFailureReason::RevisionLimitExhausted,
+                ..
+            }
+        ),
         "expected Failed with 'revision limit exhausted', got {:?}",
         t.state
     );
@@ -86,7 +92,10 @@ fn referee_rejection_fails_when_no_revisions_allowed() {
     );
     assert!(matches!(
         machine().output(&t.state),
-        Some(DeliberationTerminalOutput::Failed { reason, .. }) if reason.contains("revision limit exhausted")
+        Some(DeliberationTerminalOutput::Failed {
+            reason: DeliberationFailureReason::RevisionLimitExhausted,
+            ..
+        })
     ));
 }
 
@@ -129,10 +138,7 @@ fn referee_missing_critic_content_fails() {
         DeliberationState::Failed { reason, .. } => reason,
         other => panic!("expected Failed, got {:?}", other),
     };
-    assert!(
-        reason.contains("invalid deliberation state"),
-        "expected 'invalid deliberation state' in reason, got: {reason}"
-    );
+    assert_eq!(reason, &DeliberationFailureReason::InvalidState);
 }
 
 #[test]
@@ -177,10 +183,7 @@ fn role_mismatch_while_waiting_referee_fails() {
             DeliberationState::Failed { reason, .. } => reason,
             other => panic!("expected Failed, got {:?}", other),
         };
-        assert!(
-            reason.contains("protocol violation"),
-            "expected 'protocol violation' in reason, got: {reason}"
-        );
+        assert_eq!(reason, &DeliberationFailureReason::ProtocolViolation);
     }
 }
 
@@ -215,7 +218,16 @@ fn referee_failed_is_terminal() {
     );
 
     assert!(
-        matches!(&t.state, DeliberationState::Failed { reason, .. } if reason == "authentication error"),
+        matches!(
+            &t.state,
+            DeliberationState::Failed {
+                reason: DeliberationFailureReason::RoleFailed {
+                    role: DeliberationRole::Referee
+                },
+                message,
+                ..
+            } if message == "authentication error"
+        ),
         "expected Failed (not a revision loop), got {:?}",
         t.state
     );
@@ -225,7 +237,13 @@ fn referee_failed_is_terminal() {
     );
     assert!(matches!(
         machine().output(&t.state),
-        Some(DeliberationTerminalOutput::Failed { reason, .. }) if reason == "authentication error"
+        Some(DeliberationTerminalOutput::Failed {
+            reason: DeliberationFailureReason::RoleFailed {
+                role: DeliberationRole::Referee
+            },
+            message,
+            ..
+        }) if message == "authentication error"
     ));
 }
 

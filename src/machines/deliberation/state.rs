@@ -43,6 +43,28 @@ pub struct DeliberationOutput {
     pub content: String,
 }
 
+/// Machine-readable terminal failure cause for the deliberation pipeline.
+#[derive(Clone, Debug, PartialEq)]
+pub enum DeliberationFailureReason {
+    /// A role returned successfully but the Producer rejected the task.
+    ProducerRejected,
+    /// A role returned an execution failure.
+    RoleFailed {
+        /// The role whose execution failed.
+        role: DeliberationRole,
+    },
+    /// Producer semantic validation exhausted its retry budget.
+    ProducerValidationRetriesExhausted,
+    /// Referee rejection exhausted the revision budget.
+    RevisionLimitExhausted,
+    /// The machine received an event that violates the expected role protocol.
+    ProtocolViolation,
+    /// Durable state was internally inconsistent for the received event.
+    InvalidState,
+    /// The state/event pair is not a valid transition.
+    InvalidTransition,
+}
+
 /// Terminal result returned by `run_machine` for the deliberation pipeline.
 #[derive(Clone, Debug, PartialEq)]
 pub enum DeliberationTerminalOutput {
@@ -52,8 +74,10 @@ pub enum DeliberationTerminalOutput {
     Failed {
         /// Machine-readable failure cause.
         kind: FailureKind,
-        /// Human-readable description of why the pipeline failed.
-        reason: String,
+        /// Machine-readable terminal failure reason.
+        reason: DeliberationFailureReason,
+        /// Human-readable diagnostic text.
+        message: String,
     },
 }
 
@@ -131,7 +155,9 @@ pub enum DeliberationState {
     Failed {
         /// Machine-readable failure cause.
         kind: FailureKind,
-        /// Human-readable description of why the pipeline failed.
-        reason: String,
+        /// Machine-readable terminal failure reason.
+        reason: DeliberationFailureReason,
+        /// Human-readable diagnostic text.
+        message: String,
     },
 }

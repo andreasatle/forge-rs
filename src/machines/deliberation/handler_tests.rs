@@ -10,8 +10,8 @@ use crate::machines::deliberation::event::{
 };
 use crate::machines::deliberation::machine::DeliberationMachine;
 use crate::machines::deliberation::state::{
-    DeliberationRequest, DeliberationRole, DeliberationState, DeliberationTerminalOutput,
-    RevisionFeedback,
+    DeliberationFailureReason, DeliberationRequest, DeliberationRole, DeliberationState,
+    DeliberationTerminalOutput, RevisionFeedback,
 };
 use crate::machines::scheduler::{FailureKind, NodeKind, TestPlanContext};
 use crate::providers::types::{ProviderError, ProviderResponse};
@@ -598,6 +598,7 @@ fn repeated_unparseable_plans_exhaust_retries_before_review() {
             output,
             DeliberationTerminalOutput::Failed {
                 kind: FailureKind::PlannerValidationFailure,
+                reason: DeliberationFailureReason::ProducerValidationRetriesExhausted,
                 ..
             }
         ),
@@ -707,6 +708,7 @@ fn semantic_validation_failure_ends_run_before_critic_or_referee() {
             output,
             DeliberationTerminalOutput::Failed {
                 kind: FailureKind::PlannerValidationFailure,
+                reason: DeliberationFailureReason::ProducerValidationRetriesExhausted,
                 ..
             }
         ),
@@ -872,6 +874,7 @@ fn critic_and_referee_are_not_invoked_while_work_semantic_validation_fails() {
             output,
             DeliberationTerminalOutput::Failed {
                 kind: FailureKind::WorkSemanticValidationFailure,
+                reason: DeliberationFailureReason::ProducerValidationRetriesExhausted,
                 ..
             }
         ),
