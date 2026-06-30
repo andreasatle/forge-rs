@@ -11,13 +11,13 @@
 use crate::validation::ValidationPlan;
 
 use super::event::WorkOutput;
-use super::state::{ModelTier, NodeId, NodeKind, RunGraph, TestPlanContext};
+use super::state::{ModelTier, NodeId, NodeKind, TestPlanContext};
 
 /// Commands that the scheduler emits to the outside world.
 ///
-/// Transition functions are pure, so they cannot run nodes or signal
-/// completion directly. Instead they emit `SchedulerEffect` values that the
-/// handler layer executes on their behalf.
+/// Transition functions are pure, so they cannot run nodes or integrate work
+/// directly. Instead they emit `SchedulerEffect` values that the handler layer
+/// executes on their behalf.
 #[derive(Clone, Debug, PartialEq)]
 pub enum SchedulerEffect {
     /// Dispatch a single node to a runner for execution.
@@ -61,29 +61,5 @@ pub enum SchedulerEffect {
         /// When present, integration executes this plan instead of the global
         /// handler-level validator.  `None` falls back to the global validator.
         validation_plan: Option<ValidationPlan>,
-    },
-
-    /// Signal that the entire run completed successfully.
-    ///
-    /// This effect is emitted alongside the transition to
-    /// `SchedulerState::Complete`. The `RunMachine` (or `run_machine` during
-    /// development) intercepts it to extract the final graph. It is never
-    /// forwarded to `handle_effect`; reaching this effect in the handler is a
-    /// bug.
-    ReturnComplete {
-        /// The final graph with every node in a terminal status.
-        graph: RunGraph,
-    },
-
-    /// Signal that the run ended in an unrecoverable failure.
-    ///
-    /// Emitted alongside the transition to `SchedulerState::Failed`. Like
-    /// `ReturnComplete`, it is a sentinel for the parent context and must not
-    /// reach `handle_effect`.
-    ReturnFailed {
-        /// The graph at the point of failure, for post-mortem inspection.
-        graph: RunGraph,
-        /// A human-readable explanation of why the run was halted.
-        reason: String,
     },
 }

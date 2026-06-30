@@ -159,8 +159,8 @@ impl SchedulerMachine {
             // Scan the graph, then in the same tick either complete, fail, or dispatch.
             //
             // Three outcomes:
-            //   1. All nodes are terminal → emit ReturnComplete and stop.
-            //   2. Some nodes are Pending but none are ready → deadlock; emit ReturnFailed.
+            //   1. All nodes are terminal → enter Complete and stop.
+            //   2. Some nodes are Pending but none are ready → deadlock; enter Failed.
             //   3. At least one node is ready → mark it Running, emit RunNode, move to Waiting.
             (SchedulerState::Active { graph }, SchedulerEvent::Start) => {
                 if let Err(reason) = graph::validate_graph_invariants(&graph) {
@@ -169,7 +169,7 @@ impl SchedulerMachine {
                             graph: graph.clone(),
                             reason: reason.clone(),
                         },
-                        effects: vec![SchedulerEffect::ReturnFailed { graph, reason }],
+                        effects: vec![],
                     };
                 }
                 let active = graph::active_nodes(&graph);
@@ -187,14 +187,14 @@ impl SchedulerMachine {
                                 graph: graph.clone(),
                                 reason: reason.clone(),
                             },
-                            effects: vec![SchedulerEffect::ReturnFailed { graph, reason }],
+                            effects: vec![],
                         }
                     } else {
                         Transition {
                             state: SchedulerState::Complete {
                                 graph: graph.clone(),
                             },
-                            effects: vec![SchedulerEffect::ReturnComplete { graph }],
+                            effects: vec![],
                         }
                     }
                 } else {
@@ -206,7 +206,7 @@ impl SchedulerMachine {
                                 graph: graph.clone(),
                                 reason: reason.clone(),
                             },
-                            effects: vec![SchedulerEffect::ReturnFailed { graph, reason }],
+                            effects: vec![],
                         }
                     } else {
                         let node_id = ready[0].clone();
@@ -276,7 +276,7 @@ impl SchedulerMachine {
                             graph: graph.clone(),
                             reason: reason.clone(),
                         },
-                        effects: vec![SchedulerEffect::ReturnFailed { graph, reason }],
+                        effects: vec![],
                     };
                 }
 
@@ -296,7 +296,7 @@ impl SchedulerMachine {
                                     graph: graph.clone(),
                                     reason: reason.clone(),
                                 },
-                                effects: vec![SchedulerEffect::ReturnFailed { graph, reason }],
+                                effects: vec![],
                             },
                             Ok(()) if !graph::graph_has_capacity(&graph, plan.children.len()) => {
                                 let reason = graph::graph_size_limit_reason(plan.children.len());
@@ -305,7 +305,7 @@ impl SchedulerMachine {
                                         graph: graph.clone(),
                                         reason: reason.clone(),
                                     },
-                                    effects: vec![SchedulerEffect::ReturnFailed { graph, reason }],
+                                    effects: vec![],
                                 }
                             }
                             Ok(()) => {
@@ -394,7 +394,7 @@ impl SchedulerMachine {
                             graph: graph.clone(),
                             reason: reason.clone(),
                         },
-                        effects: vec![SchedulerEffect::ReturnFailed { graph, reason }],
+                        effects: vec![],
                     };
                 }
 

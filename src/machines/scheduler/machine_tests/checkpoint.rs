@@ -29,10 +29,7 @@ fn plan_node_rejects_work_accepted() {
         reason.contains("WorkAccepted"),
         "reason should mention WorkAccepted, got: {reason:?}"
     );
-    assert!(matches!(
-        t.effects.as_slice(),
-        [SchedulerEffect::ReturnFailed { .. }]
-    ));
+    assert!(t.effects.is_empty());
 }
 
 #[test]
@@ -59,10 +56,7 @@ fn work_node_rejects_plan_accepted() {
         reason.contains("PlanAccepted"),
         "reason should mention PlanAccepted, got: {reason:?}"
     );
-    assert!(matches!(
-        t.effects.as_slice(),
-        [SchedulerEffect::ReturnFailed { .. }]
-    ));
+    assert!(t.effects.is_empty());
 }
 
 #[test]
@@ -104,10 +98,7 @@ fn node_returned_rejects_integrating_node() {
         reason.contains("Integrating"),
         "reason should mention actual status Integrating, got: {reason:?}"
     );
-    assert!(matches!(
-        t.effects.as_slice(),
-        [SchedulerEffect::ReturnFailed { .. }]
-    ));
+    assert!(t.effects.is_empty());
 }
 
 #[test]
@@ -133,10 +124,7 @@ fn integration_returned_rejects_non_integrating_work() {
         reason.contains("Integrating"),
         "reason should mention Integrating, got: {reason:?}"
     );
-    assert!(matches!(
-        t.effects.as_slice(),
-        [SchedulerEffect::ReturnFailed { .. }]
-    ));
+    assert!(t.effects.is_empty());
 }
 
 #[test]
@@ -164,10 +152,7 @@ fn integration_returned_rejects_plan_node() {
         reason.contains("Work") || reason.contains("Plan"),
         "reason should mention Work or Plan, got: {reason:?}"
     );
-    assert!(matches!(
-        t.effects.as_slice(),
-        [SchedulerEffect::ReturnFailed { .. }]
-    ));
+    assert!(t.effects.is_empty());
 }
 
 // ── Protocol violation tests ──────────────────────────────────────────────
@@ -205,10 +190,7 @@ fn node_returned_wrong_node_fails_scheduler() {
         reason.contains('B'),
         "reason should contain received node B, got: {reason:?}"
     );
-    assert!(matches!(
-        t.effects.as_slice(),
-        [SchedulerEffect::ReturnFailed { .. }]
-    ));
+    assert!(t.effects.is_empty());
 }
 
 #[test]
@@ -244,10 +226,7 @@ fn integration_returned_wrong_node_fails_scheduler() {
         reason.contains('B'),
         "reason should contain received node B, got: {reason:?}"
     );
-    assert!(matches!(
-        t.effects.as_slice(),
-        [SchedulerEffect::ReturnFailed { .. }]
-    ));
+    assert!(t.effects.is_empty());
 }
 
 #[test]
@@ -278,10 +257,7 @@ fn active_rejects_node_returned() {
         reason.contains("NodeReturned"),
         "reason should mention NodeReturned, got: {reason:?}"
     );
-    assert!(matches!(
-        t.effects.as_slice(),
-        [SchedulerEffect::ReturnFailed { .. }]
-    ));
+    assert!(t.effects.is_empty());
 }
 
 #[test]
@@ -312,10 +288,7 @@ fn active_rejects_integration_returned() {
         reason.contains("IntegrationReturned"),
         "reason should mention IntegrationReturned, got: {reason:?}"
     );
-    assert!(matches!(
-        t.effects.as_slice(),
-        [SchedulerEffect::ReturnFailed { .. }]
-    ));
+    assert!(t.effects.is_empty());
 }
 
 #[test]
@@ -338,10 +311,7 @@ fn waiting_rejects_start() {
         reason.contains("Start"),
         "reason should mention Start, got: {reason:?}"
     );
-    assert!(matches!(
-        t.effects.as_slice(),
-        [SchedulerEffect::ReturnFailed { .. }]
-    ));
+    assert!(t.effects.is_empty());
 }
 
 // ── Waiting-state invariant validation tests ──────────────────────────────
@@ -370,10 +340,7 @@ fn waiting_with_no_active_node_fails_before_matching_returned_node() {
         reason.contains("found none"),
         "reason should mention that no active node exists, got: {reason:?}"
     );
-    assert!(matches!(
-        t.effects.as_slice(),
-        [SchedulerEffect::ReturnFailed { .. }]
-    ));
+    assert!(t.effects.is_empty());
 }
 
 #[test]
@@ -409,10 +376,7 @@ fn waiting_with_only_completed_nodes_fails() {
         reason.contains("found none"),
         "reason should mention that no active node exists, got: {reason:?}"
     );
-    assert!(matches!(
-        t.effects.as_slice(),
-        [SchedulerEffect::ReturnFailed { .. }]
-    ));
+    assert!(t.effects.is_empty());
 }
 
 #[test]
@@ -465,10 +429,7 @@ fn active_state_rejects_preexisting_active_node() {
         reason.contains("Running"),
         "reason should contain the status, got: {reason:?}"
     );
-    assert!(matches!(
-        t.effects.as_slice(),
-        [SchedulerEffect::ReturnFailed { .. }]
-    ));
+    assert!(t.effects.is_empty());
 }
 
 #[test]
@@ -493,10 +454,7 @@ fn active_state_rejects_preexisting_integrating_node() {
         reason.contains("Integrating"),
         "reason should contain the status, got: {reason:?}"
     );
-    assert!(matches!(
-        t.effects.as_slice(),
-        [SchedulerEffect::ReturnFailed { .. }]
-    ));
+    assert!(t.effects.is_empty());
 }
 
 #[test]
@@ -527,10 +485,7 @@ fn waiting_state_rejects_no_active_nodes() {
         reason.contains("found none") || reason.contains("Pending"),
         "reason should mention 'found none' or equivalent status, got: {reason:?}"
     );
-    assert!(matches!(
-        t.effects.as_slice(),
-        [SchedulerEffect::ReturnFailed { .. }]
-    ));
+    assert!(t.effects.is_empty());
 }
 
 #[test]
@@ -568,10 +523,7 @@ fn waiting_state_rejects_multiple_active_nodes() {
         reason.contains('C'),
         "reason should contain node id C, got: {reason:?}"
     );
-    assert!(matches!(
-        t.effects.as_slice(),
-        [SchedulerEffect::ReturnFailed { .. }]
-    ));
+    assert!(t.effects.is_empty());
 }
 
 #[test]
@@ -608,10 +560,7 @@ fn waiting_state_rejects_return_for_non_active_node() {
         reason.contains('C'),
         "reason should contain active node id C, got: {reason:?}"
     );
-    assert!(matches!(
-        t.effects.as_slice(),
-        [SchedulerEffect::ReturnFailed { .. }]
-    ));
+    assert!(t.effects.is_empty());
 }
 
 // ── Model-tier policy tests ───────────────────────────────────────────────

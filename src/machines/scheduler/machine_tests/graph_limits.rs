@@ -37,12 +37,7 @@ fn plan_child_depth_limit_fails_scheduler() {
         reason.contains("plan depth limit") && reason.contains(&MAX_PLAN_DEPTH.to_string()),
         "unexpected reason: {reason:?}"
     );
-    assert!(matches!(
-        t.effects.as_slice(),
-        [SchedulerEffect::ReturnFailed { reason, .. }]
-            if reason.contains("plan depth limit")
-                && reason.contains(&MAX_PLAN_DEPTH.to_string())
-    ));
+    assert!(t.effects.is_empty());
 }
 
 #[test]
@@ -111,12 +106,7 @@ fn plan_expansion_respects_graph_size_limit() {
     );
     assert!(reason.contains("graph size limit"));
     assert!(reason.contains(&MAX_GRAPH_NODES.to_string()));
-    assert!(matches!(
-        t.effects.as_slice(),
-        [SchedulerEffect::ReturnFailed { reason, .. }]
-            if reason.contains("graph size limit")
-                && reason.contains(&MAX_GRAPH_NODES.to_string())
-    ));
+    assert!(t.effects.is_empty());
 }
 
 // ── Cancellation propagation tests ───────────────────────────────────────
@@ -183,10 +173,7 @@ fn recovery_respects_graph_size_limit() {
             "[{case}] got: {reason:?}"
         );
         assert!(reason.contains(&MAX_GRAPH_NODES.to_string()), "[{case}]");
-        assert!(
-            matches!(t.effects.as_slice(), [SchedulerEffect::ReturnFailed { .. }]),
-            "[{case}]"
-        );
+        assert!(t.effects.is_empty(), "[{case}]");
     }
 }
 
@@ -225,12 +212,7 @@ fn split_depth_limit_fails_scheduler() {
         reason.contains("plan depth limit") && reason.contains(&MAX_PLAN_DEPTH.to_string()),
         "unexpected reason: {reason:?}"
     );
-    assert!(matches!(
-        t.effects.as_slice(),
-        [SchedulerEffect::ReturnFailed { reason, .. }]
-            if reason.contains("plan depth limit")
-                && reason.contains(&MAX_PLAN_DEPTH.to_string())
-    ));
+    assert!(t.effects.is_empty());
 }
 
 #[test]
@@ -299,10 +281,7 @@ fn duplicate_node_ids_fail_graph_validation() {
         reason.contains('A'),
         "reason should contain the duplicated id, got: {reason:?}"
     );
-    assert!(matches!(
-        t.effects.as_slice(),
-        [SchedulerEffect::ReturnFailed { .. }]
-    ));
+    assert!(t.effects.is_empty());
 }
 
 #[test]
@@ -323,10 +302,7 @@ fn missing_dependency_fails_graph_validation() {
         reason.contains("ghost"),
         "reason should contain the missing dependency id, got: {reason:?}"
     );
-    assert!(matches!(
-        t.effects.as_slice(),
-        [SchedulerEffect::ReturnFailed { .. }]
-    ));
+    assert!(t.effects.is_empty());
 }
 
 #[test]
@@ -386,10 +362,7 @@ fn retry_origin_with_missing_source_fails_validation() {
         reason.contains("missing"),
         "reason should contain missing source id, got: {reason:?}"
     );
-    assert!(matches!(
-        t.effects.as_slice(),
-        [SchedulerEffect::ReturnFailed { .. }]
-    ));
+    assert!(t.effects.is_empty());
 }
 
 #[test]
@@ -423,10 +396,7 @@ fn elevate_origin_with_missing_source_fails_validation() {
         reason.contains("missing"),
         "reason should contain missing source id, got: {reason:?}"
     );
-    assert!(matches!(
-        t.effects.as_slice(),
-        [SchedulerEffect::ReturnFailed { .. }]
-    ));
+    assert!(t.effects.is_empty());
 }
 
 #[test]
@@ -460,10 +430,7 @@ fn split_origin_with_missing_source_fails_validation() {
         reason.contains("missing"),
         "reason should contain missing source id, got: {reason:?}"
     );
-    assert!(matches!(
-        t.effects.as_slice(),
-        [SchedulerEffect::ReturnFailed { .. }]
-    ));
+    assert!(t.effects.is_empty());
 }
 
 // ── Outcome/phase validation tests ───────────────────────────────────────

@@ -18,10 +18,7 @@ fn active_start_all_complete_moves_to_complete() {
     graph.nodes[0].status = NodeStatus::Completed;
     let t = do_transition(SchedulerState::Active { graph }, SchedulerEvent::Start);
     assert!(matches!(t.state, SchedulerState::Complete { .. }));
-    assert!(matches!(
-        t.effects.as_slice(),
-        [SchedulerEffect::ReturnComplete { .. }]
-    ));
+    assert!(t.effects.is_empty());
 }
 
 #[test]
@@ -45,10 +42,7 @@ fn final_run_fails_when_required_test_target_is_absent() {
         reason.contains("test_main.py"),
         "failure reason should identify missing required test target; got: {reason}"
     );
-    assert!(matches!(
-        t.effects.as_slice(),
-        [SchedulerEffect::ReturnFailed { .. }]
-    ));
+    assert!(t.effects.is_empty());
 }
 
 #[test]
@@ -82,10 +76,7 @@ fn active_start_no_ready_moves_to_failed() {
     };
     let t = do_transition(SchedulerState::Active { graph }, SchedulerEvent::Start);
     assert!(matches!(t.state, SchedulerState::Failed { .. }));
-    assert!(matches!(
-        t.effects.as_slice(),
-        [SchedulerEffect::ReturnFailed { .. }]
-    ));
+    assert!(t.effects.is_empty());
 }
 
 #[test]

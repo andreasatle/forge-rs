@@ -352,10 +352,7 @@ fn recovery_exhaustion_fails_scheduler() {
             reason.contains("exhausted"),
             "[{case}] reason should mention exhaustion, got: {reason:?}"
         );
-        assert!(
-            matches!(t.effects.as_slice(), [SchedulerEffect::ReturnFailed { .. }]),
-            "[{case}]"
-        );
+        assert!(t.effects.is_empty(), "[{case}]");
     }
 }
 
@@ -519,10 +516,7 @@ fn integration_failure_terminal_cancels_downstream_dependents() {
     assert_eq!(status("B"), NodeStatus::Failed);
     assert_eq!(status("C"), NodeStatus::Cancelled);
     assert_eq!(status("D"), NodeStatus::Cancelled);
-    assert!(matches!(
-        t.effects.as_slice(),
-        [SchedulerEffect::ReturnFailed { .. }]
-    ));
+    assert!(t.effects.is_empty());
 }
 
 #[test]
@@ -582,10 +576,7 @@ fn integration_failure_exhaustion_fails_scheduler() {
             reason.contains("exhausted"),
             "[{case}] reason should mention exhaustion, got: {reason:?}"
         );
-        assert!(
-            matches!(t.effects.as_slice(), [SchedulerEffect::ReturnFailed { .. }]),
-            "[{case}]"
-        );
+        assert!(t.effects.is_empty(), "[{case}]");
     }
 }
 
@@ -719,10 +710,7 @@ fn single_tier_elevate_exhausted_gives_clear_terminal_failure() {
         reason.contains("exhausted") || reason.contains(&MAX_ATTEMPTS.to_string()),
         "reason must mention attempt exhaustion, got: {reason:?}"
     );
-    assert!(matches!(
-        t.effects.as_slice(),
-        [SchedulerEffect::ReturnFailed { .. }]
-    ));
+    assert!(t.effects.is_empty());
 }
 
 #[test]

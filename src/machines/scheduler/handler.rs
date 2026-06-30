@@ -217,9 +217,6 @@ impl<R: NodeRunner> Machine for SchedulerHandler<R> {
                 target_files,
                 validation_plan,
             ),
-            SchedulerEffect::ReturnComplete { .. } | SchedulerEffect::ReturnFailed { .. } => {
-                unreachable!("return effects are never dispatched to the effect handler")
-            }
         }
     }
 

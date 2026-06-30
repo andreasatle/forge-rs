@@ -26,7 +26,7 @@ pub(super) fn failed_transition(
             graph: graph.clone(),
             reason: reason.clone(),
         },
-        effects: vec![SchedulerEffect::ReturnFailed { graph, reason }],
+        effects: vec![],
     }
 }
 
@@ -251,7 +251,7 @@ pub(super) fn route_recovery(
                         graph: graph.clone(),
                         reason: reason.clone(),
                     },
-                    effects: vec![SchedulerEffect::ReturnFailed { graph, reason }],
+                    effects: vec![],
                 }
             } else if !graph_has_capacity(&graph, 1) {
                 let graph = mark_node(graph, node_id, NodeStatus::Failed);
@@ -280,7 +280,7 @@ pub(super) fn route_recovery(
                         graph: graph.clone(),
                         reason: reason.clone(),
                     },
-                    effects: vec![SchedulerEffect::ReturnFailed { graph, reason }],
+                    effects: vec![],
                 }
             } else if !graph_has_capacity(&graph, 1) {
                 let graph = mark_node(graph, node_id, NodeStatus::Failed);
@@ -316,7 +316,7 @@ pub(super) fn route_recovery(
                             graph: graph.clone(),
                             reason: reason.clone(),
                         },
-                        effects: vec![SchedulerEffect::ReturnFailed { graph, reason }],
+                        effects: vec![],
                     }
                 } else if !graph_has_capacity(&graph, 1) {
                     let graph = mark_node(graph, node_id, NodeStatus::Failed);
@@ -339,7 +339,7 @@ pub(super) fn route_recovery(
                         graph: graph.clone(),
                         reason: reason.clone(),
                     },
-                    effects: vec![SchedulerEffect::ReturnFailed { graph, reason }],
+                    effects: vec![],
                 }
             } else if !graph_has_capacity(&graph, 1) {
                 let graph = mark_node(graph, node_id, NodeStatus::Failed);
@@ -362,7 +362,7 @@ pub(super) fn route_recovery(
                     graph: graph.clone(),
                     reason: reason.clone(),
                 },
-                effects: vec![SchedulerEffect::ReturnFailed { graph, reason }],
+                effects: vec![],
             }
         }
     }

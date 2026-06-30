@@ -97,10 +97,7 @@ fn plan_with_unknown_dependency_fails_scheduler() {
         reason.contains("missing"),
         "reason should mention the missing id, got: {reason:?}"
     );
-    assert!(matches!(
-        t.effects.as_slice(),
-        [SchedulerEffect::ReturnFailed { .. }]
-    ));
+    assert!(t.effects.is_empty());
 }
 
 #[test]
@@ -482,8 +479,5 @@ fn ordinary_missing_dependency_still_reports_unknown_node() {
         reason.contains("ghost"),
         "reason should name the unknown id, got: {reason:?}"
     );
-    assert!(matches!(
-        t.effects.as_slice(),
-        [SchedulerEffect::ReturnFailed { .. }]
-    ));
+    assert!(t.effects.is_empty());
 }
