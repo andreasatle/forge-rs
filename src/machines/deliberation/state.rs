@@ -155,12 +155,21 @@ pub enum DeliberationState {
     },
 
     /// The Producer has been dispatched; the machine is waiting for its result.
-    /// Also used while Producer output is awaiting semantic validation.
     WaitingProducer {
         /// The original request, carried forward for later stages.
         request: DeliberationRequest,
-        /// `None` before the Producer has accepted; `Some` while awaiting validation.
-        producer_content: Option<String>,
+        /// Revision feedback accumulated from prior Referee rejections.
+        feedback: Vec<RevisionFeedback>,
+        /// Producer semantic validation retry state.
+        producer_validation: ProducerValidationState,
+    },
+
+    /// The Producer has accepted; the machine is waiting for semantic validation.
+    ValidatingProducer {
+        /// The original request, carried forward for later stages.
+        request: DeliberationRequest,
+        /// The content accepted by the Producer, under validation.
+        producer_content: String,
         /// Revision feedback accumulated from prior Referee rejections.
         feedback: Vec<RevisionFeedback>,
         /// Producer semantic validation retry state.

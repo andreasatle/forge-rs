@@ -5,14 +5,8 @@ fn ready_start_runs_producer() {
     let t = step(ready("write a poem"), DeliberationEvent::Start);
 
     assert!(
-        matches!(
-            &t.state,
-            DeliberationState::WaitingProducer {
-                producer_content: None,
-                ..
-            }
-        ),
-        "expected WaitingProducer(None), got {:?}",
+        matches!(&t.state, DeliberationState::WaitingProducer { .. }),
+        "expected WaitingProducer, got {:?}",
         t.state
     );
 
@@ -49,12 +43,12 @@ fn producer_acceptance_runs_validation_then_critic() {
     assert!(
         matches!(
             &validation.state,
-            DeliberationState::WaitingProducer {
-                producer_content: Some(pc),
+            DeliberationState::ValidatingProducer {
+                producer_content,
                 ..
-            } if pc == "draft content"
+            } if producer_content == "draft content"
         ),
-        "expected WaitingProducer(Some('draft content')), got {:?}",
+        "expected ValidatingProducer('draft content'), got {:?}",
         validation.state
     );
 
@@ -134,10 +128,8 @@ fn producer_validation_retry_runs_producer_with_validation_feedback() {
     match &t.state {
         DeliberationState::WaitingProducer {
             producer_validation,
-            producer_content,
             ..
         } => {
-            assert!(producer_content.is_none());
             assert_eq!(producer_validation.attempt, 1);
             assert_eq!(producer_validation.feedback[0].reason, "must be valid JSON");
         }
@@ -155,13 +147,13 @@ fn producer_validation_retry_runs_producer_with_validation_feedback() {
 
 #[test]
 fn producer_validation_retry_exhaustion_fails() {
-    let validating = DeliberationState::WaitingProducer {
+    let validating = DeliberationState::ValidatingProducer {
         request: DeliberationRequest {
             objective: "write a poem".to_string(),
             context: crate::machines::deliberation::DeliberationContext::default(),
             max_revisions: 0,
         },
-        producer_content: Some("draft content".to_string()),
+        producer_content: "draft content".to_string(),
         feedback: vec![],
         producer_validation: ProducerValidationState {
             attempt: 2,

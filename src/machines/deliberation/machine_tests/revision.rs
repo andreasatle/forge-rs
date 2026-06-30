@@ -147,19 +147,11 @@ fn referee_rejection_loops_to_producer_with_feedback() {
 
     // State must be WaitingProducer with one feedback entry.
     match &t.state {
-        DeliberationState::WaitingProducer {
-            feedback,
-            producer_content,
-            ..
-        } => {
+        DeliberationState::WaitingProducer { feedback, .. } => {
             assert_eq!(feedback.len(), 1, "feedback should have one entry");
             assert_eq!(
                 feedback[0].reason, "needs changes",
                 "feedback reason mismatch"
-            );
-            assert!(
-                producer_content.is_none(),
-                "producer_content should be None"
             );
         }
         other => panic!("expected WaitingProducer, got {:?}", other),

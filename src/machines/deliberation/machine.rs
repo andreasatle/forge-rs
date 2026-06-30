@@ -15,15 +15,15 @@
 //!     + RunRole(Producer, feedback=[])
 //!
 //! WaitingProducer + ProducerAccepted { content, artifact_changed }
-//!     → WaitingProducer(producer_content=Some(content))
+//!     → ValidatingProducer(producer_content=content)
 //!     + ValidateProducer(content, artifact_changed)
 //!
-//! WaitingProducer(producer_content=Some(content))
+//! ValidatingProducer(producer_content=content)
 //!     + ProducerValidationReturned(Valid)
 //!     → WaitingCritic(producer_content=content)
 //!     + RunRole(Critic, producer_content=content)
 //!
-//! WaitingProducer(producer_content=Some(content))
+//! ValidatingProducer(producer_content=content)
 //!     + ProducerValidationReturned(Retry)
 //!     validation_attempt < max_validation_retries:
 //!         → WaitingProducer(validation_attempt+1, validation_feedback=[reason])
@@ -106,9 +106,9 @@ impl DeliberationMachine {
                 content: content.clone(),
                 artifact_changed,
             }],
-            state: DeliberationState::WaitingProducer {
+            state: DeliberationState::ValidatingProducer {
                 request,
-                producer_content: Some(content),
+                producer_content: content,
                 feedback,
                 producer_validation,
             },
@@ -144,7 +144,6 @@ impl Machine for DeliberationMachine {
                 }],
                 state: DeliberationState::WaitingProducer {
                     request,
-                    producer_content: None,
                     feedback: vec![],
                     producer_validation: ProducerValidationState {
                         attempt: 0,
@@ -159,7 +158,6 @@ impl Machine for DeliberationMachine {
                     request,
                     feedback,
                     producer_validation,
-                    ..
                 },
                 DeliberationEvent::ProducerAccepted {
                     content,
@@ -175,9 +173,9 @@ impl Machine for DeliberationMachine {
 
             // Producer validation accepted → hand off to Critic.
             (
-                DeliberationState::WaitingProducer {
+                DeliberationState::ValidatingProducer {
                     request,
-                    producer_content: Some(producer_content),
+                    producer_content,
                     feedback,
                     ..
                 },
@@ -203,9 +201,9 @@ impl Machine for DeliberationMachine {
 
             // Producer validation rejected → retry Producer if validation retry budget remains.
             (
-                DeliberationState::WaitingProducer {
+                DeliberationState::ValidatingProducer {
                     request,
-                    producer_content: Some(producer_content),
+                    producer_content,
                     feedback,
                     producer_validation,
                 },
@@ -235,7 +233,6 @@ impl Machine for DeliberationMachine {
                         }],
                         state: DeliberationState::WaitingProducer {
                             request,
-                            producer_content: None,
                             feedback,
                             producer_validation: ProducerValidationState {
                                 attempt: producer_validation.attempt + 1,
@@ -442,7 +439,6 @@ impl Machine for DeliberationMachine {
                         }],
                         state: DeliberationState::WaitingProducer {
                             request,
-                            producer_content: None,
                             feedback: new_feedback,
                             producer_validation: ProducerValidationState {
                                 attempt: 0,
