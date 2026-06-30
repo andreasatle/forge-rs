@@ -1,7 +1,7 @@
 //! Effect handler for `DeliberationMachine`.
 //!
 //! `DeliberationHandler` executes `DeliberationEffect` values: it unpacks
-//! `RunRole` effects, delegates to a [`RoleRunner`](crate::roles::runner::RoleRunner),
+//! `RunRole` effects, delegates to a [`RoleRunner`],
 //! wraps results back into events, and validates producer output before forwarding
 //! to the Critic/Referee stages. Workspace context construction, semantic
 //! validation, and telemetry recording are all handled here.
@@ -160,7 +160,7 @@ pub(super) fn work_validation_feedback(error: &WorkSemanticValidationError) -> S
 }
 
 /// Executes `DeliberationEffect` values by delegating role execution to a
-/// [`RoleRunner`](crate::roles::runner::RoleRunner).
+/// [`RoleRunner`].
 ///
 pub struct DeliberationHandler<R> {
     pub(crate) runner: R,
