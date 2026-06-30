@@ -22,7 +22,7 @@ use crate::language::registry::language_spec;
 use super::repo::load_or_create_artifact;
 use crate::machines::scheduler::state::SchedulerState;
 use crate::machines::scheduler::{
-    RunConfig, RunRequest, SchedulerHandler, SchedulerMachine, SchedulerOutput,
+    RunConfig, RunRequest, SchedulerHandler, SchedulerMachine, SchedulerTerminalOutput,
 };
 use crate::node_runner::{DeliberatingNodeRunner, TestTargetsFn};
 use crate::project::{CodingProjectAdapter, DefaultProjectAdapter, ProjectAdapter as _};
@@ -129,17 +129,17 @@ impl ForgeRuntime {
         print_summary(&output, &config, final_artifact.as_ref(), &run_info);
 
         let failure_reason_str: Option<String> =
-            if let SchedulerOutput::Failed { reason, .. } = &output {
+            if let SchedulerTerminalOutput::Failed { reason, .. } = &output {
                 Some(reason.to_string())
             } else {
                 None
             };
         let (status, final_commit) = match &output {
-            SchedulerOutput::Complete { .. } => (
+            SchedulerTerminalOutput::Complete { .. } => (
                 "succeeded",
                 final_artifact.as_ref().map(|a| a.commit_sha.as_str()),
             ),
-            SchedulerOutput::Failed { .. } => ("failed", None),
+            SchedulerTerminalOutput::Failed { .. } => ("failed", None),
         };
         if let Err(e) = finalize_manifest(
             &run_info,
@@ -151,7 +151,7 @@ impl ForgeRuntime {
             eprintln!("warning: failed to finalize manifest: {e}");
         }
 
-        runtime_result_from_scheduler_output(output)
+        runtime_result_from_scheduler_terminal_output(output)
     }
 
     /// Resume a previously interrupted forge run.
@@ -265,17 +265,17 @@ impl ForgeRuntime {
         print_summary(&output, &config, final_artifact.as_ref(), &run_info);
 
         let failure_reason_str: Option<String> =
-            if let SchedulerOutput::Failed { reason, .. } = &output {
+            if let SchedulerTerminalOutput::Failed { reason, .. } = &output {
                 Some(reason.to_string())
             } else {
                 None
             };
         let (status, final_commit) = match &output {
-            SchedulerOutput::Complete { .. } => (
+            SchedulerTerminalOutput::Complete { .. } => (
                 "succeeded",
                 final_artifact.as_ref().map(|a| a.commit_sha.as_str()),
             ),
-            SchedulerOutput::Failed { .. } => ("failed", None),
+            SchedulerTerminalOutput::Failed { .. } => ("failed", None),
         };
         if let Err(e) = finalize_manifest(
             &run_info,
@@ -287,7 +287,7 @@ impl ForgeRuntime {
             eprintln!("warning: failed to finalize manifest: {e}");
         }
 
-        runtime_result_from_scheduler_output(output)
+        runtime_result_from_scheduler_terminal_output(output)
     }
 }
 
@@ -366,17 +366,21 @@ fn start_managed_provider_servers(
     Ok(servers)
 }
 
-fn runtime_result_from_scheduler_output(output: SchedulerOutput) -> Result<(), Box<dyn Error>> {
+fn runtime_result_from_scheduler_terminal_output(
+    output: SchedulerTerminalOutput,
+) -> Result<(), Box<dyn Error>> {
     match output {
-        SchedulerOutput::Failed { reason, .. } => Err(format!("run failed: {reason}").into()),
-        SchedulerOutput::Complete { .. } => Ok(()),
+        SchedulerTerminalOutput::Failed { reason, .. } => {
+            Err(format!("run failed: {reason}").into())
+        }
+        SchedulerTerminalOutput::Complete { .. } => Ok(()),
     }
 }
 
-fn print_run_progress_result(output: &SchedulerOutput) {
+fn print_run_progress_result(output: &SchedulerTerminalOutput) {
     match output {
-        SchedulerOutput::Complete { .. } => eprintln!("[run] complete"),
-        SchedulerOutput::Failed { .. } => eprintln!("[run] failed"),
+        SchedulerTerminalOutput::Complete { .. } => eprintln!("[run] complete"),
+        SchedulerTerminalOutput::Failed { .. } => eprintln!("[run] failed"),
     }
 }
 
@@ -525,14 +529,14 @@ fn make_validator(
 }
 
 fn print_summary(
-    output: &SchedulerOutput,
+    output: &SchedulerTerminalOutput,
     config: &ForgeConfig,
     artifact: Option<&Artifact>,
     run_info: &crate::runtime::RunInfo,
 ) {
     let result_str = match output {
-        SchedulerOutput::Complete { .. } => "COMPLETE",
-        SchedulerOutput::Failed { .. } => "FAILED",
+        SchedulerTerminalOutput::Complete { .. } => "COMPLETE",
+        SchedulerTerminalOutput::Failed { .. } => "FAILED",
     };
 
     println!("Result      : {result_str}");
@@ -569,7 +573,7 @@ mod tests {
         ArtifactConfig, ForgeConfig, ProjectConfig, ProjectKind, ProviderConfig, TelemetryConfig,
         UnmanagedProviderConfig,
     };
-    use crate::machines::scheduler::machine::{RecoverySummary, SchedulerOutput};
+    use crate::machines::scheduler::machine::{RecoverySummary, SchedulerTerminalOutput};
     use crate::machines::scheduler::{FailureReason, RunGraph};
     use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -848,11 +852,11 @@ mod tests {
 
     #[test]
     fn failed_runtime_run_returns_error_or_nonzero_status() {
-        let output = SchedulerOutput::Failed {
+        let output = SchedulerTerminalOutput::Failed {
             graph: empty_graph(),
             reason: FailureReason::ProtocolViolation("something went wrong".to_string()),
         };
-        let result = runtime_result_from_scheduler_output(output);
+        let result = runtime_result_from_scheduler_terminal_output(output);
         assert!(result.is_err(), "Failed output must produce an error");
         assert!(
             result.unwrap_err().to_string().contains("run failed"),
@@ -862,14 +866,14 @@ mod tests {
 
     #[test]
     fn runtime_error_includes_provider_failure_reason() {
-        let output = SchedulerOutput::Failed {
+        let output = SchedulerTerminalOutput::Failed {
             graph: empty_graph(),
             reason: FailureReason::TerminalRecovery {
                 terminal_message: "deliberation failed".to_string(),
                 failure_message: "provider error (Retryable): connection refused".to_string(),
             },
         };
-        let result = runtime_result_from_scheduler_output(output);
+        let result = runtime_result_from_scheduler_terminal_output(output);
         let err = result.expect_err("failed output must become an error");
         let message = err.to_string();
         assert!(message.contains("run failed"));
@@ -878,7 +882,7 @@ mod tests {
 
     #[test]
     fn successful_runtime_run_still_returns_ok() {
-        let output = SchedulerOutput::Complete {
+        let output = SchedulerTerminalOutput::Complete {
             graph: empty_graph(),
             recovery_summary: RecoverySummary {
                 recovered: false,
@@ -887,7 +891,7 @@ mod tests {
                 split_count: 0,
             },
         };
-        let result = runtime_result_from_scheduler_output(output);
+        let result = runtime_result_from_scheduler_terminal_output(output);
         assert!(result.is_ok(), "Complete output must return Ok");
     }
 
@@ -1433,8 +1437,8 @@ mod tests {
 
         let validation_passed = handler.validation_passed();
         let status = match &output {
-            SchedulerOutput::Complete { .. } => "succeeded",
-            SchedulerOutput::Failed { .. } => "failed",
+            SchedulerTerminalOutput::Complete { .. } => "succeeded",
+            SchedulerTerminalOutput::Failed { .. } => "failed",
         };
         finalize_manifest(&run_info, status, None, validation_passed, None).unwrap();
 
@@ -1526,8 +1530,8 @@ mod tests {
 
         let validation_passed = handler.validation_passed();
         let status = match &output {
-            SchedulerOutput::Complete { .. } => "succeeded",
-            SchedulerOutput::Failed { .. } => "failed",
+            SchedulerTerminalOutput::Complete { .. } => "succeeded",
+            SchedulerTerminalOutput::Failed { .. } => "failed",
         };
         finalize_manifest(&run_info, status, None, validation_passed, None).unwrap();
 
@@ -1583,12 +1587,12 @@ mod tests {
 
         let validation_passed = handler.validation_passed();
         let failure_reason_str: Option<String> =
-            if let SchedulerOutput::Failed { reason, .. } = &output {
+            if let SchedulerTerminalOutput::Failed { reason, .. } = &output {
                 Some(reason.to_string())
             } else {
                 None
             };
-        let status = if matches!(output, SchedulerOutput::Failed { .. }) {
+        let status = if matches!(output, SchedulerTerminalOutput::Failed { .. }) {
             "failed"
         } else {
             "succeeded"

@@ -1,8 +1,14 @@
 //! Scheduler machine — state-machine entry point.
 //!
-//! Owns `SchedulerMachine`, `SchedulerOutput`, `RecoverySummary`, and the
-//! `transition` and `output` functions. Pure graph helpers live in `graph.rs`;
-//! recovery routing and application live in `recovery.rs`.
+//! Owns `SchedulerMachine`, `SchedulerTerminalOutput`, `RecoverySummary`, and the
+//! `transition` and terminal-output functions. Pure graph helpers live in
+//! `graph.rs`; recovery routing and application live in `recovery.rs`.
+//!
+//! The transition function implements:
+//!
+//! ```text
+//! (SchedulerState, SchedulerEvent) -> (SchedulerState, SchedulerEffect)
+//! ```
 
 use crate::engine::Transition;
 
@@ -69,7 +75,7 @@ impl RecoverySummary {
 /// Split). Inspect `recovery_summary` to determine which path was taken without
 /// re-scanning the graph.
 #[derive(Clone, Debug, PartialEq)]
-pub enum SchedulerOutput {
+pub enum SchedulerTerminalOutput {
     /// Every node reached a terminal status and the run succeeded.
     Complete {
         /// The final graph with every node in a terminal status.
@@ -517,13 +523,13 @@ impl SchedulerMachine {
     /// Returns `Some` only for `Complete` and `Failed`, the two states from
     /// which the scheduler cannot advance further. All other states return
     /// `None` to keep the runner loop going.
-    pub fn output(&self, state: &SchedulerState) -> Option<SchedulerOutput> {
+    pub fn output(&self, state: &SchedulerState) -> Option<SchedulerTerminalOutput> {
         match state {
-            SchedulerState::Complete { graph } => Some(SchedulerOutput::Complete {
+            SchedulerState::Complete { graph } => Some(SchedulerTerminalOutput::Complete {
                 recovery_summary: RecoverySummary::from_graph(graph),
                 graph: graph.clone(),
             }),
-            SchedulerState::Failed { graph, reason } => Some(SchedulerOutput::Failed {
+            SchedulerState::Failed { graph, reason } => Some(SchedulerTerminalOutput::Failed {
                 graph: graph.clone(),
                 reason: reason.clone(),
             }),

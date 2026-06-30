@@ -101,7 +101,7 @@ fn telemetry_failure_does_not_change_scheduler_behavior() {
         shared.as_ref(),
     );
     assert!(
-        matches!(output.0, SchedulerOutput::Complete { .. }),
+        matches!(output.0, SchedulerTerminalOutput::Complete { .. }),
         "scheduler output must be Complete regardless of telemetry failures; got: {:#?}",
         output.0
     );
@@ -145,7 +145,7 @@ fn artifact_commit_still_succeeds_when_telemetry_fails() {
     );
 
     assert!(
-        matches!(output, SchedulerOutput::Complete { .. }),
+        matches!(output, SchedulerTerminalOutput::Complete { .. }),
         "run must complete even when telemetry writes all fail; got: {output:#?}"
     );
 

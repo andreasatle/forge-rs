@@ -14,7 +14,7 @@ use crate::machines::scheduler::dispatch::{RunNodeDispatch, dispatch_run_node};
 use crate::machines::scheduler::effect::SchedulerEffect;
 use crate::machines::scheduler::event::SchedulerEvent;
 use crate::machines::scheduler::integration::IntegrationService;
-use crate::machines::scheduler::machine::{SchedulerMachine, SchedulerOutput};
+use crate::machines::scheduler::machine::{SchedulerMachine, SchedulerTerminalOutput};
 use crate::machines::scheduler::progress::{is_progress_event, print_returned_progress};
 use crate::machines::scheduler::state::SchedulerState;
 use crate::node_runner::NodeRunner;
@@ -111,7 +111,7 @@ impl<R: NodeRunner> Machine for SchedulerHandler<R> {
     type State = SchedulerState;
     type Event = SchedulerEvent;
     type Effect = SchedulerEffect;
-    type Output = SchedulerOutput;
+    type Output = SchedulerTerminalOutput;
 
     fn name(&self) -> String {
         "SchedulerMachine".to_string()
@@ -197,7 +197,7 @@ impl<R: NodeRunner> Machine for SchedulerHandler<R> {
         }
     }
 
-    fn output(&self, state: &SchedulerState) -> Option<SchedulerOutput> {
+    fn output(&self, state: &SchedulerState) -> Option<SchedulerTerminalOutput> {
         SchedulerMachine.output(state)
     }
 }

@@ -7,7 +7,7 @@ fn run_request_starts_scheduler_end_to_end() {
     };
     let state = SchedulerMachine::initial_state(request, RunConfig::default());
     let output = run_machine(scheduler_handler(), state);
-    assert!(matches!(output, SchedulerOutput::Complete { .. }));
+    assert!(matches!(output, SchedulerTerminalOutput::Complete { .. }));
 }
 
 // ── Active + Start structural tests ──────────────────────────────────────
@@ -130,7 +130,7 @@ fn active_start_dispatches_ready_node_and_waits() {
 // ── new outcome tests ──────────────────────────────────────────────────────
 
 #[test]
-fn terminal_failure_produces_failed_scheduler_output() {
+fn terminal_failure_produces_failed_scheduler_terminal_output() {
     let graph = RunGraph {
         nodes: vec![Node {
             id: NodeId("T".to_string()),
@@ -157,11 +157,11 @@ fn terminal_failure_produces_failed_scheduler_output() {
             run_config: RunConfig::default(),
         },
     );
-    assert!(matches!(output, SchedulerOutput::Failed { .. }));
+    assert!(matches!(output, SchedulerTerminalOutput::Failed { .. }));
 }
 
 #[test]
-fn scheduler_output_includes_node_failure_reason() {
+fn scheduler_terminal_output_includes_node_failure_reason() {
     let graph = RunGraph {
         nodes: vec![Node {
             id: NodeId("T".to_string()),
@@ -232,7 +232,7 @@ fn three_node_chain_completes_via_handler() {
         },
     );
 
-    let SchedulerOutput::Complete { graph, .. } = output else {
+    let SchedulerTerminalOutput::Complete { graph, .. } = output else {
         panic!("expected Complete")
     };
     assert!(
@@ -463,7 +463,7 @@ fn full_chain_run() {
             run_config: RunConfig::default(),
         },
     );
-    let SchedulerOutput::Complete { graph, .. } = output else {
+    let SchedulerTerminalOutput::Complete { graph, .. } = output else {
         panic!("expected Complete")
     };
     assert!(
@@ -485,7 +485,7 @@ fn clean_success_has_no_recovery() {
             run_config: RunConfig::default(),
         },
     );
-    let SchedulerOutput::Complete {
+    let SchedulerTerminalOutput::Complete {
         recovery_summary, ..
     } = output
     else {
@@ -547,7 +547,7 @@ fn split_success_reports_recovery() {
     let output = SchedulerMachine
         .output(&state)
         .expect("Complete is a terminal state");
-    let SchedulerOutput::Complete {
+    let SchedulerTerminalOutput::Complete {
         recovery_summary, ..
     } = output
     else {

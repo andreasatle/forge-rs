@@ -115,7 +115,7 @@ fn retry_worker_receives_validation_diagnostics_and_can_fix_file() {
 
     let output = run_machine(handler, state);
 
-    let SchedulerOutput::Complete {
+    let SchedulerTerminalOutput::Complete {
         graph,
         recovery_summary,
     } = output

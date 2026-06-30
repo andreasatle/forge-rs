@@ -243,7 +243,7 @@ fn work_node_without_update_preserves_commit() {
         state,
     );
     assert!(
-        matches!(output, SchedulerOutput::Failed { .. }),
+        matches!(output, SchedulerTerminalOutput::Failed { .. }),
         "no-diff artifact Work must fail semantically; got {output:#?}"
     );
 
@@ -275,7 +275,7 @@ fn rejected_work_attempt_records_evidence_and_retry_starts_clean() {
         state,
     );
 
-    let SchedulerOutput::Complete { graph, .. } = output else {
+    let SchedulerTerminalOutput::Complete { graph, .. } = output else {
         panic!("expected retry to complete, got {output:#?}");
     };
     assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
@@ -346,7 +346,7 @@ fn revision_exhaustion_records_final_work_attempt_evidence_before_cleanup() {
         state,
     );
 
-    let SchedulerOutput::Failed { graph, reason } = output else {
+    let SchedulerTerminalOutput::Failed { graph, reason } = output else {
         panic!("expected terminal scheduler failure after revision exhaustion");
     };
     let FailureReason::AttemptsExhausted { node_id, .. } = reason else {
@@ -428,7 +428,7 @@ fn deliberation_revision_stays_inside_single_scheduler_attempt_until_acceptance(
 
     let output = run_machine(SchedulerHandler::with_artifact(runner, artifact), state);
 
-    let SchedulerOutput::Complete {
+    let SchedulerTerminalOutput::Complete {
         graph,
         recovery_summary,
     } = output

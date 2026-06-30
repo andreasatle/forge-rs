@@ -4,6 +4,12 @@
 //! `Failed`. It owns graph progression: selecting ready nodes, dispatching work
 //! one at a time, receiving node outcomes, and routing recovery decisions.
 //!
+//! The transition algebra is:
+//!
+//! ```text
+//! (SchedulerState, SchedulerEvent) -> (SchedulerState, SchedulerEffect)
+//! ```
+//!
 //! # Module layout
 //!
 //! - `state.rs` — `SchedulerState`: the scheduler machine phase enum
@@ -11,11 +17,11 @@
 //! - `event.rs` — `SchedulerEvent` and event-owned payload vocabulary
 //! - `effect.rs` — `SchedulerEffect` (commands emitted by transitions)
 //! - `types.rs` — payloads shared by scheduler events and effects
-//! - `machine.rs` — `SchedulerMachine`, `SchedulerOutput`, `RecoverySummary`, graph helpers, and the `Machine` implementation
+//! - `machine.rs` — `SchedulerMachine`, `SchedulerTerminalOutput`, `RecoverySummary`, graph helpers, and the `Machine` implementation
 //!
 //! # Output classification
 //!
-//! `SchedulerOutput::Complete` carries a `RecoverySummary` derived from node
+//! `SchedulerTerminalOutput::Complete` carries a `RecoverySummary` derived from node
 //! `NodeOrigin` values, so the caller can distinguish a clean run from one that
 //! required Retry, ElevateModel, or Split recovery without re-scanning the graph.
 //!
@@ -63,7 +69,7 @@ pub use graph::{
     ModelTier, Node, NodeId, NodeKind, NodeOrigin, NodeStatus, RunGraph, TestPlanContext,
 };
 pub use handler::SchedulerHandler;
-pub use machine::{RecoverySummary, SchedulerMachine, SchedulerOutput};
+pub use machine::{RecoverySummary, SchedulerMachine, SchedulerTerminalOutput};
 pub use request::RunRequest;
 pub use state::SchedulerState;
 pub use types::WorkOutput;

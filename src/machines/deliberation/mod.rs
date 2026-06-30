@@ -4,6 +4,12 @@
 //! A single `DeliberationRequest` enters; a `DeliberationOutput` (or failure) exits.
 //! Final output is always the producer content; critic and referee do not replace it.
 //!
+//! The transition algebra is:
+//!
+//! ```text
+//! (DeliberationState, DeliberationEvent) -> (DeliberationState, DeliberationEffect)
+//! ```
+//!
 //! ## Role result semantics
 //!
 //! Role results distinguish semantic outcomes from infrastructure failures:

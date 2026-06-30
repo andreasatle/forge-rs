@@ -64,7 +64,7 @@ fn work_accepted_emits_integration_and_does_not_complete_node() {
 }
 
 #[test]
-fn scheduler_output_includes_integration_failure_reason() {
+fn scheduler_terminal_output_includes_integration_failure_reason() {
     let graph = RunGraph {
         nodes: vec![Node {
             id: NodeId("W".to_string()),

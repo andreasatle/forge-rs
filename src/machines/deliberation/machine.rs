@@ -9,6 +9,12 @@
 //! terminal — it routes to the Referee, which makes the final accept/reject
 //! decision. Only the Referee controls revision.
 //!
+//! The transition function implements:
+//!
+//! ```text
+//! (DeliberationState, DeliberationEvent) -> (DeliberationState, DeliberationEffect)
+//! ```
+//!
 //! ```text
 //! Ready + Start
 //!     → WaitingProducer(feedback=[], validation_attempt=0)

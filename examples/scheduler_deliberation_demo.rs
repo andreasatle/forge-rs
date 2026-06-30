@@ -19,16 +19,16 @@
 
 use forge_rs::engine::run_machine_with_telemetry;
 use forge_rs::machines::scheduler::{
-    RunConfig, RunRequest, SchedulerHandler, SchedulerMachine, SchedulerOutput,
+    RunConfig, RunRequest, SchedulerHandler, SchedulerMachine, SchedulerTerminalOutput,
 };
 use forge_rs::node_runner::DeliberatingNodeRunner;
 use forge_rs::providers::{LlamaCppProvider, RetryingProvider};
 use forge_rs::telemetry::FileTelemetry;
 use std::path::PathBuf;
 
-fn print_output(output: SchedulerOutput) {
+fn print_terminal_output(output: SchedulerTerminalOutput) {
     match output {
-        SchedulerOutput::Complete {
+        SchedulerTerminalOutput::Complete {
             graph,
             recovery_summary,
         } => {
@@ -53,7 +53,7 @@ fn print_output(output: SchedulerOutput) {
                 );
             }
         }
-        SchedulerOutput::Failed { graph, reason } => {
+        SchedulerTerminalOutput::Failed { graph, reason } => {
             println!("Result      : FAILED");
             println!("Reason      : {reason}");
             println!("Node count  : {}", graph.nodes.len());
@@ -88,7 +88,7 @@ fn main() {
     let sink = FileTelemetry::new(telemetry_dir.clone());
 
     let (output, _handler) = run_machine_with_telemetry(handler, initial_state, &sink);
-    print_output(output);
+    print_terminal_output(output);
 
     println!();
     println!("Telemetry written to: runs/latest");

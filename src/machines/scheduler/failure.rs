@@ -59,7 +59,7 @@ impl fmt::Display for ExhaustedAction {
 /// The typed cause of a scheduler run failure.
 ///
 /// Replaces the raw `reason: String` in `SchedulerState::Failed` and
-/// `SchedulerOutput::Failed` so callers can distinguish failure causes without
+/// `SchedulerTerminalOutput::Failed` so callers can distinguish failure causes without
 /// string parsing. The `Display` impl produces a human-readable message for
 /// telemetry and manifests.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
