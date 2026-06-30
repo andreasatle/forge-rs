@@ -83,7 +83,7 @@ impl<R: NodeRunner> SchedulerHandler<R> {
     /// Enable checkpoint writes to `dir` after each progress event.
     ///
     /// When set, the handler writes `graph.json` to `dir` after every
-    /// `NodeReturned` and `IntegrationReturned` transition that leaves the
+    /// node and integration completion transition that leaves the
     /// scheduler in a non-terminal state.
     pub fn with_checkpoint_dir(self, dir: PathBuf) -> Self {
         Self {

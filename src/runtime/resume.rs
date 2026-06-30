@@ -13,7 +13,7 @@
 use std::error::Error;
 use std::path::{Path, PathBuf};
 
-use crate::machines::scheduler::state::{NodeStatus, RunGraph, SchedulerState};
+use crate::machines::scheduler::{NodeStatus, RunGraph, SchedulerState};
 use crate::runtime::checkpoint::load_checkpoint;
 
 /// Locate a single resumable run under `runs_root` and return its directory
@@ -151,7 +151,7 @@ fn reset_active_nodes(graph: RunGraph) -> RunGraph {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::machines::scheduler::state::{
+    use crate::machines::scheduler::{
         ModelTier, Node, NodeId, NodeKind, NodeOrigin, NodeStatus, RunConfig, RunGraph,
         SchedulerState,
     };

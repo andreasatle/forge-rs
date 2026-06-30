@@ -36,7 +36,7 @@ pub struct NodeId(pub String);
 /// reacts to that output:
 ///
 /// - `Plan` nodes are expected to decompose work and return child
-///   [`NodeRequest`](super::types::NodeRequest)s. When accepted, the scheduler
+///   [`NodeRequest`](super::event::NodeRequest)s. When accepted, the scheduler
 ///   inserts the requested children and continues graph traversal.
 /// - `Work` nodes are expected to perform a concrete task and return a summary
 ///   string. When the runner reports `WorkAccepted`, the node moves to
@@ -118,7 +118,7 @@ pub enum NodeOrigin {
 pub enum NodeStatus {
     /// Not yet eligible to run; waiting for dependencies to complete.
     Pending,
-    /// Dispatched to a runner; awaiting a `NodeReturned` event.
+    /// Dispatched to a runner; awaiting a node completion event.
     Running,
     /// Work has been produced by the runner but is not dependency-satisfying
     /// until integration succeeds.
@@ -485,7 +485,7 @@ pub(super) fn cancel_pending_dependents(graph: RunGraph, failed_id: &NodeId) -> 
 pub(super) fn insert_children(
     mut graph: RunGraph,
     parent_id: &NodeId,
-    children: Vec<super::types::NodeRequest>,
+    children: Vec<super::event::NodeRequest>,
 ) -> RunGraph {
     let parent_depth = get_node(&graph, parent_id).plan_depth;
 
@@ -548,7 +548,7 @@ fn plan_depth_limit_reason(depth: usize) -> String {
 
 pub(super) fn validate_plan_child_depths(
     parent_depth: usize,
-    children: &[super::types::NodeRequest],
+    children: &[super::event::NodeRequest],
 ) -> Result<(), String> {
     for child in children {
         let child_depth = plan_child_depth(parent_depth, &child.kind);
@@ -570,7 +570,7 @@ pub(super) fn validate_split_depth(original_depth: usize) -> Result<(), String> 
 
 pub(super) fn validate_plan_dependencies(
     graph: &RunGraph,
-    children: &[super::types::NodeRequest],
+    children: &[super::event::NodeRequest],
 ) -> Result<(), String> {
     let known: HashSet<&NodeId> = graph.nodes.iter().map(|n| &n.id).collect();
     let sibling_ids: HashSet<&NodeId> = children.iter().map(|c| &c.id).collect();

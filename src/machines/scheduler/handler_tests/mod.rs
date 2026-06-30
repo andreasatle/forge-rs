@@ -14,9 +14,11 @@ use crate::machines::scheduler::graph::{
     ModelTier, Node, NodeId, NodeKind, NodeOrigin, NodeStatus, RunGraph, TestPlanContext,
 };
 use crate::machines::scheduler::machine::{SchedulerMachine, SchedulerOutput};
-use crate::machines::scheduler::state::{FailureReason, RunConfig, RunRequest, SchedulerState};
-use crate::machines::scheduler::types::{
-    FailureKind, IntegrationFailure, NodeFailure, RecoveryAction, WorkOutput,
+use crate::machines::scheduler::request::RunRequest;
+use crate::machines::scheduler::state::SchedulerState;
+use crate::machines::scheduler::{
+    FailureKind, FailureReason, IntegrationFailure, NodeFailure, RecoveryAction, RunConfig,
+    WorkOutput,
 };
 use crate::node_runner::runner::NodeRunner;
 use crate::node_runner::types::{NodeRunRequest, NodeRunResult};

@@ -8,13 +8,9 @@
 
 use serde::{Deserialize, Serialize};
 
-pub use super::config::RunConfig;
-pub use super::failure::{ExhaustedAction, FailureReason};
-pub use super::graph::{
-    ModelTier, Node, NodeId, NodeKind, NodeOrigin, NodeStatus, RetryFeedback, RunGraph,
-    TestPlanContext,
-};
-pub use super::request::RunRequest;
+use super::config::RunConfig;
+use super::failure::FailureReason;
+use super::graph::RunGraph;
 
 /// The durable checkpoints of the scheduler state machine.
 ///
@@ -34,10 +30,10 @@ pub use super::request::RunRequest;
 ///        mark Running, emit RunNode
 ///              ↓
 ///           Waiting
-///              │ NodeReturned
+///              │ node completion event
 ///              ├─ PlanAccepted ────────→ Active   (insert children)
 ///              ├─ WorkAccepted ────────→ Waiting  (mark Integrating, emit IntegrateWork)
-///              │    │ IntegrationReturned
+///              │    │ integration completion event
 ///              │    ├─ Succeeded ──────→ Active   (mark Completed)
 ///              │    └─ Failed ─────────→ Active | Failed  (recovery)
 ///              ├─ recoverable failure ─→ Active   (insert replacement)
@@ -59,11 +55,11 @@ pub enum SchedulerState {
         run_config: RunConfig,
     },
     /// One node in the graph has been dispatched and the scheduler is waiting
-    /// for its result. No further dispatch happens until `NodeReturned` or
-    /// `IntegrationReturned` arrives. The active node is derived from the
-    /// single node whose status is `Running` or `Integrating`. If the node
+    /// for its result. No further dispatch happens until a node completion or
+    /// integration completion event arrives. The active node is derived from
+    /// the single node whose status is `Running` or `Integrating`. If the node
     /// reported `WorkAccepted`, it will be in `Integrating` status and the
-    /// scheduler awaits `IntegrationReturned`.
+    /// scheduler awaits `IntegrationSucceeded` or `IntegrationFailed`.
     Waiting {
         /// The run graph with the dispatched node marked `Running` or `Integrating`.
         graph: RunGraph,

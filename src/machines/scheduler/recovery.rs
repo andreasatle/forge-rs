@@ -6,7 +6,10 @@
 
 use crate::engine::Transition;
 
+use super::config::RunConfig;
 use super::effect::SchedulerEffect;
+use super::event::RecoveryAction;
+use super::failure::{ExhaustedAction, FailureKind, FailureReason};
 use super::graph::{
     MAX_ATTEMPTS, MAX_GRAPH_NODES, MAX_PLAN_DEPTH, attempts_exhausted, cancel_pending_dependents,
     get_node, graph_has_capacity, mark_node, push_node, remap_pending_dependencies,
@@ -15,8 +18,7 @@ use super::graph::{
 use super::graph::{
     ModelTier, Node, NodeId, NodeKind, NodeOrigin, NodeStatus, RetryFeedback, RunGraph,
 };
-use super::state::{ExhaustedAction, FailureReason, RunConfig, SchedulerState};
-use super::types::{FailureKind, RecoveryAction};
+use super::state::SchedulerState;
 
 pub(super) fn failed_transition(
     graph: RunGraph,

@@ -5,15 +5,15 @@
 //! loadable. Neither function validates scheduler-level invariants; that is the
 //! responsibility of the transition layer.
 //!
-//! Checkpoints are written after `NodeReturned` and `IntegrationReturned`
-//! transitions in `SchedulerHandler`. They are never written for terminal states
-//! (`Complete`, `Failed`), because the manifest is finalized before the process
-//! exits and a terminal state does not need to be resumed.
+//! Checkpoints are written after scheduler progress events in
+//! `SchedulerHandler`. They are never written for terminal states (`Complete`,
+//! `Failed`), because the manifest is finalized before the process exits and a
+//! terminal state does not need to be resumed.
 
 use std::error::Error;
 use std::path::Path;
 
-use crate::machines::scheduler::state::{NodeStatus, RunGraph, SchedulerState};
+use crate::machines::scheduler::{NodeStatus, RunGraph, SchedulerState};
 
 const CHECKPOINT_FILE: &str = "graph.json";
 
@@ -55,7 +55,7 @@ pub fn node_counts(graph: &RunGraph) -> (usize, usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::machines::scheduler::state::{
+    use crate::machines::scheduler::{
         ModelTier, Node, NodeId, NodeKind, NodeOrigin, NodeStatus, RunConfig, RunGraph,
         SchedulerState,
     };

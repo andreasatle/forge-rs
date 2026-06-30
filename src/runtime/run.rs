@@ -20,8 +20,10 @@ use crate::engine::run_machine_with_telemetry;
 use crate::language::registry::language_spec;
 
 use super::repo::load_or_create_artifact;
-use crate::machines::scheduler::state::{RunConfig, SchedulerState};
-use crate::machines::scheduler::{RunRequest, SchedulerHandler, SchedulerMachine, SchedulerOutput};
+use crate::machines::scheduler::state::SchedulerState;
+use crate::machines::scheduler::{
+    RunConfig, RunRequest, SchedulerHandler, SchedulerMachine, SchedulerOutput,
+};
 use crate::node_runner::{DeliberatingNodeRunner, TestTargetsFn};
 use crate::project::{CodingProjectAdapter, DefaultProjectAdapter, ProjectAdapter as _};
 use crate::providers::{LlamaCppProvider, RetryingProvider};
@@ -568,7 +570,7 @@ mod tests {
         UnmanagedProviderConfig,
     };
     use crate::machines::scheduler::machine::{RecoverySummary, SchedulerOutput};
-    use crate::machines::scheduler::state::{FailureReason, RunGraph};
+    use crate::machines::scheduler::{FailureReason, RunGraph};
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static NEXT_ID: AtomicU64 = AtomicU64::new(0);
@@ -1555,7 +1557,7 @@ mod tests {
                 _request: NodeRunRequest,
                 _telemetry: &dyn crate::telemetry::TelemetrySink,
             ) -> NodeRunResult {
-                use crate::machines::scheduler::types::{FailureKind, NodeFailure, RecoveryAction};
+                use crate::machines::scheduler::{FailureKind, NodeFailure, RecoveryAction};
                 NodeRunResult::Failed(NodeFailure {
                     kind: FailureKind::DeliberationFailure,
                     message: "provider error (Retryable): connection refused".to_string(),
