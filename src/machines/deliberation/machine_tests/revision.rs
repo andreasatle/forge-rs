@@ -43,13 +43,12 @@ fn referee_rejection_after_critic_rejection_loops_when_revisions_remain() {
     assert!(
         matches!(
             &t.state,
-            DeliberationState::Waiting {
-                role: DeliberationRole::Producer,
+            DeliberationState::WaitingProducer {
                 feedback,
                 ..
             } if feedback.len() == 1
         ),
-        "expected Waiting(Producer) revision loop, got {:?}",
+        "expected WaitingProducer revision loop, got {:?}",
         t.state
     );
     assert_eq!(t.effects.len(), 1);
@@ -123,19 +122,17 @@ fn referee_rejection_after_critic_rejection_exhausts_budget_when_no_revisions_re
 
 #[test]
 fn referee_rejection_loops_to_producer_with_feedback() {
-    let waiting_referee = DeliberationState::Waiting {
+    let waiting_referee = DeliberationState::WaitingReferee {
         request: DeliberationRequest {
             objective: "write a poem".to_string(),
             context: crate::machines::deliberation::DeliberationContext::default(),
             max_revisions: 1,
         },
-        role: DeliberationRole::Referee,
-        producer_content: Some("draft".to_string()),
-        critic_advisory: Some(CriticAdvisory::AcceptedReview {
+        producer_content: "draft".to_string(),
+        critic_advisory: CriticAdvisory::AcceptedReview {
             content: "review".to_string(),
-        }),
+        },
         feedback: vec![],
-        producer_validation: producer_validation(),
     };
 
     let t = step(
@@ -148,13 +145,11 @@ fn referee_rejection_loops_to_producer_with_feedback() {
         },
     );
 
-    // State must be Waiting(Producer) with one feedback entry.
+    // State must be WaitingProducer with one feedback entry.
     match &t.state {
-        DeliberationState::Waiting {
-            role: DeliberationRole::Producer,
+        DeliberationState::WaitingProducer {
             feedback,
             producer_content,
-            critic_advisory,
             ..
         } => {
             assert_eq!(feedback.len(), 1, "feedback should have one entry");
@@ -166,9 +161,8 @@ fn referee_rejection_loops_to_producer_with_feedback() {
                 producer_content.is_none(),
                 "producer_content should be None"
             );
-            assert!(critic_advisory.is_none(), "critic_advisory should be None");
         }
-        other => panic!("expected Waiting(Producer), got {:?}", other),
+        other => panic!("expected WaitingProducer, got {:?}", other),
     }
 
     // Effect must be RunRole(Producer) with the same feedback.
@@ -192,21 +186,19 @@ fn referee_rejection_loops_to_producer_with_feedback() {
 
 #[test]
 fn referee_rejection_exhausts_revision_limit() {
-    let waiting_referee = DeliberationState::Waiting {
+    let waiting_referee = DeliberationState::WaitingReferee {
         request: DeliberationRequest {
             objective: "write a poem".to_string(),
             context: crate::machines::deliberation::DeliberationContext::default(),
             max_revisions: 1,
         },
-        role: DeliberationRole::Referee,
-        producer_content: Some("draft".to_string()),
-        critic_advisory: Some(CriticAdvisory::AcceptedReview {
+        producer_content: "draft".to_string(),
+        critic_advisory: CriticAdvisory::AcceptedReview {
             content: "review".to_string(),
-        }),
+        },
         feedback: vec![RevisionFeedback {
             reason: "earlier rejection".to_string(),
         }],
-        producer_validation: producer_validation(),
     };
 
     let t = step(
@@ -246,19 +238,17 @@ fn referee_rejection_exhausts_revision_limit() {
 
 #[test]
 fn max_revisions_zero_fails_on_first_referee_rejection() {
-    let waiting_referee = DeliberationState::Waiting {
+    let waiting_referee = DeliberationState::WaitingReferee {
         request: DeliberationRequest {
             objective: "write a poem".to_string(),
             context: crate::machines::deliberation::DeliberationContext::default(),
             max_revisions: 0,
         },
-        role: DeliberationRole::Referee,
-        producer_content: Some("draft".to_string()),
-        critic_advisory: Some(CriticAdvisory::AcceptedReview {
+        producer_content: "draft".to_string(),
+        critic_advisory: CriticAdvisory::AcceptedReview {
             content: "review".to_string(),
-        }),
+        },
         feedback: vec![],
-        producer_validation: producer_validation(),
     };
 
     let t = step(

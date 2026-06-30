@@ -89,8 +89,6 @@ pub enum DeliberationFailureReason {
     RevisionLimitExhausted,
     /// The machine received an event that violates the expected role protocol.
     ProtocolViolation,
-    /// Durable state was internally inconsistent for the received event.
-    InvalidState,
     /// The state/event pair is not a valid transition.
     InvalidTransition,
 }
@@ -156,23 +154,39 @@ pub enum DeliberationState {
         request: DeliberationRequest,
     },
 
-    /// A role has been dispatched; the machine is waiting for its result.
-    Waiting {
+    /// The Producer has been dispatched; the machine is waiting for its result.
+    /// Also used while Producer output is awaiting semantic validation.
+    WaitingProducer {
         /// The original request, carried forward for later stages.
         request: DeliberationRequest,
-        /// The role that was dispatched and has not yet responded.
-        role: DeliberationRole,
-        /// Content accepted by the Producer. `None` while waiting for Producer;
-        /// `Some` while waiting for Critic or Referee.
+        /// `None` before the Producer has accepted; `Some` while awaiting validation.
         producer_content: Option<String>,
-        /// Advisory result from the Critic stage. `None` until Critic completes.
-        critic_advisory: Option<CriticAdvisory>,
-        /// Feedback accumulated from each Referee rejection.
-        /// The number of used revision loops is derived from this length.
+        /// Revision feedback accumulated from prior Referee rejections.
         feedback: Vec<RevisionFeedback>,
-        /// Producer semantic validation retry state. Empty until Producer
-        /// output is being validated or retried.
+        /// Producer semantic validation retry state.
         producer_validation: ProducerValidationState,
+    },
+
+    /// The Critic has been dispatched; the machine is waiting for its result.
+    WaitingCritic {
+        /// The original request, carried forward for later stages.
+        request: DeliberationRequest,
+        /// Content accepted by the Producer (always present at this stage).
+        producer_content: String,
+        /// Revision feedback accumulated from prior Referee rejections.
+        feedback: Vec<RevisionFeedback>,
+    },
+
+    /// The Referee has been dispatched; the machine is waiting for its result.
+    WaitingReferee {
+        /// The original request, carried forward for later stages.
+        request: DeliberationRequest,
+        /// Content accepted by the Producer (always present at this stage).
+        producer_content: String,
+        /// Advisory result from the Critic stage (always present at this stage).
+        critic_advisory: CriticAdvisory,
+        /// Revision feedback accumulated from prior Referee rejections.
+        feedback: Vec<RevisionFeedback>,
     },
 
     /// The pipeline finished successfully. Terminal state.

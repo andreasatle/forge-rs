@@ -19,26 +19,24 @@
 //!
 //! ## Transitions
 //!
-//! - `Ready + Start` → `Waiting(Producer)` + `RunRole(Producer)`.
-//! - `Waiting(Producer) + ProducerAccepted` → `Waiting(Producer)` + `ValidateProducer`.
-//! - `Waiting(Producer) + ProducerValidationReturned(Valid)` → `Waiting(Critic)` + `RunRole(Critic)`.
-//! - `Waiting(Producer) + ProducerValidationReturned(Retry)` and validation retries remain
-//!   → `Waiting(Producer)` with validation feedback + `RunRole(Producer, feedback)`.
-//! - `Waiting(Producer) + ProducerValidationReturned(Retry)` and validation retries are exhausted
+//! - `Ready + Start` → `WaitingProducer` + `RunRole(Producer)`.
+//! - `WaitingProducer + ProducerAccepted` → `WaitingProducer` + `ValidateProducer`.
+//! - `WaitingProducer + ProducerValidationReturned(Valid)` → `WaitingCritic` + `RunRole(Critic)`.
+//! - `WaitingProducer + ProducerValidationReturned(Retry)` and validation retries remain
+//!   → `WaitingProducer` with validation feedback + `RunRole(Producer, feedback)`.
+//! - `WaitingProducer + ProducerValidationReturned(Retry)` and validation retries are exhausted
 //!   → `Failed`.
-//! - `Waiting(Producer) + RoleReturned(Producer, Rejected | Failed)` → `Failed`.
-//! - `Waiting(Critic) + RoleReturned(Critic, Accepted)` → `Waiting(Referee)` + `RunRole(Referee)`.
-//! - `Waiting(Critic) + RoleReturned(Critic, Rejected)` → `Waiting(Referee)` with advisory critic feedback.
-//! - `Waiting(Critic) + RoleReturned(Critic, Failed)` → `Failed`.
-//! - `Waiting(Critic)` with no producer content → `Failed` ("invalid deliberation state").
-//! - `Waiting(Referee) + RoleReturned(Referee, Accepted)` → `Complete` with producer content.
-//! - `Waiting(Referee) + RoleReturned(Referee, Rejected)` and revisions remain
-//!   → `Waiting(Producer)` with updated `feedback`
+//! - `WaitingProducer + RoleReturned(Producer, Rejected | Failed)` → `Failed`.
+//! - `WaitingCritic + RoleReturned(Critic, Accepted)` → `WaitingReferee` + `RunRole(Referee)`.
+//! - `WaitingCritic + RoleReturned(Critic, Rejected)` → `WaitingReferee` with advisory critic feedback.
+//! - `WaitingCritic + RoleReturned(Critic, Failed)` → `Failed`.
+//! - `WaitingReferee + RoleReturned(Referee, Accepted)` → `Complete` with producer content.
+//! - `WaitingReferee + RoleReturned(Referee, Rejected)` and revisions remain
+//!   → `WaitingProducer` with updated `feedback`
 //!   + `RunRole(Producer, feedback)`.
-//! - `Waiting(Referee) + RoleReturned(Referee, Rejected)` and limit reached
+//! - `WaitingReferee + RoleReturned(Referee, Rejected)` and limit reached
 //!   → `Failed` ("revision limit exhausted").
-//! - `Waiting(Referee) + RoleReturned(Referee, Failed)` → `Failed` (no revision loop).
-//! - `Waiting(Referee)` with missing producer or critic content → `Failed` ("invalid deliberation state").
+//! - `WaitingReferee + RoleReturned(Referee, Failed)` → `Failed` (no revision loop).
 //! - Any role mismatch → `Failed` with a "protocol violation" reason.
 
 pub mod effect;

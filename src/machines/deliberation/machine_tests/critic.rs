@@ -17,18 +17,17 @@ fn critic_acceptance_runs_referee() {
         },
     );
 
-    // Must not complete yet — should enter Waiting(Referee).
+    // Must not complete yet — should enter WaitingReferee.
     assert!(
         matches!(
             &t.state,
-            DeliberationState::Waiting {
-                role: DeliberationRole::Referee,
-                producer_content: Some(pc),
-                critic_advisory: Some(CriticAdvisory::AcceptedReview { content }),
+            DeliberationState::WaitingReferee {
+                producer_content,
+                critic_advisory: CriticAdvisory::AcceptedReview { content },
                 ..
-            } if pc == "draft content" && content == "looks good"
+            } if producer_content == "draft content" && content == "looks good"
         ),
-        "expected Waiting(Referee, Some('draft content'), Some('looks good')), got {:?}",
+        "expected WaitingReferee('draft content', AcceptedReview('looks good')), got {:?}",
         t.state
     );
 
@@ -68,14 +67,13 @@ fn critic_rejection_routes_to_referee() {
     assert!(
         matches!(
             &t.state,
-            DeliberationState::Waiting {
-                role: DeliberationRole::Referee,
-                producer_content: Some(pc),
-                critic_advisory: Some(CriticAdvisory::RejectedReason { reason }),
+            DeliberationState::WaitingReferee {
+                producer_content,
+                critic_advisory: CriticAdvisory::RejectedReason { reason },
                 ..
-            } if pc == "draft content" && reason == "too short"
+            } if producer_content == "draft content" && reason == "too short"
         ),
-        "expected Waiting(Referee) with rejected critic advisory, got {:?}",
+        "expected WaitingReferee with rejected critic advisory, got {:?}",
         t.state
     );
 
@@ -113,12 +111,12 @@ fn critic_rejection_stores_typed_rejected_advisory() {
     );
 
     let critic_reason = match &t.state {
-        DeliberationState::Waiting {
-            critic_advisory: Some(CriticAdvisory::RejectedReason { reason }),
+        DeliberationState::WaitingReferee {
+            critic_advisory: CriticAdvisory::RejectedReason { reason },
             ..
         } => reason,
         other => panic!(
-            "expected Waiting with rejected critic advisory, got {:?}",
+            "expected WaitingReferee with rejected critic advisory, got {:?}",
             other
         ),
     };
@@ -156,48 +154,6 @@ fn critic_rejection_runs_referee_instead_of_failing() {
         "Critic rejection must run Referee, got {:?}",
         t.effects
     );
-}
-
-#[test]
-fn critic_missing_producer_content_fails() {
-    let invalid_state = DeliberationState::Waiting {
-        request: DeliberationRequest {
-            objective: "write a poem".to_string(),
-            context: crate::machines::deliberation::DeliberationContext::default(),
-            max_revisions: 0,
-        },
-        role: DeliberationRole::Critic,
-        producer_content: None,
-        critic_advisory: None,
-        feedback: vec![],
-        producer_validation: producer_validation(),
-    };
-
-    let t = step(
-        invalid_state,
-        DeliberationEvent::RoleReturned {
-            role: DeliberationRole::Critic,
-            result: RoleResult::Accepted {
-                content: "shouldn't matter".to_string(),
-            },
-        },
-    );
-
-    assert!(
-        matches!(&t.state, DeliberationState::Failed { .. }),
-        "expected Failed, got {:?}",
-        t.state
-    );
-
-    assert!(
-        t.effects.is_empty(),
-        "terminal failure must not emit effects"
-    );
-    let reason = match &t.state {
-        DeliberationState::Failed { reason, .. } => reason,
-        other => panic!("expected Failed, got {:?}", other),
-    };
-    assert_eq!(reason, &DeliberationFailureReason::InvalidState);
 }
 
 #[test]

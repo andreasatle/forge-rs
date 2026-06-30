@@ -100,62 +100,18 @@ fn referee_rejection_fails_when_no_revisions_allowed() {
 }
 
 #[test]
-fn referee_missing_critic_content_fails() {
-    let invalid_state = DeliberationState::Waiting {
-        request: DeliberationRequest {
-            objective: "write a poem".to_string(),
-            context: crate::machines::deliberation::DeliberationContext::default(),
-            max_revisions: 0,
-        },
-        role: DeliberationRole::Referee,
-        producer_content: Some("draft".to_string()),
-        critic_advisory: None,
-        feedback: vec![],
-        producer_validation: producer_validation(),
-    };
-
-    let t = step(
-        invalid_state,
-        DeliberationEvent::RoleReturned {
-            role: DeliberationRole::Referee,
-            result: RoleResult::Accepted {
-                content: "shouldn't matter".to_string(),
-            },
-        },
-    );
-
-    assert!(
-        matches!(&t.state, DeliberationState::Failed { .. }),
-        "expected Failed, got {:?}",
-        t.state
-    );
-
-    assert!(
-        t.effects.is_empty(),
-        "terminal failure must not emit effects"
-    );
-    let reason = match &t.state {
-        DeliberationState::Failed { reason, .. } => reason,
-        other => panic!("expected Failed, got {:?}", other),
-    };
-    assert_eq!(reason, &DeliberationFailureReason::InvalidState);
-}
-
-#[test]
 fn role_mismatch_while_waiting_referee_fails() {
-    let waiting_referee = DeliberationState::Waiting {
+    let waiting_referee = DeliberationState::WaitingReferee {
         request: DeliberationRequest {
             objective: "write a poem".to_string(),
             context: crate::machines::deliberation::DeliberationContext::default(),
             max_revisions: 0,
         },
-        role: DeliberationRole::Referee,
-        producer_content: Some("draft".to_string()),
-        critic_advisory: Some(CriticAdvisory::AcceptedReview {
+        producer_content: "draft".to_string(),
+        critic_advisory: CriticAdvisory::AcceptedReview {
             content: "looks good".to_string(),
-        }),
+        },
         feedback: vec![],
-        producer_validation: producer_validation(),
     };
 
     for wrong_role in [DeliberationRole::Producer, DeliberationRole::Critic] {
@@ -191,19 +147,17 @@ fn role_mismatch_while_waiting_referee_fails() {
 fn referee_failed_is_terminal() {
     // max_revisions=1 to confirm Failed does not enter the revision loop
     // even when revisions are available.
-    let waiting_referee = DeliberationState::Waiting {
+    let waiting_referee = DeliberationState::WaitingReferee {
         request: DeliberationRequest {
             objective: "write a poem".to_string(),
             context: crate::machines::deliberation::DeliberationContext::default(),
             max_revisions: 1,
         },
-        role: DeliberationRole::Referee,
-        producer_content: Some("draft".to_string()),
-        critic_advisory: Some(CriticAdvisory::AcceptedReview {
+        producer_content: "draft".to_string(),
+        critic_advisory: CriticAdvisory::AcceptedReview {
             content: "review".to_string(),
-        }),
+        },
         feedback: vec![],
-        producer_validation: producer_validation(),
     };
 
     let t = step(
@@ -250,19 +204,17 @@ fn referee_failed_is_terminal() {
 #[test]
 fn referee_rejected_still_revises() {
     // Rejected (semantic outcome) continues to loop; Failed (execution) must not.
-    let waiting_referee = DeliberationState::Waiting {
+    let waiting_referee = DeliberationState::WaitingReferee {
         request: DeliberationRequest {
             objective: "write a poem".to_string(),
             context: crate::machines::deliberation::DeliberationContext::default(),
             max_revisions: 1,
         },
-        role: DeliberationRole::Referee,
-        producer_content: Some("draft".to_string()),
-        critic_advisory: Some(CriticAdvisory::AcceptedReview {
+        producer_content: "draft".to_string(),
+        critic_advisory: CriticAdvisory::AcceptedReview {
             content: "review".to_string(),
-        }),
+        },
         feedback: vec![],
-        producer_validation: producer_validation(),
     };
 
     let t = step(
@@ -278,13 +230,12 @@ fn referee_rejected_still_revises() {
     assert!(
         matches!(
             &t.state,
-            DeliberationState::Waiting {
-                role: DeliberationRole::Producer,
+            DeliberationState::WaitingProducer {
                 feedback,
                 ..
             } if feedback.len() == 1
         ),
-        "expected Waiting(Producer) revision loop, got {:?}",
+        "expected WaitingProducer revision loop, got {:?}",
         t.state
     );
 }

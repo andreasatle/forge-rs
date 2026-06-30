@@ -7,14 +7,12 @@ fn ready_start_runs_producer() {
     assert!(
         matches!(
             &t.state,
-            DeliberationState::Waiting {
-                role: DeliberationRole::Producer,
+            DeliberationState::WaitingProducer {
                 producer_content: None,
-                critic_advisory: None,
                 ..
             }
         ),
-        "expected Waiting(Producer, None, None), got {:?}",
+        "expected WaitingProducer(None), got {:?}",
         t.state
     );
 
@@ -51,14 +49,12 @@ fn producer_acceptance_runs_validation_then_critic() {
     assert!(
         matches!(
             &validation.state,
-            DeliberationState::Waiting {
-                role: DeliberationRole::Producer,
+            DeliberationState::WaitingProducer {
                 producer_content: Some(pc),
-                critic_advisory: None,
                 ..
             } if pc == "draft content"
         ),
-        "expected Waiting(Producer validation, Some('draft content')), got {:?}",
+        "expected WaitingProducer(Some('draft content')), got {:?}",
         validation.state
     );
 
@@ -86,14 +82,12 @@ fn producer_acceptance_runs_validation_then_critic() {
     assert!(
         matches!(
             &t.state,
-            DeliberationState::Waiting {
-                role: DeliberationRole::Critic,
-                producer_content: Some(pc),
-                critic_advisory: None,
+            DeliberationState::WaitingCritic {
+                producer_content,
                 ..
-            } if pc == "draft content"
+            } if producer_content == "draft content"
         ),
-        "expected Waiting(Critic, Some('draft content'), None), got {:?}",
+        "expected WaitingCritic('draft content'), got {:?}",
         t.state
     );
 
@@ -138,8 +132,7 @@ fn producer_validation_retry_runs_producer_with_validation_feedback() {
     );
 
     match &t.state {
-        DeliberationState::Waiting {
-            role: DeliberationRole::Producer,
+        DeliberationState::WaitingProducer {
             producer_validation,
             producer_content,
             ..
@@ -148,7 +141,7 @@ fn producer_validation_retry_runs_producer_with_validation_feedback() {
             assert_eq!(producer_validation.attempt, 1);
             assert_eq!(producer_validation.feedback[0].reason, "must be valid JSON");
         }
-        other => panic!("expected Producer retry state, got {other:?}"),
+        other => panic!("expected WaitingProducer retry state, got {other:?}"),
     }
     assert!(matches!(
         &t.effects[0],
@@ -162,15 +155,13 @@ fn producer_validation_retry_runs_producer_with_validation_feedback() {
 
 #[test]
 fn producer_validation_retry_exhaustion_fails() {
-    let validating = DeliberationState::Waiting {
+    let validating = DeliberationState::WaitingProducer {
         request: DeliberationRequest {
             objective: "write a poem".to_string(),
             context: crate::machines::deliberation::DeliberationContext::default(),
             max_revisions: 0,
         },
-        role: DeliberationRole::Producer,
         producer_content: Some("draft content".to_string()),
-        critic_advisory: None,
         feedback: vec![],
         producer_validation: ProducerValidationState {
             attempt: 2,

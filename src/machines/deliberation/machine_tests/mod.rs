@@ -36,13 +36,6 @@ fn step(
     machine().transition(state, event)
 }
 
-fn producer_validation() -> ProducerValidationState {
-    ProducerValidationState {
-        attempt: 0,
-        feedback: vec![],
-    }
-}
-
 fn producer_accepts(state: DeliberationState, content: &str) -> DeliberationState {
     let validating = step(
         state,
