@@ -9,7 +9,7 @@ use crate::machines::scheduler::event::{
     FailureKind, IntegrationFailure, IntegrationOutcome, IntegrationOutput, RecoveryAction,
     SchedulerEvent, WorkOutput,
 };
-use crate::machines::scheduler::state::NodeId;
+use crate::machines::scheduler::graph::NodeId;
 use crate::node_runner::WorkAttempt;
 use crate::telemetry::{TelemetryEvent, TelemetryRecord, TelemetrySink};
 use crate::validation::{AlwaysPassValidator, ValidationPlan, ValidationResult, Validator};

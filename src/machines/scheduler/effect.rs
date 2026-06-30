@@ -11,7 +11,7 @@
 use crate::validation::ValidationPlan;
 
 use super::event::WorkOutput;
-use super::state::{ModelTier, NodeId, NodeKind, RetryFeedback, TestPlanContext};
+use super::graph::{ModelTier, NodeId, NodeKind, RetryFeedback, TestPlanContext};
 
 /// Commands that the scheduler emits to the outside world.
 ///

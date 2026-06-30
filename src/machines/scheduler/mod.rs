@@ -6,7 +6,8 @@
 //!
 //! # Module layout
 //!
-//! - `state.rs` — `RunGraph`, `Node`, `NodeOrigin`, `SchedulerState`, and all node descriptor types
+//! - `state.rs` — `SchedulerState`: the scheduler machine phase enum
+//! - `graph.rs` — `RunGraph`, `Node`, `NodeId`, and all node/graph descriptor types
 //! - `event.rs` — `SchedulerEvent`, `NodeOutcome`, `RecoveryAction`, and outcome payloads
 //! - `effect.rs` — `SchedulerEffect` (commands emitted by transitions)
 //! - `machine.rs` — `SchedulerMachine`, `SchedulerOutput`, `RecoverySummary`, graph helpers, and the `Machine` implementation
@@ -56,10 +57,10 @@ pub use event::{
     NodeRequest, PlanOutput, RecoveryAction, SchedulerEvent, WorkOutput,
 };
 pub use failure::{ExhaustedAction, FailureKind, FailureReason};
+pub use graph::{
+    ModelTier, Node, NodeId, NodeKind, NodeOrigin, NodeStatus, RunGraph, TestPlanContext,
+};
 pub use handler::SchedulerHandler;
 pub use machine::{RecoverySummary, SchedulerMachine, SchedulerOutput};
 pub use request::RunRequest;
-pub use state::{
-    ModelTier, Node, NodeId, NodeKind, NodeOrigin, NodeStatus, RunGraph, SchedulerState,
-    TestPlanContext,
-};
+pub use state::SchedulerState;

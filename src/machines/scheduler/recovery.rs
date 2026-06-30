@@ -13,10 +13,10 @@ use super::graph::{
     get_node, graph_has_capacity, mark_node, push_node, remap_pending_dependencies,
     validate_split_depth,
 };
-use super::state::{
-    ExhaustedAction, FailureReason, ModelTier, Node, NodeId, NodeKind, NodeOrigin, NodeStatus,
-    RetryFeedback, RunConfig, RunGraph, SchedulerState,
+use super::graph::{
+    ModelTier, Node, NodeId, NodeKind, NodeOrigin, NodeStatus, RetryFeedback, RunGraph,
 };
+use super::state::{ExhaustedAction, FailureReason, RunConfig, SchedulerState};
 
 pub(super) fn failed_transition(
     graph: RunGraph,

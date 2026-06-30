@@ -14,7 +14,7 @@
 
 use crate::validation::ValidationPlan;
 
-use super::state::{NodeId, NodeKind};
+use super::graph::{NodeId, NodeKind};
 
 pub use super::failure::FailureKind;
 

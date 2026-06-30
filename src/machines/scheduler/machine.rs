@@ -10,10 +10,8 @@ use super::effect::SchedulerEffect;
 use super::event::{
     IntegrationFailure, IntegrationOutcome, NodeFailure, NodeOutcome::*, SchedulerEvent,
 };
-use super::state::{
-    FailureReason, ModelTier, Node, NodeId, NodeKind, NodeOrigin, NodeStatus, RunConfig, RunGraph,
-    RunRequest, SchedulerState,
-};
+use super::graph::{ModelTier, Node, NodeId, NodeKind, NodeOrigin, NodeStatus, RunGraph};
+use super::state::{FailureReason, RunConfig, RunRequest, SchedulerState};
 use super::{graph, recovery};
 
 // Re-expose constants so the nested test module sees them via `use super::*`.

@@ -2,7 +2,7 @@
 
 use crate::artifacts::{Artifact, ArtifactView};
 use crate::machines::scheduler::event::{NodeOutcome, SchedulerEvent};
-use crate::machines::scheduler::state::{
+use crate::machines::scheduler::graph::{
     ModelTier, NodeId, NodeKind, RetryFeedback, TestPlanContext,
 };
 use crate::node_runner::{NodeRunRequest, NodeRunner, WorkAttempt};
