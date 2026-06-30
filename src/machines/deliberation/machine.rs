@@ -19,47 +19,47 @@
 //!     + ValidateProducer(content, artifact_changed)
 //!
 //! WaitingValidator(producer_content=content, validation_attempt=N)
-//!     + ProducerValidationReturned(Valid)
+//!     + ProducerValidationAccepted
 //!     → WaitingCritic(producer_content=content)
 //!     + RunRole(Critic, producer_content=content)
 //!
 //! WaitingValidator(producer_content=content, validation_attempt=N)
-//!     + ProducerValidationReturned(Retry)
+//!     + ProducerValidationRejected
 //!     N < max_validation_retries:
 //!         → WaitingProducer(validation_attempt=N+1, feedback=[reason])
 //!         + RunRole(Producer, feedback=[reason])
 //!     N >= max_validation_retries:
 //!         → Failed
 //!
-//! WaitingProducer + RoleReturned(Producer, Rejected { reason })
+//! WaitingProducer + ProducerRejected { reason }
 //!     → Failed
 //!
-//! WaitingProducer + RoleReturned(Producer, Failed { reason })
+//! WaitingProducer + ProducerFailed { reason }
 //!     → Failed  (execution failure, not semantic rejection)
 //!
-//! WaitingCritic(pc) + RoleReturned(Critic, Accepted { content })
+//! WaitingCritic(pc) + CriticAccepted { content }
 //!     → WaitingReferee(producer_content=pc, critic_advisory=AcceptedReview)
 //!     + RunRole(Referee, …)
 //!
-//! WaitingCritic(pc) + RoleReturned(Critic, Rejected { reason })
+//! WaitingCritic(pc) + CriticRejected { reason }
 //!     → WaitingReferee(producer_content=pc, critic_advisory=RejectedReason)
 //!     + RunRole(Referee, producer_content=pc, critic_content=reason)
 //!     (Critic is advisory; Referee decides)
 //!
-//! WaitingCritic(…) + RoleReturned(Critic, Failed { reason })
+//! WaitingCritic(…) + CriticFailed { reason }
 //!     → Failed  (execution failure, not semantic rejection)
 //!
-//! WaitingReferee(pc, advisory) + RoleReturned(Referee, Accepted)
+//! WaitingReferee(pc, advisory) + RefereeAccepted
 //!     → Complete { output: pc }   ← output is producer content
 //!
-//! WaitingReferee(…) + RoleReturned(Referee, Rejected { reason })
+//! WaitingReferee(…) + RefereeRejected { reason }
 //!     feedback.len() < max_revisions:
 //!         → WaitingProducer(feedback+[reason], validation_attempt=0)
 //!         + RunRole(Producer, feedback+[reason])
 //!     feedback.len() >= max_revisions:
 //!         → Failed(reason=RevisionLimitExhausted)
 //!
-//! WaitingReferee(…) + RoleReturned(Referee, Failed { reason })
+//! WaitingReferee(…) + RefereeFailed { reason }
 //!     → Failed  (execution failure — must NOT enter the revision loop)
 //!
 //! Role mismatches → Failed (protocol violation)
@@ -69,7 +69,7 @@ use crate::engine::{Machine, Transition};
 use crate::machines::scheduler::FailureKind;
 
 use super::effect::DeliberationEffect;
-use super::event::{DeliberationEvent, ProducerValidationResult, RoleResult};
+use super::event::DeliberationEvent;
 use super::state::DeliberationState;
 use super::types::DeliberationFailureReason;
 use super::types::{
@@ -162,10 +162,7 @@ impl Machine for DeliberationMachine {
                     feedback,
                     ..
                 },
-                DeliberationEvent::ProducerValidationReturned {
-                    content,
-                    result: ProducerValidationResult::Valid,
-                },
+                DeliberationEvent::ProducerValidationAccepted { content },
             ) if producer_content == content => Transition {
                 effects: vec![DeliberationEffect::RunRole {
                     role: DeliberationRole::Critic,
@@ -190,20 +187,11 @@ impl Machine for DeliberationMachine {
                     feedback,
                     validation_attempt,
                 },
-                DeliberationEvent::ProducerValidationReturned {
-                    content,
-                    result:
-                        ProducerValidationResult::Retry {
-                            feedback_reason,
-                            max_retries,
-                            failure_kind,
-                            failure_reason,
-                        },
-                },
+                DeliberationEvent::ProducerValidationRejected { content, retry },
             ) if producer_content == content => {
-                if validation_attempt < max_retries {
+                if validation_attempt < retry.max_retries {
                     let validation_feedback = vec![RevisionFeedback {
-                        reason: feedback_reason,
+                        reason: retry.feedback_reason,
                     }];
                     Transition {
                         effects: vec![DeliberationEffect::RunRole {
@@ -222,9 +210,9 @@ impl Machine for DeliberationMachine {
                     }
                 } else {
                     Self::failed_transition(
-                        failure_kind,
+                        retry.failure_kind,
                         DeliberationFailureReason::ProducerValidationRetriesExhausted,
-                        failure_reason,
+                        retry.failure_reason,
                     )
                 }
             }
@@ -232,10 +220,7 @@ impl Machine for DeliberationMachine {
             // Producer rejected → failed.
             (
                 DeliberationState::WaitingProducer { .. },
-                DeliberationEvent::RoleReturned {
-                    role: DeliberationRole::Producer,
-                    result: RoleResult::Rejected { reason },
-                },
+                DeliberationEvent::ProducerRejected { reason },
             ) => Self::failed_transition(
                 FailureKind::UserTaskRejection,
                 DeliberationFailureReason::ProducerRejected,
@@ -245,10 +230,7 @@ impl Machine for DeliberationMachine {
             // Producer execution failure → terminal.
             (
                 DeliberationState::WaitingProducer { .. },
-                DeliberationEvent::RoleReturned {
-                    role: DeliberationRole::Producer,
-                    result: RoleResult::Failed { kind, reason },
-                },
+                DeliberationEvent::ProducerFailed { kind, reason },
             ) => Self::failed_transition(
                 kind,
                 DeliberationFailureReason::RoleFailed {
@@ -260,12 +242,27 @@ impl Machine for DeliberationMachine {
             // Role mismatch while waiting for Producer → protocol violation.
             (
                 DeliberationState::WaitingProducer { .. },
-                DeliberationEvent::RoleReturned { role, .. },
+                DeliberationEvent::CriticAccepted { .. }
+                | DeliberationEvent::CriticRejected { .. }
+                | DeliberationEvent::CriticFailed { .. },
             ) => {
-                let reason = format!(
-                    "protocol violation: expected Producer result but received {:?}",
-                    role
-                );
+                let reason =
+                    "protocol violation: expected Producer result but received Critic".to_string();
+                Self::failed_transition(
+                    FailureKind::ProtocolFailure,
+                    DeliberationFailureReason::ProtocolViolation,
+                    reason,
+                )
+            }
+
+            (
+                DeliberationState::WaitingProducer { .. },
+                DeliberationEvent::RefereeAccepted { .. }
+                | DeliberationEvent::RefereeRejected { .. }
+                | DeliberationEvent::RefereeFailed { .. },
+            ) => {
+                let reason =
+                    "protocol violation: expected Producer result but received Referee".to_string();
                 Self::failed_transition(
                     FailureKind::ProtocolFailure,
                     DeliberationFailureReason::ProtocolViolation,
@@ -280,12 +277,8 @@ impl Machine for DeliberationMachine {
                     producer_content,
                     feedback,
                 },
-                DeliberationEvent::RoleReturned {
-                    role: DeliberationRole::Critic,
-                    result:
-                        RoleResult::Accepted {
-                            content: critic_content,
-                        },
+                DeliberationEvent::CriticAccepted {
+                    content: critic_content,
                 },
             ) => {
                 let critic_advisory = CriticAdvisory::AcceptedReview {
@@ -317,10 +310,7 @@ impl Machine for DeliberationMachine {
                     producer_content,
                     feedback,
                 },
-                DeliberationEvent::RoleReturned {
-                    role: DeliberationRole::Critic,
-                    result: RoleResult::Rejected { reason },
-                },
+                DeliberationEvent::CriticRejected { reason },
             ) => {
                 let critic_advisory = CriticAdvisory::RejectedReason {
                     reason: reason.clone(),
@@ -346,10 +336,7 @@ impl Machine for DeliberationMachine {
             // Critic execution failure → terminal.
             (
                 DeliberationState::WaitingCritic { .. },
-                DeliberationEvent::RoleReturned {
-                    role: DeliberationRole::Critic,
-                    result: RoleResult::Failed { kind, reason },
-                },
+                DeliberationEvent::CriticFailed { kind, reason },
             ) => Self::failed_transition(
                 kind,
                 DeliberationFailureReason::RoleFailed {
@@ -361,12 +348,27 @@ impl Machine for DeliberationMachine {
             // Role mismatch while waiting for Critic → protocol violation.
             (
                 DeliberationState::WaitingCritic { .. },
-                DeliberationEvent::RoleReturned { role, .. },
+                DeliberationEvent::ProducerAccepted { .. }
+                | DeliberationEvent::ProducerRejected { .. }
+                | DeliberationEvent::ProducerFailed { .. },
             ) => {
-                let reason = format!(
-                    "protocol violation: expected Critic result but received {:?}",
-                    role
-                );
+                let reason =
+                    "protocol violation: expected Critic result but received Producer".to_string();
+                Self::failed_transition(
+                    FailureKind::ProtocolFailure,
+                    DeliberationFailureReason::ProtocolViolation,
+                    reason,
+                )
+            }
+
+            (
+                DeliberationState::WaitingCritic { .. },
+                DeliberationEvent::RefereeAccepted { .. }
+                | DeliberationEvent::RefereeRejected { .. }
+                | DeliberationEvent::RefereeFailed { .. },
+            ) => {
+                let reason =
+                    "protocol violation: expected Critic result but received Referee".to_string();
                 Self::failed_transition(
                     FailureKind::ProtocolFailure,
                     DeliberationFailureReason::ProtocolViolation,
@@ -379,10 +381,7 @@ impl Machine for DeliberationMachine {
                 DeliberationState::WaitingReferee {
                     producer_content, ..
                 },
-                DeliberationEvent::RoleReturned {
-                    role: DeliberationRole::Referee,
-                    result: RoleResult::Accepted { .. },
-                },
+                DeliberationEvent::RefereeAccepted { .. },
             ) => {
                 let output = DeliberationOutput {
                     content: producer_content,
@@ -398,10 +397,7 @@ impl Machine for DeliberationMachine {
                 DeliberationState::WaitingReferee {
                     request, feedback, ..
                 },
-                DeliberationEvent::RoleReturned {
-                    role: DeliberationRole::Referee,
-                    result: RoleResult::Rejected { reason },
-                },
+                DeliberationEvent::RefereeRejected { reason },
             ) => {
                 if feedback.len() < request.max_revisions {
                     let mut new_feedback = feedback;
@@ -436,10 +432,7 @@ impl Machine for DeliberationMachine {
             // Referee execution failure → terminal. Must NOT enter the revision loop.
             (
                 DeliberationState::WaitingReferee { .. },
-                DeliberationEvent::RoleReturned {
-                    role: DeliberationRole::Referee,
-                    result: RoleResult::Failed { kind, reason },
-                },
+                DeliberationEvent::RefereeFailed { kind, reason },
             ) => Self::failed_transition(
                 kind,
                 DeliberationFailureReason::RoleFailed {
@@ -451,12 +444,27 @@ impl Machine for DeliberationMachine {
             // Role mismatch while waiting for Referee → protocol violation.
             (
                 DeliberationState::WaitingReferee { .. },
-                DeliberationEvent::RoleReturned { role, .. },
+                DeliberationEvent::ProducerAccepted { .. }
+                | DeliberationEvent::ProducerRejected { .. }
+                | DeliberationEvent::ProducerFailed { .. },
             ) => {
-                let reason = format!(
-                    "protocol violation: expected Referee result but received {:?}",
-                    role
-                );
+                let reason =
+                    "protocol violation: expected Referee result but received Producer".to_string();
+                Self::failed_transition(
+                    FailureKind::ProtocolFailure,
+                    DeliberationFailureReason::ProtocolViolation,
+                    reason,
+                )
+            }
+
+            (
+                DeliberationState::WaitingReferee { .. },
+                DeliberationEvent::CriticAccepted { .. }
+                | DeliberationEvent::CriticRejected { .. }
+                | DeliberationEvent::CriticFailed { .. },
+            ) => {
+                let reason =
+                    "protocol violation: expected Referee result but received Critic".to_string();
                 Self::failed_transition(
                     FailureKind::ProtocolFailure,
                     DeliberationFailureReason::ProtocolViolation,

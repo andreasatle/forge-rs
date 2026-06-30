@@ -65,13 +65,7 @@ fn integration_executes_nodes_passing_validation_plan() {
     });
 
     assert!(
-        matches!(
-            event,
-            SchedulerEvent::IntegrationReturned {
-                outcome: IntegrationOutcome::Succeeded(_),
-                ..
-            }
-        ),
+        matches!(event, SchedulerEvent::IntegrationSucceeded { .. }),
         "passing ValidationPlan must allow integration to succeed; got: {event:#?}"
     );
 }
@@ -111,13 +105,7 @@ fn integration_executes_nodes_failing_validation_plan() {
     });
 
     assert!(
-        matches!(
-            event,
-            SchedulerEvent::IntegrationReturned {
-                outcome: IntegrationOutcome::Failed(_),
-                ..
-            }
-        ),
+        matches!(event, SchedulerEvent::IntegrationFailed { .. }),
         "failing ValidationPlan must block integration; got: {event:#?}"
     );
     let current_sha = git_output(&repo_path, &["rev-parse", "HEAD"]);
@@ -175,13 +163,7 @@ fn integration_executes_validation_plan_with_target_file_scope() {
     });
 
     assert!(
-        matches!(
-            event,
-            SchedulerEvent::IntegrationReturned {
-                outcome: IntegrationOutcome::Succeeded(_),
-                ..
-            }
-        ),
+        matches!(event, SchedulerEvent::IntegrationSucceeded { .. }),
         "target-scoped ValidationPlan must receive node targets; got: {event:#?}"
     );
 }
@@ -232,13 +214,7 @@ fn preconditioned_step_skipped_when_file_absent() {
     });
 
     assert!(
-        matches!(
-            event,
-            SchedulerEvent::IntegrationReturned {
-                outcome: IntegrationOutcome::Succeeded(_),
-                ..
-            }
-        ),
+        matches!(event, SchedulerEvent::IntegrationSucceeded { .. }),
         "preconditioned step must be skipped when no matching file exists; got: {event:#?}"
     );
 }

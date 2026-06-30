@@ -20,7 +20,7 @@ use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
-use super::event::{NodeOutcome, NodeOutcome::*};
+use super::event::SchedulerEvent;
 use crate::validation::ValidationPlan;
 
 /// An opaque, stable identifier for a node in the run graph.
@@ -686,17 +686,17 @@ pub(super) fn diagnose_no_ready(graph: &RunGraph) -> String {
     "no ready nodes: blocked dependency chain or possible cycle".to_string()
 }
 
-pub(super) fn invalid_node_outcome_reason(
+pub(super) fn invalid_node_event_reason(
     node_id: &NodeId,
     node_kind: &NodeKind,
-    outcome: &NodeOutcome,
+    event: &SchedulerEvent,
 ) -> Option<String> {
-    match (node_kind, outcome) {
-        (NodeKind::Work, PlanAccepted(_)) => Some(format!(
+    match (node_kind, event) {
+        (NodeKind::Work, SchedulerEvent::PlanAccepted { .. }) => Some(format!(
             "node {} is Work but received PlanAccepted outcome",
             node_id.0
         )),
-        (NodeKind::Plan, WorkAccepted(_)) => Some(format!(
+        (NodeKind::Plan, SchedulerEvent::WorkAccepted { .. }) => Some(format!(
             "node {} is Plan but received WorkAccepted outcome",
             node_id.0
         )),

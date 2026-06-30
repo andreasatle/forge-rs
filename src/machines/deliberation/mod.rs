@@ -6,7 +6,7 @@
 //!
 //! ## Role result semantics
 //!
-//! `RoleResult` distinguishes semantic outcomes from infrastructure failures:
+//! Role results distinguish semantic outcomes from infrastructure failures:
 //!
 //! - `Accepted` — role completed successfully; content is acceptable.
 //! - `Rejected` — role completed successfully but rejected the content.
@@ -21,22 +21,22 @@
 //!
 //! - `Ready + Start` → `WaitingProducer` + `RunRole(Producer)`.
 //! - `WaitingProducer + ProducerAccepted` → `WaitingValidator` + `ValidateProducer`.
-//! - `WaitingValidator + ProducerValidationReturned(Valid)` → `WaitingCritic` + `RunRole(Critic)`.
-//! - `WaitingValidator + ProducerValidationReturned(Retry)` and validation retries remain
+//! - `WaitingValidator + ProducerValidationAccepted` → `WaitingCritic` + `RunRole(Critic)`.
+//! - `WaitingValidator + ProducerValidationRejected` and validation retries remain
 //!   → `WaitingProducer` with validation feedback + `RunRole(Producer, feedback)`.
-//! - `WaitingValidator + ProducerValidationReturned(Retry)` and validation retries are exhausted
+//! - `WaitingValidator + ProducerValidationRejected` and validation retries are exhausted
 //!   → `Failed`.
-//! - `WaitingProducer + RoleReturned(Producer, Rejected | Failed)` → `Failed`.
-//! - `WaitingCritic + RoleReturned(Critic, Accepted)` → `WaitingReferee` + `RunRole(Referee)`.
-//! - `WaitingCritic + RoleReturned(Critic, Rejected)` → `WaitingReferee` with advisory critic feedback.
-//! - `WaitingCritic + RoleReturned(Critic, Failed)` → `Failed`.
-//! - `WaitingReferee + RoleReturned(Referee, Accepted)` → `Complete` with producer content.
-//! - `WaitingReferee + RoleReturned(Referee, Rejected)` and revisions remain
+//! - `WaitingProducer + ProducerRejected | ProducerFailed` → `Failed`.
+//! - `WaitingCritic + CriticAccepted` → `WaitingReferee` + `RunRole(Referee)`.
+//! - `WaitingCritic + CriticRejected` → `WaitingReferee` with advisory critic feedback.
+//! - `WaitingCritic + CriticFailed` → `Failed`.
+//! - `WaitingReferee + RefereeAccepted` → `Complete` with producer content.
+//! - `WaitingReferee + RefereeRejected` and revisions remain
 //!   → `WaitingProducer` with updated `feedback`
 //!   + `RunRole(Producer, feedback)`.
-//! - `WaitingReferee + RoleReturned(Referee, Rejected)` and limit reached
+//! - `WaitingReferee + RefereeRejected` and limit reached
 //!   → `Failed` ("revision limit exhausted").
-//! - `WaitingReferee + RoleReturned(Referee, Failed)` → `Failed` (no revision loop).
+//! - `WaitingReferee + RefereeFailed` → `Failed` (no revision loop).
 //! - Any role mismatch → `Failed` with a "protocol violation" reason.
 
 pub mod effect;
@@ -47,7 +47,7 @@ pub mod state;
 pub mod types;
 
 pub use effect::DeliberationEffect;
-pub use event::{DeliberationEvent, ProducerValidationResult, RoleResult};
+pub use event::{DeliberationEvent, ProducerValidationRetry};
 pub(crate) use handler::PlanValidationContext;
 pub use handler::{DeliberationHandler, ProviderBackedDeliberationHandler};
 pub use machine::DeliberationMachine;

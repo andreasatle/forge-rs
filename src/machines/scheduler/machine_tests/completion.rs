@@ -187,15 +187,15 @@ fn scheduler_output_includes_node_failure_reason() {
             graph,
             run_config: RunConfig::default(),
         },
-        SchedulerEvent::NodeReturned {
+        SchedulerEvent::NodeFailed {
             node_id: NodeId("T".to_string()),
-            outcome: NodeOutcome::Failed(NodeFailure {
+            failure: NodeFailure {
                 kind: FailureKind::DeliberationFailure,
                 message: "provider error (Retryable): connection refused".to_string(),
                 recovery: RecoveryAction::Terminal {
                     message: "deliberation failed".to_string(),
                 },
-            }),
+            },
         },
     );
 
@@ -275,11 +275,11 @@ fn split_remaps_downstream_dependencies_and_chain_completes() {
             graph,
             run_config: RunConfig::default(),
         },
-        SchedulerEvent::NodeReturned {
+        SchedulerEvent::WorkAccepted {
             node_id: NodeId("A".to_string()),
-            outcome: NodeOutcome::WorkAccepted(WorkOutput {
+            work: WorkOutput {
                 summary: "A done".to_string(),
-            }),
+            },
         },
     );
     let SchedulerState::Waiting { graph, .. } = t.state else {
@@ -292,11 +292,11 @@ fn split_remaps_downstream_dependencies_and_chain_completes() {
             graph,
             run_config: RunConfig::default(),
         },
-        SchedulerEvent::IntegrationReturned {
+        SchedulerEvent::IntegrationSucceeded {
             node_id: NodeId("A".to_string()),
-            outcome: IntegrationOutcome::Succeeded(IntegrationOutput {
+            output: IntegrationOutput {
                 summary: "A integrated".to_string(),
-            }),
+            },
         },
     );
     let SchedulerState::Active { graph, .. } = t.state else {
@@ -321,15 +321,15 @@ fn split_remaps_downstream_dependencies_and_chain_completes() {
             graph,
             run_config: RunConfig::default(),
         },
-        SchedulerEvent::NodeReturned {
+        SchedulerEvent::NodeFailed {
             node_id: NodeId("B".to_string()),
-            outcome: NodeOutcome::Failed(NodeFailure {
+            failure: NodeFailure {
                 kind: FailureKind::DeliberationFailure,
                 message: "task too complex".to_string(),
                 recovery: RecoveryAction::Split {
                     message: "decompose the work".to_string(),
                 },
-            }),
+            },
         },
     );
     let SchedulerState::Active { graph, .. } = t.state else {
@@ -379,9 +379,9 @@ fn split_remaps_downstream_dependencies_and_chain_completes() {
             graph,
             run_config: RunConfig::default(),
         },
-        SchedulerEvent::NodeReturned {
+        SchedulerEvent::PlanAccepted {
             node_id: split_id.clone(),
-            outcome: NodeOutcome::PlanAccepted(PlanOutput { children: vec![] }),
+            plan: PlanOutput { children: vec![] },
         },
     );
     let SchedulerState::Active { graph, .. } = t.state else {
@@ -406,11 +406,11 @@ fn split_remaps_downstream_dependencies_and_chain_completes() {
             graph,
             run_config: RunConfig::default(),
         },
-        SchedulerEvent::NodeReturned {
+        SchedulerEvent::WorkAccepted {
             node_id: NodeId("C".to_string()),
-            outcome: NodeOutcome::WorkAccepted(WorkOutput {
+            work: WorkOutput {
                 summary: "C done".to_string(),
-            }),
+            },
         },
     );
     let SchedulerState::Waiting { graph, .. } = t.state else {
@@ -423,11 +423,11 @@ fn split_remaps_downstream_dependencies_and_chain_completes() {
             graph,
             run_config: RunConfig::default(),
         },
-        SchedulerEvent::IntegrationReturned {
+        SchedulerEvent::IntegrationSucceeded {
             node_id: NodeId("C".to_string()),
-            outcome: IntegrationOutcome::Succeeded(IntegrationOutput {
+            output: IntegrationOutput {
                 summary: "C integrated".to_string(),
-            }),
+            },
         },
     );
     let SchedulerState::Active { graph, .. } = t.state else {

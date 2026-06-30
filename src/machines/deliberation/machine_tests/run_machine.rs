@@ -34,26 +34,17 @@ fn run_machine_deliberation_smoke_test() {
                 DeliberationEffect::RunRole {
                     role: DeliberationRole::Critic,
                     ..
-                } => DeliberationEvent::RoleReturned {
-                    role: DeliberationRole::Critic,
-                    result: RoleResult::Accepted {
-                        content: "looks good".to_string(),
-                    },
+                } => DeliberationEvent::CriticAccepted {
+                    content: "looks good".to_string(),
                 },
                 DeliberationEffect::RunRole {
                     role: DeliberationRole::Referee,
                     ..
-                } => DeliberationEvent::RoleReturned {
-                    role: DeliberationRole::Referee,
-                    result: RoleResult::Accepted {
-                        content: "approved".to_string(),
-                    },
+                } => DeliberationEvent::RefereeAccepted {
+                    content: "approved".to_string(),
                 },
                 DeliberationEffect::ValidateProducer { content, .. } => {
-                    DeliberationEvent::ProducerValidationReturned {
-                        content,
-                        result: ProducerValidationResult::Valid,
-                    }
+                    DeliberationEvent::ProducerValidationAccepted { content }
                 }
             }
         }
@@ -105,12 +96,9 @@ fn run_machine_provider_failure_smoke_test() {
                 DeliberationEffect::RunRole {
                     role: DeliberationRole::Producer,
                     ..
-                } => DeliberationEvent::RoleReturned {
-                    role: DeliberationRole::Producer,
-                    result: RoleResult::Failed {
-                        kind: FailureKind::ProviderFailure,
-                        reason: "timeout".into(),
-                    },
+                } => DeliberationEvent::ProducerFailed {
+                    kind: FailureKind::ProviderFailure,
+                    reason: "timeout".into(),
                 },
                 other => panic!("unexpected effect: {:?}", other),
             }
@@ -173,11 +161,8 @@ fn run_machine_producer_rejection_returns_failed_output() {
                 DeliberationEffect::RunRole {
                     role: DeliberationRole::Producer,
                     ..
-                } => DeliberationEvent::RoleReturned {
-                    role: DeliberationRole::Producer,
-                    result: RoleResult::Rejected {
-                        reason: "bad draft".into(),
-                    },
+                } => DeliberationEvent::ProducerRejected {
+                    reason: "bad draft".into(),
                 },
                 other => panic!("unexpected effect: {:?}", other),
             }

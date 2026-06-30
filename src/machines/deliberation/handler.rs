@@ -23,8 +23,9 @@ use crate::roles::runner::{ProviderRoleRunner, RoleRequest, RoleRunner, RoleTool
 use crate::telemetry::{NoopTelemetry, TelemetryEvent, TelemetryRecord, TelemetrySink};
 
 use super::effect::DeliberationEffect;
-use super::event::{DeliberationEvent, ProducerValidationResult, RoleResult};
+use super::event::{DeliberationEvent, ProducerValidationRetry};
 use super::types::DeliberationRole;
+use crate::roles::runner::RoleResult;
 
 /// Maximum retry attempts after the first accepted plan violates structured
 /// planner validation.
@@ -320,13 +321,11 @@ impl<R: RoleRunner> DeliberationHandler<R> {
                                     reason: reason.clone(),
                                 },
                             ));
-                            return DeliberationEvent::RoleReturned {
+                            return failed_role_event(
                                 role,
-                                result: RoleResult::Failed {
-                                    kind: FailureKind::WorkSemanticValidationFailure,
-                                    reason,
-                                },
-                            };
+                                FailureKind::WorkSemanticValidationFailure,
+                                reason,
+                            );
                         }
                     };
 
@@ -350,7 +349,7 @@ impl<R: RoleRunner> DeliberationHandler<R> {
                             artifact_changed: output.artifact_changed,
                         }
                     }
-                    (_, result) => DeliberationEvent::RoleReturned { role, result },
+                    (_, result) => role_result_event(role, result),
                 }
             }
             DeliberationEffect::ValidateProducer {
@@ -358,7 +357,10 @@ impl<R: RoleRunner> DeliberationHandler<R> {
                 artifact_changed,
             } => {
                 let result = self.validate_producer_semantics(&content, artifact_changed);
-                DeliberationEvent::ProducerValidationReturned { content, result }
+                match result {
+                    Ok(()) => DeliberationEvent::ProducerValidationAccepted { content },
+                    Err(retry) => DeliberationEvent::ProducerValidationRejected { content, retry },
+                }
             }
         }
     }
@@ -403,7 +405,7 @@ impl<R: RoleRunner> DeliberationHandler<R> {
         &self,
         content: &str,
         artifact_changed: bool,
-    ) -> ProducerValidationResult {
+    ) -> Result<(), ProducerValidationRetry> {
         if self.node_kind == NodeKind::Plan && self.plan_validation_context.is_some() {
             return self.validate_plan_producer_content(content);
         }
@@ -412,50 +414,96 @@ impl<R: RoleRunner> DeliberationHandler<R> {
             return self.validate_work_producer_output(artifact_changed);
         }
 
-        ProducerValidationResult::Valid
+        Ok(())
     }
 
-    pub(crate) fn validate_plan_producer_content(&self, content: &str) -> ProducerValidationResult {
+    pub(crate) fn validate_plan_producer_content(
+        &self,
+        content: &str,
+    ) -> Result<(), ProducerValidationRetry> {
         let context = self
             .plan_validation_context
             .as_ref()
             .expect("plan_validation_context must be Some when this method is called");
 
         let Some(planner_out) = parse_planner_content(content) else {
-            return ProducerValidationResult::Retry {
+            return Err(ProducerValidationRetry {
                 feedback_reason: planner_parse_failure_feedback(),
                 max_retries: MAX_PLAN_VALIDATION_RETRIES,
                 failure_kind: FailureKind::PlannerValidationFailure,
                 failure_reason:
                     "planner validation failed: content is not valid PlannerOutput JSON".to_string(),
-            };
+            });
         };
 
         match validate_plan_output_for_context(&planner_out, context) {
-            Ok(()) => ProducerValidationResult::Valid,
-            Err(e) => ProducerValidationResult::Retry {
+            Ok(()) => Ok(()),
+            Err(e) => Err(ProducerValidationRetry {
                 feedback_reason: planner_validation_feedback(&e),
                 max_retries: MAX_PLAN_VALIDATION_RETRIES,
                 failure_kind: FailureKind::PlannerValidationFailure,
                 failure_reason: format!("planner validation failed: {e}"),
-            },
+            }),
         }
     }
 
     pub(crate) fn validate_work_producer_output(
         &self,
         artifact_changed: bool,
-    ) -> ProducerValidationResult {
+    ) -> Result<(), ProducerValidationRetry> {
         match validate_work_output(artifact_changed) {
-            Ok(()) => ProducerValidationResult::Valid,
-            Err(e) => ProducerValidationResult::Retry {
+            Ok(()) => Ok(()),
+            Err(e) => Err(ProducerValidationRetry {
                 feedback_reason: work_validation_feedback(&e),
                 max_retries: MAX_WORK_SEMANTIC_VALIDATION_RETRIES,
                 failure_kind: FailureKind::WorkSemanticValidationFailure,
                 failure_reason: format!("work semantic validation failed: {e}"),
-            },
+            }),
         }
     }
+}
+
+fn role_result_event(role: DeliberationRole, result: RoleResult) -> DeliberationEvent {
+    match (role, result) {
+        (DeliberationRole::Producer, RoleResult::Accepted { content }) => {
+            DeliberationEvent::ProducerAccepted {
+                content,
+                artifact_changed: false,
+            }
+        }
+        (DeliberationRole::Producer, RoleResult::Rejected { reason }) => {
+            DeliberationEvent::ProducerRejected { reason }
+        }
+        (DeliberationRole::Producer, RoleResult::Failed { kind, reason }) => {
+            DeliberationEvent::ProducerFailed { kind, reason }
+        }
+        (DeliberationRole::Critic, RoleResult::Accepted { content }) => {
+            DeliberationEvent::CriticAccepted { content }
+        }
+        (DeliberationRole::Critic, RoleResult::Rejected { reason }) => {
+            DeliberationEvent::CriticRejected { reason }
+        }
+        (DeliberationRole::Critic, RoleResult::Failed { kind, reason }) => {
+            DeliberationEvent::CriticFailed { kind, reason }
+        }
+        (DeliberationRole::Referee, RoleResult::Accepted { content }) => {
+            DeliberationEvent::RefereeAccepted { content }
+        }
+        (DeliberationRole::Referee, RoleResult::Rejected { reason }) => {
+            DeliberationEvent::RefereeRejected { reason }
+        }
+        (DeliberationRole::Referee, RoleResult::Failed { kind, reason }) => {
+            DeliberationEvent::RefereeFailed { kind, reason }
+        }
+    }
+}
+
+fn failed_role_event(
+    role: DeliberationRole,
+    kind: FailureKind,
+    reason: String,
+) -> DeliberationEvent {
+    role_result_event(role, RoleResult::Failed { kind, reason })
 }
 
 #[cfg(test)]

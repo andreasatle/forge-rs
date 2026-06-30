@@ -55,8 +55,7 @@ pub struct NodeRunWorkResult {
 
 /// The outcome of running a single scheduler node.
 ///
-/// Maps directly onto [`NodeOutcome`](crate::machines::scheduler::NodeOutcome):
-/// use `From<NodeRunResult> for NodeOutcome` to convert.
+/// Dispatch maps this directly onto the corresponding scheduler event.
 pub enum NodeRunResult {
     /// A plan node completed and produced child nodes to insert.
     PlanAccepted(PlanOutput),

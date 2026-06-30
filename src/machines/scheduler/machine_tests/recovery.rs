@@ -12,15 +12,15 @@ fn retry_creates_replacement_node() {
             graph: running(graph, "W"),
             run_config: RunConfig::default(),
         },
-        SchedulerEvent::NodeReturned {
+        SchedulerEvent::NodeFailed {
             node_id: NodeId("W".to_string()),
-            outcome: NodeOutcome::Failed(NodeFailure {
+            failure: NodeFailure {
                 kind: FailureKind::DeliberationFailure,
                 message: "first try failed".to_string(),
                 recovery: RecoveryAction::Retry {
                     message: "try again".to_string(),
                 },
-            }),
+            },
         },
     );
 
@@ -52,15 +52,12 @@ fn validation_failure_creates_retry_feedback() {
             graph,
         run_config: RunConfig::default(),
         },
-        SchedulerEvent::IntegrationReturned {
-            node_id: NodeId("W".to_string()),
-            outcome: IntegrationOutcome::Failed(IntegrationFailure {
+        SchedulerEvent::IntegrationFailed { node_id: NodeId("W".to_string()), failure: IntegrationFailure {
                 kind: FailureKind::ValidationFailure,
                 message: "validation failed".to_string(),
                 recovery: RecoveryAction::Retry {
-                    message: "validation failed\ncommand: validate main.py\nexit code: 2\nfirst location: main.py:1:1\ndiagnostics:\nmain.py:1:1: invalid syntax\ninstruction: fix the existing file using file tools before accepting".to_string(),
-                },
-            }),
+                    message: "validation failed\ncommand: validate main.py\nexit code: 2\nfirst location: main.py:1:1\ndiagnostics:\nmain.py:1:1: invalid syntax\ninstruction: fix the existing file using file tools before accepting".to_string() },
+            },
         },
     );
 
@@ -115,15 +112,12 @@ fn work_semantic_validation_failure_retries_with_artifact_feedback() {
             graph,
         run_config: RunConfig::default(),
         },
-        SchedulerEvent::NodeReturned {
-            node_id: NodeId("W".to_string()),
-            outcome: NodeOutcome::Failed(NodeFailure {
+        SchedulerEvent::NodeFailed { node_id: NodeId("W".to_string()), failure: NodeFailure {
                 kind: FailureKind::WorkSemanticValidationFailure,
                 message: "work semantic validation failed: accepted work did not produce an artifact update".to_string(),
                 recovery: RecoveryAction::Retry {
-                    message: "Accepted Work results must modify the artifact. Use write_file by default when creating a file or replacing most or all of an existing file. Use replace_text only for small, localized edits after reading the file and providing an exact old string that occurs once; whitespace, indentation, or formatting differences will cause replace_text to fail. If a replace_text attempt could not be validated for a whole-file rewrite, switch to write_file instead of retrying another replace_text.".to_string(),
-                },
-            }),
+                    message: "Accepted Work results must modify the artifact. Use write_file by default when creating a file or replacing most or all of an existing file. Use replace_text only for small, localized edits after reading the file and providing an exact old string that occurs once; whitespace, indentation, or formatting differences will cause replace_text to fail. If a replace_text attempt could not be validated for a whole-file rewrite, switch to write_file instead of retrying another replace_text.".to_string() },
+            },
         },
     );
 
@@ -175,15 +169,12 @@ fn invalid_work_attempt_update_failure_recovers_with_retry() {
             graph,
         run_config: RunConfig::default(),
         },
-        SchedulerEvent::NodeReturned {
-            node_id: NodeId("W".to_string()),
-            outcome: NodeOutcome::Failed(NodeFailure {
+        SchedulerEvent::NodeFailed { node_id: NodeId("W".to_string()), failure: NodeFailure {
                 kind: FailureKind::WorkSemanticValidationFailure,
                 message: "WorkAttempt workspace update could not be validated: replacement target not found".to_string(),
                 recovery: RecoveryAction::Retry {
-                    message: "retryable work semantic validation failure: WorkAttempt workspace update could not be validated. Accepted Work results must modify the artifact in the current WorkAttempt workspace. Use write_file by default when creating a file or replacing most or all of an existing file. Use replace_text only for small, localized edits after reading the file and providing an exact old string that occurs once; whitespace, indentation, or formatting differences will cause replace_text to fail. If a workspace mutation cannot be validated after a failed replace_text, switch to write_file for whole-file rewrites instead of retrying another replace_text.".to_string(),
-                },
-            }),
+                    message: "retryable work semantic validation failure: WorkAttempt workspace update could not be validated. Accepted Work results must modify the artifact in the current WorkAttempt workspace. Use write_file by default when creating a file or replacing most or all of an existing file. Use replace_text only for small, localized edits after reading the file and providing an exact old string that occurs once; whitespace, indentation, or formatting differences will cause replace_text to fail. If a workspace mutation cannot be validated after a failed replace_text, switch to write_file for whole-file rewrites instead of retrying another replace_text.".to_string() },
+            },
         },
     );
 
@@ -225,15 +216,15 @@ fn retry_preserves_depth() {
             graph: running(graph, "W"),
             run_config: RunConfig::default(),
         },
-        SchedulerEvent::NodeReturned {
+        SchedulerEvent::NodeFailed {
             node_id: NodeId("W".to_string()),
-            outcome: NodeOutcome::Failed(NodeFailure {
+            failure: NodeFailure {
                 kind: FailureKind::DeliberationFailure,
                 message: "first try failed".to_string(),
                 recovery: RecoveryAction::Retry {
                     message: "try again".to_string(),
                 },
-            }),
+            },
         },
     );
 
@@ -256,15 +247,15 @@ fn elevate_creates_replacement_node_with_strong_tier() {
             graph: running(graph, "W"),
             run_config: RunConfig::default(),
         },
-        SchedulerEvent::NodeReturned {
+        SchedulerEvent::NodeFailed {
             node_id: NodeId("W".to_string()),
-            outcome: NodeOutcome::Failed(NodeFailure {
+            failure: NodeFailure {
                 kind: FailureKind::DeliberationFailure,
                 message: "needs stronger model".to_string(),
                 recovery: RecoveryAction::ElevateModel {
                     message: "use strong".to_string(),
                 },
-            }),
+            },
         },
     );
 
@@ -293,15 +284,15 @@ fn elevate_preserves_depth() {
             graph: running(graph, "W"),
             run_config: RunConfig::default(),
         },
-        SchedulerEvent::NodeReturned {
+        SchedulerEvent::NodeFailed {
             node_id: NodeId("W".to_string()),
-            outcome: NodeOutcome::Failed(NodeFailure {
+            failure: NodeFailure {
                 kind: FailureKind::DeliberationFailure,
                 message: "needs stronger model".to_string(),
                 recovery: RecoveryAction::ElevateModel {
                     message: "use strong".to_string(),
                 },
-            }),
+            },
         },
     );
 
@@ -353,13 +344,13 @@ fn recovery_exhaustion_fails_scheduler() {
                 graph: running(graph, "W"),
                 run_config: RunConfig::default(),
             },
-            SchedulerEvent::NodeReturned {
+            SchedulerEvent::NodeFailed {
                 node_id: NodeId("W".to_string()),
-                outcome: NodeOutcome::Failed(NodeFailure {
+                failure: NodeFailure {
                     kind: FailureKind::DeliberationFailure,
                     message: "transient error".to_string(),
                     recovery,
-                }),
+                },
             },
         );
 
@@ -412,15 +403,15 @@ fn terminal_failure_cancels_downstream_chain() {
             graph: running(graph, "B"),
             run_config: RunConfig::default(),
         },
-        SchedulerEvent::NodeReturned {
+        SchedulerEvent::NodeFailed {
             node_id: NodeId("B".to_string()),
-            outcome: NodeOutcome::Failed(NodeFailure {
+            failure: NodeFailure {
                 kind: FailureKind::DeliberationFailure,
                 message: "unrecoverable".to_string(),
                 recovery: RecoveryAction::Terminal {
                     message: "fatal error".to_string(),
                 },
-            }),
+            },
         },
     );
 
@@ -463,15 +454,15 @@ fn split_below_attempt_limit_still_creates_plan_node() {
             graph: running(graph, "W"),
             run_config: RunConfig::default(),
         },
-        SchedulerEvent::NodeReturned {
+        SchedulerEvent::NodeFailed {
             node_id: NodeId("W".to_string()),
-            outcome: NodeOutcome::Failed(NodeFailure {
+            failure: NodeFailure {
                 kind: FailureKind::DeliberationFailure,
                 message: "task too complex".to_string(),
                 recovery: RecoveryAction::Split {
                     message: "decompose the work".to_string(),
                 },
-            }),
+            },
         },
     );
 
@@ -525,15 +516,15 @@ fn integration_failure_terminal_cancels_downstream_dependents() {
             graph,
             run_config: RunConfig::default(),
         },
-        SchedulerEvent::IntegrationReturned {
+        SchedulerEvent::IntegrationFailed {
             node_id: NodeId("B".to_string()),
-            outcome: IntegrationOutcome::Failed(IntegrationFailure {
+            failure: IntegrationFailure {
                 kind: FailureKind::IntegrationFailure,
                 message: "integration error".to_string(),
                 recovery: RecoveryAction::Terminal {
                     message: "integration cannot be recovered".to_string(),
                 },
-            }),
+            },
         },
     );
 
@@ -594,13 +585,13 @@ fn integration_failure_exhaustion_fails_scheduler() {
                 graph,
                 run_config: RunConfig::default(),
             },
-            SchedulerEvent::IntegrationReturned {
+            SchedulerEvent::IntegrationFailed {
                 node_id: NodeId("B".to_string()),
-                outcome: IntegrationOutcome::Failed(IntegrationFailure {
+                failure: IntegrationFailure {
                     kind: FailureKind::IntegrationFailure,
                     message: "integration error".to_string(),
                     recovery,
-                }),
+                },
             },
         );
 
@@ -638,15 +629,15 @@ fn single_tier_elevate_falls_back_to_retry() {
                 has_strong_tier: false,
             },
         },
-        SchedulerEvent::NodeReturned {
+        SchedulerEvent::NodeFailed {
             node_id: NodeId("W".to_string()),
-            outcome: NodeOutcome::Failed(NodeFailure {
+            failure: NodeFailure {
                 kind: FailureKind::DeliberationFailure,
                 message: "needs stronger model".to_string(),
                 recovery: RecoveryAction::ElevateModel {
                     message: "use strong".to_string(),
                 },
-            }),
+            },
         },
     );
 
@@ -682,15 +673,15 @@ fn multi_tier_elevate_creates_strong_replacement() {
             graph: running(graph, "W"),
             run_config: RunConfig::default(),
         },
-        SchedulerEvent::NodeReturned {
+        SchedulerEvent::NodeFailed {
             node_id: NodeId("W".to_string()),
-            outcome: NodeOutcome::Failed(NodeFailure {
+            failure: NodeFailure {
                 kind: FailureKind::DeliberationFailure,
                 message: "needs stronger model".to_string(),
                 recovery: RecoveryAction::ElevateModel {
                     message: "use strong".to_string(),
                 },
-            }),
+            },
         },
     );
 
@@ -724,15 +715,15 @@ fn single_tier_elevate_exhausted_gives_clear_terminal_failure() {
                 has_strong_tier: false,
             },
         },
-        SchedulerEvent::NodeReturned {
+        SchedulerEvent::NodeFailed {
             node_id: NodeId("W".to_string()),
-            outcome: NodeOutcome::Failed(NodeFailure {
+            failure: NodeFailure {
                 kind: FailureKind::DeliberationFailure,
                 message: "capability ceiling".to_string(),
                 recovery: RecoveryAction::ElevateModel {
                     message: "escalate model".to_string(),
                 },
-            }),
+            },
         },
     );
 
@@ -768,15 +759,15 @@ fn elevate_at_strong_tier_falls_back_to_retry() {
             graph: running(graph, "W"),
             run_config: RunConfig::default(),
         },
-        SchedulerEvent::NodeReturned {
+        SchedulerEvent::NodeFailed {
             node_id: NodeId("W".to_string()),
-            outcome: NodeOutcome::Failed(NodeFailure {
+            failure: NodeFailure {
                 kind: FailureKind::DeliberationFailure,
                 message: "still failing at strong tier".to_string(),
                 recovery: RecoveryAction::ElevateModel {
                     message: "use even stronger".to_string(),
                 },
-            }),
+            },
         },
     );
 
@@ -812,15 +803,15 @@ fn terminal_failure_does_not_touch_completed_nodes() {
             graph: running(graph, "B"),
             run_config: RunConfig::default(),
         },
-        SchedulerEvent::NodeReturned {
+        SchedulerEvent::NodeFailed {
             node_id: NodeId("B".to_string()),
-            outcome: NodeOutcome::Failed(NodeFailure {
+            failure: NodeFailure {
                 kind: FailureKind::DeliberationFailure,
                 message: "unrecoverable".to_string(),
                 recovery: RecoveryAction::Terminal {
                     message: "fatal error".to_string(),
                 },
-            }),
+            },
         },
     );
 
@@ -838,15 +829,15 @@ fn terminal_failure_does_not_touch_completed_nodes() {
 }
 
 fn validation_retry_event(node_id: &str, diagnostics: &str) -> SchedulerEvent {
-    SchedulerEvent::IntegrationReturned {
+    SchedulerEvent::IntegrationFailed {
         node_id: NodeId(node_id.to_string()),
-        outcome: IntegrationOutcome::Failed(IntegrationFailure {
+        failure: IntegrationFailure {
             kind: FailureKind::ValidationFailure,
             message: "validation failed".to_string(),
             recovery: RecoveryAction::Retry {
                 message: diagnostics.to_string(),
             },
-        }),
+        },
     }
 }
 

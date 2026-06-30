@@ -67,9 +67,8 @@ fn producer_acceptance_runs_validation_then_critic() {
 
     let t = step(
         validation.state,
-        DeliberationEvent::ProducerValidationReturned {
+        DeliberationEvent::ProducerValidationAccepted {
             content: "draft content".to_string(),
-            result: ProducerValidationResult::Valid,
         },
     );
 
@@ -114,9 +113,9 @@ fn producer_validation_retry_runs_producer_with_validation_feedback() {
 
     let t = step(
         validating,
-        DeliberationEvent::ProducerValidationReturned {
+        DeliberationEvent::ProducerValidationRejected {
             content: "draft content".to_string(),
-            result: ProducerValidationResult::Retry {
+            retry: ProducerValidationRetry {
                 feedback_reason: "must be valid JSON".to_string(),
                 max_retries: 2,
                 failure_kind: FailureKind::PlannerValidationFailure,
@@ -161,9 +160,9 @@ fn producer_validation_retry_exhaustion_fails() {
 
     let t = step(
         validating,
-        DeliberationEvent::ProducerValidationReturned {
+        DeliberationEvent::ProducerValidationRejected {
             content: "draft content".to_string(),
-            result: ProducerValidationResult::Retry {
+            retry: ProducerValidationRetry {
                 feedback_reason: "still invalid".to_string(),
                 max_retries: 2,
                 failure_kind: FailureKind::PlannerValidationFailure,
@@ -189,11 +188,8 @@ fn producer_rejection_fails() {
 
     let t = step(
         waiting,
-        DeliberationEvent::RoleReturned {
-            role: DeliberationRole::Producer,
-            result: RoleResult::Rejected {
-                reason: "out of ideas".to_string(),
-            },
+        DeliberationEvent::ProducerRejected {
+            reason: "out of ideas".to_string(),
         },
     );
 
@@ -229,11 +225,8 @@ fn role_mismatch_while_waiting_producer_fails() {
 
     let t = step(
         waiting,
-        DeliberationEvent::RoleReturned {
-            role: DeliberationRole::Critic,
-            result: RoleResult::Accepted {
-                content: "unexpected".to_string(),
-            },
+        DeliberationEvent::CriticAccepted {
+            content: "unexpected".to_string(),
         },
     );
 
@@ -260,12 +253,9 @@ fn producer_failed_is_terminal() {
 
     let t = step(
         waiting,
-        DeliberationEvent::RoleReturned {
-            role: DeliberationRole::Producer,
-            result: RoleResult::Failed {
-                kind: FailureKind::ProviderFailure,
-                reason: "timeout".to_string(),
-            },
+        DeliberationEvent::ProducerFailed {
+            kind: FailureKind::ProviderFailure,
+            reason: "timeout".to_string(),
         },
     );
 

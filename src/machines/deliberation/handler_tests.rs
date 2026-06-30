@@ -5,9 +5,7 @@ use std::sync::Arc;
 use super::*;
 use crate::engine::{Machine, Transition, run_machine, run_machine_with_telemetry};
 use crate::machines::deliberation::effect::DeliberationEffect;
-use crate::machines::deliberation::event::{
-    DeliberationEvent, ProducerValidationResult, RoleResult,
-};
+use crate::machines::deliberation::event::{DeliberationEvent, ProducerValidationRetry};
 use crate::machines::deliberation::machine::DeliberationMachine;
 use crate::machines::deliberation::state::DeliberationState;
 use crate::machines::deliberation::types::{DeliberationFailureReason, DeliberationRequest};
@@ -17,6 +15,7 @@ use crate::machines::deliberation::types::{
 use crate::machines::scheduler::{FailureKind, NodeKind, TestPlanContext};
 use crate::providers::types::{ProviderError, ProviderResponse};
 use crate::providers::{ProviderClient, ProviderRequest};
+use crate::roles::runner::RoleResult;
 use crate::roles::runner::{RoleRequest, RoleRunOutput, RoleRunner};
 use crate::telemetry::{NoopTelemetry, TelemetrySink};
 
@@ -483,10 +482,7 @@ fn valid_single_task_plan_passes_semantic_validation() {
     assert!(
         matches!(
             validation,
-            DeliberationEvent::ProducerValidationReturned {
-                result: ProducerValidationResult::Valid,
-                ..
-            }
+            DeliberationEvent::ProducerValidationAccepted { .. }
         ),
         "valid plan must produce Valid validation; got {validation:?}"
     );
@@ -518,8 +514,8 @@ fn empty_plan_triggers_revision_feedback() {
     );
     assert!(matches!(event, DeliberationEvent::ProducerAccepted { .. }));
     let validation = handler.handle_effect(validate_producer_effect(EMPTY_PLAN, false));
-    let DeliberationEvent::ProducerValidationReturned {
-        result: ProducerValidationResult::Retry {
+    let DeliberationEvent::ProducerValidationRejected {
+        retry: ProducerValidationRetry {
             feedback_reason, ..
         },
         ..
@@ -563,8 +559,8 @@ fn unparseable_plan_triggers_revision_feedback() {
         "Just do the work in one step.",
         false,
     ));
-    let DeliberationEvent::ProducerValidationReturned {
-        result: ProducerValidationResult::Retry {
+    let DeliberationEvent::ProducerValidationRejected {
+        retry: ProducerValidationRetry {
             feedback_reason, ..
         },
         ..
@@ -651,8 +647,8 @@ fn repeated_empty_plans_exhaust_retries() {
     assert!(
         matches!(
             validation,
-            DeliberationEvent::ProducerValidationReturned {
-                result: ProducerValidationResult::Retry {
+            DeliberationEvent::ProducerValidationRejected {
+                retry: ProducerValidationRetry {
                     failure_kind: FailureKind::PlannerValidationFailure,
                     ..
                 },
@@ -744,10 +740,7 @@ fn accepted_work_with_one_file_change_passes_semantic_validation() {
     assert!(
         matches!(
             validation,
-            DeliberationEvent::ProducerValidationReturned {
-                result: ProducerValidationResult::Valid,
-                ..
-            }
+            DeliberationEvent::ProducerValidationAccepted { .. }
         ),
         "valid work must produce Valid validation; got {validation:?}"
     );
@@ -775,8 +768,8 @@ fn accepted_work_with_no_artifact_mutation_triggers_revision_feedback() {
     assert!(matches!(event, DeliberationEvent::ProducerAccepted { .. }));
     let validation =
         handler.handle_effect(validate_producer_effect("summary without changes", false));
-    let DeliberationEvent::ProducerValidationReturned {
-        result: ProducerValidationResult::Retry {
+    let DeliberationEvent::ProducerValidationRejected {
+        retry: ProducerValidationRetry {
             feedback_reason, ..
         },
         ..
@@ -849,8 +842,8 @@ fn repeated_empty_work_exhausts_semantic_validation_retries() {
     assert!(
         matches!(
             validation,
-            DeliberationEvent::ProducerValidationReturned {
-                result: ProducerValidationResult::Retry {
+            DeliberationEvent::ProducerValidationRejected {
+                retry: ProducerValidationRetry {
                     failure_kind: FailureKind::WorkSemanticValidationFailure,
                     ..
                 },

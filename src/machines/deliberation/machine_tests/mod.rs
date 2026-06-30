@@ -1,5 +1,5 @@
 use super::super::effect::DeliberationEffect;
-use super::super::event::{DeliberationEvent, ProducerValidationResult, RoleResult};
+use super::super::event::{DeliberationEvent, ProducerValidationRetry};
 use super::super::state::DeliberationState;
 use super::super::types::{
     CriticAdvisory, DeliberationRole, DeliberationTerminalOutput, RevisionFeedback,
@@ -55,9 +55,8 @@ fn producer_accepts(state: DeliberationState, content: &str) -> DeliberationStat
     ));
     step(
         waiting_validator.state,
-        DeliberationEvent::ProducerValidationReturned {
+        DeliberationEvent::ProducerValidationAccepted {
             content: content.to_string(),
-            result: ProducerValidationResult::Valid,
         },
     )
     .state

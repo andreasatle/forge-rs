@@ -6,8 +6,7 @@ use std::rc::Rc;
 
 use crate::artifacts::{Artifact, Workspace, create_temporary_workspace, git_command, integrate};
 use crate::machines::scheduler::event::{
-    FailureKind, IntegrationFailure, IntegrationOutcome, IntegrationOutput, RecoveryAction,
-    SchedulerEvent, WorkOutput,
+    FailureKind, IntegrationFailure, IntegrationOutput, RecoveryAction, SchedulerEvent, WorkOutput,
 };
 use crate::machines::scheduler::graph::NodeId;
 use crate::node_runner::WorkAttempt;
@@ -137,9 +136,9 @@ impl IntegrationService {
             .remove(&(node_id.clone(), attempt));
         if let Some(error) = failed_attempt {
             self.discard_work_attempt_with_reason(&node_id, attempt, error.clone());
-            return SchedulerEvent::IntegrationReturned {
+            return SchedulerEvent::IntegrationFailed {
                 node_id,
-                outcome: integration_failure(error),
+                failure: integration_failure(error),
             };
         }
 
@@ -152,15 +151,15 @@ impl IntegrationService {
         if let (Some(workspace), Some(artifact)) = (pending_workspace, artifact_snapshot) {
             let changed_files = changed_paths(&workspace.borrow());
             if changed_files.is_empty() {
-                return SchedulerEvent::IntegrationReturned {
+                return SchedulerEvent::IntegrationFailed {
                     node_id,
-                    outcome: IntegrationOutcome::Failed(IntegrationFailure {
+                    failure: IntegrationFailure {
                         kind: FailureKind::WorkSemanticValidationFailure,
                         message: no_diff_work_message(),
                         recovery: RecoveryAction::Retry {
                             message: no_diff_work_message(),
                         },
-                    }),
+                    },
                 };
             }
             self.telemetry.record(TelemetryRecord::new(
@@ -194,9 +193,9 @@ impl IntegrationService {
                             &workspace.borrow(),
                             message.clone(),
                         );
-                        return SchedulerEvent::IntegrationReturned {
+                        return SchedulerEvent::IntegrationFailed {
                             node_id,
-                            outcome: integration_failure(message),
+                            failure: integration_failure(message),
                         };
                     }
                 }
@@ -232,24 +231,24 @@ impl IntegrationService {
                     &workspace.borrow(),
                     diagnostic_message.clone(),
                 );
-                return SchedulerEvent::IntegrationReturned {
+                return SchedulerEvent::IntegrationFailed {
                     node_id,
-                    outcome: IntegrationOutcome::Failed(IntegrationFailure {
+                    failure: IntegrationFailure {
                         kind: FailureKind::ValidationFailure,
                         message: diagnostic_message.clone(),
                         recovery: RecoveryAction::Retry {
                             message: diagnostic_message,
                         },
-                    }),
+                    },
                 };
             }
         }
 
-        SchedulerEvent::IntegrationReturned {
+        SchedulerEvent::IntegrationSucceeded {
             node_id,
-            outcome: IntegrationOutcome::Succeeded(IntegrationOutput {
+            output: IntegrationOutput {
                 summary: work.summary,
-            }),
+            },
         }
     }
 
@@ -376,12 +375,12 @@ fn run_validation(
     }
 }
 
-fn integration_failure(message: String) -> IntegrationOutcome {
-    IntegrationOutcome::Failed(IntegrationFailure {
+fn integration_failure(message: String) -> IntegrationFailure {
+    IntegrationFailure {
         kind: FailureKind::IntegrationFailure,
         message: message.clone(),
         recovery: RecoveryAction::Terminal { message },
-    })
+    }
 }
 
 fn no_diff_work_message() -> String {

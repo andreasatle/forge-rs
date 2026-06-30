@@ -9,11 +9,8 @@ fn critic_acceptance_runs_referee() {
 
     let t = step(
         after_producer,
-        DeliberationEvent::RoleReturned {
-            role: DeliberationRole::Critic,
-            result: RoleResult::Accepted {
-                content: "looks good".to_string(),
-            },
+        DeliberationEvent::CriticAccepted {
+            content: "looks good".to_string(),
         },
     );
 
@@ -56,11 +53,8 @@ fn critic_rejection_routes_to_referee() {
 
     let t = step(
         after_producer,
-        DeliberationEvent::RoleReturned {
-            role: DeliberationRole::Critic,
-            result: RoleResult::Rejected {
-                reason: "too short".to_string(),
-            },
+        DeliberationEvent::CriticRejected {
+            reason: "too short".to_string(),
         },
     );
 
@@ -102,11 +96,8 @@ fn critic_rejection_stores_typed_rejected_advisory() {
 
     let t = step(
         after_producer,
-        DeliberationEvent::RoleReturned {
-            role: DeliberationRole::Critic,
-            result: RoleResult::Rejected {
-                reason: "the haiku is not following the 5-7-5 syllable structure".to_string(),
-            },
+        DeliberationEvent::CriticRejected {
+            reason: "the haiku is not following the 5-7-5 syllable structure".to_string(),
         },
     );
 
@@ -135,11 +126,8 @@ fn critic_rejection_runs_referee_instead_of_failing() {
 
     let t = step(
         after_producer,
-        DeliberationEvent::RoleReturned {
-            role: DeliberationRole::Critic,
-            result: RoleResult::Rejected {
-                reason: "not good enough".to_string(),
-            },
+        DeliberationEvent::CriticRejected {
+            reason: "not good enough".to_string(),
         },
     );
 
@@ -165,11 +153,9 @@ fn role_mismatch_while_waiting_critic_fails() {
 
     let t = step(
         after_producer,
-        DeliberationEvent::RoleReturned {
-            role: DeliberationRole::Producer,
-            result: RoleResult::Accepted {
-                content: "wrong role".to_string(),
-            },
+        DeliberationEvent::ProducerAccepted {
+            content: "wrong role".to_string(),
+            artifact_changed: false,
         },
     );
 
@@ -199,12 +185,9 @@ fn critic_failed_is_terminal() {
 
     let t = step(
         after_producer,
-        DeliberationEvent::RoleReturned {
-            role: DeliberationRole::Critic,
-            result: RoleResult::Failed {
-                kind: FailureKind::ProviderFailure,
-                reason: "provider unavailable".to_string(),
-            },
+        DeliberationEvent::CriticFailed {
+            kind: FailureKind::ProviderFailure,
+            reason: "provider unavailable".to_string(),
         },
     );
 

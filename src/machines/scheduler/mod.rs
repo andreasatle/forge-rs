@@ -8,7 +8,7 @@
 //!
 //! - `state.rs` — `SchedulerState`: the scheduler machine phase enum
 //! - `graph.rs` — `RunGraph`, `Node`, `NodeId`, and all node/graph descriptor types
-//! - `event.rs` — `SchedulerEvent`, `NodeOutcome`, `RecoveryAction`, and outcome payloads
+//! - `event.rs` — `SchedulerEvent`, `RecoveryAction`, and event payloads
 //! - `effect.rs` — `SchedulerEffect` (commands emitted by transitions)
 //! - `machine.rs` — `SchedulerMachine`, `SchedulerOutput`, `RecoverySummary`, graph helpers, and the `Machine` implementation
 //!
@@ -22,7 +22,7 @@
 //!
 //! - A node runs only when every node it depends on is `Completed`.
 //! - `WorkAccepted` means work was produced; the node is not `Completed` until
-//!   `IntegrationReturned(Succeeded)` arrives.
+//!   `IntegrationSucceeded` arrives.
 //! - Failed nodes are permanent records; recovery creates replacement nodes.
 //! - Retry preserves the same objective and model tier; attempt count increases.
 //! - ElevateModel preserves the same objective; model tier upgrades to `Strong`.
@@ -53,8 +53,8 @@ mod validation;
 pub use config::RunConfig;
 pub use effect::SchedulerEffect;
 pub use event::{
-    IntegrationFailure, IntegrationOutcome, IntegrationOutput, NodeFailure, NodeOutcome,
-    NodeRequest, PlanOutput, RecoveryAction, SchedulerEvent, WorkOutput,
+    IntegrationFailure, IntegrationOutput, NodeFailure, NodeRequest, PlanOutput, RecoveryAction,
+    SchedulerEvent, WorkOutput,
 };
 pub use failure::{ExhaustedAction, FailureKind, FailureReason};
 pub use graph::{

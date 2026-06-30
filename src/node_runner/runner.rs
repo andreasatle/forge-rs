@@ -1,8 +1,7 @@
 //! The NodeRunner trait and the static fake implementation.
 
 use crate::machines::scheduler::{
-    FailureKind, NodeFailure, NodeId, NodeKind, NodeOutcome, NodeRequest, PlanOutput,
-    RecoveryAction, WorkOutput,
+    FailureKind, NodeFailure, NodeId, NodeKind, NodeRequest, PlanOutput, RecoveryAction, WorkOutput,
 };
 use crate::telemetry::TelemetrySink;
 
@@ -55,16 +54,6 @@ impl NodeRunner for StaticNodeRunner {
                     summary: format!("completed: {}", request.objective),
                 },
             }),
-        }
-    }
-}
-
-impl From<NodeRunResult> for NodeOutcome {
-    fn from(result: NodeRunResult) -> Self {
-        match result {
-            NodeRunResult::PlanAccepted(plan) => NodeOutcome::PlanAccepted(plan),
-            NodeRunResult::WorkAccepted(work_result) => NodeOutcome::WorkAccepted(work_result.work),
-            NodeRunResult::Failed(failure) => NodeOutcome::Failed(failure),
         }
     }
 }
@@ -170,36 +159,5 @@ mod tests {
             unreachable!()
         };
         assert!(matches!(failure.recovery, RecoveryAction::Terminal { .. }));
-    }
-
-    #[test]
-    fn node_run_result_can_convert_to_node_outcome() {
-        let plan_result = NodeRunResult::PlanAccepted(PlanOutput { children: vec![] });
-        assert!(matches!(
-            NodeOutcome::from(plan_result),
-            NodeOutcome::PlanAccepted(_)
-        ));
-
-        let work_result = NodeRunResult::WorkAccepted(NodeRunWorkResult {
-            work: WorkOutput {
-                summary: "done".to_string(),
-            },
-        });
-        assert!(matches!(
-            NodeOutcome::from(work_result),
-            NodeOutcome::WorkAccepted(_)
-        ));
-
-        let fail_result = NodeRunResult::Failed(NodeFailure {
-            kind: FailureKind::DeliberationFailure,
-            message: "bad".to_string(),
-            recovery: RecoveryAction::Terminal {
-                message: "stop".to_string(),
-            },
-        });
-        assert!(matches!(
-            NodeOutcome::from(fail_result),
-            NodeOutcome::Failed(_)
-        ));
     }
 }

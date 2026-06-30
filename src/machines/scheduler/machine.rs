@@ -7,9 +7,7 @@
 use crate::engine::Transition;
 
 use super::effect::SchedulerEffect;
-use super::event::{
-    IntegrationFailure, IntegrationOutcome, NodeFailure, NodeOutcome::*, SchedulerEvent,
-};
+use super::event::{IntegrationFailure, NodeFailure, SchedulerEvent};
 use super::graph::{ModelTier, Node, NodeId, NodeKind, NodeOrigin, NodeStatus, RunGraph};
 use super::state::{FailureReason, RunConfig, RunRequest, SchedulerState};
 use super::{graph, recovery};
@@ -257,8 +255,11 @@ impl SchedulerMachine {
             // a node that was never dispatched.
             (
                 SchedulerState::Waiting { graph, run_config },
-                SchedulerEvent::NodeReturned { node_id, outcome },
+                event @ (SchedulerEvent::PlanAccepted { .. }
+                | SchedulerEvent::WorkAccepted { .. }
+                | SchedulerEvent::NodeFailed { .. }),
             ) => {
+                let node_id = node_event_id(&event).clone();
                 let active_node = match graph::active_node(&graph) {
                     Ok(node) => node.id.clone(),
                     Err(detail) => {
@@ -290,8 +291,7 @@ impl SchedulerMachine {
 
                 // Validate that the outcome is compatible with the node's kind.
                 let node_kind = graph::get_node(&graph, &node_id).kind.clone();
-                if let Some(detail) =
-                    graph::invalid_node_outcome_reason(&node_id, &node_kind, &outcome)
+                if let Some(detail) = graph::invalid_node_event_reason(&node_id, &node_kind, &event)
                 {
                     return Transition {
                         state: SchedulerState::Failed {
@@ -302,7 +302,7 @@ impl SchedulerMachine {
                     };
                 }
 
-                match outcome {
+                match event {
                     // A successful planner expands the graph: the plan node is marked
                     // Completed and its requested children are inserted as new Pending
                     // nodes. The scheduler then re-scans for ready nodes.
@@ -310,7 +310,7 @@ impl SchedulerMachine {
                     // Validation runs first, before any mutation, so an invalid plan
                     // does not insert children. A plan-depth violation additionally
                     // marks the original plan Failed as the circuit breaker source.
-                    PlanAccepted(plan) => {
+                    SchedulerEvent::PlanAccepted { plan, .. } => {
                         let parent_depth = graph::get_node(&graph, &node_id).plan_depth;
                         match graph::validate_plan_dependencies(&graph, &plan.children) {
                             Err(detail) => Transition {
@@ -358,7 +358,7 @@ impl SchedulerMachine {
                     // Work accepted: the node moves to Integrating and an IntegrateWork
                     // effect is emitted. The node is not yet dependency-satisfying; that
                     // only happens when IntegrationReturned(Succeeded) arrives.
-                    WorkAccepted(work) => {
+                    SchedulerEvent::WorkAccepted { work, .. } => {
                         let (target_files, validation_plan, attempt) = {
                             let node = graph::get_node(&graph, &node_id);
                             (
@@ -380,13 +380,18 @@ impl SchedulerMachine {
                         }
                     }
 
-                    Failed(NodeFailure {
-                        kind,
-                        message,
-                        recovery,
-                    }) => recovery::route_recovery(
+                    SchedulerEvent::NodeFailed {
+                        failure:
+                            NodeFailure {
+                                kind,
+                                message,
+                                recovery,
+                            },
+                        ..
+                    } => recovery::route_recovery(
                         run_config, graph, &node_id, kind, message, recovery,
                     ),
+                    _ => unreachable!("node event group matched above"),
                 }
             }
 
@@ -395,8 +400,10 @@ impl SchedulerMachine {
             // machinery as execution failure.
             (
                 SchedulerState::Waiting { graph, run_config },
-                SchedulerEvent::IntegrationReturned { node_id, outcome },
+                event @ (SchedulerEvent::IntegrationSucceeded { .. }
+                | SchedulerEvent::IntegrationFailed { .. }),
             ) => {
+                let node_id = integration_event_id(&event).clone();
                 let active_node = match graph::active_node(&graph) {
                     Ok(node) => node.id.clone(),
                     Err(detail) => {
@@ -429,8 +436,11 @@ impl SchedulerMachine {
                     };
                 }
 
-                match outcome {
-                    IntegrationOutcome::Succeeded(integration_output) => {
+                match event {
+                    SchedulerEvent::IntegrationSucceeded {
+                        output: integration_output,
+                        ..
+                    } => {
                         let graph = graph::mark_node_completed_with_summary(
                             graph,
                             &node_id,
@@ -441,33 +451,43 @@ impl SchedulerMachine {
                             effects: vec![],
                         }
                     }
-                    IntegrationOutcome::Failed(IntegrationFailure {
-                        kind,
-                        message,
-                        recovery,
-                    }) => recovery::route_recovery(
+                    SchedulerEvent::IntegrationFailed {
+                        failure:
+                            IntegrationFailure {
+                                kind,
+                                message,
+                                recovery,
+                            },
+                        ..
+                    } => recovery::route_recovery(
                         run_config, graph, &node_id, kind, message, recovery,
                     ),
+                    _ => unreachable!("integration event group matched above"),
                 }
             }
 
-            (SchedulerState::Active { graph, .. }, SchedulerEvent::NodeReturned { .. }) => {
-                recovery::failed_transition(
-                    graph,
-                    FailureReason::ProtocolViolation(
-                        "state Active cannot consume NodeReturned".to_string(),
-                    ),
-                )
-            }
+            (
+                SchedulerState::Active { graph, .. },
+                SchedulerEvent::PlanAccepted { .. }
+                | SchedulerEvent::WorkAccepted { .. }
+                | SchedulerEvent::NodeFailed { .. },
+            ) => recovery::failed_transition(
+                graph,
+                FailureReason::ProtocolViolation(
+                    "state Active cannot consume NodeReturned".to_string(),
+                ),
+            ),
 
-            (SchedulerState::Active { graph, .. }, SchedulerEvent::IntegrationReturned { .. }) => {
-                recovery::failed_transition(
-                    graph,
-                    FailureReason::ProtocolViolation(
-                        "state Active cannot consume IntegrationReturned".to_string(),
-                    ),
-                )
-            }
+            (
+                SchedulerState::Active { graph, .. },
+                SchedulerEvent::IntegrationSucceeded { .. }
+                | SchedulerEvent::IntegrationFailed { .. },
+            ) => recovery::failed_transition(
+                graph,
+                FailureReason::ProtocolViolation(
+                    "state Active cannot consume IntegrationReturned".to_string(),
+                ),
+            ),
 
             (SchedulerState::Waiting { graph, .. }, SchedulerEvent::Start) => {
                 recovery::failed_transition(
@@ -506,6 +526,23 @@ impl SchedulerMachine {
             }),
             _ => None,
         }
+    }
+}
+
+fn node_event_id(event: &SchedulerEvent) -> &NodeId {
+    match event {
+        SchedulerEvent::PlanAccepted { node_id, .. }
+        | SchedulerEvent::WorkAccepted { node_id, .. }
+        | SchedulerEvent::NodeFailed { node_id, .. } => node_id,
+        _ => unreachable!("not a node result event"),
+    }
+}
+
+fn integration_event_id(event: &SchedulerEvent) -> &NodeId {
+    match event {
+        SchedulerEvent::IntegrationSucceeded { node_id, .. }
+        | SchedulerEvent::IntegrationFailed { node_id, .. } => node_id,
+        _ => unreachable!("not an integration result event"),
     }
 }
 

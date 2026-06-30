@@ -524,13 +524,7 @@ fn integrate_work_commits_pending_workspace_mutation() {
     });
 
     assert!(
-        matches!(
-            event,
-            SchedulerEvent::IntegrationReturned {
-                outcome: IntegrationOutcome::Succeeded(_),
-                ..
-            }
-        ),
+        matches!(event, SchedulerEvent::IntegrationSucceeded { .. }),
         "IntegrateWork must return Succeeded; got: {event:#?}"
     );
 
@@ -632,11 +626,11 @@ fn work_node_without_update_fails_without_commit() {
     assert!(
         matches!(
             event,
-            SchedulerEvent::IntegrationReturned {
-                outcome: IntegrationOutcome::Failed(IntegrationFailure {
+            SchedulerEvent::IntegrationFailed {
+                failure: IntegrationFailure {
                     kind: FailureKind::WorkSemanticValidationFailure,
                     ..
-                }),
+                },
                 ..
             }
         ),

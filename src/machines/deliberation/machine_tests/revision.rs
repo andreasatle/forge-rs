@@ -20,11 +20,8 @@ fn referee_rejection_after_critic_rejection_loops_when_revisions_remain() {
     // Critic rejects → routes to Referee.
     let after_critic_rejection = step(
         after_producer,
-        DeliberationEvent::RoleReturned {
-            role: DeliberationRole::Critic,
-            result: RoleResult::Rejected {
-                reason: "too short".to_string(),
-            },
+        DeliberationEvent::CriticRejected {
+            reason: "too short".to_string(),
         },
     )
     .state;
@@ -32,11 +29,8 @@ fn referee_rejection_after_critic_rejection_loops_when_revisions_remain() {
     // Referee also rejects — should loop back to Producer.
     let t = step(
         after_critic_rejection,
-        DeliberationEvent::RoleReturned {
-            role: DeliberationRole::Referee,
-            result: RoleResult::Rejected {
-                reason: "still not acceptable".to_string(),
-            },
+        DeliberationEvent::RefereeRejected {
+            reason: "still not acceptable".to_string(),
         },
     );
 
@@ -76,11 +70,8 @@ fn referee_rejection_after_critic_rejection_exhausts_budget_when_no_revisions_re
     // Critic rejects → routes to Referee.
     let after_critic_rejection = step(
         after_producer,
-        DeliberationEvent::RoleReturned {
-            role: DeliberationRole::Critic,
-            result: RoleResult::Rejected {
-                reason: "too short".to_string(),
-            },
+        DeliberationEvent::CriticRejected {
+            reason: "too short".to_string(),
         },
     )
     .state;
@@ -88,11 +79,8 @@ fn referee_rejection_after_critic_rejection_exhausts_budget_when_no_revisions_re
     // Referee rejects — no revisions remain → fail.
     let t = step(
         after_critic_rejection,
-        DeliberationEvent::RoleReturned {
-            role: DeliberationRole::Referee,
-            result: RoleResult::Rejected {
-                reason: "still not acceptable".to_string(),
-            },
+        DeliberationEvent::RefereeRejected {
+            reason: "still not acceptable".to_string(),
         },
     );
 
@@ -137,11 +125,8 @@ fn referee_rejection_loops_to_producer_with_feedback() {
 
     let t = step(
         waiting_referee,
-        DeliberationEvent::RoleReturned {
-            role: DeliberationRole::Referee,
-            result: RoleResult::Rejected {
-                reason: "needs changes".to_string(),
-            },
+        DeliberationEvent::RefereeRejected {
+            reason: "needs changes".to_string(),
         },
     );
 
@@ -195,11 +180,8 @@ fn referee_rejection_exhausts_revision_limit() {
 
     let t = step(
         waiting_referee,
-        DeliberationEvent::RoleReturned {
-            role: DeliberationRole::Referee,
-            result: RoleResult::Rejected {
-                reason: "still not good enough".to_string(),
-            },
+        DeliberationEvent::RefereeRejected {
+            reason: "still not good enough".to_string(),
         },
     );
 
@@ -245,11 +227,8 @@ fn max_revisions_zero_fails_on_first_referee_rejection() {
 
     let t = step(
         waiting_referee,
-        DeliberationEvent::RoleReturned {
-            role: DeliberationRole::Referee,
-            result: RoleResult::Rejected {
-                reason: "not good".to_string(),
-            },
+        DeliberationEvent::RefereeRejected {
+            reason: "not good".to_string(),
         },
     );
 
@@ -323,11 +302,8 @@ fn revision_then_acceptance_completes_with_revised_producer_content() {
                 DeliberationEffect::RunRole {
                     role: DeliberationRole::Critic,
                     ..
-                } => DeliberationEvent::RoleReturned {
-                    role: DeliberationRole::Critic,
-                    result: RoleResult::Accepted {
-                        content: "looks fine".to_string(),
-                    },
+                } => DeliberationEvent::CriticAccepted {
+                    content: "looks fine".to_string(),
                 },
                 DeliberationEffect::RunRole {
                     role: DeliberationRole::Referee,
@@ -335,18 +311,12 @@ fn revision_then_acceptance_completes_with_revised_producer_content() {
                     ..
                 } => {
                     if pc == "draft v1" {
-                        DeliberationEvent::RoleReturned {
-                            role: DeliberationRole::Referee,
-                            result: RoleResult::Rejected {
-                                reason: "needs changes".to_string(),
-                            },
+                        DeliberationEvent::RefereeRejected {
+                            reason: "needs changes".to_string(),
                         }
                     } else {
-                        DeliberationEvent::RoleReturned {
-                            role: DeliberationRole::Referee,
-                            result: RoleResult::Accepted {
-                                content: "approved".to_string(),
-                            },
+                        DeliberationEvent::RefereeAccepted {
+                            content: "approved".to_string(),
                         }
                     }
                 }
@@ -354,10 +324,7 @@ fn revision_then_acceptance_completes_with_revised_producer_content() {
                     panic!("unexpected RunRole variant")
                 }
                 DeliberationEffect::ValidateProducer { content, .. } => {
-                    DeliberationEvent::ProducerValidationReturned {
-                        content,
-                        result: ProducerValidationResult::Valid,
-                    }
+                    DeliberationEvent::ProducerValidationAccepted { content }
                 }
             }
         }

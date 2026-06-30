@@ -16,10 +16,9 @@ fn run_node_effect_uses_node_runner() {
         retry_feedback: None,
     };
     let event = h.handle_effect(effect);
-    let SchedulerEvent::NodeReturned { outcome, .. } = event else {
-        panic!("expected NodeReturned, got {event:#?}");
+    let SchedulerEvent::WorkAccepted { .. } = event else {
+        panic!("expected WorkAccepted, got {event:#?}");
     };
-    assert!(matches!(outcome, NodeOutcome::WorkAccepted(_)));
 }
 
 #[test]

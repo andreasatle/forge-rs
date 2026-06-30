@@ -36,13 +36,7 @@ fn validation_pass_allows_commit() {
     });
 
     assert!(
-        matches!(
-            event,
-            SchedulerEvent::IntegrationReturned {
-                outcome: IntegrationOutcome::Succeeded(_),
-                ..
-            }
-        ),
+        matches!(event, SchedulerEvent::IntegrationSucceeded { .. }),
         "AlwaysPassValidator must allow integration; got: {event:#?}"
     );
 
@@ -88,13 +82,7 @@ fn validation_failure_blocks_commit() {
     });
 
     assert!(
-        matches!(
-            event,
-            SchedulerEvent::IntegrationReturned {
-                outcome: IntegrationOutcome::Failed(_),
-                ..
-            }
-        ),
+        matches!(event, SchedulerEvent::IntegrationFailed { .. }),
         "failing validator must block integration; got: {event:#?}"
     );
 
@@ -367,11 +355,11 @@ fn no_diff_fails_before_running_validator() {
     assert!(
         matches!(
             event,
-            SchedulerEvent::IntegrationReturned {
-                outcome: IntegrationOutcome::Failed(IntegrationFailure {
+            SchedulerEvent::IntegrationFailed {
+                failure: IntegrationFailure {
                     kind: FailureKind::WorkSemanticValidationFailure,
                     ..
-                }),
+                },
                 ..
             }
         ),
@@ -531,14 +519,8 @@ fn validation_passed_true_even_when_integration_conflicts() {
     });
 
     assert!(
-        matches!(
-            event,
-            SchedulerEvent::IntegrationReturned {
-                outcome: IntegrationOutcome::Failed(_),
-                ..
-            }
-        ),
-        "CAS conflict must produce IntegrationOutcome::Failed; got: {event:#?}"
+        matches!(event, SchedulerEvent::IntegrationFailed { .. }),
+        "CAS conflict must produce IntegrationFailed; got: {event:#?}"
     );
     assert_eq!(
         h.validation_passed(),
@@ -641,13 +623,7 @@ fn timeout_blocks_commit() {
     });
 
     assert!(
-        matches!(
-            event,
-            SchedulerEvent::IntegrationReturned {
-                outcome: IntegrationOutcome::Failed(_),
-                ..
-            }
-        ),
+        matches!(event, SchedulerEvent::IntegrationFailed { .. }),
         "timed-out validator must block integration; got: {event:#?}"
     );
 

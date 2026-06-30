@@ -68,14 +68,8 @@ fn scheduler_handler_maps_integration_error_to_failed_outcome() {
     });
 
     assert!(
-        matches!(
-            event,
-            SchedulerEvent::IntegrationReturned {
-                outcome: IntegrationOutcome::Failed(_),
-                ..
-            }
-        ),
-        "integrate() error must map to IntegrationOutcome::Failed; got: {event:#?}"
+        matches!(event, SchedulerEvent::IntegrationFailed { .. }),
+        "integrate() error must map to IntegrationFailed; got: {event:#?}"
     );
 
     // Artifact commit must remain unchanged on integration failure.
@@ -127,11 +121,8 @@ fn scheduler_handler_maps_integration_conflict_to_failed_outcome() {
         validation_plan: None,
     });
 
-    let IntegrationOutcome::Failed(failure) = (match &event {
-        SchedulerEvent::IntegrationReturned { outcome, .. } => outcome,
-        other => panic!("expected IntegrationReturned, got: {other:#?}"),
-    }) else {
-        panic!("expected IntegrationOutcome::Failed, got: {event:#?}");
+    let SchedulerEvent::IntegrationFailed { failure, .. } = &event else {
+        panic!("expected IntegrationFailed, got: {event:#?}");
     };
 
     assert!(

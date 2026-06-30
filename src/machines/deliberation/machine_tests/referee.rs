@@ -7,22 +7,16 @@ fn referee_acceptance_completes_with_producer_content() {
             step(ready("write a poem"), DeliberationEvent::Start).state,
             "draft content",
         ),
-        DeliberationEvent::RoleReturned {
-            role: DeliberationRole::Critic,
-            result: RoleResult::Accepted {
-                content: "looks good".to_string(),
-            },
+        DeliberationEvent::CriticAccepted {
+            content: "looks good".to_string(),
         },
     )
     .state;
 
     let t = step(
         after_critic,
-        DeliberationEvent::RoleReturned {
-            role: DeliberationRole::Referee,
-            result: RoleResult::Accepted {
-                content: "referee notes (ignored)".to_string(),
-            },
+        DeliberationEvent::RefereeAccepted {
+            content: "referee notes (ignored)".to_string(),
         },
     );
 
@@ -55,22 +49,16 @@ fn referee_rejection_fails_when_no_revisions_allowed() {
             step(ready("write a poem"), DeliberationEvent::Start).state,
             "draft content",
         ),
-        DeliberationEvent::RoleReturned {
-            role: DeliberationRole::Critic,
-            result: RoleResult::Accepted {
-                content: "looks good".to_string(),
-            },
+        DeliberationEvent::CriticAccepted {
+            content: "looks good".to_string(),
         },
     )
     .state;
 
     let t = step(
         after_critic,
-        DeliberationEvent::RoleReturned {
-            role: DeliberationRole::Referee,
-            result: RoleResult::Rejected {
-                reason: "not acceptable".to_string(),
-            },
+        DeliberationEvent::RefereeRejected {
+            reason: "not acceptable".to_string(),
         },
     );
 
@@ -114,16 +102,16 @@ fn role_mismatch_while_waiting_referee_fails() {
         feedback: vec![],
     };
 
-    for wrong_role in [DeliberationRole::Producer, DeliberationRole::Critic] {
-        let t = step(
-            waiting_referee.clone(),
-            DeliberationEvent::RoleReturned {
-                role: wrong_role,
-                result: RoleResult::Accepted {
-                    content: "unexpected".to_string(),
-                },
-            },
-        );
+    for wrong_event in [
+        DeliberationEvent::ProducerAccepted {
+            content: "unexpected".to_string(),
+            artifact_changed: false,
+        },
+        DeliberationEvent::CriticAccepted {
+            content: "unexpected".to_string(),
+        },
+    ] {
+        let t = step(waiting_referee.clone(), wrong_event);
 
         assert!(
             matches!(&t.state, DeliberationState::Failed { .. }),
@@ -162,12 +150,9 @@ fn referee_failed_is_terminal() {
 
     let t = step(
         waiting_referee,
-        DeliberationEvent::RoleReturned {
-            role: DeliberationRole::Referee,
-            result: RoleResult::Failed {
-                kind: FailureKind::ProviderTerminalFailure,
-                reason: "authentication error".to_string(),
-            },
+        DeliberationEvent::RefereeFailed {
+            kind: FailureKind::ProviderTerminalFailure,
+            reason: "authentication error".to_string(),
         },
     );
 
@@ -219,11 +204,8 @@ fn referee_rejected_still_revises() {
 
     let t = step(
         waiting_referee,
-        DeliberationEvent::RoleReturned {
-            role: DeliberationRole::Referee,
-            result: RoleResult::Rejected {
-                reason: "needs changes".to_string(),
-            },
+        DeliberationEvent::RefereeRejected {
+            reason: "needs changes".to_string(),
         },
     );
 

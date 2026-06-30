@@ -10,8 +10,7 @@ use crate::artifacts::{Artifact, ArtifactView, WorkspaceFileOps};
 use crate::engine::{Machine, run_machine};
 use crate::machines::scheduler::effect::SchedulerEffect;
 use crate::machines::scheduler::event::{
-    FailureKind, IntegrationFailure, IntegrationOutcome, NodeFailure, NodeOutcome, RecoveryAction,
-    SchedulerEvent, WorkOutput,
+    FailureKind, IntegrationFailure, NodeFailure, RecoveryAction, SchedulerEvent, WorkOutput,
 };
 use crate::machines::scheduler::graph::{
     ModelTier, Node, NodeId, NodeKind, NodeOrigin, NodeStatus, RunGraph, TestPlanContext,

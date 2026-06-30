@@ -12,7 +12,7 @@ use crate::engine::{Machine, Transition};
 use crate::machines::scheduler::checkpoint::CheckpointService;
 use crate::machines::scheduler::dispatch::{RunNodeDispatch, dispatch_run_node};
 use crate::machines::scheduler::effect::SchedulerEffect;
-use crate::machines::scheduler::event::{NodeOutcome, SchedulerEvent};
+use crate::machines::scheduler::event::SchedulerEvent;
 use crate::machines::scheduler::integration::IntegrationService;
 use crate::machines::scheduler::machine::{SchedulerMachine, SchedulerOutput};
 use crate::machines::scheduler::progress::{is_progress_event, print_returned_progress};
@@ -170,17 +170,13 @@ impl<R: NodeRunner> Machine for SchedulerHandler<R> {
                     self.integration.artifact(),
                     work_attempt.clone(),
                 );
-                if let SchedulerEvent::NodeReturned { node_id, outcome } = &result.event
-                    && !matches!(
-                        outcome,
-                        crate::machines::scheduler::NodeOutcome::WorkAccepted(_)
-                    )
+                if let Some((node_id, reason)) = node_rejection_reason(&result.event)
                     && let Some(attempt) = work_attempt
                 {
                     self.integration.discard_work_attempt_with_reason(
                         node_id,
                         attempt.attempt,
-                        node_rejection_reason(outcome),
+                        reason,
                     );
                 }
                 result.event
@@ -206,9 +202,16 @@ impl<R: NodeRunner> Machine for SchedulerHandler<R> {
     }
 }
 
-fn node_rejection_reason(outcome: &NodeOutcome) -> String {
-    match outcome {
-        NodeOutcome::Failed(failure) => failure.message.clone(),
-        other => format!("work attempt rejected with outcome: {other:#?}"),
+fn node_rejection_reason(
+    event: &SchedulerEvent,
+) -> Option<(&crate::machines::scheduler::NodeId, String)> {
+    match event {
+        SchedulerEvent::WorkAccepted { .. } => None,
+        SchedulerEvent::NodeFailed { node_id, failure } => Some((node_id, failure.message.clone())),
+        SchedulerEvent::PlanAccepted { node_id, .. } => Some((
+            node_id,
+            format!("work attempt rejected with event: {event:#?}"),
+        )),
+        _ => None,
     }
 }

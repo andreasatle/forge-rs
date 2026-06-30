@@ -13,9 +13,9 @@ fn plan_child_depth_limit_fails_scheduler() {
             graph: running(graph, "P"),
             run_config: RunConfig::default(),
         },
-        SchedulerEvent::NodeReturned {
+        SchedulerEvent::PlanAccepted {
             node_id: NodeId("P".to_string()),
-            outcome: NodeOutcome::PlanAccepted(PlanOutput {
+            plan: PlanOutput {
                 children: vec![NodeRequest {
                     id: NodeId("nested-plan".to_string()),
                     kind: NodeKind::Plan,
@@ -25,7 +25,7 @@ fn plan_child_depth_limit_fails_scheduler() {
                     dependencies: vec![NodeId("P".to_string())],
                     validation_plan: None,
                 }],
-            }),
+            },
         },
     );
 
@@ -70,9 +70,9 @@ fn plan_expansion_respects_graph_size_limit() {
             graph,
             run_config: RunConfig::default(),
         },
-        SchedulerEvent::NodeReturned {
+        SchedulerEvent::PlanAccepted {
             node_id: NodeId("P".to_string()),
-            outcome: NodeOutcome::PlanAccepted(PlanOutput {
+            plan: PlanOutput {
                 children: vec![
                     NodeRequest {
                         id: NodeId("child-1".to_string()),
@@ -93,7 +93,7 @@ fn plan_expansion_respects_graph_size_limit() {
                         validation_plan: None,
                     },
                 ],
-            }),
+            },
         },
     );
 
@@ -152,13 +152,13 @@ fn recovery_respects_graph_size_limit() {
                 graph: running(graph, "W"),
                 run_config: RunConfig::default(),
             },
-            SchedulerEvent::NodeReturned {
+            SchedulerEvent::NodeFailed {
                 node_id: NodeId("W".to_string()),
-                outcome: NodeOutcome::Failed(NodeFailure {
+                failure: NodeFailure {
                     kind: FailureKind::DeliberationFailure,
                     message: "transient error".to_string(),
                     recovery,
-                }),
+                },
             },
         );
 
@@ -198,15 +198,15 @@ fn split_depth_limit_fails_scheduler() {
             graph: running(graph, "W"),
             run_config: RunConfig::default(),
         },
-        SchedulerEvent::NodeReturned {
+        SchedulerEvent::NodeFailed {
             node_id: NodeId("W".to_string()),
-            outcome: NodeOutcome::Failed(NodeFailure {
+            failure: NodeFailure {
                 kind: FailureKind::DeliberationFailure,
                 message: "task too complex".to_string(),
                 recovery: RecoveryAction::Split {
                     message: "decompose the work".to_string(),
                 },
-            }),
+            },
         },
     );
 

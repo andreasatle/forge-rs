@@ -2,7 +2,7 @@
 
 use serde::Deserialize;
 
-use crate::machines::deliberation::event::RoleResult;
+use crate::roles::runner::RoleResult;
 use crate::services::extract_json_object;
 
 pub(super) const MIN_CONTENT_LENGTH: usize = 8;

@@ -31,9 +31,9 @@ fn plan_node_creates_work_child() {
             graph: running(graph, "P"),
             run_config: RunConfig::default(),
         },
-        SchedulerEvent::NodeReturned {
+        SchedulerEvent::PlanAccepted {
             node_id: NodeId("P".to_string()),
-            outcome: NodeOutcome::PlanAccepted(PlanOutput {
+            plan: PlanOutput {
                 children: vec![NodeRequest {
                     id: NodeId("child-1".to_string()),
                     kind: NodeKind::Work,
@@ -43,7 +43,7 @@ fn plan_node_creates_work_child() {
                     dependencies: vec![NodeId("P".to_string())],
                     validation_plan: None,
                 }],
-            }),
+            },
         },
     );
 
@@ -69,9 +69,9 @@ fn plan_with_unknown_dependency_fails_scheduler() {
             graph: graph_before.clone(),
             run_config: RunConfig::default(),
         },
-        SchedulerEvent::NodeReturned {
+        SchedulerEvent::PlanAccepted {
             node_id: NodeId("P".to_string()),
-            outcome: NodeOutcome::PlanAccepted(PlanOutput {
+            plan: PlanOutput {
                 children: vec![NodeRequest {
                     id: NodeId("child-1".to_string()),
                     kind: NodeKind::Work,
@@ -81,7 +81,7 @@ fn plan_with_unknown_dependency_fails_scheduler() {
                     dependencies: vec![NodeId("missing".to_string())],
                     validation_plan: None,
                 }],
-            }),
+            },
         },
     );
 
@@ -116,9 +116,9 @@ fn plan_with_valid_dependencies_still_succeeds() {
             graph: running(graph, "P"),
             run_config: RunConfig::default(),
         },
-        SchedulerEvent::NodeReturned {
+        SchedulerEvent::PlanAccepted {
             node_id: NodeId("P".to_string()),
-            outcome: NodeOutcome::PlanAccepted(PlanOutput {
+            plan: PlanOutput {
                 children: vec![NodeRequest {
                     id: NodeId("child-1".to_string()),
                     kind: NodeKind::Work,
@@ -128,7 +128,7 @@ fn plan_with_valid_dependencies_still_succeeds() {
                     dependencies: vec![NodeId("P".to_string())],
                     validation_plan: None,
                 }],
-            }),
+            },
         },
     );
 
@@ -154,9 +154,9 @@ fn sibling_dependencies_are_resolved_to_graph_ids() {
             graph: running(graph, "P"),
             run_config: RunConfig::default(),
         },
-        SchedulerEvent::NodeReturned {
+        SchedulerEvent::PlanAccepted {
             node_id: NodeId("P".to_string()),
-            outcome: NodeOutcome::PlanAccepted(PlanOutput {
+            plan: PlanOutput {
                 children: vec![
                     NodeRequest {
                         id: NodeId("A".to_string()),
@@ -177,7 +177,7 @@ fn sibling_dependencies_are_resolved_to_graph_ids() {
                         validation_plan: None,
                     },
                 ],
-            }),
+            },
         },
     );
 
@@ -241,9 +241,9 @@ fn planner_can_create_two_work_nodes_with_dependency() {
             graph,
             run_config: RunConfig::default(),
         },
-        SchedulerEvent::NodeReturned {
+        SchedulerEvent::PlanAccepted {
             node_id: NodeId("root".to_string()),
-            outcome: NodeOutcome::PlanAccepted(PlanOutput {
+            plan: PlanOutput {
                 children: vec![
                     NodeRequest {
                         id: NodeId("write-tests".to_string()),
@@ -264,7 +264,7 @@ fn planner_can_create_two_work_nodes_with_dependency() {
                         validation_plan: None,
                     },
                 ],
-            }),
+            },
         },
     );
 
@@ -308,11 +308,11 @@ fn planner_can_create_two_work_nodes_with_dependency() {
             graph,
             run_config: RunConfig::default(),
         },
-        SchedulerEvent::NodeReturned {
+        SchedulerEvent::WorkAccepted {
             node_id: write_tests_id.clone(),
-            outcome: NodeOutcome::WorkAccepted(WorkOutput {
+            work: WorkOutput {
                 summary: "tests written".to_string(),
-            }),
+            },
         },
     );
     let SchedulerState::Waiting { graph, .. } = t.state else {
@@ -325,13 +325,11 @@ fn planner_can_create_two_work_nodes_with_dependency() {
             graph,
             run_config: RunConfig::default(),
         },
-        SchedulerEvent::IntegrationReturned {
+        SchedulerEvent::IntegrationSucceeded {
             node_id: write_tests_id.clone(),
-            outcome: crate::machines::scheduler::event::IntegrationOutcome::Succeeded(
-                crate::machines::scheduler::event::IntegrationOutput {
-                    summary: "tests integrated".to_string(),
-                },
-            ),
+            output: crate::machines::scheduler::event::IntegrationOutput {
+                summary: "tests integrated".to_string(),
+            },
         },
     );
     let SchedulerState::Active { graph, .. } = t.state else {
@@ -363,11 +361,11 @@ fn planner_can_create_two_work_nodes_with_dependency() {
             graph,
             run_config: RunConfig::default(),
         },
-        SchedulerEvent::NodeReturned {
+        SchedulerEvent::WorkAccepted {
             node_id: implement_id.clone(),
-            outcome: NodeOutcome::WorkAccepted(WorkOutput {
+            work: WorkOutput {
                 summary: "feature implemented".to_string(),
-            }),
+            },
         },
     );
     let SchedulerState::Waiting { graph, .. } = t.state else {
@@ -380,13 +378,11 @@ fn planner_can_create_two_work_nodes_with_dependency() {
             graph,
             run_config: RunConfig::default(),
         },
-        SchedulerEvent::IntegrationReturned {
+        SchedulerEvent::IntegrationSucceeded {
             node_id: implement_id.clone(),
-            outcome: crate::machines::scheduler::event::IntegrationOutcome::Succeeded(
-                crate::machines::scheduler::event::IntegrationOutput {
-                    summary: "implementation integrated".to_string(),
-                },
-            ),
+            output: crate::machines::scheduler::event::IntegrationOutput {
+                summary: "implementation integrated".to_string(),
+            },
         },
     );
     let SchedulerState::Active { graph, .. } = t.state else {
@@ -510,9 +506,9 @@ fn ordinary_missing_dependency_still_reports_unknown_node() {
             graph: running(graph, "P"),
             run_config: RunConfig::default(),
         },
-        SchedulerEvent::NodeReturned {
+        SchedulerEvent::PlanAccepted {
             node_id: NodeId("P".to_string()),
-            outcome: NodeOutcome::PlanAccepted(PlanOutput {
+            plan: PlanOutput {
                 children: vec![NodeRequest {
                     id: NodeId("child-1".to_string()),
                     kind: NodeKind::Work,
@@ -522,7 +518,7 @@ fn ordinary_missing_dependency_still_reports_unknown_node() {
                     dependencies: vec![NodeId("ghost".to_string())],
                     validation_plan: None,
                 }],
-            }),
+            },
         },
     );
 

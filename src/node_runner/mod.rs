@@ -1,8 +1,8 @@
 //! The NodeRunner service boundary.
 //!
 //! Translates a scheduler [`RunNode`](crate::machines::scheduler::SchedulerEffect) effect
-//! into a typed [`NodeRunResult`], which maps back to a
-//! [`NodeOutcome`](crate::machines::scheduler::NodeOutcome) via `From`.
+//! into a typed [`NodeRunResult`], which dispatch converts back into a
+//! direct [`SchedulerEvent`](crate::machines::scheduler::SchedulerEvent).
 //!
 //! # Module layout
 //!

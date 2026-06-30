@@ -2,8 +2,8 @@ use super::*;
 use crate::engine::run_machine;
 use crate::machines::scheduler::FailureKind;
 use crate::machines::scheduler::event::{
-    IntegrationFailure, IntegrationOutcome, IntegrationOutput, NodeFailure, NodeOutcome,
-    NodeRequest, PlanOutput, RecoveryAction, WorkOutput,
+    IntegrationFailure, IntegrationOutput, NodeFailure, NodeRequest, PlanOutput, RecoveryAction,
+    WorkOutput,
 };
 use crate::machines::scheduler::graph::{Node, RunGraph};
 use crate::machines::scheduler::handler::SchedulerHandler;

@@ -1,13 +1,12 @@
-//! Events and node-outcome types for the scheduler machine.
+//! Events and payload types for the scheduler machine.
 //!
 //! Events are facts delivered *to* the scheduler from the outside world.
 //! They describe things that have already happened: a node finished, or the
 //! runner is ready to start.
 //!
-//! The outcome types in this module (`NodeOutcome`, `NodeFailure`,
-//! `RecoveryAction`, `PlanOutput`, `WorkOutput`) are part of the event payload
-//! carried inside `NodeReturned`. They describe what a node produced and how
-//! the scheduler should respond to it.
+//! Events are the scheduler's transition input vocabulary. Payload types such
+//! as `NodeFailure`, `RecoveryAction`, `PlanOutput`, and `WorkOutput` carry
+//! domain data for those events.
 //!
 //! This module does **not** own scheduler state shapes or emitted commands;
 //! those live in `state.rs` and `effect.rs`.
@@ -142,22 +141,6 @@ pub enum RecoveryAction {
     },
 }
 
-/// The three possible outcomes when a node finishes.
-///
-/// The scheduler pattern-matches on `NodeOutcome` inside the `Waiting +
-/// NodeReturned` transition to decide how to update the graph.
-#[derive(Clone, Debug, PartialEq)]
-pub enum NodeOutcome {
-    /// A plan node completed successfully and wants new nodes inserted.
-    PlanAccepted(PlanOutput),
-    /// A work node produced work that must still pass integration before the
-    /// node is marked `Completed`.
-    WorkAccepted(WorkOutput),
-    /// The node could not complete. The embedded `NodeFailure` tells the
-    /// scheduler which recovery path to take.
-    Failed(NodeFailure),
-}
-
 /// The structured output of a successful integration.
 #[derive(Clone, Debug, PartialEq)]
 pub struct IntegrationOutput {
@@ -176,16 +159,6 @@ pub struct IntegrationFailure {
     pub recovery: RecoveryAction,
 }
 
-/// The two possible outcomes when integration finishes.
-#[derive(Clone, Debug, PartialEq)]
-pub enum IntegrationOutcome {
-    /// Integration completed successfully.
-    Succeeded(IntegrationOutput),
-    /// Integration could not complete. The embedded `IntegrationFailure` tells
-    /// the scheduler which recovery path to take.
-    Failed(IntegrationFailure),
-}
-
 /// Events that the scheduler machine can receive.
 ///
 /// `Start` is a synthetic tick injected by the runner when the scheduler is
@@ -193,7 +166,7 @@ pub enum IntegrationOutcome {
 /// machine from `Active` to `Waiting` (by dispatching a ready node), to
 /// `Complete`, or to `Failed` — all without blocking on an external result.
 ///
-/// `NodeReturned` and `IntegrationReturned` carry real external results that
+/// Node and integration completion events carry real external results that
 /// drive the `Waiting` state forward.
 #[derive(Clone, Debug, PartialEq)]
 pub enum SchedulerEvent {
@@ -202,19 +175,40 @@ pub enum SchedulerEvent {
     /// moves to `Waiting`. If no node is ready the run fails; if all nodes
     /// are terminal the run completes.
     Start,
-    /// A previously-dispatched node has finished and is reporting its outcome.
-    NodeReturned {
+    /// A previously-dispatched plan node completed and wants new nodes inserted.
+    PlanAccepted {
         /// The ID of the node that finished, used to verify it matches the
         /// graph's single active node.
         node_id: NodeId,
-        /// What the node produced and how the scheduler should react.
-        outcome: NodeOutcome,
+        /// The plan output to insert into the graph.
+        plan: PlanOutput,
     },
-    /// A previously-dispatched integration has finished and is reporting its outcome.
-    IntegrationReturned {
+    /// A previously-dispatched work node produced work that must be integrated.
+    WorkAccepted {
         /// The ID of the node whose work was being integrated.
         node_id: NodeId,
-        /// Whether integration succeeded or failed, and how to proceed.
-        outcome: IntegrationOutcome,
+        /// The work output to integrate before the node can complete.
+        work: WorkOutput,
+    },
+    /// A previously-dispatched node could not complete.
+    NodeFailed {
+        /// The ID of the node that failed.
+        node_id: NodeId,
+        /// The failure and recovery direction.
+        failure: NodeFailure,
+    },
+    /// A previously-dispatched integration completed successfully.
+    IntegrationSucceeded {
+        /// The ID of the node whose work was integrated.
+        node_id: NodeId,
+        /// The integration output to store on the node.
+        output: IntegrationOutput,
+    },
+    /// A previously-dispatched integration could not complete.
+    IntegrationFailed {
+        /// The ID of the node whose work was being integrated.
+        node_id: NodeId,
+        /// The failure and recovery direction.
+        failure: IntegrationFailure,
     },
 }

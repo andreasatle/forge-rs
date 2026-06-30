@@ -8,11 +8,11 @@ fn work_node_accepted_marks_integrating_and_emits_integrate_work() {
             graph: running(graph, "A"),
             run_config: RunConfig::default(),
         },
-        SchedulerEvent::NodeReturned {
+        SchedulerEvent::WorkAccepted {
             node_id: NodeId("A".to_string()),
-            outcome: NodeOutcome::WorkAccepted(WorkOutput {
+            work: WorkOutput {
                 summary: "done!".to_string(),
-            }),
+            },
         },
     );
 
@@ -37,11 +37,11 @@ fn work_accepted_emits_integration_and_does_not_complete_node() {
             graph: running(graph, "A"),
             run_config: RunConfig::default(),
         },
-        SchedulerEvent::NodeReturned {
+        SchedulerEvent::WorkAccepted {
             node_id: node_id.clone(),
-            outcome: NodeOutcome::WorkAccepted(WorkOutput {
+            work: WorkOutput {
                 summary: "work done".to_string(),
-            }),
+            },
         },
     );
 
@@ -90,15 +90,15 @@ fn scheduler_output_includes_integration_failure_reason() {
             graph,
             run_config: RunConfig::default(),
         },
-        SchedulerEvent::IntegrationReturned {
+        SchedulerEvent::IntegrationFailed {
             node_id: NodeId("W".to_string()),
-            outcome: IntegrationOutcome::Failed(IntegrationFailure {
+            failure: IntegrationFailure {
                 kind: FailureKind::IntegrationFailure,
                 message: "validation failed: cargo test failed".to_string(),
                 recovery: RecoveryAction::Terminal {
                     message: "integration failed".to_string(),
                 },
-            }),
+            },
         },
     );
 
@@ -142,15 +142,15 @@ fn integration_failure_retry_routes_to_replacement() {
             graph,
             run_config: RunConfig::default(),
         },
-        SchedulerEvent::IntegrationReturned {
+        SchedulerEvent::IntegrationFailed {
             node_id: NodeId("B".to_string()),
-            outcome: IntegrationOutcome::Failed(IntegrationFailure {
+            failure: IntegrationFailure {
                 kind: FailureKind::IntegrationFailure,
                 message: "integration error".to_string(),
                 recovery: RecoveryAction::Retry {
                     message: "retry after integration failure".to_string(),
                 },
-            }),
+            },
         },
     );
 
@@ -205,15 +205,15 @@ fn integration_failure_elevate_routes_to_strong_replacement() {
             graph,
             run_config: RunConfig::default(),
         },
-        SchedulerEvent::IntegrationReturned {
+        SchedulerEvent::IntegrationFailed {
             node_id: NodeId("B".to_string()),
-            outcome: IntegrationOutcome::Failed(IntegrationFailure {
+            failure: IntegrationFailure {
                 kind: FailureKind::IntegrationFailure,
                 message: "integration error".to_string(),
                 recovery: RecoveryAction::ElevateModel {
                     message: "use stronger model".to_string(),
                 },
-            }),
+            },
         },
     );
 
@@ -264,15 +264,15 @@ fn integration_failure_split_routes_to_plan_replacement() {
             graph,
             run_config: RunConfig::default(),
         },
-        SchedulerEvent::IntegrationReturned {
+        SchedulerEvent::IntegrationFailed {
             node_id: NodeId("B".to_string()),
-            outcome: IntegrationOutcome::Failed(IntegrationFailure {
+            failure: IntegrationFailure {
                 kind: FailureKind::IntegrationFailure,
                 message: "integration error".to_string(),
                 recovery: RecoveryAction::Split {
                     message: "decompose step B".to_string(),
                 },
-            }),
+            },
         },
     );
 

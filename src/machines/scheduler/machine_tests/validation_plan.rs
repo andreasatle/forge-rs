@@ -36,9 +36,9 @@ fn plan_expansion_stamps_validation_plan_onto_work_children() {
             graph: running(graph, "P"),
             run_config: RunConfig::default(),
         },
-        SchedulerEvent::NodeReturned {
+        SchedulerEvent::PlanAccepted {
             node_id: NodeId("P".to_string()),
-            outcome: NodeOutcome::PlanAccepted(PlanOutput {
+            plan: PlanOutput {
                 children: vec![NodeRequest {
                     id: NodeId("work".to_string()),
                     kind: NodeKind::Work,
@@ -48,7 +48,7 @@ fn plan_expansion_stamps_validation_plan_onto_work_children() {
                     dependencies: vec![],
                     validation_plan: Some(plan.clone()),
                 }],
-            }),
+            },
         },
     );
 
@@ -120,15 +120,15 @@ fn retry_preserves_validation_plan() {
             graph: running(graph, "W"),
             run_config: RunConfig::default(),
         },
-        SchedulerEvent::NodeReturned {
+        SchedulerEvent::NodeFailed {
             node_id: NodeId("W".to_string()),
-            outcome: NodeOutcome::Failed(NodeFailure {
+            failure: NodeFailure {
                 kind: FailureKind::DeliberationFailure,
                 message: "first try failed".to_string(),
                 recovery: RecoveryAction::Retry {
                     message: "try again".to_string(),
                 },
-            }),
+            },
         },
     );
 

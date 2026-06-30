@@ -11,11 +11,11 @@ fn plan_node_rejects_work_accepted() {
             graph: running(graph, "P"),
             run_config: RunConfig::default(),
         },
-        SchedulerEvent::NodeReturned {
+        SchedulerEvent::WorkAccepted {
             node_id: NodeId("P".to_string()),
-            outcome: NodeOutcome::WorkAccepted(WorkOutput {
+            work: WorkOutput {
                 summary: "work done".to_string(),
-            }),
+            },
         },
     );
 
@@ -44,9 +44,9 @@ fn work_node_rejects_plan_accepted() {
             graph: running(graph, "A"),
             run_config: RunConfig::default(),
         },
-        SchedulerEvent::NodeReturned {
+        SchedulerEvent::PlanAccepted {
             node_id: NodeId("A".to_string()),
-            outcome: NodeOutcome::PlanAccepted(PlanOutput { children: vec![] }),
+            plan: PlanOutput { children: vec![] },
         },
     );
 
@@ -82,11 +82,11 @@ fn node_returned_rejects_integrating_node() {
             graph,
             run_config: RunConfig::default(),
         },
-        SchedulerEvent::NodeReturned {
+        SchedulerEvent::WorkAccepted {
             node_id: NodeId("B".to_string()),
-            outcome: NodeOutcome::WorkAccepted(WorkOutput {
+            work: WorkOutput {
                 summary: "spurious result".to_string(),
-            }),
+            },
         },
     );
 
@@ -120,11 +120,11 @@ fn integration_returned_rejects_non_integrating_work() {
             graph: running(graph, "A"),
             run_config: RunConfig::default(),
         },
-        SchedulerEvent::IntegrationReturned {
+        SchedulerEvent::IntegrationSucceeded {
             node_id: NodeId("A".to_string()),
-            outcome: IntegrationOutcome::Succeeded(IntegrationOutput {
+            output: IntegrationOutput {
                 summary: "done".to_string(),
-            }),
+            },
         },
     );
 
@@ -152,11 +152,11 @@ fn integration_returned_rejects_plan_node() {
             graph: running(graph, "P"),
             run_config: RunConfig::default(),
         },
-        SchedulerEvent::IntegrationReturned {
+        SchedulerEvent::IntegrationSucceeded {
             node_id: NodeId("P".to_string()),
-            outcome: IntegrationOutcome::Succeeded(IntegrationOutput {
+            output: IntegrationOutput {
                 summary: "done".to_string(),
-            }),
+            },
         },
     );
 
@@ -186,11 +186,11 @@ fn node_returned_wrong_node_fails_scheduler() {
             graph: running(graph, "A"),
             run_config: RunConfig::default(),
         },
-        SchedulerEvent::NodeReturned {
+        SchedulerEvent::WorkAccepted {
             node_id: NodeId("B".to_string()),
-            outcome: NodeOutcome::WorkAccepted(WorkOutput {
+            work: WorkOutput {
                 summary: "spurious result".to_string(),
-            }),
+            },
         },
     );
 
@@ -224,11 +224,11 @@ fn integration_returned_wrong_node_fails_scheduler() {
             graph,
             run_config: RunConfig::default(),
         },
-        SchedulerEvent::IntegrationReturned {
+        SchedulerEvent::IntegrationSucceeded {
             node_id: NodeId("B".to_string()),
-            outcome: IntegrationOutcome::Succeeded(IntegrationOutput {
+            output: IntegrationOutput {
                 summary: "spurious result".to_string(),
-            }),
+            },
         },
     );
 
@@ -257,11 +257,11 @@ fn active_rejects_node_returned() {
             graph,
             run_config: RunConfig::default(),
         },
-        SchedulerEvent::NodeReturned {
+        SchedulerEvent::WorkAccepted {
             node_id: NodeId("A".to_string()),
-            outcome: NodeOutcome::WorkAccepted(WorkOutput {
+            work: WorkOutput {
                 summary: "spurious".to_string(),
-            }),
+            },
         },
     );
 
@@ -290,11 +290,11 @@ fn active_rejects_integration_returned() {
             graph,
             run_config: RunConfig::default(),
         },
-        SchedulerEvent::IntegrationReturned {
+        SchedulerEvent::IntegrationSucceeded {
             node_id: NodeId("A".to_string()),
-            outcome: IntegrationOutcome::Succeeded(IntegrationOutput {
+            output: IntegrationOutput {
                 summary: "spurious".to_string(),
-            }),
+            },
         },
     );
 
@@ -353,11 +353,11 @@ fn waiting_with_no_active_node_fails_before_matching_returned_node() {
             graph,
             run_config: RunConfig::default(),
         },
-        SchedulerEvent::NodeReturned {
+        SchedulerEvent::WorkAccepted {
             node_id: NodeId("missing".to_string()),
-            outcome: NodeOutcome::WorkAccepted(WorkOutput {
+            work: WorkOutput {
                 summary: "irrelevant".to_string(),
-            }),
+            },
         },
     );
 
@@ -395,11 +395,11 @@ fn waiting_with_only_completed_nodes_fails() {
             graph,
             run_config: RunConfig::default(),
         },
-        SchedulerEvent::NodeReturned {
+        SchedulerEvent::WorkAccepted {
             node_id: NodeId("B".to_string()),
-            outcome: NodeOutcome::WorkAccepted(WorkOutput {
+            work: WorkOutput {
                 summary: "irrelevant".to_string(),
-            }),
+            },
         },
     );
 
@@ -428,11 +428,11 @@ fn waiting_with_running_node_still_works() {
             graph: running(graph, "A"),
             run_config: RunConfig::default(),
         },
-        SchedulerEvent::NodeReturned {
+        SchedulerEvent::WorkAccepted {
             node_id: NodeId("A".to_string()),
-            outcome: NodeOutcome::WorkAccepted(WorkOutput {
+            work: WorkOutput {
                 summary: "success".to_string(),
-            }),
+            },
         },
     );
 
@@ -529,11 +529,11 @@ fn waiting_state_rejects_no_active_nodes() {
             graph,
             run_config: RunConfig::default(),
         },
-        SchedulerEvent::NodeReturned {
+        SchedulerEvent::WorkAccepted {
             node_id: NodeId("B".to_string()),
-            outcome: NodeOutcome::WorkAccepted(WorkOutput {
+            work: WorkOutput {
                 summary: "irrelevant".to_string(),
-            }),
+            },
         },
     );
 
@@ -569,11 +569,11 @@ fn waiting_state_rejects_multiple_active_nodes() {
             graph,
             run_config: RunConfig::default(),
         },
-        SchedulerEvent::NodeReturned {
+        SchedulerEvent::WorkAccepted {
             node_id: NodeId("B".to_string()),
-            outcome: NodeOutcome::WorkAccepted(WorkOutput {
+            work: WorkOutput {
                 summary: "irrelevant".to_string(),
-            }),
+            },
         },
     );
 
@@ -612,11 +612,11 @@ fn waiting_state_rejects_return_for_non_active_node() {
             graph,
             run_config: RunConfig::default(),
         },
-        SchedulerEvent::NodeReturned {
+        SchedulerEvent::WorkAccepted {
             node_id: NodeId("B".to_string()),
-            outcome: NodeOutcome::WorkAccepted(WorkOutput {
+            work: WorkOutput {
                 summary: "irrelevant".to_string(),
-            }),
+            },
         },
     );
 

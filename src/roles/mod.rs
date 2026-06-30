@@ -6,7 +6,7 @@
 //!
 //! [`DeliberationMachine`]: crate::machines::deliberation::DeliberationMachine
 //! [`ProviderClient`]: crate::providers::ProviderClient
-//! [`RoleResult`]: crate::machines::deliberation::RoleResult
+//! [`RoleResult`]: crate::roles::runner::RoleResult
 
 mod parser;
 pub mod policy;
