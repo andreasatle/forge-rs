@@ -10,8 +10,9 @@
 
 use forge_rs::engine::{Machine, Transition, run_machine_with_telemetry};
 use forge_rs::machines::deliberation::{
-    DeliberationEffect, DeliberationEvent, DeliberationMachine, DeliberationRequest,
-    DeliberationState, DeliberationTerminalOutput, ProviderBackedDeliberationHandler,
+    DeliberationContext, DeliberationEffect, DeliberationEvent, DeliberationMachine,
+    DeliberationRequest, DeliberationState, DeliberationTerminalOutput,
+    ProviderBackedDeliberationHandler,
 };
 use forge_rs::providers::{LlamaCppProvider, RetryingProvider};
 use forge_rs::telemetry::FileTelemetry;
@@ -65,7 +66,7 @@ fn main() {
     let initial = DeliberationState::Ready {
         request: DeliberationRequest {
             objective: objective.to_string(),
-            target_files: vec![],
+            context: DeliberationContext::default(),
             max_revisions,
         },
     };

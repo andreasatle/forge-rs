@@ -145,7 +145,7 @@ impl Machine for DeliberationMachine {
                 effects: vec![DeliberationEffect::RunRole {
                     role: DeliberationRole::Producer,
                     objective: request.objective.clone(),
-                    target_files: request.target_files.clone(),
+                    context: request.context.clone(),
                     producer_content: None,
                     critic_content: None,
                     feedback: vec![],
@@ -222,7 +222,7 @@ impl Machine for DeliberationMachine {
                 effects: vec![DeliberationEffect::RunRole {
                     role: DeliberationRole::Critic,
                     objective: request.objective.clone(),
-                    target_files: request.target_files.clone(),
+                    context: request.context.clone(),
                     producer_content: Some(producer_content.clone()),
                     critic_content: None,
                     feedback: feedback.clone(),
@@ -269,7 +269,7 @@ impl Machine for DeliberationMachine {
                         effects: vec![DeliberationEffect::RunRole {
                             role: DeliberationRole::Producer,
                             objective: request.objective.clone(),
-                            target_files: request.target_files.clone(),
+                            context: request.context.clone(),
                             producer_content: None,
                             critic_content: None,
                             feedback: validation_feedback.clone(),
@@ -391,7 +391,7 @@ impl Machine for DeliberationMachine {
                     effects: vec![DeliberationEffect::RunRole {
                         role: DeliberationRole::Referee,
                         objective: request.objective.clone(),
-                        target_files: request.target_files.clone(),
+                        context: request.context.clone(),
                         producer_content: Some(producer_content.clone()),
                         critic_content: Some(critic_advisory.as_referee_content().to_string()),
                         feedback: feedback.clone(),
@@ -432,7 +432,7 @@ impl Machine for DeliberationMachine {
                     effects: vec![DeliberationEffect::RunRole {
                         role: DeliberationRole::Referee,
                         objective: request.objective.clone(),
-                        target_files: request.target_files.clone(),
+                        context: request.context.clone(),
                         producer_content: Some(producer_content.clone()),
                         critic_content: Some(critic_advisory.as_referee_content().to_string()),
                         feedback: feedback.clone(),
@@ -555,7 +555,7 @@ impl Machine for DeliberationMachine {
                         effects: vec![DeliberationEffect::RunRole {
                             role: DeliberationRole::Producer,
                             objective: request.objective.clone(),
-                            target_files: request.target_files.clone(),
+                            context: request.context.clone(),
                             producer_content: None,
                             critic_content: None,
                             feedback: new_feedback.clone(),

@@ -13,7 +13,7 @@ use crate::roles::RolePolicy;
 
 use crate::node_runner::types::NodeRunRequest;
 
-use super::context::enrich_objective;
+use super::context::build_deliberation_context;
 
 pub(crate) struct PreparedDeliberation<'a, P: ProviderClient> {
     pub(crate) initial_state: DeliberationState,
@@ -30,11 +30,11 @@ pub(crate) fn prepare_deliberation<'a, P: ProviderClient>(
 ) -> PreparedDeliberation<'a, P> {
     let plan_validation_context =
         build_plan_validation_context(request, Arc::clone(required_test_targets_fn));
-    let objective = enrich_objective(request, required_test_targets_fn, context_file_names);
+    let context = build_deliberation_context(request, required_test_targets_fn, context_file_names);
     let initial_state = DeliberationState::Ready {
         request: DeliberationRequest {
-            objective,
-            target_files: request.target_files.clone(),
+            objective: request.objective.clone(),
+            context,
             max_revisions: 1,
         },
     };

@@ -133,7 +133,7 @@ fn run_role_effect(
     DeliberationEffect::RunRole {
         role,
         objective: objective.to_string(),
-        target_files: vec![],
+        context: crate::machines::deliberation::DeliberationContext::default(),
         producer_content: producer_content.map(|s| s.to_string()),
         critic_content: critic_content.map(|s| s.to_string()),
         feedback,
@@ -144,7 +144,7 @@ fn ready(objective: &str, max_revisions: usize) -> DeliberationState {
     DeliberationState::Ready {
         request: DeliberationRequest {
             objective: objective.to_string(),
-            target_files: vec![],
+            context: crate::machines::deliberation::DeliberationContext::default(),
             max_revisions,
         },
     }
@@ -229,7 +229,10 @@ fn structured_targets_flow_to_worker_role_request() {
     let event = handler.handle_effect(DeliberationEffect::RunRole {
         role: DeliberationRole::Producer,
         objective: "write the implementation".to_string(),
-        target_files: vec!["src/main.rs".to_string()],
+        context: crate::machines::deliberation::DeliberationContext {
+            target_files: vec!["src/main.rs".to_string()],
+            ..Default::default()
+        },
         producer_content: None,
         critic_content: None,
         feedback: vec![],
@@ -238,7 +241,7 @@ fn structured_targets_flow_to_worker_role_request() {
     assert!(matches!(event, DeliberationEvent::ProducerAccepted { .. }));
     let req = &handler.runner.requests.borrow()[0];
     assert_eq!(req.objective, "write the implementation");
-    assert_eq!(req.target_files, vec!["src/main.rs".to_string()]);
+    assert_eq!(req.context.target_files, vec!["src/main.rs".to_string()]);
 }
 
 // --- run_machine integration tests ---

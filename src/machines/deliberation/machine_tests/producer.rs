@@ -169,7 +169,7 @@ fn producer_validation_retry_exhaustion_fails() {
     let validating = DeliberationState::Waiting {
         request: DeliberationRequest {
             objective: "write a poem".to_string(),
-            target_files: vec![],
+            context: crate::machines::deliberation::DeliberationContext::default(),
             max_revisions: 0,
         },
         role: DeliberationRole::Producer,

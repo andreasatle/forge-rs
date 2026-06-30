@@ -7,7 +7,7 @@ fn referee_rejection_after_critic_rejection_loops_when_revisions_remain() {
             DeliberationState::Ready {
                 request: crate::machines::deliberation::state::DeliberationRequest {
                     objective: "write a poem".to_string(),
-                    target_files: vec![],
+                    context: crate::machines::deliberation::DeliberationContext::default(),
                     max_revisions: 1,
                 },
             },
@@ -126,7 +126,7 @@ fn referee_rejection_loops_to_producer_with_feedback() {
     let waiting_referee = DeliberationState::Waiting {
         request: DeliberationRequest {
             objective: "write a poem".to_string(),
-            target_files: vec![],
+            context: crate::machines::deliberation::DeliberationContext::default(),
             max_revisions: 1,
         },
         role: DeliberationRole::Referee,
@@ -195,7 +195,7 @@ fn referee_rejection_exhausts_revision_limit() {
     let waiting_referee = DeliberationState::Waiting {
         request: DeliberationRequest {
             objective: "write a poem".to_string(),
-            target_files: vec![],
+            context: crate::machines::deliberation::DeliberationContext::default(),
             max_revisions: 1,
         },
         role: DeliberationRole::Referee,
@@ -249,7 +249,7 @@ fn max_revisions_zero_fails_on_first_referee_rejection() {
     let waiting_referee = DeliberationState::Waiting {
         request: DeliberationRequest {
             objective: "write a poem".to_string(),
-            target_files: vec![],
+            context: crate::machines::deliberation::DeliberationContext::default(),
             max_revisions: 0,
         },
         role: DeliberationRole::Referee,
@@ -388,7 +388,7 @@ fn revision_then_acceptance_completes_with_revised_producer_content() {
     let initial = DeliberationState::Ready {
         request: DeliberationRequest {
             objective: "write a poem".to_string(),
-            target_files: vec![],
+            context: crate::machines::deliberation::DeliberationContext::default(),
             max_revisions: 1,
         },
     };

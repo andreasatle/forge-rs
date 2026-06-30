@@ -104,7 +104,7 @@ fn referee_missing_critic_content_fails() {
     let invalid_state = DeliberationState::Waiting {
         request: DeliberationRequest {
             objective: "write a poem".to_string(),
-            target_files: vec![],
+            context: crate::machines::deliberation::DeliberationContext::default(),
             max_revisions: 0,
         },
         role: DeliberationRole::Referee,
@@ -146,7 +146,7 @@ fn role_mismatch_while_waiting_referee_fails() {
     let waiting_referee = DeliberationState::Waiting {
         request: DeliberationRequest {
             objective: "write a poem".to_string(),
-            target_files: vec![],
+            context: crate::machines::deliberation::DeliberationContext::default(),
             max_revisions: 0,
         },
         role: DeliberationRole::Referee,
@@ -194,7 +194,7 @@ fn referee_failed_is_terminal() {
     let waiting_referee = DeliberationState::Waiting {
         request: DeliberationRequest {
             objective: "write a poem".to_string(),
-            target_files: vec![],
+            context: crate::machines::deliberation::DeliberationContext::default(),
             max_revisions: 1,
         },
         role: DeliberationRole::Referee,
@@ -253,7 +253,7 @@ fn referee_rejected_still_revises() {
     let waiting_referee = DeliberationState::Waiting {
         request: DeliberationRequest {
             objective: "write a poem".to_string(),
-            target_files: vec![],
+            context: crate::machines::deliberation::DeliberationContext::default(),
             max_revisions: 1,
         },
         role: DeliberationRole::Referee,

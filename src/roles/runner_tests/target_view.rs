@@ -14,7 +14,10 @@ fn producer_prompt_for_targets(
         RoleRequest {
             role: DeliberationRole::Producer,
             objective: objective.to_string(),
-            target_files,
+            context: crate::machines::deliberation::DeliberationContext {
+                target_files,
+                ..Default::default()
+            },
             test_plan_context: TestPlanContext::default(),
             target_views,
             producer_content: None,

@@ -176,7 +176,7 @@ fn make_role_request(role: DeliberationRole, objective: &str) -> RoleRequest {
     RoleRequest {
         role,
         objective: objective.to_string(),
-        target_files: vec![],
+        context: crate::machines::deliberation::DeliberationContext::default(),
         test_plan_context: TestPlanContext::default(),
         target_views: vec![],
         producer_content: None,
@@ -240,7 +240,7 @@ fn with_dummy_tool_context(request: RoleRequest) -> RoleRequest {
 }
 
 fn with_target_files(mut request: RoleRequest, target_files: &[&str]) -> RoleRequest {
-    request.target_files = target_files.iter().map(|path| path.to_string()).collect();
+    request.context.target_files = target_files.iter().map(|path| path.to_string()).collect();
     request
 }
 

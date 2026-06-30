@@ -163,7 +163,7 @@ fn critic_missing_producer_content_fails() {
     let invalid_state = DeliberationState::Waiting {
         request: DeliberationRequest {
             objective: "write a poem".to_string(),
-            target_files: vec![],
+            context: crate::machines::deliberation::DeliberationContext::default(),
             max_revisions: 0,
         },
         role: DeliberationRole::Critic,

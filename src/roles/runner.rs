@@ -9,7 +9,9 @@ use std::rc::Rc;
 
 use crate::artifacts::{ArtifactRead, Workspace};
 use crate::machines::deliberation::event::RoleResult;
-use crate::machines::deliberation::state::{DeliberationRole, RevisionFeedback};
+use crate::machines::deliberation::state::{
+    DeliberationContext, DeliberationRole, RevisionFeedback,
+};
 use crate::machines::scheduler::{FailureKind, NodeKind, TestPlanContext};
 use crate::node_runner::planner::{try_parse_planner_response, validate_planner_output};
 use crate::providers::{ProviderClient, ProviderErrorKind, ProviderRequest, StructuredOutput};
@@ -24,9 +26,9 @@ use super::parser::{strip_code_fence, try_parse_role_response};
 use super::prompt::render_role_prompt;
 use super::prompt::{
     NodeReviewContract, RolePromptRender, detect_placeholder_tool_echo,
-    render_completion_pressure_retry_prompt, render_objective_for_prompt,
-    render_planner_retry_prompt, render_retry_prompt, render_reviewer_must_read_prompt,
-    render_role_prompt_with_test_plan_context, render_tool_section, role_subsource,
+    render_completion_pressure_retry_prompt, render_planner_retry_prompt, render_retry_prompt,
+    render_reviewer_must_read_prompt, render_role_prompt_with_test_plan_context,
+    render_tool_section, role_subsource,
 };
 use super::protocol_state::ProtocolState;
 use super::tooling::{
@@ -68,8 +70,8 @@ pub struct RoleRequest {
     pub role: DeliberationRole,
     /// The objective to pass to the role.
     pub objective: String,
-    /// Structured target files this role should use for target-aware tooling.
-    pub target_files: Vec<String>,
+    /// Structured prompt/tooling context for this role.
+    pub context: DeliberationContext,
     /// Structured test-target planning context for this node.
     pub test_plan_context: TestPlanContext,
     /// Adapter-produced views of the target files for prompt context.
@@ -162,8 +164,11 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
         let subsource = role_subsource(&request.role);
         let has_tools = request.tool_context.is_some();
 
-        let policy =
-            file_tool_policy_for_request(&request.role, &request.node_kind, &request.target_files);
+        let policy = file_tool_policy_for_request(
+            &request.role,
+            &request.node_kind,
+            &request.context.target_files,
+        );
 
         let system = match (&request.node_kind, &request.role) {
             (NodeKind::Plan, DeliberationRole::Producer) => &self.policy.planner_producer_system,
@@ -174,19 +179,18 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
             (NodeKind::Work, DeliberationRole::Referee) => &self.policy.worker_referee_system,
         };
 
-        let rendered_objective =
-            render_objective_for_prompt(&request.objective, &request.target_files);
         let review_contract = NodeReviewContract::for_role(
             &request.role,
             &request.node_kind,
-            &request.target_files,
+            &request.context.target_files,
             &request.test_plan_context,
             has_tools,
         );
         let core_prompt = render_role_prompt_with_test_plan_context(RolePromptRender {
             system,
             role: &request.role,
-            objective: &rendered_objective,
+            objective: &request.objective,
+            context: &request.context,
             producer_content: request.producer_content.as_deref(),
             critic_content: request.critic_content.as_deref(),
             feedback: &request.feedback,

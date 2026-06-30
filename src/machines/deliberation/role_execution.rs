@@ -18,13 +18,13 @@ impl<R: RoleRunner> DeliberationHandler<R> {
             DeliberationEffect::RunRole {
                 role,
                 objective,
-                target_files,
+                context,
                 producer_content,
                 critic_content,
                 feedback,
             } => {
                 let (tool_context, target_views) =
-                    match self.role_tool_context_and_target_views(&role, &target_files) {
+                    match self.role_tool_context_and_target_views(&role, &context.target_files) {
                         Ok(context) => context,
                         Err(error) => {
                             let reason = format!(
@@ -57,7 +57,7 @@ impl<R: RoleRunner> DeliberationHandler<R> {
                 let request = RoleRequest {
                     role: role.clone(),
                     objective,
-                    target_files,
+                    context,
                     test_plan_context: self.test_plan_context.clone(),
                     target_views,
                     producer_content,

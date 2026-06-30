@@ -1,18 +1,12 @@
 //! Prompt rendering functions for role invocations.
 
-use crate::machines::deliberation::state::{DeliberationRole, RevisionFeedback};
+use crate::machines::deliberation::state::{
+    ArtifactContext, DeliberationContext, DeliberationRole, RevisionFeedback,
+};
 use crate::machines::scheduler::{NodeKind, TestPlanContext};
 use crate::roles::{TargetView, TargetViewKind};
 use crate::services::extract_json_object;
 use crate::tools::{FileToolPolicy, FileToolResponse, parse_tool_request};
-
-pub(super) fn render_objective_for_prompt(objective: &str, target_files: &[String]) -> String {
-    if target_files.is_empty() {
-        objective.to_string()
-    } else {
-        format!("{objective}\n\nTarget files: {}", target_files.join(", "))
-    }
-}
 
 pub(super) fn format_tool_observation(
     response: &FileToolResponse,
@@ -308,6 +302,7 @@ pub(super) fn render_role_prompt(
         system,
         role,
         objective,
+        context: &DeliberationContext::default(),
         producer_content,
         critic_content,
         feedback,
@@ -321,6 +316,7 @@ pub(super) struct RolePromptRender<'a> {
     pub(super) system: &'a str,
     pub(super) role: &'a DeliberationRole,
     pub(super) objective: &'a str,
+    pub(super) context: &'a DeliberationContext,
     pub(super) producer_content: Option<&'a str>,
     pub(super) critic_content: Option<&'a str>,
     pub(super) feedback: &'a [RevisionFeedback],
@@ -331,6 +327,11 @@ pub(super) struct RolePromptRender<'a> {
 
 pub(super) fn render_role_prompt_with_test_plan_context(input: RolePromptRender<'_>) -> String {
     let mut parts = Vec::new();
+    if let Some(context) =
+        render_deliberation_context(input.context, input.review_contract.is_none())
+    {
+        parts.push(context);
+    }
     parts.push(format!("Objective: {}", input.objective));
     parts.push(format!("Role: {:?}", input.role));
     if !input.target_views.is_empty() {
@@ -353,6 +354,45 @@ pub(super) fn render_role_prompt_with_test_plan_context(input: RolePromptRender<
     }
     parts.push(input.system.to_string());
     parts.join("\n")
+}
+
+fn render_deliberation_context(
+    context: &DeliberationContext,
+    include_target_files: bool,
+) -> Option<String> {
+    let mut parts = Vec::new();
+    if let Some(artifact) = &context.artifact {
+        parts.push(render_artifact_context(artifact));
+    }
+    if let Some(requirement) = &context.testing_requirement {
+        parts.push(requirement.clone());
+    }
+    if include_target_files && !context.target_files.is_empty() {
+        parts.push(format!("Target files: {}", context.target_files.join(", ")));
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join("\n\n"))
+    }
+}
+
+fn render_artifact_context(context: &ArtifactContext) -> String {
+    let mut parts = Vec::new();
+    let listing: Vec<String> = context
+        .files
+        .iter()
+        .map(|path| format!("  {path}"))
+        .collect();
+    parts.push(format!(
+        "Existing project files (already initialized — do not create tasks to recreate \
+         or reinitialize these files unless the objective explicitly names them as targets):\n{}",
+        listing.join("\n")
+    ));
+    for file in &context.selected_files {
+        parts.push(format!("{}:\n{}", file.path, file.content));
+    }
+    parts.join("\n\n")
 }
 
 pub(super) fn render_node_review_contract(contract: &NodeReviewContract) -> String {

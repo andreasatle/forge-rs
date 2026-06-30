@@ -19,7 +19,7 @@ fn ready(objective: &str) -> DeliberationState {
     DeliberationState::Ready {
         request: DeliberationRequest {
             objective: objective.to_string(),
-            target_files: vec![],
+            context: crate::machines::deliberation::DeliberationContext::default(),
             max_revisions: 0,
         },
     }

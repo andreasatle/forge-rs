@@ -1,78 +1,70 @@
-//! Objective enrichment for deliberation runs.
+//! Structured context capture for deliberation runs.
 
 use std::sync::Arc;
 
 use crate::artifacts::ArtifactView;
+use crate::machines::deliberation::state::{
+    ArtifactContext, DeliberationContext, SelectedFileContent,
+};
 use crate::node_runner::TestTargetsFn;
 use crate::node_runner::types::NodeRunRequest;
 
-/// Returns the objective string, optionally prefixed with artifact file context.
+pub(crate) const TESTING_REQUIREMENT: &str = "Testing requirement: project validation includes a test command. Code changes require corresponding tests, and plans for code changes must include at least one test-related target.";
+
+/// Returns structured context for a deliberation run.
 ///
 /// `required_test_targets_fn` is probed with a sentinel code file to determine
-/// whether the project adapter requires tests; when it does, a testing-context
-/// line is prepended to the objective so the LLM is aware of the requirement.
-pub(crate) fn enrich_objective(
+/// whether the project adapter requires tests.
+pub(crate) fn build_deliberation_context(
     request: &NodeRunRequest,
     required_test_targets_fn: &Arc<TestTargetsFn>,
     context_file_names: &[String],
-) -> String {
+) -> DeliberationContext {
     let requires_tests = !required_test_targets_fn(&["_probe_.rs".to_string()]).is_empty();
-    let testing_context = if requires_tests {
-        Some(
-            "Testing requirement: project validation includes a test command. Code changes require corresponding tests, and plans for code changes must include at least one test-related target.".to_string(),
-        )
+    let testing_requirement = if requires_tests {
+        Some(TESTING_REQUIREMENT.to_string())
     } else {
         None
     };
-    let Some(view) = &request.artifact_view else {
-        return match testing_context {
-            Some(context) => format!("{context}\n\nObjective: {}", request.objective),
-            None => request.objective.clone(),
-        };
-    };
-    let context = build_artifact_context(view, context_file_names);
-    if context.is_empty() {
-        return match testing_context {
-            Some(testing_context) => {
-                format!("{testing_context}\n\nObjective: {}", request.objective)
-            }
-            None => request.objective.clone(),
-        };
-    }
-    match testing_context {
-        Some(testing_context) => {
-            format!(
-                "{context}\n\n{testing_context}\n\nObjective: {}",
-                request.objective
-            )
-        }
-        None => format!("{context}\n\nObjective: {}", request.objective),
+
+    DeliberationContext {
+        target_files: request.target_files.clone(),
+        testing_requirement,
+        artifact: request
+            .artifact_view
+            .as_ref()
+            .and_then(|view| build_artifact_context(view, context_file_names)),
     }
 }
 
-/// Builds a short context string from a read-only artifact view.
+/// Builds structured context from a read-only artifact view.
 ///
-/// Lists all files under a heading that signals they already exist and must
-/// not be recreated unless the objective explicitly names them. Then includes
-/// the content of each file named in `context_file_names` if present.
-///
-/// Returns an empty string when the view has no files or when git fails.
-pub(crate) fn build_artifact_context(view: &ArtifactView, context_file_names: &[String]) -> String {
+/// Returns `None` when the view has no files or when git fails.
+pub(crate) fn build_artifact_context(
+    view: &ArtifactView,
+    context_file_names: &[String],
+) -> Option<ArtifactContext> {
     let files = match view.list_files() {
         Ok(f) if !f.is_empty() => f,
-        _ => return String::new(),
+        _ => return None,
     };
-    let mut parts = Vec::new();
-    let listing: Vec<String> = files.iter().map(|p| format!("  {}", p.display())).collect();
-    parts.push(format!(
-        "Existing project files (already initialized — do not create tasks to recreate \
-         or reinitialize these files unless the objective explicitly names them as targets):\n{}",
-        listing.join("\n")
-    ));
-    for name in context_file_names {
-        if let Ok(content) = view.read_file(name) {
-            parts.push(format!("{name}:\n{content}"));
-        }
-    }
-    parts.join("\n\n")
+    let selected_files = context_file_names
+        .iter()
+        .filter_map(|name| {
+            view.read_file(name)
+                .ok()
+                .map(|content| SelectedFileContent {
+                    path: name.clone(),
+                    content,
+                })
+        })
+        .collect();
+
+    Some(ArtifactContext {
+        files: files
+            .iter()
+            .map(|path| path.to_string_lossy().into_owned())
+            .collect(),
+        selected_files,
+    })
 }

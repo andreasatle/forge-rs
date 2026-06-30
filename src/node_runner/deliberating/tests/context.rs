@@ -1,4 +1,51 @@
 use super::*;
+use crate::machines::deliberation::DeliberationState;
+use crate::node_runner::deliberating::request::prepare_deliberation;
+use std::sync::Arc;
+
+#[test]
+fn prepared_deliberation_keeps_canonical_objective_and_structured_context_separate() {
+    let temp = TempDir::new("structured-context-state");
+    let view = make_artifact_view(&temp, "README.md", "This is the README.\n");
+    let provider = ScriptedProvider::from_strs(&[]);
+    let required_tests: Arc<TestTargetsFn> = Arc::new(|_| vec!["tests/test_main.py".to_string()]);
+    let request = NodeRunRequest {
+        kind: NodeKind::Work,
+        objective: "do the thing".to_string(),
+        target_files: vec!["src/main.py".to_string()],
+        test_plan_context: TestPlanContext::default(),
+        model_tier: ModelTier::Cheap,
+        attempt: 0,
+        artifact_view: Some(view),
+        work_attempt: None,
+    };
+
+    let prepared = prepare_deliberation(
+        &provider,
+        &request,
+        1024,
+        &RolePolicy::default(),
+        &required_tests,
+        &["README.md".to_string()],
+    );
+
+    let DeliberationState::Ready { request } = prepared.initial_state else {
+        panic!("prepared deliberation must start in Ready state");
+    };
+    assert_eq!(request.objective, "do the thing");
+    assert_eq!(
+        request.context.target_files,
+        vec!["src/main.py".to_string()]
+    );
+    assert!(request.context.testing_requirement.is_some());
+    let artifact = request
+        .context
+        .artifact
+        .expect("artifact context must be captured");
+    assert_eq!(artifact.files, vec!["README.md".to_string()]);
+    assert_eq!(artifact.selected_files[0].path, "README.md");
+    assert_eq!(artifact.selected_files[0].content, "This is the README.\n");
+}
 
 #[test]
 fn artifact_view_context_is_visible_to_deliberation_prompt() {

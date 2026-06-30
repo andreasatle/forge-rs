@@ -168,7 +168,7 @@ fn reviewer_prompt_explains_tests_planned_separately() {
     let provider = ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"review ok"}"#]);
     let runner = ProviderRoleRunner::new(&provider);
     let mut request = critic_request("implement fibonacci", "source updated");
-    request.target_files = vec!["main.py".to_string()];
+    request.context.target_files = vec!["main.py".to_string()];
     request.test_plan_context = TestPlanContext {
         required_test_targets: vec!["test_main.py".to_string()],
         planned_test_targets: vec!["test_main.py".to_string()],
@@ -202,7 +202,7 @@ fn referee_prompt_explains_missing_planned_test_target_from_metadata() {
         "source updated",
         "review ok",
     );
-    request.target_files = vec!["main.py".to_string()];
+    request.context.target_files = vec!["main.py".to_string()];
     request.test_plan_context = TestPlanContext {
         required_test_targets: vec!["test_main.py".to_string()],
         planned_test_targets: vec![],
@@ -232,7 +232,7 @@ fn source_only_node_with_planned_test_node_has_consistent_reviewer_contract() {
         "Implement fibonacci(n: int) in main.py.",
         "main.py implements fibonacci correctly",
     );
-    request.target_files = vec!["main.py".to_string()];
+    request.context.target_files = vec!["main.py".to_string()];
     request.test_plan_context = TestPlanContext {
         required_test_targets: vec!["test_main.py".to_string()],
         planned_test_targets: vec!["test_main.py".to_string()],
@@ -270,7 +270,7 @@ fn implementation_and_tests_node_can_still_reject_missing_tests() {
         "main.py changed but test_main.py was not created",
         "critic says tests are missing",
     );
-    request.target_files = vec!["main.py".to_string(), "test_main.py".to_string()];
+    request.context.target_files = vec!["main.py".to_string(), "test_main.py".to_string()];
     request.test_plan_context = TestPlanContext {
         required_test_targets: vec!["test_main.py".to_string()],
         planned_test_targets: vec![],
@@ -280,7 +280,7 @@ fn implementation_and_tests_node_can_still_reject_missing_tests() {
 
     let prompt = &provider.requests.borrow()[0].prompt;
     assert!(
-        prompt.contains("target: main.py") || prompt.contains("Target files: main.py"),
+        prompt.contains("Current node target files: main.py, test_main.py"),
         "prompt must preserve implementation target context; got:\n{prompt}"
     );
     assert!(
@@ -310,7 +310,7 @@ fn reviewer_prompt_has_no_test_guidance_contradiction_when_tests_are_planned() {
         "main.py implements fibonacci correctly",
         "critic says source is correct",
     );
-    request.target_files = vec!["main.py".to_string()];
+    request.context.target_files = vec!["main.py".to_string()];
     request.test_plan_context = TestPlanContext {
         required_test_targets: vec!["test_main.py".to_string()],
         planned_test_targets: vec!["test_main.py".to_string()],

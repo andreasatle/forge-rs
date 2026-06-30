@@ -68,7 +68,7 @@ fn run_machine_deliberation_smoke_test() {
     let initial = DeliberationState::Ready {
         request: DeliberationRequest {
             objective: "smoke test".to_string(),
-            target_files: vec![],
+            context: crate::machines::deliberation::DeliberationContext::default(),
             max_revisions: 0,
         },
     };
@@ -126,7 +126,7 @@ fn run_machine_provider_failure_smoke_test() {
     let initial = DeliberationState::Ready {
         request: DeliberationRequest {
             objective: "write something".to_string(),
-            target_files: vec![],
+            context: crate::machines::deliberation::DeliberationContext::default(),
             max_revisions: 0,
         },
     };
@@ -193,7 +193,7 @@ fn run_machine_producer_rejection_returns_failed_output() {
     let initial = DeliberationState::Ready {
         request: DeliberationRequest {
             objective: "write something".to_string(),
-            target_files: vec![],
+            context: crate::machines::deliberation::DeliberationContext::default(),
             max_revisions: 0,
         },
     };
