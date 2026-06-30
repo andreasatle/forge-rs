@@ -267,6 +267,30 @@ impl Default for RunConfig {
     }
 }
 
+/// The recovery action that triggered an `AttemptsExhausted` failure.
+///
+/// Stored on `FailureReason::AttemptsExhausted` so callers can distinguish
+/// which kind of recovery exhausted the attempt budget without string parsing.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum ExhaustedAction {
+    /// The node's attempt budget was consumed by `Retry` recovery.
+    Retry,
+    /// The node's attempt budget was consumed by `Split` recovery.
+    Split,
+    /// The node's attempt budget was consumed by `ElevateModel` recovery.
+    ElevateModel,
+}
+
+impl fmt::Display for ExhaustedAction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Retry => write!(f, "Retry"),
+            Self::Split => write!(f, "Split"),
+            Self::ElevateModel => write!(f, "ElevateModel"),
+        }
+    }
+}
+
 /// The typed cause of a scheduler run failure.
 ///
 /// Replaces the raw `reason: String` in `SchedulerState::Failed` and
@@ -287,8 +311,8 @@ pub enum FailureReason {
         node_id: String,
         /// The attempt limit that was reached.
         max_attempts: u32,
-        /// The recovery action that triggered the exhaustion check (`"Retry"`, `"Split"`, `"ElevateModel"`).
-        recovery_action: String,
+        /// The recovery action that triggered the exhaustion check.
+        recovery_action: ExhaustedAction,
     },
     /// ElevateModel was requested but no higher model tier exists and attempts are exhausted.
     NoHigherModelTierAvailable {

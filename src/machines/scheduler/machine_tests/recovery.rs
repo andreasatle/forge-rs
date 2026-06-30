@@ -317,24 +317,28 @@ fn elevate_preserves_depth() {
 fn recovery_exhaustion_fails_scheduler() {
     // A node already at MAX_ATTEMPTS must not spawn a replacement regardless
     // of the recovery action; the scheduler transitions to Failed immediately.
-    for (case, recovery) in [
+    // The typed ExhaustedAction must match the action that triggered exhaustion.
+    for (case, recovery, expected_action) in [
         (
             "Retry",
             RecoveryAction::Retry {
                 message: "try again".to_string(),
             },
+            ExhaustedAction::Retry,
         ),
         (
             "ElevateModel",
             RecoveryAction::ElevateModel {
                 message: "escalate model".to_string(),
             },
+            ExhaustedAction::ElevateModel,
         ),
         (
             "Split",
             RecoveryAction::Split {
                 message: "decompose the work".to_string(),
             },
+            ExhaustedAction::Split,
         ),
     ] {
         let mut node = work_node("W", "failing task", &[]);
@@ -368,10 +372,19 @@ fn recovery_exhaustion_fails_scheduler() {
             "[{case}] no replacement node should be created"
         );
         assert_eq!(graph.nodes[0].status, NodeStatus::Failed, "[{case}]");
-        let FailureReason::AttemptsExhausted { node_id, .. } = reason else {
+        let FailureReason::AttemptsExhausted {
+            node_id,
+            recovery_action,
+            ..
+        } = reason
+        else {
             panic!("[{case}] expected AttemptsExhausted, got {reason:?}");
         };
         assert_eq!(node_id, "W", "[{case}] exhausted node id");
+        assert_eq!(
+            recovery_action, expected_action,
+            "[{case}] recovery_action must be the typed variant"
+        );
         assert!(t.effects.is_empty(), "[{case}]");
     }
 }

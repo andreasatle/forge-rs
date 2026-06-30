@@ -14,8 +14,8 @@ use super::graph::{
     validate_split_depth,
 };
 use super::state::{
-    FailureReason, ModelTier, Node, NodeId, NodeKind, NodeOrigin, NodeStatus, RetryFeedback,
-    RunConfig, RunGraph, SchedulerState,
+    ExhaustedAction, FailureReason, ModelTier, Node, NodeId, NodeKind, NodeOrigin, NodeStatus,
+    RetryFeedback, RunConfig, RunGraph, SchedulerState,
 };
 
 pub(super) fn failed_transition(
@@ -226,7 +226,7 @@ pub(super) fn route_recovery(
                         reason: FailureReason::AttemptsExhausted {
                             node_id: node_id.0.clone(),
                             max_attempts: MAX_ATTEMPTS,
-                            recovery_action: "Retry".to_string(),
+                            recovery_action: ExhaustedAction::Retry,
                         },
                     },
                     effects: vec![],
@@ -260,7 +260,7 @@ pub(super) fn route_recovery(
                         reason: FailureReason::AttemptsExhausted {
                             node_id: node_id.0.clone(),
                             max_attempts: MAX_ATTEMPTS,
-                            recovery_action: "Split".to_string(),
+                            recovery_action: ExhaustedAction::Split,
                         },
                     },
                     effects: vec![],
@@ -333,7 +333,7 @@ pub(super) fn route_recovery(
                         reason: FailureReason::AttemptsExhausted {
                             node_id: node_id.0.clone(),
                             max_attempts: MAX_ATTEMPTS,
-                            recovery_action: "ElevateModel".to_string(),
+                            recovery_action: ExhaustedAction::ElevateModel,
                         },
                     },
                     effects: vec![],
