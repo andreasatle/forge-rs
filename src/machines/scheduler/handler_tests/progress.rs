@@ -9,7 +9,7 @@ struct AlwaysFailRunner {
 
 impl NodeRunner for AlwaysFailRunner {
     fn run_node(&self, _request: NodeRunRequest, _telemetry: &dyn TelemetrySink) -> NodeRunResult {
-        use crate::machines::scheduler::event::{NodeFailure, RecoveryAction};
+        use crate::machines::scheduler::types::{NodeFailure, RecoveryAction};
         NodeRunResult::Failed(NodeFailure {
             kind: FailureKind::DeliberationFailure,
             message: self.reason.clone(),

@@ -327,7 +327,7 @@ fn planner_can_create_two_work_nodes_with_dependency() {
         },
         SchedulerEvent::IntegrationSucceeded {
             node_id: write_tests_id.clone(),
-            output: crate::machines::scheduler::event::IntegrationOutput {
+            output: IntegrationOutput {
                 summary: "tests integrated".to_string(),
             },
         },
@@ -380,7 +380,7 @@ fn planner_can_create_two_work_nodes_with_dependency() {
         },
         SchedulerEvent::IntegrationSucceeded {
             node_id: implement_id.clone(),
-            output: crate::machines::scheduler::event::IntegrationOutput {
+            output: IntegrationOutput {
                 summary: "implementation integrated".to_string(),
             },
         },

@@ -9,14 +9,15 @@ use super::*;
 use crate::artifacts::{Artifact, ArtifactView, WorkspaceFileOps};
 use crate::engine::{Machine, run_machine};
 use crate::machines::scheduler::effect::SchedulerEffect;
-use crate::machines::scheduler::event::{
-    FailureKind, IntegrationFailure, NodeFailure, RecoveryAction, SchedulerEvent, WorkOutput,
-};
+use crate::machines::scheduler::event::SchedulerEvent;
 use crate::machines::scheduler::graph::{
     ModelTier, Node, NodeId, NodeKind, NodeOrigin, NodeStatus, RunGraph, TestPlanContext,
 };
 use crate::machines::scheduler::machine::{SchedulerMachine, SchedulerOutput};
 use crate::machines::scheduler::state::{FailureReason, RunConfig, RunRequest, SchedulerState};
+use crate::machines::scheduler::types::{
+    FailureKind, IntegrationFailure, NodeFailure, RecoveryAction, WorkOutput,
+};
 use crate::node_runner::runner::NodeRunner;
 use crate::node_runner::types::{NodeRunRequest, NodeRunResult};
 use crate::node_runner::{DeliberatingNodeRunner, NodeRunWorkResult, StaticNodeRunner};

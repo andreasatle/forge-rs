@@ -1,6 +1,7 @@
 //! Scheduler progress reporting.
 
-use crate::machines::scheduler::event::{RecoveryAction, SchedulerEvent};
+use crate::machines::scheduler::event::SchedulerEvent;
+use crate::machines::scheduler::types::RecoveryAction;
 
 pub(crate) fn print_returned_progress(event: &SchedulerEvent) {
     match event {

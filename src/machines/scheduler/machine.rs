@@ -7,9 +7,10 @@
 use crate::engine::Transition;
 
 use super::effect::SchedulerEffect;
-use super::event::{IntegrationFailure, NodeFailure, SchedulerEvent};
+use super::event::SchedulerEvent;
 use super::graph::{ModelTier, Node, NodeId, NodeKind, NodeOrigin, NodeStatus, RunGraph};
 use super::state::{FailureReason, RunConfig, RunRequest, SchedulerState};
+use super::types::{IntegrationFailure, NodeFailure};
 use super::{graph, recovery};
 
 // Re-expose constants so the nested test module sees them via `use super::*`.

@@ -8,8 +8,9 @@
 //!
 //! - `state.rs` — `SchedulerState`: the scheduler machine phase enum
 //! - `graph.rs` — `RunGraph`, `Node`, `NodeId`, and all node/graph descriptor types
-//! - `event.rs` — `SchedulerEvent`, `RecoveryAction`, and event payloads
+//! - `event.rs` — `SchedulerEvent`, the scheduler transition input vocabulary
 //! - `effect.rs` — `SchedulerEffect` (commands emitted by transitions)
+//! - `types.rs` — shared scheduler payload and recovery vocabulary
 //! - `machine.rs` — `SchedulerMachine`, `SchedulerOutput`, `RecoverySummary`, graph helpers, and the `Machine` implementation
 //!
 //! # Output classification
@@ -48,14 +49,12 @@ mod progress;
 mod recovery;
 pub mod request;
 pub mod state;
+pub mod types;
 mod validation;
 
 pub use config::RunConfig;
 pub use effect::SchedulerEffect;
-pub use event::{
-    IntegrationFailure, IntegrationOutput, NodeFailure, NodeRequest, PlanOutput, RecoveryAction,
-    SchedulerEvent, WorkOutput,
-};
+pub use event::SchedulerEvent;
 pub use failure::{ExhaustedAction, FailureKind, FailureReason};
 pub use graph::{
     ModelTier, Node, NodeId, NodeKind, NodeOrigin, NodeStatus, RunGraph, TestPlanContext,
@@ -64,3 +63,7 @@ pub use handler::SchedulerHandler;
 pub use machine::{RecoverySummary, SchedulerMachine, SchedulerOutput};
 pub use request::RunRequest;
 pub use state::SchedulerState;
+pub use types::{
+    IntegrationFailure, IntegrationOutput, NodeFailure, NodeRequest, PlanOutput, RecoveryAction,
+    WorkOutput,
+};

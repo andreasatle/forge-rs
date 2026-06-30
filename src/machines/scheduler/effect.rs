@@ -10,8 +10,8 @@
 
 use crate::validation::ValidationPlan;
 
-use super::event::WorkOutput;
 use super::graph::{ModelTier, NodeId, NodeKind, RetryFeedback, TestPlanContext};
+use super::types::WorkOutput;
 
 /// Commands that the scheduler emits to the outside world.
 ///
@@ -23,7 +23,7 @@ pub enum SchedulerEffect {
     /// Dispatch a single node to a runner for execution.
     ///
     /// The handler is responsible for running the node with the given
-    /// parameters and returning a `NodeReturned` event when it finishes.
+    /// parameters and returning a node result event when it finishes.
     /// Carrying `kind`, `objective`, `model_tier`, and `attempt` here means
     /// the handler does not need to re-read the graph.
     RunNode {
@@ -51,7 +51,7 @@ pub enum SchedulerEffect {
 
     /// Dispatch the work produced by a node to the integration handler.
     ///
-    /// The handler integrates the work and returns an `IntegrationReturned` event.
+    /// The handler integrates the work and returns an integration result event.
     /// The node remains `Integrating` until that event arrives.
     IntegrateWork {
         /// The ID of the node whose work is being integrated.

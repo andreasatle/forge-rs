@@ -5,10 +5,11 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use crate::artifacts::{Artifact, Workspace, create_temporary_workspace, git_command, integrate};
-use crate::machines::scheduler::event::{
-    FailureKind, IntegrationFailure, IntegrationOutput, RecoveryAction, SchedulerEvent, WorkOutput,
-};
+use crate::machines::scheduler::event::SchedulerEvent;
 use crate::machines::scheduler::graph::NodeId;
+use crate::machines::scheduler::types::{
+    FailureKind, IntegrationFailure, IntegrationOutput, RecoveryAction, WorkOutput,
+};
 use crate::node_runner::WorkAttempt;
 use crate::telemetry::{TelemetryEvent, TelemetryRecord, TelemetrySink};
 use crate::validation::{AlwaysPassValidator, ValidationPlan, ValidationResult, Validator};
