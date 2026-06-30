@@ -239,6 +239,32 @@ pub struct RunRequest {
     pub objective: String,
 }
 
+/// Run-scoped policy that is constant for the lifetime of a scheduler run.
+///
+/// Carried inside `Active` and `Waiting` so that `SchedulerMachine::transition`
+/// is fully reproducible from `(state, event)` alone — no out-of-band inputs.
+///
+/// `serde(default)` ensures that checkpoints written before this field existed
+/// can be loaded and will default to the historical behaviour (`has_strong_tier:
+/// true`).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct RunConfig {
+    /// Whether a distinct strong-tier model is configured.
+    ///
+    /// When `false`, `ElevateModel` recovery cannot produce a meaningfully
+    /// different result and is demoted to a `Retry` instead (or the run is
+    /// failed when attempts are exhausted).
+    pub has_strong_tier: bool,
+}
+
+impl Default for RunConfig {
+    fn default() -> Self {
+        RunConfig {
+            has_strong_tier: true,
+        }
+    }
+}
+
 /// The durable checkpoints of the scheduler state machine.
 ///
 /// Each variant carries exactly the data needed to resume from that point.
@@ -277,6 +303,9 @@ pub enum SchedulerState {
     Active {
         /// The run graph to scan and advance.
         graph: RunGraph,
+        /// Run-scoped policy; `serde(default)` for checkpoint compatibility.
+        #[serde(default)]
+        run_config: RunConfig,
     },
     /// One node in the graph has been dispatched and the scheduler is waiting
     /// for its result. No further dispatch happens until `NodeReturned` or
@@ -287,6 +316,9 @@ pub enum SchedulerState {
     Waiting {
         /// The run graph with the dispatched node marked `Running` or `Integrating`.
         graph: RunGraph,
+        /// Run-scoped policy; propagated from the matching `Active` state.
+        #[serde(default)]
+        run_config: RunConfig,
     },
     /// All nodes have reached a terminal status (`Completed`, `Failed`, or
     /// `Cancelled`) with no failures that halted the run. The graph is the

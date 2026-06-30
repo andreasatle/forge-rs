@@ -42,6 +42,7 @@ fn node_failure_reason_preserved_in_full_in_telemetry() {
             nodes: vec![work_node("fail-node", "do some work")],
             next_id: 0,
         },
+        run_config: RunConfig::default(),
     };
 
     run_machine_with_telemetry(
@@ -92,6 +93,7 @@ fn telemetry_failure_does_not_change_scheduler_behavior() {
             nodes: vec![work_node("W", "do some work")],
             next_id: 0,
         },
+        run_config: RunConfig::default(),
     };
     let output = run_machine_with_telemetry(
         SchedulerHandler::new(StaticNodeRunner).with_telemetry(Rc::clone(&shared)),
@@ -134,6 +136,7 @@ fn artifact_commit_still_succeeds_when_telemetry_fails() {
             nodes: vec![work_node("W", "write a file")],
             next_id: 0,
         },
+        run_config: RunConfig::default(),
     };
     let (output, handler) = run_machine_with_telemetry(
         SchedulerHandler::with_artifact(runner, artifact).with_telemetry(Rc::clone(&shared)),
@@ -210,9 +213,12 @@ fn scheduler_and_deliberation_share_one_trace() {
         r#"{"status":"accepted","content":"approved"}"#,
     ]);
     let runner = DeliberatingNodeRunner::new(&provider, &provider);
-    let initial_state = SchedulerMachine::initial_state(RunRequest {
-        objective: "do something".to_string(),
-    });
+    let initial_state = SchedulerMachine::initial_state(
+        RunRequest {
+            objective: "do something".to_string(),
+        },
+        RunConfig::default(),
+    );
 
     let handler = SchedulerHandler::new(runner).with_telemetry(Rc::clone(&shared));
     let _ = run_machine_with_telemetry(handler, initial_state, shared.as_ref());
@@ -255,9 +261,12 @@ fn nested_machine_events_preserve_order() {
         r#"{"status":"accepted","content":"approved"}"#,
     ]);
     let runner = DeliberatingNodeRunner::new(&provider, &provider);
-    let initial_state = SchedulerMachine::initial_state(RunRequest {
-        objective: "do something".to_string(),
-    });
+    let initial_state = SchedulerMachine::initial_state(
+        RunRequest {
+            objective: "do something".to_string(),
+        },
+        RunConfig::default(),
+    );
 
     let handler = SchedulerHandler::new(runner).with_telemetry(Rc::clone(&shared));
     let _ = run_machine_with_telemetry(handler, initial_state, shared.as_ref());
@@ -336,9 +345,12 @@ fn runtime_creates_only_one_file_telemetry() {
         r#"{"status":"accepted","content":"approved"}"#,
     ]);
     let runner = DeliberatingNodeRunner::new(&provider, &provider);
-    let initial_state = SchedulerMachine::initial_state(RunRequest {
-        objective: "do something".to_string(),
-    });
+    let initial_state = SchedulerMachine::initial_state(
+        RunRequest {
+            objective: "do something".to_string(),
+        },
+        RunConfig::default(),
+    );
 
     let handler = SchedulerHandler::new(runner).with_telemetry(Rc::clone(&shared));
     let _ = run_machine_with_telemetry(handler, initial_state, shared.as_ref());

@@ -9,6 +9,7 @@ fn plan_node_rejects_work_accepted() {
     let t = do_transition(
         SchedulerState::Waiting {
             graph: running(graph, "P"),
+            run_config: RunConfig::default(),
         },
         SchedulerEvent::NodeReturned {
             node_id: NodeId("P".to_string()),
@@ -38,6 +39,7 @@ fn work_node_rejects_plan_accepted() {
     let t = do_transition(
         SchedulerState::Waiting {
             graph: running(graph, "A"),
+            run_config: RunConfig::default(),
         },
         SchedulerEvent::NodeReturned {
             node_id: NodeId("A".to_string()),
@@ -70,7 +72,10 @@ fn node_returned_rejects_integrating_node() {
     graph.nodes[0].status = NodeStatus::Integrating;
 
     let t = do_transition(
-        SchedulerState::Waiting { graph },
+        SchedulerState::Waiting {
+            graph,
+            run_config: RunConfig::default(),
+        },
         SchedulerEvent::NodeReturned {
             node_id: NodeId("B".to_string()),
             outcome: NodeOutcome::WorkAccepted(WorkOutput {
@@ -108,6 +113,7 @@ fn integration_returned_rejects_non_integrating_work() {
     let t = do_transition(
         SchedulerState::Waiting {
             graph: running(graph, "A"),
+            run_config: RunConfig::default(),
         },
         SchedulerEvent::IntegrationReturned {
             node_id: NodeId("A".to_string()),
@@ -136,6 +142,7 @@ fn integration_returned_rejects_plan_node() {
     let t = do_transition(
         SchedulerState::Waiting {
             graph: running(graph, "P"),
+            run_config: RunConfig::default(),
         },
         SchedulerEvent::IntegrationReturned {
             node_id: NodeId("P".to_string()),
@@ -166,6 +173,7 @@ fn node_returned_wrong_node_fails_scheduler() {
     let t = do_transition(
         SchedulerState::Waiting {
             graph: running(graph, "A"),
+            run_config: RunConfig::default(),
         },
         SchedulerEvent::NodeReturned {
             node_id: NodeId("B".to_string()),
@@ -202,7 +210,10 @@ fn integration_returned_wrong_node_fails_scheduler() {
     graph.nodes[0].status = NodeStatus::Integrating;
 
     let t = do_transition(
-        SchedulerState::Waiting { graph },
+        SchedulerState::Waiting {
+            graph,
+            run_config: RunConfig::default(),
+        },
         SchedulerEvent::IntegrationReturned {
             node_id: NodeId("B".to_string()),
             outcome: IntegrationOutcome::Succeeded(IntegrationOutput {
@@ -233,7 +244,10 @@ fn integration_returned_wrong_node_fails_scheduler() {
 fn active_rejects_node_returned() {
     let graph = single_work_graph();
     let t = do_transition(
-        SchedulerState::Active { graph },
+        SchedulerState::Active {
+            graph,
+            run_config: RunConfig::default(),
+        },
         SchedulerEvent::NodeReturned {
             node_id: NodeId("A".to_string()),
             outcome: NodeOutcome::WorkAccepted(WorkOutput {
@@ -264,7 +278,10 @@ fn active_rejects_node_returned() {
 fn active_rejects_integration_returned() {
     let graph = single_work_graph();
     let t = do_transition(
-        SchedulerState::Active { graph },
+        SchedulerState::Active {
+            graph,
+            run_config: RunConfig::default(),
+        },
         SchedulerEvent::IntegrationReturned {
             node_id: NodeId("A".to_string()),
             outcome: IntegrationOutcome::Succeeded(IntegrationOutput {
@@ -294,7 +311,13 @@ fn active_rejects_integration_returned() {
 #[test]
 fn waiting_rejects_start() {
     let graph = single_work_graph();
-    let t = do_transition(SchedulerState::Waiting { graph }, SchedulerEvent::Start);
+    let t = do_transition(
+        SchedulerState::Waiting {
+            graph,
+            run_config: RunConfig::default(),
+        },
+        SchedulerEvent::Start,
+    );
 
     let SchedulerState::Failed { reason, .. } = t.state else {
         panic!("expected Failed, got {:#?}", t.state);
@@ -320,7 +343,10 @@ fn waiting_rejects_start() {
 fn waiting_with_no_active_node_fails_before_matching_returned_node() {
     let graph = single_work_graph();
     let t = do_transition(
-        SchedulerState::Waiting { graph },
+        SchedulerState::Waiting {
+            graph,
+            run_config: RunConfig::default(),
+        },
         SchedulerEvent::NodeReturned {
             node_id: NodeId("missing".to_string()),
             outcome: NodeOutcome::WorkAccepted(WorkOutput {
@@ -356,7 +382,10 @@ fn waiting_with_only_completed_nodes_fails() {
     graph.nodes[1].status = NodeStatus::Completed;
 
     let t = do_transition(
-        SchedulerState::Waiting { graph },
+        SchedulerState::Waiting {
+            graph,
+            run_config: RunConfig::default(),
+        },
         SchedulerEvent::NodeReturned {
             node_id: NodeId("B".to_string()),
             outcome: NodeOutcome::WorkAccepted(WorkOutput {
@@ -385,6 +414,7 @@ fn waiting_with_running_node_still_works() {
     let t = do_transition(
         SchedulerState::Waiting {
             graph: running(graph, "A"),
+            run_config: RunConfig::default(),
         },
         SchedulerEvent::NodeReturned {
             node_id: NodeId("A".to_string()),
@@ -412,7 +442,13 @@ fn active_state_rejects_preexisting_active_node() {
     let mut graph = single_work_graph();
     graph.nodes[0].status = NodeStatus::Running;
 
-    let t = do_transition(SchedulerState::Active { graph }, SchedulerEvent::Start);
+    let t = do_transition(
+        SchedulerState::Active {
+            graph,
+            run_config: RunConfig::default(),
+        },
+        SchedulerEvent::Start,
+    );
 
     let SchedulerState::Failed { reason, .. } = t.state else {
         panic!("expected Failed, got {:#?}", t.state);
@@ -437,7 +473,13 @@ fn active_state_rejects_preexisting_integrating_node() {
     let mut graph = single_work_graph();
     graph.nodes[0].status = NodeStatus::Integrating;
 
-    let t = do_transition(SchedulerState::Active { graph }, SchedulerEvent::Start);
+    let t = do_transition(
+        SchedulerState::Active {
+            graph,
+            run_config: RunConfig::default(),
+        },
+        SchedulerEvent::Start,
+    );
 
     let SchedulerState::Failed { reason, .. } = t.state else {
         panic!("expected Failed, got {:#?}", t.state);
@@ -465,7 +507,10 @@ fn waiting_state_rejects_no_active_nodes() {
         next_id: 0,
     };
     let t = do_transition(
-        SchedulerState::Waiting { graph },
+        SchedulerState::Waiting {
+            graph,
+            run_config: RunConfig::default(),
+        },
         SchedulerEvent::NodeReturned {
             node_id: NodeId("B".to_string()),
             outcome: NodeOutcome::WorkAccepted(WorkOutput {
@@ -499,7 +544,10 @@ fn waiting_state_rejects_multiple_active_nodes() {
     graph.nodes[1].status = NodeStatus::Running;
 
     let t = do_transition(
-        SchedulerState::Waiting { graph },
+        SchedulerState::Waiting {
+            graph,
+            run_config: RunConfig::default(),
+        },
         SchedulerEvent::NodeReturned {
             node_id: NodeId("B".to_string()),
             outcome: NodeOutcome::WorkAccepted(WorkOutput {
@@ -536,7 +584,10 @@ fn waiting_state_rejects_return_for_non_active_node() {
     graph.nodes[1].status = NodeStatus::Running;
 
     let t = do_transition(
-        SchedulerState::Waiting { graph },
+        SchedulerState::Waiting {
+            graph,
+            run_config: RunConfig::default(),
+        },
         SchedulerEvent::NodeReturned {
             node_id: NodeId("B".to_string()),
             outcome: NodeOutcome::WorkAccepted(WorkOutput {

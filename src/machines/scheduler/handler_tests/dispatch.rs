@@ -24,9 +24,12 @@ fn run_node_effect_uses_node_runner() {
 
 #[test]
 fn plan_node_flows_through_runner() {
-    let state = SchedulerMachine::initial_state(RunRequest {
-        objective: "plan the work".to_string(),
-    });
+    let state = SchedulerMachine::initial_state(
+        RunRequest {
+            objective: "plan the work".to_string(),
+        },
+        RunConfig::default(),
+    );
     let output = run_machine(handler(), state);
     assert!(
         matches!(output, SchedulerOutput::Complete { .. }),
@@ -41,6 +44,7 @@ fn work_node_flows_through_runner() {
             nodes: vec![work_node("W", "build artifacts")],
             next_id: 0,
         },
+        run_config: RunConfig::default(),
     };
     let output = run_machine(handler(), state);
     assert!(
@@ -56,6 +60,7 @@ fn failed_node_flows_through_runner() {
             nodes: vec![work_node("F", "fail this step")],
             next_id: 0,
         },
+        run_config: RunConfig::default(),
     };
     let output = run_machine(handler(), state);
     assert!(

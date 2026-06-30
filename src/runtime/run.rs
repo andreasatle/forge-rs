@@ -20,7 +20,7 @@ use crate::engine::run_machine_with_telemetry;
 use crate::language::registry::language_spec;
 
 use super::repo::load_or_create_artifact;
-use crate::machines::scheduler::state::SchedulerState;
+use crate::machines::scheduler::state::{RunConfig, SchedulerState};
 use crate::machines::scheduler::{RunRequest, SchedulerHandler, SchedulerMachine, SchedulerOutput};
 use crate::node_runner::{DeliberatingNodeRunner, TestTargetsFn};
 use crate::project::{CodingProjectAdapter, DefaultProjectAdapter, ProjectAdapter as _};
@@ -110,9 +110,12 @@ impl ForgeRuntime {
             .with_validator(validator)
             .with_checkpoint_dir(run_info.run_dir.clone());
 
-        let initial_state = SchedulerMachine::initial_state(RunRequest {
-            objective: config.objective.clone(),
-        });
+        let initial_state = SchedulerMachine::initial_state(
+            RunRequest {
+                objective: config.objective.clone(),
+            },
+            RunConfig::default(),
+        );
 
         let (output, handler) = run_machine_with_telemetry(handler, initial_state, sink.as_ref());
         print_run_progress_result(&output);
@@ -166,7 +169,7 @@ impl ForgeRuntime {
         let sink: Rc<dyn TelemetrySink> = Rc::new(FileTelemetry::new(run_dir.join("telemetry")));
 
         let graph = match &initial_state {
-            SchedulerState::Active { graph } => graph,
+            SchedulerState::Active { graph, .. } => graph,
             _ => unreachable!("normalize_for_resume always returns Active"),
         };
         let (node_count, completed_count) = node_counts(graph);
@@ -1253,9 +1256,12 @@ mod tests {
         };
 
         let handler = SchedulerHandler::with_artifact(FileWritingRunner, artifact);
-        let initial_state = SchedulerMachine::initial_state(RunRequest {
-            objective: "generate a file".to_string(),
-        });
+        let initial_state = SchedulerMachine::initial_state(
+            RunRequest {
+                objective: "generate a file".to_string(),
+            },
+            RunConfig::default(),
+        );
         let (_output, handler) = run_machine_with_telemetry(handler, initial_state, &NoopTelemetry);
 
         let final_artifact = handler
@@ -1386,9 +1392,12 @@ mod tests {
 
         let run_info = create_run(&runs_root, "test", "repo", &test_provider_metadata()).unwrap();
         let handler = SchedulerHandler::with_artifact(FileWritingRunner, artifact);
-        let initial_state = SchedulerMachine::initial_state(RunRequest {
-            objective: "generate a file".to_string(),
-        });
+        let initial_state = SchedulerMachine::initial_state(
+            RunRequest {
+                objective: "generate a file".to_string(),
+            },
+            RunConfig::default(),
+        );
         let (output, handler) = run_machine_with_telemetry(handler, initial_state, &NoopTelemetry);
 
         let validation_passed = handler.validation_passed();
@@ -1476,9 +1485,12 @@ mod tests {
         let run_info = create_run(&runs_root, "test", "repo", &test_provider_metadata()).unwrap();
         let handler = SchedulerHandler::with_artifact(FileWritingRunner, artifact)
             .with_validator(Rc::new(AlwaysFailValidator));
-        let initial_state = SchedulerMachine::initial_state(RunRequest {
-            objective: "generate a file".to_string(),
-        });
+        let initial_state = SchedulerMachine::initial_state(
+            RunRequest {
+                objective: "generate a file".to_string(),
+            },
+            RunConfig::default(),
+        );
         let (output, handler) = run_machine_with_telemetry(handler, initial_state, &NoopTelemetry);
 
         let validation_passed = handler.validation_passed();
@@ -1530,9 +1542,12 @@ mod tests {
 
         let run_info = create_run(&runs_root, "test", "repo", &test_provider_metadata()).unwrap();
         let handler = SchedulerHandler::with_artifact(AlwaysFailRunner, artifact);
-        let initial_state = SchedulerMachine::initial_state(RunRequest {
-            objective: "do something".to_string(),
-        });
+        let initial_state = SchedulerMachine::initial_state(
+            RunRequest {
+                objective: "do something".to_string(),
+            },
+            RunConfig::default(),
+        );
         let (output, handler) = run_machine_with_telemetry(handler, initial_state, &NoopTelemetry);
 
         let validation_passed = handler.validation_passed();

@@ -14,7 +14,7 @@ use super::graph::{
     validate_split_depth,
 };
 use super::state::{
-    ModelTier, Node, NodeId, NodeKind, NodeOrigin, NodeStatus, RetryFeedback, RunGraph,
+    ModelTier, Node, NodeId, NodeKind, NodeOrigin, NodeStatus, RetryFeedback, RunConfig, RunGraph,
     SchedulerState,
 };
 
@@ -211,7 +211,7 @@ pub(super) fn apply_elevate(graph: RunGraph, node_id: &NodeId) -> RunGraph {
 }
 
 pub(super) fn route_recovery(
-    has_strong_tier: bool,
+    run_config: RunConfig,
     graph: RunGraph,
     node_id: &NodeId,
     failure_kind: FailureKind,
@@ -240,7 +240,7 @@ pub(super) fn route_recovery(
             } else {
                 let graph = apply_retry(graph, node_id, failure_kind, &message);
                 Transition {
-                    state: SchedulerState::Active { graph },
+                    state: SchedulerState::Active { graph, run_config },
                     effects: vec![],
                 }
             }
@@ -272,7 +272,7 @@ pub(super) fn route_recovery(
             } else {
                 let graph = apply_split(graph, node_id, message);
                 Transition {
-                    state: SchedulerState::Active { graph },
+                    state: SchedulerState::Active { graph, run_config },
                     effects: vec![],
                 }
             }
@@ -281,7 +281,7 @@ pub(super) fn route_recovery(
         RecoveryAction::ElevateModel { .. } => {
             let (can_elevate, exhausted) = {
                 let node = get_node(&graph, node_id);
-                let can = has_strong_tier && node.model_tier == ModelTier::Cheap;
+                let can = run_config.has_strong_tier && node.model_tier == ModelTier::Cheap;
                 (can, attempts_exhausted(node))
             };
 
@@ -305,7 +305,7 @@ pub(super) fn route_recovery(
                 } else {
                     let graph = apply_retry(graph, node_id, failure_kind, "");
                     Transition {
-                        state: SchedulerState::Active { graph },
+                        state: SchedulerState::Active { graph, run_config },
                         effects: vec![],
                     }
                 }
@@ -328,7 +328,7 @@ pub(super) fn route_recovery(
             } else {
                 let graph = apply_elevate(graph, node_id);
                 Transition {
-                    state: SchedulerState::Active { graph },
+                    state: SchedulerState::Active { graph, run_config },
                     effects: vec![],
                 }
             }

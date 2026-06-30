@@ -6,7 +6,7 @@ use crate::machines::scheduler::event::{
     NodeRequest, PlanOutput, RecoveryAction, WorkOutput,
 };
 use crate::machines::scheduler::handler::SchedulerHandler;
-use crate::machines::scheduler::state::{Node, RunGraph, RunRequest};
+use crate::machines::scheduler::state::{Node, RunConfig, RunGraph, RunRequest};
 use crate::node_runner::StaticNodeRunner;
 
 fn scheduler_handler() -> SchedulerHandler<StaticNodeRunner> {
@@ -100,10 +100,7 @@ fn do_transition(
     state: SchedulerState,
     event: SchedulerEvent,
 ) -> Transition<SchedulerState, SchedulerEffect> {
-    SchedulerMachine {
-        has_strong_tier: true,
-    }
-    .transition(state, event)
+    SchedulerMachine.transition(state, event)
 }
 
 mod checkpoint;

@@ -15,7 +15,7 @@ use crate::machines::scheduler::event::{
 };
 use crate::machines::scheduler::machine::{SchedulerMachine, SchedulerOutput};
 use crate::machines::scheduler::state::{
-    ModelTier, Node, NodeId, NodeKind, NodeOrigin, NodeStatus, RunGraph, RunRequest,
+    ModelTier, Node, NodeId, NodeKind, NodeOrigin, NodeStatus, RunConfig, RunGraph, RunRequest,
     SchedulerState, TestPlanContext,
 };
 use crate::node_runner::runner::NodeRunner;

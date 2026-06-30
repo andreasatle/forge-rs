@@ -122,6 +122,7 @@ fn retry_worker_receives_validation_diagnostics_and_can_fix_file() {
             nodes: vec![node],
             next_id: 0,
         },
+        run_config: RunConfig::default(),
     };
 
     let output = run_machine(handler, state);

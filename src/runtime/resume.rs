@@ -119,11 +119,13 @@ fn manifest_status_is_running(manifest_path: &Path) -> bool {
 ///   scheduler re-dispatches it. All other statuses are unchanged.
 pub fn normalize_for_resume(state: SchedulerState) -> SchedulerState {
     match state {
-        SchedulerState::Active { graph } => SchedulerState::Active {
+        SchedulerState::Active { graph, run_config } => SchedulerState::Active {
             graph: reset_active_nodes(graph),
+            run_config,
         },
-        SchedulerState::Waiting { graph } => SchedulerState::Active {
+        SchedulerState::Waiting { graph, run_config } => SchedulerState::Active {
             graph: reset_active_nodes(graph),
+            run_config,
         },
         other => other,
     }
@@ -150,7 +152,8 @@ fn reset_active_nodes(graph: RunGraph) -> RunGraph {
 mod tests {
     use super::*;
     use crate::machines::scheduler::state::{
-        ModelTier, Node, NodeId, NodeKind, NodeOrigin, NodeStatus, RunGraph, SchedulerState,
+        ModelTier, Node, NodeId, NodeKind, NodeOrigin, NodeStatus, RunConfig, RunGraph,
+        SchedulerState,
     };
     use crate::runtime::checkpoint::save_checkpoint;
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -202,6 +205,7 @@ mod tests {
                 ],
                 next_id: 2,
             },
+            run_config: RunConfig::default(),
         }
     }
 
@@ -275,7 +279,7 @@ mod tests {
         save_checkpoint(&run, &sample_running_state()).unwrap();
         let (loaded_dir, loaded_state) = find_resumable_run(&root).unwrap();
         assert_eq!(loaded_dir, run);
-        let SchedulerState::Active { graph } = loaded_state else {
+        let SchedulerState::Active { graph, .. } = loaded_state else {
             panic!("expected Active state");
         };
         assert_eq!(graph.nodes.len(), 2);
@@ -313,8 +317,9 @@ mod tests {
                 ],
                 next_id: 0,
             },
+            run_config: RunConfig::default(),
         };
-        let SchedulerState::Active { graph } = normalize_for_resume(state) else {
+        let SchedulerState::Active { graph, .. } = normalize_for_resume(state) else {
             panic!("expected Active");
         };
         assert_eq!(graph.nodes[0].status, NodeStatus::Completed);
@@ -331,8 +336,9 @@ mod tests {
                 ],
                 next_id: 0,
             },
+            run_config: RunConfig::default(),
         };
-        let SchedulerState::Active { graph } = normalize_for_resume(state) else {
+        let SchedulerState::Active { graph, .. } = normalize_for_resume(state) else {
             panic!("expected Active");
         };
         assert_eq!(graph.nodes[1].status, NodeStatus::Pending);
@@ -347,13 +353,16 @@ mod tests {
             ],
             next_id: 0,
         };
-        let state = SchedulerState::Waiting { graph };
+        let state = SchedulerState::Waiting {
+            graph,
+            run_config: RunConfig::default(),
+        };
         let normalized = normalize_for_resume(state);
         assert!(
             matches!(normalized, SchedulerState::Active { .. }),
             "Waiting must become Active after normalization"
         );
-        let SchedulerState::Active { graph } = normalized else {
+        let SchedulerState::Active { graph, .. } = normalized else {
             unreachable!()
         };
         assert_eq!(graph.nodes[1].status, NodeStatus::Pending);
@@ -371,8 +380,9 @@ mod tests {
                 ],
                 next_id: 0,
             },
+            run_config: RunConfig::default(),
         };
-        let SchedulerState::Active { graph } = normalize_for_resume(state) else {
+        let SchedulerState::Active { graph, .. } = normalize_for_resume(state) else {
             panic!("expected Active");
         };
         assert_eq!(graph.nodes[0].status, NodeStatus::Completed);

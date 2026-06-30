@@ -19,7 +19,7 @@
 
 use forge_rs::engine::run_machine_with_telemetry;
 use forge_rs::machines::scheduler::{
-    RunRequest, SchedulerHandler, SchedulerMachine, SchedulerOutput,
+    RunConfig, RunRequest, SchedulerHandler, SchedulerMachine, SchedulerOutput,
 };
 use forge_rs::node_runner::DeliberatingNodeRunner;
 use forge_rs::providers::{LlamaCppProvider, RetryingProvider};
@@ -76,9 +76,12 @@ fn main() {
     let runner = DeliberatingNodeRunner::new(&retrying, &retrying);
     let handler = SchedulerHandler::new(runner);
 
-    let initial_state = SchedulerMachine::initial_state(RunRequest {
-        objective: objective.to_string(),
-    });
+    let initial_state = SchedulerMachine::initial_state(
+        RunRequest {
+            objective: objective.to_string(),
+        },
+        RunConfig::default(),
+    );
 
     let telemetry_dir = PathBuf::from("runs/latest");
     let _ = std::fs::remove_dir_all(&telemetry_dir);

@@ -126,6 +126,7 @@ fn checkpoint_written_after_node_returned() {
             nodes: vec![work_node("W", "do some work")],
             next_id: 0,
         },
+        run_config: RunConfig::default(),
     };
     run_machine(
         SchedulerHandler::new(StaticNodeRunner).with_checkpoint_dir(dir.clone()),
@@ -140,7 +141,7 @@ fn checkpoint_written_after_node_returned() {
     // The checkpoint captures the last non-terminal state (Active, not Complete).
     // The final Complete state is a terminal and is never checkpointed.
     let loaded = load_checkpoint(&dir).unwrap();
-    let SchedulerState::Active { graph } = loaded else {
+    let SchedulerState::Active { graph, .. } = loaded else {
         panic!("expected Active state in checkpoint");
     };
     assert!(
@@ -189,6 +190,7 @@ fn checkpoint_load_round_trip() {
             ],
             next_id: 1,
         },
+        run_config: RunConfig::default(),
     };
 
     save_checkpoint(&dir, &state).unwrap();

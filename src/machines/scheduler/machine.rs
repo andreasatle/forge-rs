@@ -11,7 +11,8 @@ use super::event::{
     IntegrationFailure, IntegrationOutcome, NodeFailure, NodeOutcome::*, SchedulerEvent,
 };
 use super::state::{
-    ModelTier, Node, NodeId, NodeKind, NodeOrigin, NodeStatus, RunGraph, RunRequest, SchedulerState,
+    ModelTier, Node, NodeId, NodeKind, NodeOrigin, NodeStatus, RunConfig, RunGraph, RunRequest,
+    SchedulerState,
 };
 use super::{graph, recovery};
 
@@ -91,24 +92,18 @@ pub enum SchedulerOutput {
 
 /// The scheduler state machine.
 ///
-/// All durable data travels inside `SchedulerState`. This type carries only
-/// static policy that is fixed for the lifetime of a run.
-pub struct SchedulerMachine {
-    /// Whether a distinct strong-tier model is configured.
-    ///
-    /// When `false`, `ElevateModel` recovery cannot produce a meaningfully
-    /// different result and is demoted to a `Retry` instead (or `Terminal` when
-    /// attempts are exhausted).
-    pub has_strong_tier: bool,
-}
+/// All durable run data travels inside `SchedulerState`, including the
+/// `RunConfig` policy. This struct has no fields; it exists only as the
+/// namespace for `transition`, `output`, and `initial_state`.
+pub struct SchedulerMachine;
 
 impl SchedulerMachine {
-    /// Build the initial scheduler state from an external run request.
+    /// Build the initial scheduler state from a run request and policy config.
     ///
     /// Creates a `SchedulerState::Active` containing a single root `Plan` node
-    /// whose objective is taken from the request. All other node fields are set
-    /// to their default starting values.
-    pub fn initial_state(request: RunRequest) -> SchedulerState {
+    /// whose objective is taken from the request. The `run_config` is embedded
+    /// in the state so `transition` is fully reproducible from `(state, event)`.
+    pub fn initial_state(request: RunRequest, run_config: RunConfig) -> SchedulerState {
         let root = Node {
             id: NodeId("root".to_string()),
             kind: NodeKind::Plan,
@@ -130,6 +125,7 @@ impl SchedulerMachine {
                 nodes: vec![root],
                 next_id: 0,
             },
+            run_config,
         }
     }
 
@@ -151,6 +147,9 @@ impl SchedulerMachine {
 
     /// Pure transition function: given the current state and an event, returns
     /// the next state and any effects to dispatch.
+    ///
+    /// The outcome depends only on `(state, event)`. `RunConfig` is read from
+    /// the state variant itself rather than from any field on `SchedulerMachine`.
     pub fn transition(
         &self,
         state: SchedulerState,
@@ -163,7 +162,7 @@ impl SchedulerMachine {
             //   1. All nodes are terminal → enter Complete and stop.
             //   2. Some nodes are Pending but none are ready → deadlock; enter Failed.
             //   3. At least one node is ready → mark it Running, emit RunNode, move to Waiting.
-            (SchedulerState::Active { graph }, SchedulerEvent::Start) => {
+            (SchedulerState::Active { graph, run_config }, SchedulerEvent::Start) => {
                 if let Err(reason) = graph::validate_graph_invariants(&graph) {
                     return Transition {
                         state: SchedulerState::Failed {
@@ -243,7 +242,7 @@ impl SchedulerMachine {
                         };
                         let graph = graph::mark_node(graph, &node_id, NodeStatus::Running);
                         Transition {
-                            state: SchedulerState::Waiting { graph },
+                            state: SchedulerState::Waiting { graph, run_config },
                             effects: vec![effect],
                         }
                     }
@@ -256,7 +255,7 @@ impl SchedulerMachine {
             // single-threaded runner but would be catastrophic if it did: a result for
             // a node that was never dispatched.
             (
-                SchedulerState::Waiting { graph },
+                SchedulerState::Waiting { graph, run_config },
                 SchedulerEvent::NodeReturned { node_id, outcome },
             ) => {
                 let active_node = match graph::active_node(&graph) {
@@ -331,7 +330,7 @@ impl SchedulerMachine {
                                     graph::mark_node(graph, &node_id, NodeStatus::Completed);
                                 let graph = graph::insert_children(graph, &node_id, plan.children);
                                 Transition {
-                                    state: SchedulerState::Active { graph },
+                                    state: SchedulerState::Active { graph, run_config },
                                     effects: vec![],
                                 }
                             }
@@ -352,7 +351,7 @@ impl SchedulerMachine {
                         };
                         let graph = graph::mark_node(graph, &node_id, NodeStatus::Integrating);
                         Transition {
-                            state: SchedulerState::Waiting { graph },
+                            state: SchedulerState::Waiting { graph, run_config },
                             effects: vec![SchedulerEffect::IntegrateWork {
                                 node_id,
                                 work,
@@ -368,12 +367,7 @@ impl SchedulerMachine {
                         message,
                         recovery,
                     }) => recovery::route_recovery(
-                        self.has_strong_tier,
-                        graph,
-                        &node_id,
-                        kind,
-                        message,
-                        recovery,
+                        run_config, graph, &node_id, kind, message, recovery,
                     ),
                 }
             }
@@ -382,7 +376,7 @@ impl SchedulerMachine {
             // resumes scanning; failure routes through the same recovery
             // machinery as execution failure.
             (
-                SchedulerState::Waiting { graph },
+                SchedulerState::Waiting { graph, run_config },
                 SchedulerEvent::IntegrationReturned { node_id, outcome },
             ) => {
                 let active_node = match graph::active_node(&graph) {
@@ -417,7 +411,7 @@ impl SchedulerMachine {
                             integration_output.summary,
                         );
                         Transition {
-                            state: SchedulerState::Active { graph },
+                            state: SchedulerState::Active { graph, run_config },
                             effects: vec![],
                         }
                     }
@@ -426,24 +420,19 @@ impl SchedulerMachine {
                         message,
                         recovery,
                     }) => recovery::route_recovery(
-                        self.has_strong_tier,
-                        graph,
-                        &node_id,
-                        kind,
-                        message,
-                        recovery,
+                        run_config, graph, &node_id, kind, message, recovery,
                     ),
                 }
             }
 
-            (SchedulerState::Active { graph }, SchedulerEvent::NodeReturned { .. }) => {
+            (SchedulerState::Active { graph, .. }, SchedulerEvent::NodeReturned { .. }) => {
                 recovery::failed_transition(
                     graph,
                     "protocol violation: state Active cannot consume NodeReturned".to_string(),
                 )
             }
 
-            (SchedulerState::Active { graph }, SchedulerEvent::IntegrationReturned { .. }) => {
+            (SchedulerState::Active { graph, .. }, SchedulerEvent::IntegrationReturned { .. }) => {
                 recovery::failed_transition(
                     graph,
                     "protocol violation: state Active cannot consume IntegrationReturned"
@@ -451,7 +440,7 @@ impl SchedulerMachine {
                 )
             }
 
-            (SchedulerState::Waiting { graph }, SchedulerEvent::Start) => {
+            (SchedulerState::Waiting { graph, .. }, SchedulerEvent::Start) => {
                 recovery::failed_transition(
                     graph,
                     "protocol violation: state Waiting cannot consume Start".to_string(),

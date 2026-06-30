@@ -10,6 +10,7 @@ fn retry_creates_replacement_node() {
     let t = do_transition(
         SchedulerState::Waiting {
             graph: running(graph, "W"),
+            run_config: RunConfig::default(),
         },
         SchedulerEvent::NodeReturned {
             node_id: NodeId("W".to_string()),
@@ -23,7 +24,7 @@ fn retry_creates_replacement_node() {
         },
     );
 
-    let SchedulerState::Active { graph } = t.state else {
+    let SchedulerState::Active { graph, .. } = t.state else {
         panic!("expected Active")
     };
     assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
@@ -49,6 +50,7 @@ fn validation_failure_creates_retry_feedback() {
     let t = do_transition(
         SchedulerState::Waiting {
             graph,
+        run_config: RunConfig::default(),
         },
         SchedulerEvent::IntegrationReturned {
             node_id: NodeId("W".to_string()),
@@ -62,7 +64,7 @@ fn validation_failure_creates_retry_feedback() {
         },
     );
 
-    let SchedulerState::Active { graph } = t.state else {
+    let SchedulerState::Active { graph, .. } = t.state else {
         panic!("expected Active, got {:#?}", t.state);
     };
     assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
@@ -111,6 +113,7 @@ fn work_semantic_validation_failure_retries_with_artifact_feedback() {
     let t = do_transition(
         SchedulerState::Waiting {
             graph,
+        run_config: RunConfig::default(),
         },
         SchedulerEvent::NodeReturned {
             node_id: NodeId("W".to_string()),
@@ -124,7 +127,7 @@ fn work_semantic_validation_failure_retries_with_artifact_feedback() {
         },
     );
 
-    let SchedulerState::Active { graph } = t.state else {
+    let SchedulerState::Active { graph, .. } = t.state else {
         panic!("expected Active, got {:#?}", t.state);
     };
     assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
@@ -170,6 +173,7 @@ fn invalid_work_attempt_update_failure_recovers_with_retry() {
     let t = do_transition(
         SchedulerState::Waiting {
             graph,
+        run_config: RunConfig::default(),
         },
         SchedulerEvent::NodeReturned {
             node_id: NodeId("W".to_string()),
@@ -183,7 +187,7 @@ fn invalid_work_attempt_update_failure_recovers_with_retry() {
         },
     );
 
-    let SchedulerState::Active { graph } = t.state else {
+    let SchedulerState::Active { graph, .. } = t.state else {
         panic!("expected Active, got {:#?}", t.state);
     };
     assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
@@ -219,6 +223,7 @@ fn retry_preserves_depth() {
     let t = do_transition(
         SchedulerState::Waiting {
             graph: running(graph, "W"),
+            run_config: RunConfig::default(),
         },
         SchedulerEvent::NodeReturned {
             node_id: NodeId("W".to_string()),
@@ -232,7 +237,7 @@ fn retry_preserves_depth() {
         },
     );
 
-    let SchedulerState::Active { graph } = t.state else {
+    let SchedulerState::Active { graph, .. } = t.state else {
         panic!("expected Active, got {:#?}", t.state);
     };
     assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
@@ -249,6 +254,7 @@ fn elevate_creates_replacement_node_with_strong_tier() {
     let t = do_transition(
         SchedulerState::Waiting {
             graph: running(graph, "W"),
+            run_config: RunConfig::default(),
         },
         SchedulerEvent::NodeReturned {
             node_id: NodeId("W".to_string()),
@@ -262,7 +268,7 @@ fn elevate_creates_replacement_node_with_strong_tier() {
         },
     );
 
-    let SchedulerState::Active { graph } = t.state else {
+    let SchedulerState::Active { graph, .. } = t.state else {
         panic!("expected Active")
     };
     assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
@@ -285,6 +291,7 @@ fn elevate_preserves_depth() {
     let t = do_transition(
         SchedulerState::Waiting {
             graph: running(graph, "W"),
+            run_config: RunConfig::default(),
         },
         SchedulerEvent::NodeReturned {
             node_id: NodeId("W".to_string()),
@@ -298,7 +305,7 @@ fn elevate_preserves_depth() {
         },
     );
 
-    let SchedulerState::Active { graph } = t.state else {
+    let SchedulerState::Active { graph, .. } = t.state else {
         panic!("expected Active, got {:#?}", t.state);
     };
     assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
@@ -340,6 +347,7 @@ fn recovery_exhaustion_fails_scheduler() {
         let t = do_transition(
             SchedulerState::Waiting {
                 graph: running(graph, "W"),
+                run_config: RunConfig::default(),
             },
             SchedulerEvent::NodeReturned {
                 node_id: NodeId("W".to_string()),
@@ -389,6 +397,7 @@ fn terminal_failure_cancels_downstream_chain() {
     let t = do_transition(
         SchedulerState::Waiting {
             graph: running(graph, "B"),
+            run_config: RunConfig::default(),
         },
         SchedulerEvent::NodeReturned {
             node_id: NodeId("B".to_string()),
@@ -439,6 +448,7 @@ fn split_below_attempt_limit_still_creates_plan_node() {
     let t = do_transition(
         SchedulerState::Waiting {
             graph: running(graph, "W"),
+            run_config: RunConfig::default(),
         },
         SchedulerEvent::NodeReturned {
             node_id: NodeId("W".to_string()),
@@ -452,7 +462,7 @@ fn split_below_attempt_limit_still_creates_plan_node() {
         },
     );
 
-    let SchedulerState::Active { graph } = t.state else {
+    let SchedulerState::Active { graph, .. } = t.state else {
         panic!("expected Active, got {:#?}", t.state);
     };
 
@@ -498,7 +508,10 @@ fn integration_failure_terminal_cancels_downstream_dependents() {
     graph.nodes[1].status = NodeStatus::Integrating;
 
     let t = do_transition(
-        SchedulerState::Waiting { graph },
+        SchedulerState::Waiting {
+            graph,
+            run_config: RunConfig::default(),
+        },
         SchedulerEvent::IntegrationReturned {
             node_id: NodeId("B".to_string()),
             outcome: IntegrationOutcome::Failed(IntegrationFailure {
@@ -564,7 +577,10 @@ fn integration_failure_exhaustion_fails_scheduler() {
         };
 
         let t = do_transition(
-            SchedulerState::Waiting { graph },
+            SchedulerState::Waiting {
+                graph,
+                run_config: RunConfig::default(),
+            },
             SchedulerEvent::IntegrationReturned {
                 node_id: NodeId("B".to_string()),
                 outcome: IntegrationOutcome::Failed(IntegrationFailure {
@@ -602,12 +618,12 @@ fn single_tier_elevate_falls_back_to_retry() {
         nodes: vec![work_node("W", "do elevate", &[])],
         next_id: 0,
     };
-    let t = SchedulerMachine {
-        has_strong_tier: false,
-    }
-    .transition(
+    let t = SchedulerMachine.transition(
         SchedulerState::Waiting {
             graph: running(graph, "W"),
+            run_config: RunConfig {
+                has_strong_tier: false,
+            },
         },
         SchedulerEvent::NodeReturned {
             node_id: NodeId("W".to_string()),
@@ -621,7 +637,7 @@ fn single_tier_elevate_falls_back_to_retry() {
         },
     );
 
-    let SchedulerState::Active { graph } = t.state else {
+    let SchedulerState::Active { graph, .. } = t.state else {
         panic!("expected Active, got {:#?}", t.state);
     };
     assert_eq!(graph.nodes.len(), 2, "must create a replacement node");
@@ -648,12 +664,10 @@ fn multi_tier_elevate_creates_strong_replacement() {
         nodes: vec![work_node("W", "do elevate", &[])],
         next_id: 0,
     };
-    let t = SchedulerMachine {
-        has_strong_tier: true,
-    }
-    .transition(
+    let t = SchedulerMachine.transition(
         SchedulerState::Waiting {
             graph: running(graph, "W"),
+            run_config: RunConfig::default(),
         },
         SchedulerEvent::NodeReturned {
             node_id: NodeId("W".to_string()),
@@ -667,7 +681,7 @@ fn multi_tier_elevate_creates_strong_replacement() {
         },
     );
 
-    let SchedulerState::Active { graph } = t.state else {
+    let SchedulerState::Active { graph, .. } = t.state else {
         panic!("expected Active, got {:#?}", t.state);
     };
     assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
@@ -690,12 +704,12 @@ fn single_tier_elevate_exhausted_gives_clear_terminal_failure() {
         nodes: vec![node],
         next_id: 0,
     };
-    let t = SchedulerMachine {
-        has_strong_tier: false,
-    }
-    .transition(
+    let t = SchedulerMachine.transition(
         SchedulerState::Waiting {
             graph: running(graph, "W"),
+            run_config: RunConfig {
+                has_strong_tier: false,
+            },
         },
         SchedulerEvent::NodeReturned {
             node_id: NodeId("W".to_string()),
@@ -735,12 +749,10 @@ fn elevate_at_strong_tier_falls_back_to_retry() {
         nodes: vec![node],
         next_id: 0,
     };
-    let t = SchedulerMachine {
-        has_strong_tier: true,
-    }
-    .transition(
+    let t = SchedulerMachine.transition(
         SchedulerState::Waiting {
             graph: running(graph, "W"),
+            run_config: RunConfig::default(),
         },
         SchedulerEvent::NodeReturned {
             node_id: NodeId("W".to_string()),
@@ -754,7 +766,7 @@ fn elevate_at_strong_tier_falls_back_to_retry() {
         },
     );
 
-    let SchedulerState::Active { graph } = t.state else {
+    let SchedulerState::Active { graph, .. } = t.state else {
         panic!("expected Active, got {:#?}", t.state);
     };
     assert_eq!(graph.nodes.len(), 2, "must create a Retry replacement");
@@ -784,6 +796,7 @@ fn terminal_failure_does_not_touch_completed_nodes() {
     let t = do_transition(
         SchedulerState::Waiting {
             graph: running(graph, "B"),
+            run_config: RunConfig::default(),
         },
         SchedulerEvent::NodeReturned {
             node_id: NodeId("B".to_string()),
@@ -836,14 +849,17 @@ fn validation_retry_feedback_includes_all_structured_target_files() {
     graph.nodes[0].status = NodeStatus::Integrating;
 
     let t = do_transition(
-        SchedulerState::Waiting { graph },
+        SchedulerState::Waiting {
+            graph,
+            run_config: RunConfig::default(),
+        },
         validation_retry_event(
             "W",
             "validation failed\ncommand: pytest\nexit code: 1\nfirst location: (not detected)\ndiagnostics:\n0 tests ran\ninstruction: fix the existing file using file tools before accepting",
         ),
     );
 
-    let SchedulerState::Active { graph } = t.state else {
+    let SchedulerState::Active { graph, .. } = t.state else {
         panic!("expected Active, got {:#?}", t.state);
     };
     let retry = &graph.nodes[1];
@@ -880,14 +896,17 @@ fn validation_retry_test_target_appears_in_retry_prompt() {
     graph.nodes[0].status = NodeStatus::Integrating;
 
     let t = do_transition(
-        SchedulerState::Waiting { graph },
+        SchedulerState::Waiting {
+            graph,
+            run_config: RunConfig::default(),
+        },
         validation_retry_event(
             "W",
             "validation failed\ncommand: cargo test\nexit code: 101\nfirst location: (not detected)\ndiagnostics:\ntest failed\ninstruction: fix the existing file using file tools before accepting",
         ),
     );
 
-    let SchedulerState::Active { graph } = t.state else {
+    let SchedulerState::Active { graph, .. } = t.state else {
         panic!("expected Active, got {:#?}", t.state);
     };
     let retry = &graph.nodes[1];
@@ -913,13 +932,16 @@ fn repeated_validation_retries_do_not_duplicate_feedback_blocks() {
     graph.nodes[0].status = NodeStatus::Integrating;
 
     let t1 = do_transition(
-        SchedulerState::Waiting { graph },
+        SchedulerState::Waiting {
+            graph,
+            run_config: RunConfig::default(),
+        },
         validation_retry_event(
             "W",
             "validation failed\ncommand: val\nexit code: 1\nfirst location: main.py:1:1\ndiagnostics:\nfirst-error\ninstruction: fix the existing file using file tools before accepting",
         ),
     );
-    let SchedulerState::Active { mut graph } = t1.state else {
+    let SchedulerState::Active { mut graph, .. } = t1.state else {
         panic!("expected Active after first retry");
     };
 
@@ -927,13 +949,16 @@ fn repeated_validation_retries_do_not_duplicate_feedback_blocks() {
     graph.nodes[1].status = NodeStatus::Integrating;
 
     let t2 = do_transition(
-        SchedulerState::Waiting { graph },
+        SchedulerState::Waiting {
+            graph,
+            run_config: RunConfig::default(),
+        },
         validation_retry_event(
             &retry1_id.0,
             "validation failed\ncommand: val\nexit code: 2\nfirst location: main.py:2:1\ndiagnostics:\nsecond-error\ninstruction: fix the existing file using file tools before accepting",
         ),
     );
-    let SchedulerState::Active { graph } = t2.state else {
+    let SchedulerState::Active { graph, .. } = t2.state else {
         panic!("expected Active after second retry");
     };
     let retry2 = &graph.nodes[2];
@@ -972,13 +997,16 @@ fn retry_target_files_unchanged_across_retries() {
     graph.nodes[0].status = NodeStatus::Integrating;
 
     let t1 = do_transition(
-        SchedulerState::Waiting { graph },
+        SchedulerState::Waiting {
+            graph,
+            run_config: RunConfig::default(),
+        },
         validation_retry_event(
             "W",
             "validation failed\ncommand: v\nexit code: 1\nfirst location: (not detected)\ndiagnostics:\n(no diagnostic output)\ninstruction: fix the existing file using file tools before accepting",
         ),
     );
-    let SchedulerState::Active { mut graph } = t1.state else {
+    let SchedulerState::Active { mut graph, .. } = t1.state else {
         panic!("expected Active after first retry");
     };
     assert_eq!(
@@ -990,13 +1018,16 @@ fn retry_target_files_unchanged_across_retries() {
     graph.nodes[1].status = NodeStatus::Integrating;
 
     let t2 = do_transition(
-        SchedulerState::Waiting { graph },
+        SchedulerState::Waiting {
+            graph,
+            run_config: RunConfig::default(),
+        },
         validation_retry_event(
             &retry1_id.0,
             "validation failed\ncommand: v\nexit code: 2\nfirst location: (not detected)\ndiagnostics:\n(no diagnostic output)\ninstruction: fix the existing file using file tools before accepting",
         ),
     );
-    let SchedulerState::Active { graph } = t2.state else {
+    let SchedulerState::Active { graph, .. } = t2.state else {
         panic!("expected Active after second retry");
     };
     assert_eq!(

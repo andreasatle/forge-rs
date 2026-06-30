@@ -34,6 +34,7 @@ fn plan_expansion_stamps_validation_plan_onto_work_children() {
     let t = do_transition(
         SchedulerState::Waiting {
             graph: running(graph, "P"),
+            run_config: RunConfig::default(),
         },
         SchedulerEvent::NodeReturned {
             node_id: NodeId("P".to_string()),
@@ -51,7 +52,7 @@ fn plan_expansion_stamps_validation_plan_onto_work_children() {
         },
     );
 
-    let SchedulerState::Active { graph } = t.state else {
+    let SchedulerState::Active { graph, .. } = t.state else {
         panic!("expected Active");
     };
     let work = graph
@@ -86,12 +87,13 @@ fn checkpoint_roundtrip_preserves_validation_plan_in_node() {
             nodes: vec![node_with_plan("W", "work with plan", plan.clone())],
             next_id: 0,
         },
+        run_config: RunConfig::default(),
     };
 
     save_checkpoint(&dir, &state).unwrap();
     let loaded = load_checkpoint(&dir).unwrap();
 
-    let SchedulerState::Active { graph } = loaded else {
+    let SchedulerState::Active { graph, .. } = loaded else {
         panic!("expected Active");
     };
     assert_eq!(
@@ -116,6 +118,7 @@ fn retry_preserves_validation_plan() {
     let t = do_transition(
         SchedulerState::Waiting {
             graph: running(graph, "W"),
+            run_config: RunConfig::default(),
         },
         SchedulerEvent::NodeReturned {
             node_id: NodeId("W".to_string()),
@@ -129,7 +132,7 @@ fn retry_preserves_validation_plan() {
         },
     );
 
-    let SchedulerState::Active { graph } = t.state else {
+    let SchedulerState::Active { graph, .. } = t.state else {
         panic!("expected Active");
     };
     let retry = graph
@@ -165,6 +168,7 @@ fn checkpointed_plan_is_independent_of_later_config() {
             nodes: vec![node_with_plan("W", "work", original_plan.clone())],
             next_id: 0,
         },
+        run_config: RunConfig::default(),
     };
 
     save_checkpoint(&dir, &state).unwrap();
@@ -183,7 +187,7 @@ fn checkpointed_plan_is_independent_of_later_config() {
     };
 
     let loaded = load_checkpoint(&dir).unwrap();
-    let SchedulerState::Active { graph } = loaded else {
+    let SchedulerState::Active { graph, .. } = loaded else {
         panic!("expected Active");
     };
     assert_ne!(

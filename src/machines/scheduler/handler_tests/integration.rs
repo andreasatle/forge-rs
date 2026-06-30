@@ -179,6 +179,7 @@ fn work_node_workspace_mutation_creates_new_commit() {
             nodes: vec![work_node("W", "write a file")],
             next_id: 0,
         },
+        run_config: RunConfig::default(),
     };
     run_machine(SchedulerHandler::with_artifact(runner, artifact), state);
 
@@ -207,6 +208,7 @@ fn second_work_node_sees_first_work_node_changes() {
             ],
             next_id: 0,
         },
+        run_config: RunConfig::default(),
     };
     run_machine(SchedulerHandler::with_artifact(runner, artifact), state);
 
@@ -234,6 +236,7 @@ fn work_node_without_update_preserves_commit() {
             nodes: vec![work_node("W", "do some work")],
             next_id: 0,
         },
+        run_config: RunConfig::default(),
     };
     let output = run_machine(
         SchedulerHandler::with_artifact(StaticNodeRunner, artifact),
@@ -264,6 +267,7 @@ fn rejected_work_attempt_records_evidence_and_retry_starts_clean() {
             nodes: vec![work_node("W", "dirty then retry")],
             next_id: 0,
         },
+        run_config: RunConfig::default(),
     };
 
     let output = run_machine(
@@ -334,6 +338,7 @@ fn revision_exhaustion_records_final_work_attempt_evidence_before_cleanup() {
             nodes: vec![node],
             next_id: 0,
         },
+        run_config: RunConfig::default(),
     };
 
     let output = run_machine(
@@ -418,6 +423,7 @@ fn deliberation_revision_stays_inside_single_scheduler_attempt_until_acceptance(
             nodes: vec![work_node("W", "revise then accept")],
             next_id: 0,
         },
+        run_config: RunConfig::default(),
     };
 
     let output = run_machine(SchedulerHandler::with_artifact(runner, artifact), state);

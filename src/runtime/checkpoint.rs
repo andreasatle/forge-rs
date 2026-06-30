@@ -56,7 +56,8 @@ pub fn node_counts(graph: &RunGraph) -> (usize, usize) {
 mod tests {
     use super::*;
     use crate::machines::scheduler::state::{
-        ModelTier, Node, NodeId, NodeKind, NodeOrigin, NodeStatus, RunGraph, SchedulerState,
+        ModelTier, Node, NodeId, NodeKind, NodeOrigin, NodeStatus, RunConfig, RunGraph,
+        SchedulerState,
     };
     use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -107,6 +108,7 @@ mod tests {
         let dir = temp_dir("graph-round-trip");
         let state = SchedulerState::Active {
             graph: sample_graph(),
+            run_config: RunConfig::default(),
         };
         save_checkpoint(&dir, &state).unwrap();
         let loaded = load_checkpoint(&dir).unwrap();
@@ -119,6 +121,7 @@ mod tests {
         let dir = temp_dir("active-checkpoint-tag");
         let state = SchedulerState::Active {
             graph: sample_graph(),
+            run_config: RunConfig::default(),
         };
         save_checkpoint(&dir, &state).unwrap();
         let raw = std::fs::read_to_string(dir.join("graph.json")).unwrap();
@@ -136,7 +139,10 @@ mod tests {
         let dir = temp_dir("state-waiting-round-trip");
         let mut graph = sample_graph();
         graph.nodes[1].status = NodeStatus::Integrating;
-        let state = SchedulerState::Waiting { graph };
+        let state = SchedulerState::Waiting {
+            graph,
+            run_config: RunConfig::default(),
+        };
         save_checkpoint(&dir, &state).unwrap();
         let loaded = load_checkpoint(&dir).unwrap();
         assert_eq!(state, loaded);
@@ -157,7 +163,10 @@ mod tests {
             nodes: vec![original, retry],
             next_id: 2,
         };
-        let state = SchedulerState::Active { graph };
+        let state = SchedulerState::Active {
+            graph,
+            run_config: RunConfig::default(),
+        };
         save_checkpoint(&dir, &state).unwrap();
         let loaded = load_checkpoint(&dir).unwrap();
         assert_eq!(state, loaded);
@@ -169,6 +178,7 @@ mod tests {
         let dir = temp_dir("valid-json");
         let state = SchedulerState::Active {
             graph: sample_graph(),
+            run_config: RunConfig::default(),
         };
         save_checkpoint(&dir, &state).unwrap();
         let raw = std::fs::read_to_string(dir.join("graph.json")).unwrap();

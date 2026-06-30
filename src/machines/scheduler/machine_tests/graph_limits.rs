@@ -11,6 +11,7 @@ fn plan_child_depth_limit_fails_scheduler() {
     let t = do_transition(
         SchedulerState::Waiting {
             graph: running(graph, "P"),
+            run_config: RunConfig::default(),
         },
         SchedulerEvent::NodeReturned {
             node_id: NodeId("P".to_string()),
@@ -65,7 +66,10 @@ fn plan_expansion_respects_graph_size_limit() {
     let graph = running(graph, "P");
 
     let t = do_transition(
-        SchedulerState::Waiting { graph },
+        SchedulerState::Waiting {
+            graph,
+            run_config: RunConfig::default(),
+        },
         SchedulerEvent::NodeReturned {
             node_id: NodeId("P".to_string()),
             outcome: NodeOutcome::PlanAccepted(PlanOutput {
@@ -144,6 +148,7 @@ fn recovery_respects_graph_size_limit() {
         let t = do_transition(
             SchedulerState::Waiting {
                 graph: running(graph, "W"),
+                run_config: RunConfig::default(),
             },
             SchedulerEvent::NodeReturned {
                 node_id: NodeId("W".to_string()),
@@ -190,6 +195,7 @@ fn split_depth_limit_fails_scheduler() {
     let t = do_transition(
         SchedulerState::Waiting {
             graph: running(graph, "W"),
+            run_config: RunConfig::default(),
         },
         SchedulerEvent::NodeReturned {
             node_id: NodeId("W".to_string()),
@@ -222,7 +228,13 @@ fn no_ready_reports_missing_dependency() {
         nodes: vec![work_node("C", "do C", &["B"])],
         next_id: 0,
     };
-    let t = do_transition(SchedulerState::Active { graph }, SchedulerEvent::Start);
+    let t = do_transition(
+        SchedulerState::Active {
+            graph,
+            run_config: RunConfig::default(),
+        },
+        SchedulerEvent::Start,
+    );
 
     let SchedulerState::Failed { reason, .. } = t.state else {
         panic!("expected Failed, got {:#?}", t.state);
@@ -247,7 +259,13 @@ fn no_ready_reports_blocked_or_possible_cycle() {
         ],
         next_id: 0,
     };
-    let t = do_transition(SchedulerState::Active { graph }, SchedulerEvent::Start);
+    let t = do_transition(
+        SchedulerState::Active {
+            graph,
+            run_config: RunConfig::default(),
+        },
+        SchedulerEvent::Start,
+    );
 
     let SchedulerState::Failed { reason, .. } = t.state else {
         panic!("expected Failed, got {:#?}", t.state);
@@ -269,7 +287,13 @@ fn duplicate_node_ids_fail_graph_validation() {
         ],
         next_id: 0,
     };
-    let t = do_transition(SchedulerState::Active { graph }, SchedulerEvent::Start);
+    let t = do_transition(
+        SchedulerState::Active {
+            graph,
+            run_config: RunConfig::default(),
+        },
+        SchedulerEvent::Start,
+    );
     let SchedulerState::Failed { reason, .. } = t.state else {
         panic!("expected Failed, got {:#?}", t.state);
     };
@@ -290,7 +314,13 @@ fn missing_dependency_fails_graph_validation() {
         nodes: vec![work_node("A", "do something", &["ghost"])],
         next_id: 0,
     };
-    let t = do_transition(SchedulerState::Active { graph }, SchedulerEvent::Start);
+    let t = do_transition(
+        SchedulerState::Active {
+            graph,
+            run_config: RunConfig::default(),
+        },
+        SchedulerEvent::Start,
+    );
     let SchedulerState::Failed { reason, .. } = t.state else {
         panic!("expected Failed, got {:#?}", t.state);
     };
@@ -315,9 +345,15 @@ fn graph_validation_does_not_parse_node_ids() {
         ],
         next_id: 0,
     };
-    let t = do_transition(SchedulerState::Active { graph }, SchedulerEvent::Start);
+    let t = do_transition(
+        SchedulerState::Active {
+            graph,
+            run_config: RunConfig::default(),
+        },
+        SchedulerEvent::Start,
+    );
 
-    let SchedulerState::Waiting { graph } = t.state else {
+    let SchedulerState::Waiting { graph, .. } = t.state else {
         panic!("expected Waiting, got {:#?}", t.state);
     };
     assert_eq!(active_node_id(&graph), Some(NodeId("root".to_string())));
@@ -341,7 +377,13 @@ fn retry_origin_with_missing_source_fails_validation() {
         nodes: vec![node_b],
         next_id: 0,
     };
-    let t = do_transition(SchedulerState::Active { graph }, SchedulerEvent::Start);
+    let t = do_transition(
+        SchedulerState::Active {
+            graph,
+            run_config: RunConfig::default(),
+        },
+        SchedulerEvent::Start,
+    );
 
     let SchedulerState::Failed { reason, .. } = t.state else {
         panic!("expected Failed, got {:#?}", t.state);
@@ -375,7 +417,13 @@ fn elevate_origin_with_missing_source_fails_validation() {
         nodes: vec![node_b],
         next_id: 0,
     };
-    let t = do_transition(SchedulerState::Active { graph }, SchedulerEvent::Start);
+    let t = do_transition(
+        SchedulerState::Active {
+            graph,
+            run_config: RunConfig::default(),
+        },
+        SchedulerEvent::Start,
+    );
 
     let SchedulerState::Failed { reason, .. } = t.state else {
         panic!("expected Failed, got {:#?}", t.state);
@@ -409,7 +457,13 @@ fn split_origin_with_missing_source_fails_validation() {
         nodes: vec![node_b],
         next_id: 0,
     };
-    let t = do_transition(SchedulerState::Active { graph }, SchedulerEvent::Start);
+    let t = do_transition(
+        SchedulerState::Active {
+            graph,
+            run_config: RunConfig::default(),
+        },
+        SchedulerEvent::Start,
+    );
 
     let SchedulerState::Failed { reason, .. } = t.state else {
         panic!("expected Failed, got {:#?}", t.state);

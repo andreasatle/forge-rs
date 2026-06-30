@@ -54,6 +54,6 @@ pub use event::{
 pub use handler::SchedulerHandler;
 pub use machine::{RecoverySummary, SchedulerMachine, SchedulerOutput};
 pub use state::{
-    ModelTier, Node, NodeId, NodeKind, NodeOrigin, NodeStatus, RunGraph, RunRequest,
+    ModelTier, Node, NodeId, NodeKind, NodeOrigin, NodeStatus, RunConfig, RunGraph, RunRequest,
     SchedulerState, TestPlanContext,
 };

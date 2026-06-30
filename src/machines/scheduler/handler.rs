@@ -35,8 +35,6 @@ pub struct SchedulerHandler<R> {
     integration: IntegrationService,
     checkpoint: CheckpointService,
     telemetry: Rc<dyn TelemetrySink>,
-    /// Forwarded to `SchedulerMachine` to control `ElevateModel` recovery policy.
-    has_strong_tier: bool,
 }
 
 impl<R: NodeRunner> SchedulerHandler<R> {
@@ -48,7 +46,6 @@ impl<R: NodeRunner> SchedulerHandler<R> {
             integration: IntegrationService::without_artifact(Rc::clone(&telemetry)),
             checkpoint: CheckpointService::disabled(Rc::clone(&telemetry)),
             telemetry,
-            has_strong_tier: true,
         }
     }
 
@@ -61,18 +58,6 @@ impl<R: NodeRunner> SchedulerHandler<R> {
             integration: IntegrationService::with_artifact(artifact, Rc::clone(&telemetry)),
             checkpoint: CheckpointService::disabled(Rc::clone(&telemetry)),
             telemetry,
-            has_strong_tier: true,
-        }
-    }
-
-    /// Set whether a distinct strong-tier model is configured.
-    ///
-    /// When `false`, `ElevateModel` recovery is demoted to `Retry` (or `Terminal`
-    /// when attempts are exhausted). Defaults to `true`.
-    pub fn with_has_strong_tier(self, has_strong_tier: bool) -> Self {
-        Self {
-            has_strong_tier,
-            ..self
         }
     }
 
@@ -133,10 +118,7 @@ impl<R: NodeRunner> Machine for SchedulerHandler<R> {
     }
 
     fn start_event(&self) -> SchedulerEvent {
-        SchedulerMachine {
-            has_strong_tier: self.has_strong_tier,
-        }
-        .start_event()
+        SchedulerMachine.start_event()
     }
 
     fn transition(
@@ -146,10 +128,7 @@ impl<R: NodeRunner> Machine for SchedulerHandler<R> {
     ) -> Transition<SchedulerState, SchedulerEffect> {
         print_returned_progress(&event);
         let should_checkpoint = is_progress_event(&event);
-        let result = SchedulerMachine {
-            has_strong_tier: self.has_strong_tier,
-        }
-        .transition(state, event);
+        let result = SchedulerMachine.transition(state, event);
         if should_checkpoint {
             self.checkpoint.maybe_save(&result.state);
         }
@@ -223,10 +202,7 @@ impl<R: NodeRunner> Machine for SchedulerHandler<R> {
     }
 
     fn output(&self, state: &SchedulerState) -> Option<SchedulerOutput> {
-        SchedulerMachine {
-            has_strong_tier: self.has_strong_tier,
-        }
-        .output(state)
+        SchedulerMachine.output(state)
     }
 }
 
