@@ -20,11 +20,11 @@
 //! ## Transitions
 //!
 //! - `Ready + Start` → `WaitingProducer` + `RunRole(Producer)`.
-//! - `WaitingProducer + ProducerAccepted` → `WaitingProducer` + `ValidateProducer`.
-//! - `WaitingProducer + ProducerValidationReturned(Valid)` → `WaitingCritic` + `RunRole(Critic)`.
-//! - `WaitingProducer + ProducerValidationReturned(Retry)` and validation retries remain
+//! - `WaitingProducer + ProducerAccepted` → `ValidatingProducer` + `ValidateProducer`.
+//! - `ValidatingProducer + ProducerValidationReturned(Valid)` → `WaitingCritic` + `RunRole(Critic)`.
+//! - `ValidatingProducer + ProducerValidationReturned(Retry)` and validation retries remain
 //!   → `WaitingProducer` with validation feedback + `RunRole(Producer, feedback)`.
-//! - `WaitingProducer + ProducerValidationReturned(Retry)` and validation retries are exhausted
+//! - `ValidatingProducer + ProducerValidationReturned(Retry)` and validation retries are exhausted
 //!   → `Failed`.
 //! - `WaitingProducer + RoleReturned(Producer, Rejected | Failed)` → `Failed`.
 //! - `WaitingCritic + RoleReturned(Critic, Accepted)` → `WaitingReferee` + `RunRole(Referee)`.
