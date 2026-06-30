@@ -38,12 +38,12 @@
 //!     → Failed + ReturnFailed  (execution failure, not semantic rejection)
 //!
 //! Waiting(Critic, Some(pc)) + RoleReturned(Critic, Accepted { content })
-//!     → Waiting(Referee, producer_content=Some(pc), critic_content=Some(content))
+//!     → Waiting(Referee, producer_content=Some(pc), critic_advisory=AcceptedReview)
 //!     + RunRole(Referee, …)
 //!
 //! Waiting(Critic, Some(pc)) + RoleReturned(Critic, Rejected { reason })
-//!     → Waiting(Referee, producer_content=Some(pc), critic_content=Some("Critic rejected: {reason}"))
-//!     + RunRole(Referee, producer_content=Some(pc), critic_content=Some("Critic rejected: {reason}"))
+//!     → Waiting(Referee, producer_content=Some(pc), critic_advisory=RejectedReason)
+//!     + RunRole(Referee, producer_content=Some(pc), critic_content=Some(reason))
 //!     (Critic is advisory; Referee decides)
 //!
 //! Waiting(Critic, Some(_)) + RoleReturned(Critic, Failed { reason })
@@ -65,7 +65,7 @@
 //! Waiting(Referee, Some(_), Some(_)) + RoleReturned(Referee, Failed { reason })
 //!     → Failed + ReturnFailed  (execution failure — must NOT enter the revision loop)
 //!
-//! Waiting(Referee, None, _) or Waiting(Referee, _, None) + RoleReturned(…)
+//! Waiting(Referee, None, _) or Waiting(Referee, _, None advisory) + RoleReturned(…)
 //!     → Failed + ReturnFailed  (invalid deliberation state)
 //!
 //! Role mismatches → Failed + ReturnFailed (protocol violation)
@@ -77,8 +77,8 @@ use crate::machines::scheduler::FailureKind;
 use super::effect::DeliberationEffect;
 use super::event::{DeliberationEvent, ProducerValidationResult, RoleResult};
 use super::state::{
-    DeliberationOutput, DeliberationRole, DeliberationState, DeliberationTerminalOutput,
-    ProducerValidationState, RevisionFeedback,
+    CriticAdvisory, DeliberationOutput, DeliberationRole, DeliberationState,
+    DeliberationTerminalOutput, ProducerValidationState, RevisionFeedback,
 };
 
 /// The deliberation machine. All durable data travels in `DeliberationState`.
@@ -114,7 +114,7 @@ impl DeliberationMachine {
                 request,
                 role: DeliberationRole::Producer,
                 producer_content: Some(content),
-                critic_content: None,
+                critic_advisory: None,
                 feedback,
                 producer_validation,
             },
@@ -152,7 +152,7 @@ impl Machine for DeliberationMachine {
                     request,
                     role: DeliberationRole::Producer,
                     producer_content: None,
-                    critic_content: None,
+                    critic_advisory: None,
                     feedback: vec![],
                     producer_validation: ProducerValidationState {
                         attempt: 0,
@@ -229,7 +229,7 @@ impl Machine for DeliberationMachine {
                     request,
                     role: DeliberationRole::Critic,
                     producer_content: Some(producer_content),
-                    critic_content: None,
+                    critic_advisory: None,
                     feedback,
                     producer_validation: ProducerValidationState {
                         attempt: 0,
@@ -276,7 +276,7 @@ impl Machine for DeliberationMachine {
                             request,
                             role: DeliberationRole::Producer,
                             producer_content: None,
-                            critic_content: None,
+                            critic_advisory: None,
                             feedback,
                             producer_validation: ProducerValidationState {
                                 attempt: producer_validation.attempt + 1,
@@ -359,29 +359,34 @@ impl Machine for DeliberationMachine {
                             content: critic_content,
                         },
                 },
-            ) => Transition {
-                effects: vec![DeliberationEffect::RunRole {
-                    role: DeliberationRole::Referee,
-                    objective: request.objective.clone(),
-                    target_files: request.target_files.clone(),
-                    producer_content: Some(producer_content.clone()),
-                    critic_content: Some(critic_content.clone()),
-                    feedback: feedback.clone(),
-                }],
-                state: DeliberationState::Waiting {
-                    request,
-                    role: DeliberationRole::Referee,
-                    producer_content: Some(producer_content),
-                    critic_content: Some(critic_content),
-                    feedback,
-                    producer_validation: ProducerValidationState {
-                        attempt: 0,
-                        feedback: vec![],
+            ) => {
+                let critic_advisory = CriticAdvisory::AcceptedReview {
+                    content: critic_content.clone(),
+                };
+                Transition {
+                    effects: vec![DeliberationEffect::RunRole {
+                        role: DeliberationRole::Referee,
+                        objective: request.objective.clone(),
+                        target_files: request.target_files.clone(),
+                        producer_content: Some(producer_content.clone()),
+                        critic_content: Some(critic_advisory.as_referee_content().to_string()),
+                        feedback: feedback.clone(),
+                    }],
+                    state: DeliberationState::Waiting {
+                        request,
+                        role: DeliberationRole::Referee,
+                        producer_content: Some(producer_content),
+                        critic_advisory: Some(critic_advisory),
+                        feedback,
+                        producer_validation: ProducerValidationState {
+                            attempt: 0,
+                            feedback: vec![],
+                        },
                     },
-                },
-            },
+                }
+            }
 
-            // Critic rejected → route to Referee with the rejection reason as critic_content.
+            // Critic rejected → route to Referee with a typed advisory reason.
             // The Critic is advisory; only the Referee is authoritative.
             (
                 DeliberationState::Waiting {
@@ -396,21 +401,23 @@ impl Machine for DeliberationMachine {
                     result: RoleResult::Rejected { reason },
                 },
             ) => {
-                let critic_content = format!("Critic rejected: {reason}");
+                let critic_advisory = CriticAdvisory::RejectedReason {
+                    reason: reason.clone(),
+                };
                 Transition {
                     effects: vec![DeliberationEffect::RunRole {
                         role: DeliberationRole::Referee,
                         objective: request.objective.clone(),
                         target_files: request.target_files.clone(),
                         producer_content: Some(producer_content.clone()),
-                        critic_content: Some(critic_content.clone()),
+                        critic_content: Some(critic_advisory.as_referee_content().to_string()),
                         feedback: feedback.clone(),
                     }],
                     state: DeliberationState::Waiting {
                         request,
                         role: DeliberationRole::Referee,
                         producer_content: Some(producer_content),
-                        critic_content: Some(critic_content),
+                        critic_advisory: Some(critic_advisory),
                         feedback,
                         producer_validation: ProducerValidationState {
                             attempt: 0,
@@ -448,18 +455,18 @@ impl Machine for DeliberationMachine {
                 Self::failed_transition(FailureKind::ProtocolFailure, reason)
             }
 
-            // Referee returned but producer_content or critic_content is missing — invalid state.
+            // Referee returned but producer_content or critic_advisory is missing — invalid state.
             (
                 DeliberationState::Waiting {
                     role: DeliberationRole::Referee,
                     producer_content,
-                    critic_content,
+                    critic_advisory,
                     ..
                 },
                 DeliberationEvent::RoleReturned { .. },
-            ) if producer_content.is_none() || critic_content.is_none() => {
+            ) if producer_content.is_none() || critic_advisory.is_none() => {
                 let reason =
-                    "invalid deliberation state: Referee returned but producer_content or critic_content is missing"
+                    "invalid deliberation state: Referee returned but producer_content or critic_advisory is missing"
                         .to_string();
                 Self::failed_transition(FailureKind::DeliberationFailure, reason)
             }
@@ -469,7 +476,7 @@ impl Machine for DeliberationMachine {
                 DeliberationState::Waiting {
                     role: DeliberationRole::Referee,
                     producer_content: Some(producer_content),
-                    critic_content: Some(_),
+                    critic_advisory: Some(_),
                     ..
                 },
                 DeliberationEvent::RoleReturned {
@@ -494,7 +501,7 @@ impl Machine for DeliberationMachine {
                     request,
                     role: DeliberationRole::Referee,
                     producer_content: Some(_),
-                    critic_content: Some(_),
+                    critic_advisory: Some(_),
                     feedback,
                     producer_validation: _,
                 },
@@ -521,7 +528,7 @@ impl Machine for DeliberationMachine {
                             request,
                             role: DeliberationRole::Producer,
                             producer_content: None,
-                            critic_content: None,
+                            critic_advisory: None,
                             feedback: new_feedback,
                             producer_validation: ProducerValidationState {
                                 attempt: 0,
@@ -540,7 +547,7 @@ impl Machine for DeliberationMachine {
                 DeliberationState::Waiting {
                     role: DeliberationRole::Referee,
                     producer_content: Some(_),
-                    critic_content: Some(_),
+                    critic_advisory: Some(_),
                     ..
                 },
                 DeliberationEvent::RoleReturned {

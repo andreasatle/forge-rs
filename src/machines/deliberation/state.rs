@@ -68,6 +68,31 @@ pub enum DeliberationRole {
     Referee,
 }
 
+/// Advisory output from the Critic stage, preserved with its semantic outcome.
+#[derive(Clone, Debug, PartialEq)]
+pub enum CriticAdvisory {
+    /// The Critic accepted and supplied review content for the Referee.
+    AcceptedReview {
+        /// The review content supplied by the Critic.
+        content: String,
+    },
+    /// The Critic rejected and supplied a reason for the Referee to consider.
+    RejectedReason {
+        /// The rejection reason supplied by the Critic.
+        reason: String,
+    },
+}
+
+impl CriticAdvisory {
+    /// Text form passed to the existing role prompt boundary.
+    pub fn as_referee_content(&self) -> &str {
+        match self {
+            CriticAdvisory::AcceptedReview { content } => content,
+            CriticAdvisory::RejectedReason { reason } => reason,
+        }
+    }
+}
+
 /// The lifecycle of the deliberation machine.
 #[derive(Clone, Debug, PartialEq)]
 pub enum DeliberationState {
@@ -86,11 +111,8 @@ pub enum DeliberationState {
         /// Content accepted by the Producer. `None` while waiting for Producer;
         /// `Some` while waiting for Critic or Referee.
         producer_content: Option<String>,
-        /// Content from the Critic stage. `None` until Critic completes.
-        /// When the Critic accepts, this holds its review. When the Critic rejects,
-        /// this holds the prefixed rejection reason (`"Critic rejected: {reason}"`),
-        /// forwarded to the Referee as advisory input.
-        critic_content: Option<String>,
+        /// Advisory result from the Critic stage. `None` until Critic completes.
+        critic_advisory: Option<CriticAdvisory>,
         /// Feedback accumulated from each Referee rejection.
         /// The number of used revision loops is derived from this length.
         feedback: Vec<RevisionFeedback>,

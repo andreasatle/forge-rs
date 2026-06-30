@@ -1,8 +1,8 @@
 use super::super::effect::DeliberationEffect;
 use super::super::event::{DeliberationEvent, ProducerValidationResult, RoleResult};
 use super::super::state::{
-    DeliberationRequest, DeliberationRole, DeliberationState, DeliberationTerminalOutput,
-    ProducerValidationState, RevisionFeedback,
+    CriticAdvisory, DeliberationRequest, DeliberationRole, DeliberationState,
+    DeliberationTerminalOutput, ProducerValidationState, RevisionFeedback,
 };
 use super::DeliberationMachine;
 use crate::engine::{Machine, Transition, run_machine};

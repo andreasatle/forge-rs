@@ -10,7 +10,7 @@ fn ready_start_runs_producer() {
             DeliberationState::Waiting {
                 role: DeliberationRole::Producer,
                 producer_content: None,
-                critic_content: None,
+                critic_advisory: None,
                 ..
             }
         ),
@@ -56,7 +56,7 @@ fn producer_acceptance_runs_validation_then_critic() {
             DeliberationState::Waiting {
                 role: DeliberationRole::Producer,
                 producer_content: Some(pc),
-                critic_content: None,
+                critic_advisory: None,
                 ..
             } if pc == "draft content"
         ),
@@ -91,7 +91,7 @@ fn producer_acceptance_runs_validation_then_critic() {
             DeliberationState::Waiting {
                 role: DeliberationRole::Critic,
                 producer_content: Some(pc),
-                critic_content: None,
+                critic_advisory: None,
                 ..
             } if pc == "draft content"
         ),
@@ -174,7 +174,7 @@ fn producer_validation_retry_exhaustion_fails() {
         },
         role: DeliberationRole::Producer,
         producer_content: Some("draft content".to_string()),
-        critic_content: None,
+        critic_advisory: None,
         feedback: vec![],
         producer_validation: ProducerValidationState {
             attempt: 2,

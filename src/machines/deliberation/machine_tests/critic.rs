@@ -24,9 +24,9 @@ fn critic_acceptance_runs_referee() {
             DeliberationState::Waiting {
                 role: DeliberationRole::Referee,
                 producer_content: Some(pc),
-                critic_content: Some(cc),
+                critic_advisory: Some(CriticAdvisory::AcceptedReview { content }),
                 ..
-            } if pc == "draft content" && cc == "looks good"
+            } if pc == "draft content" && content == "looks good"
         ),
         "expected Waiting(Referee, Some('draft content'), Some('looks good')), got {:?}",
         t.state
@@ -71,11 +71,11 @@ fn critic_rejection_routes_to_referee() {
             DeliberationState::Waiting {
                 role: DeliberationRole::Referee,
                 producer_content: Some(pc),
-                critic_content: Some(cc),
+                critic_advisory: Some(CriticAdvisory::RejectedReason { reason }),
                 ..
-            } if pc == "draft content" && cc == "Critic rejected: too short"
+            } if pc == "draft content" && reason == "too short"
         ),
-        "expected Waiting(Referee) with prefixed critic_content, got {:?}",
+        "expected Waiting(Referee) with rejected critic advisory, got {:?}",
         t.state
     );
 
@@ -88,15 +88,15 @@ fn critic_rejection_routes_to_referee() {
                 producer_content: Some(pc),
                 critic_content: Some(cc),
                 ..
-            } if pc == "draft content" && cc == "Critic rejected: too short"
+            } if pc == "draft content" && cc == "too short"
         ),
-        "expected RunRole(Referee) with prefixed critic_content, got {:?}",
+        "expected RunRole(Referee) with critic rejection reason, got {:?}",
         t.effects[0]
     );
 }
 
 #[test]
-fn critic_rejection_passes_reason_as_critic_content() {
+fn critic_rejection_stores_typed_rejected_advisory() {
     let after_producer = producer_accepts(
         step(ready("write a poem"), DeliberationEvent::Start).state,
         "draft content",
@@ -112,20 +112,19 @@ fn critic_rejection_passes_reason_as_critic_content() {
         },
     );
 
-    let critic_content = match &t.state {
+    let critic_reason = match &t.state {
         DeliberationState::Waiting {
-            critic_content: Some(cc),
+            critic_advisory: Some(CriticAdvisory::RejectedReason { reason }),
             ..
-        } => cc,
-        other => panic!("expected Waiting with critic_content, got {:?}", other),
+        } => reason,
+        other => panic!(
+            "expected Waiting with rejected critic advisory, got {:?}",
+            other
+        ),
     };
     assert!(
-        critic_content.starts_with("Critic rejected:"),
-        "critic_content must start with 'Critic rejected:'; got: {critic_content}"
-    );
-    assert!(
-        critic_content.contains("5-7-5"),
-        "critic_content must contain the original critique; got: {critic_content}"
+        critic_reason.contains("5-7-5"),
+        "critic advisory must contain the original critique; got: {critic_reason}"
     );
 }
 
@@ -164,7 +163,7 @@ fn critic_missing_producer_content_fails() {
         },
         role: DeliberationRole::Critic,
         producer_content: None,
-        critic_content: None,
+        critic_advisory: None,
         feedback: vec![],
         producer_validation: producer_validation(),
     };

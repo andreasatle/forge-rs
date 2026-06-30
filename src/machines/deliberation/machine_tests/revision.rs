@@ -120,7 +120,9 @@ fn referee_rejection_loops_to_producer_with_feedback() {
         },
         role: DeliberationRole::Referee,
         producer_content: Some("draft".to_string()),
-        critic_content: Some("review".to_string()),
+        critic_advisory: Some(CriticAdvisory::AcceptedReview {
+            content: "review".to_string(),
+        }),
         feedback: vec![],
         producer_validation: producer_validation(),
     };
@@ -141,7 +143,7 @@ fn referee_rejection_loops_to_producer_with_feedback() {
             role: DeliberationRole::Producer,
             feedback,
             producer_content,
-            critic_content,
+            critic_advisory,
             ..
         } => {
             assert_eq!(feedback.len(), 1, "feedback should have one entry");
@@ -153,7 +155,7 @@ fn referee_rejection_loops_to_producer_with_feedback() {
                 producer_content.is_none(),
                 "producer_content should be None"
             );
-            assert!(critic_content.is_none(), "critic_content should be None");
+            assert!(critic_advisory.is_none(), "critic_advisory should be None");
         }
         other => panic!("expected Waiting(Producer), got {:?}", other),
     }
@@ -187,7 +189,9 @@ fn referee_rejection_exhausts_revision_limit() {
         },
         role: DeliberationRole::Referee,
         producer_content: Some("draft".to_string()),
-        critic_content: Some("review".to_string()),
+        critic_advisory: Some(CriticAdvisory::AcceptedReview {
+            content: "review".to_string(),
+        }),
         feedback: vec![RevisionFeedback {
             reason: "earlier rejection".to_string(),
         }],
@@ -228,7 +232,9 @@ fn max_revisions_zero_fails_on_first_referee_rejection() {
         },
         role: DeliberationRole::Referee,
         producer_content: Some("draft".to_string()),
-        critic_content: Some("review".to_string()),
+        critic_advisory: Some(CriticAdvisory::AcceptedReview {
+            content: "review".to_string(),
+        }),
         feedback: vec![],
         producer_validation: producer_validation(),
     };
