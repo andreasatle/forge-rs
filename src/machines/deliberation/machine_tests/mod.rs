@@ -3,7 +3,7 @@ use super::super::event::{DeliberationEvent, ProducerValidationResult, RoleResul
 use super::super::request::DeliberationRequest;
 use super::super::state::{
     CriticAdvisory, DeliberationFailureReason, DeliberationRole, DeliberationState,
-    DeliberationTerminalOutput, ProducerValidationState, RevisionFeedback,
+    DeliberationTerminalOutput, RevisionFeedback,
 };
 use super::DeliberationMachine;
 use crate::engine::{Machine, Transition, run_machine};
@@ -38,7 +38,7 @@ fn step(
 }
 
 fn producer_accepts(state: DeliberationState, content: &str) -> DeliberationState {
-    let validating = step(
+    let waiting_validator = step(
         state,
         DeliberationEvent::ProducerAccepted {
             content: content.to_string(),
@@ -46,11 +46,15 @@ fn producer_accepts(state: DeliberationState, content: &str) -> DeliberationStat
         },
     );
     assert!(matches!(
-        validating.effects.as_slice(),
+        waiting_validator.effects.as_slice(),
         [DeliberationEffect::ValidateProducer { .. }]
     ));
+    assert!(matches!(
+        &waiting_validator.state,
+        DeliberationState::WaitingValidator { .. }
+    ));
     step(
-        validating.state,
+        waiting_validator.state,
         DeliberationEvent::ProducerValidationReturned {
             content: content.to_string(),
             result: ProducerValidationResult::Valid,

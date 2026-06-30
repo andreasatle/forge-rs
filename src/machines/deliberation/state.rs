@@ -1,57 +1,18 @@
-//! DeliberationMachine state types.
+//! DeliberationMachine state enum.
 //!
-//! The deliberation machine runs Producer → Critic → Referee before completing.
-//! When the Referee rejects, the machine loops back to Producer with accumulated
-//! feedback, up to `max_revisions` times. Final output is always the producer
-//! content; critic and referee do not replace it.
+//! This module owns only `DeliberationState`, the phase enum for the
+//! deliberation state machine. Supporting payload types (`RevisionFeedback`,
+//! `CriticAdvisory`) live in `types.rs`.
 
 use crate::machines::scheduler::FailureKind;
 
 use super::request::DeliberationRequest;
 
 pub use super::failure::DeliberationFailureReason;
-pub use super::types::{DeliberationOutput, DeliberationRole, DeliberationTerminalOutput};
-
-/// Feedback recorded when the Referee rejects a producer draft.
-#[derive(Clone, Debug, PartialEq)]
-pub struct RevisionFeedback {
-    /// The reason the Referee gave for rejecting the draft.
-    pub reason: String,
-}
-
-/// Durable state for producer semantic validation attempts.
-#[derive(Clone, Debug, PartialEq)]
-pub struct ProducerValidationState {
-    /// Number of validation rejections that have already been retried.
-    pub attempt: usize,
-    /// Feedback from the most recent producer semantic validation rejection.
-    pub feedback: Vec<RevisionFeedback>,
-}
-
-/// Advisory output from the Critic stage, preserved with its semantic outcome.
-#[derive(Clone, Debug, PartialEq)]
-pub enum CriticAdvisory {
-    /// The Critic accepted and supplied review content for the Referee.
-    AcceptedReview {
-        /// The review content supplied by the Critic.
-        content: String,
-    },
-    /// The Critic rejected and supplied a reason for the Referee to consider.
-    RejectedReason {
-        /// The rejection reason supplied by the Critic.
-        reason: String,
-    },
-}
-
-impl CriticAdvisory {
-    /// Text form passed to the existing role prompt boundary.
-    pub fn as_referee_content(&self) -> &str {
-        match self {
-            CriticAdvisory::AcceptedReview { content } => content,
-            CriticAdvisory::RejectedReason { reason } => reason,
-        }
-    }
-}
+pub use super::types::{
+    CriticAdvisory, DeliberationOutput, DeliberationRole, DeliberationTerminalOutput,
+    RevisionFeedback,
+};
 
 /// The lifecycle of the deliberation machine.
 #[derive(Clone, Debug, PartialEq)]
@@ -68,20 +29,21 @@ pub enum DeliberationState {
         request: DeliberationRequest,
         /// Revision feedback accumulated from prior Referee rejections.
         feedback: Vec<RevisionFeedback>,
-        /// Producer semantic validation retry state.
-        producer_validation: ProducerValidationState,
+        /// Number of producer semantic validation rejections already retried.
+        /// Carried forward so the total retry budget is shared across the revision loop.
+        validation_attempt: usize,
     },
 
-    /// The Producer has accepted; the machine is waiting for semantic validation.
-    ValidatingProducer {
+    /// The Validator is running against accepted Producer content.
+    WaitingValidator {
         /// The original request, carried forward for later stages.
         request: DeliberationRequest,
         /// The content accepted by the Producer, under validation.
         producer_content: String,
         /// Revision feedback accumulated from prior Referee rejections.
         feedback: Vec<RevisionFeedback>,
-        /// Producer semantic validation retry state.
-        producer_validation: ProducerValidationState,
+        /// Number of producer semantic validation rejections already retried.
+        validation_attempt: usize,
     },
 
     /// The Critic has been dispatched; the machine is waiting for its result.

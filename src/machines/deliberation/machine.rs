@@ -1,9 +1,9 @@
 //! DeliberationMachine — transition logic and `Machine` implementation.
 //!
-//! Deliberation runs Producer → Critic → Referee before completing. When the
-//! Referee rejects, the machine loops back to Producer with accumulated feedback,
-//! up to `max_revisions` times. Final output is always the producer content;
-//! critic and referee content do not replace it.
+//! Deliberation runs Producer → Validator → Critic → Referee before completing.
+//! When the Referee rejects, the machine loops back to Producer with accumulated
+//! feedback, up to `max_revisions` times. Final output is always the producer
+//! content; critic and referee content do not replace it.
 //!
 //! The Critic is advisory. The Referee is authoritative. Critic rejection is not
 //! terminal — it routes to the Referee, which makes the final accept/reject
@@ -11,24 +11,24 @@
 //!
 //! ```text
 //! Ready + Start
-//!     → WaitingProducer(feedback=[])
+//!     → WaitingProducer(feedback=[], validation_attempt=0)
 //!     + RunRole(Producer, feedback=[])
 //!
 //! WaitingProducer + ProducerAccepted { content, artifact_changed }
-//!     → ValidatingProducer(producer_content=content)
+//!     → WaitingValidator(producer_content=content, validation_attempt=N)
 //!     + ValidateProducer(content, artifact_changed)
 //!
-//! ValidatingProducer(producer_content=content)
+//! WaitingValidator(producer_content=content, validation_attempt=N)
 //!     + ProducerValidationReturned(Valid)
 //!     → WaitingCritic(producer_content=content)
 //!     + RunRole(Critic, producer_content=content)
 //!
-//! ValidatingProducer(producer_content=content)
+//! WaitingValidator(producer_content=content, validation_attempt=N)
 //!     + ProducerValidationReturned(Retry)
-//!     validation_attempt < max_validation_retries:
-//!         → WaitingProducer(validation_attempt+1, validation_feedback=[reason])
+//!     N < max_validation_retries:
+//!         → WaitingProducer(validation_attempt=N+1, feedback=[reason])
 //!         + RunRole(Producer, feedback=[reason])
-//!     validation_attempt >= max_validation_retries:
+//!     N >= max_validation_retries:
 //!         → Failed
 //!
 //! WaitingProducer + RoleReturned(Producer, Rejected { reason })
@@ -54,7 +54,7 @@
 //!
 //! WaitingReferee(…) + RoleReturned(Referee, Rejected { reason })
 //!     feedback.len() < max_revisions:
-//!         → WaitingProducer(feedback+[reason])
+//!         → WaitingProducer(feedback+[reason], validation_attempt=0)
 //!         + RunRole(Producer, feedback+[reason])
 //!     feedback.len() >= max_revisions:
 //!         → Failed(reason=RevisionLimitExhausted)
@@ -72,7 +72,7 @@ use super::effect::DeliberationEffect;
 use super::event::{DeliberationEvent, ProducerValidationResult, RoleResult};
 use super::state::{
     CriticAdvisory, DeliberationFailureReason, DeliberationOutput, DeliberationRole,
-    DeliberationState, DeliberationTerminalOutput, ProducerValidationState, RevisionFeedback,
+    DeliberationState, DeliberationTerminalOutput, RevisionFeedback,
 };
 
 /// The deliberation machine. All durable data travels in `DeliberationState`.
@@ -90,27 +90,6 @@ impl DeliberationMachine {
                 kind,
                 reason,
                 message,
-            },
-        }
-    }
-
-    fn producer_accepted_transition(
-        request: super::request::DeliberationRequest,
-        feedback: Vec<RevisionFeedback>,
-        producer_validation: ProducerValidationState,
-        content: String,
-        artifact_changed: bool,
-    ) -> Transition<DeliberationState, DeliberationEffect> {
-        Transition {
-            effects: vec![DeliberationEffect::ValidateProducer {
-                content: content.clone(),
-                artifact_changed,
-            }],
-            state: DeliberationState::ValidatingProducer {
-                request,
-                producer_content: content,
-                feedback,
-                producer_validation,
             },
         }
     }
@@ -145,35 +124,37 @@ impl Machine for DeliberationMachine {
                 state: DeliberationState::WaitingProducer {
                     request,
                     feedback: vec![],
-                    producer_validation: ProducerValidationState {
-                        attempt: 0,
-                        feedback: vec![],
-                    },
+                    validation_attempt: 0,
                 },
             },
 
-            // Producer accepted with artifact metadata from the handler.
+            // Producer accepted with artifact metadata from the handler → hand off to Validator.
             (
                 DeliberationState::WaitingProducer {
                     request,
                     feedback,
-                    producer_validation,
+                    validation_attempt,
                 },
                 DeliberationEvent::ProducerAccepted {
                     content,
                     artifact_changed,
                 },
-            ) => Self::producer_accepted_transition(
-                request,
-                feedback,
-                producer_validation,
-                content,
-                artifact_changed,
-            ),
+            ) => Transition {
+                effects: vec![DeliberationEffect::ValidateProducer {
+                    content: content.clone(),
+                    artifact_changed,
+                }],
+                state: DeliberationState::WaitingValidator {
+                    request,
+                    producer_content: content,
+                    feedback,
+                    validation_attempt,
+                },
+            },
 
-            // Producer validation accepted → hand off to Critic.
+            // Validator accepted → hand off to Critic.
             (
-                DeliberationState::ValidatingProducer {
+                DeliberationState::WaitingValidator {
                     request,
                     producer_content,
                     feedback,
@@ -199,13 +180,13 @@ impl Machine for DeliberationMachine {
                 },
             },
 
-            // Producer validation rejected → retry Producer if validation retry budget remains.
+            // Validator rejected → retry Producer if validation retry budget remains.
             (
-                DeliberationState::ValidatingProducer {
+                DeliberationState::WaitingValidator {
                     request,
                     producer_content,
                     feedback,
-                    producer_validation,
+                    validation_attempt,
                 },
                 DeliberationEvent::ProducerValidationReturned {
                     content,
@@ -218,7 +199,7 @@ impl Machine for DeliberationMachine {
                         },
                 },
             ) if producer_content == content => {
-                if producer_validation.attempt < max_retries {
+                if validation_attempt < max_retries {
                     let validation_feedback = vec![RevisionFeedback {
                         reason: feedback_reason,
                     }];
@@ -234,10 +215,7 @@ impl Machine for DeliberationMachine {
                         state: DeliberationState::WaitingProducer {
                             request,
                             feedback,
-                            producer_validation: ProducerValidationState {
-                                attempt: producer_validation.attempt + 1,
-                                feedback: validation_feedback,
-                            },
+                            validation_attempt: validation_attempt + 1,
                         },
                     }
                 } else {
@@ -440,10 +418,7 @@ impl Machine for DeliberationMachine {
                         state: DeliberationState::WaitingProducer {
                             request,
                             feedback: new_feedback,
-                            producer_validation: ProducerValidationState {
-                                attempt: 0,
-                                feedback: vec![],
-                            },
+                            validation_attempt: 0,
                         },
                     }
                 } else {

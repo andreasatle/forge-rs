@@ -20,11 +20,11 @@
 //! ## Transitions
 //!
 //! - `Ready + Start` → `WaitingProducer` + `RunRole(Producer)`.
-//! - `WaitingProducer + ProducerAccepted` → `ValidatingProducer` + `ValidateProducer`.
-//! - `ValidatingProducer + ProducerValidationReturned(Valid)` → `WaitingCritic` + `RunRole(Critic)`.
-//! - `ValidatingProducer + ProducerValidationReturned(Retry)` and validation retries remain
+//! - `WaitingProducer + ProducerAccepted` → `WaitingValidator` + `ValidateProducer`.
+//! - `WaitingValidator + ProducerValidationReturned(Valid)` → `WaitingCritic` + `RunRole(Critic)`.
+//! - `WaitingValidator + ProducerValidationReturned(Retry)` and validation retries remain
 //!   → `WaitingProducer` with validation feedback + `RunRole(Producer, feedback)`.
-//! - `ValidatingProducer + ProducerValidationReturned(Retry)` and validation retries are exhausted
+//! - `WaitingValidator + ProducerValidationReturned(Retry)` and validation retries are exhausted
 //!   → `Failed`.
 //! - `WaitingProducer + RoleReturned(Producer, Rejected | Failed)` → `Failed`.
 //! - `WaitingCritic + RoleReturned(Critic, Accepted)` → `WaitingReferee` + `RunRole(Referee)`.
@@ -61,6 +61,6 @@ pub use failure::DeliberationFailureReason;
 pub use handler::{DeliberationHandler, ProviderBackedDeliberationHandler};
 pub use machine::DeliberationMachine;
 pub use request::{ArtifactContext, DeliberationContext, DeliberationRequest, SelectedFileContent};
-pub use state::{CriticAdvisory, DeliberationState, ProducerValidationState, RevisionFeedback};
+pub use state::{CriticAdvisory, DeliberationState, RevisionFeedback};
 pub use types::{DeliberationOutput, DeliberationRole, DeliberationTerminalOutput};
 pub(crate) use validation::PlanValidationContext;

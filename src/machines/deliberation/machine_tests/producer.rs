@@ -43,12 +43,12 @@ fn producer_acceptance_runs_validation_then_critic() {
     assert!(
         matches!(
             &validation.state,
-            DeliberationState::ValidatingProducer {
+            DeliberationState::WaitingValidator {
                 producer_content,
                 ..
             } if producer_content == "draft content"
         ),
-        "expected ValidatingProducer('draft content'), got {:?}",
+        "expected WaitingValidator('draft content'), got {:?}",
         validation.state
     );
 
@@ -127,11 +127,12 @@ fn producer_validation_retry_runs_producer_with_validation_feedback() {
 
     match &t.state {
         DeliberationState::WaitingProducer {
-            producer_validation,
-            ..
+            validation_attempt, ..
         } => {
-            assert_eq!(producer_validation.attempt, 1);
-            assert_eq!(producer_validation.feedback[0].reason, "must be valid JSON");
+            assert_eq!(
+                *validation_attempt, 1,
+                "validation_attempt must increment to 1 after first retry"
+            );
         }
         other => panic!("expected WaitingProducer retry state, got {other:?}"),
     }
@@ -147,7 +148,7 @@ fn producer_validation_retry_runs_producer_with_validation_feedback() {
 
 #[test]
 fn producer_validation_retry_exhaustion_fails() {
-    let validating = DeliberationState::ValidatingProducer {
+    let validating = DeliberationState::WaitingValidator {
         request: DeliberationRequest {
             objective: "write a poem".to_string(),
             context: crate::machines::deliberation::DeliberationContext::default(),
@@ -155,12 +156,7 @@ fn producer_validation_retry_exhaustion_fails() {
         },
         producer_content: "draft content".to_string(),
         feedback: vec![],
-        producer_validation: ProducerValidationState {
-            attempt: 2,
-            feedback: vec![RevisionFeedback {
-                reason: "previous validation failure".to_string(),
-            }],
-        },
+        validation_attempt: 2,
     };
 
     let t = step(
