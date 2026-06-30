@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn referee_rejection_after_critic_rejection_loops_when_revisions_remain() {
-    let after_producer = step(
+    let after_producer = producer_accepts(
         step(
             DeliberationState::Ready {
                 request: crate::machines::deliberation::state::DeliberationRequest {
@@ -14,14 +14,8 @@ fn referee_rejection_after_critic_rejection_loops_when_revisions_remain() {
             DeliberationEvent::Start,
         )
         .state,
-        DeliberationEvent::RoleReturned {
-            role: DeliberationRole::Producer,
-            result: RoleResult::Accepted {
-                content: "draft content".to_string(),
-            },
-        },
-    )
-    .state;
+        "draft content",
+    );
 
     // Critic rejects → routes to Referee.
     let after_critic_rejection = step(
@@ -75,16 +69,10 @@ fn referee_rejection_after_critic_rejection_loops_when_revisions_remain() {
 #[test]
 fn referee_rejection_after_critic_rejection_exhausts_budget_when_no_revisions_remain() {
     // max_revisions=0: any Referee rejection must fail immediately.
-    let after_producer = step(
+    let after_producer = producer_accepts(
         step(ready("write a poem"), DeliberationEvent::Start).state,
-        DeliberationEvent::RoleReturned {
-            role: DeliberationRole::Producer,
-            result: RoleResult::Accepted {
-                content: "draft content".to_string(),
-            },
-        },
-    )
-    .state;
+        "draft content",
+    );
 
     // Critic rejects → routes to Referee.
     let after_critic_rejection = step(
@@ -135,6 +123,7 @@ fn referee_rejection_loops_to_producer_with_feedback() {
         critic_content: Some("review".to_string()),
         revision_count: 0,
         feedback: vec![],
+        producer_validation: producer_validation(),
     };
 
     let t = step(
@@ -206,6 +195,7 @@ fn referee_rejection_exhausts_revision_limit() {
         feedback: vec![RevisionFeedback {
             reason: "earlier rejection".to_string(),
         }],
+        producer_validation: producer_validation(),
     };
 
     let t = step(
@@ -245,6 +235,7 @@ fn max_revisions_zero_fails_on_first_referee_rejection() {
         critic_content: Some("review".to_string()),
         revision_count: 0,
         feedback: vec![],
+        producer_validation: producer_validation(),
     };
 
     let t = step(
@@ -345,6 +336,12 @@ fn revision_then_acceptance_completes_with_revised_producer_content() {
                 }
                 DeliberationEffect::RunRole { .. } => {
                     panic!("unexpected RunRole variant")
+                }
+                DeliberationEffect::ValidateProducer { content, .. } => {
+                    DeliberationEvent::ProducerValidationReturned {
+                        content,
+                        result: ProducerValidationResult::Valid,
+                    }
                 }
                 DeliberationEffect::ReturnComplete { .. } => {
                     unreachable!("ReturnComplete should not re-enter the loop")

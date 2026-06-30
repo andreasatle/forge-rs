@@ -15,8 +15,21 @@
 //!     + RunRole(Producer, feedback=[])
 //!
 //! Waiting(Producer) + RoleReturned(Producer, Accepted { content })
+//!     → Waiting(Producer, producer_content=Some(content))
+//!     + ValidateProducer(content)
+//!
+//! Waiting(Producer, producer_content=Some(content))
+//!     + ProducerValidationReturned(Valid)
 //!     → Waiting(Critic, producer_content=Some(content))
 //!     + RunRole(Critic, producer_content=Some(content))
+//!
+//! Waiting(Producer, producer_content=Some(content))
+//!     + ProducerValidationReturned(Retry)
+//!     validation_attempt < max_validation_retries:
+//!         → Waiting(Producer, validation_attempt+1, validation_feedback=[reason])
+//!         + RunRole(Producer, feedback=[reason])
+//!     validation_attempt >= max_validation_retries:
+//!         → Failed + ReturnFailed
 //!
 //! Waiting(Producer) + RoleReturned(Producer, Rejected { reason })
 //!     → Failed + ReturnFailed
@@ -62,10 +75,10 @@ use crate::engine::{Machine, Transition};
 use crate::machines::scheduler::FailureKind;
 
 use super::effect::DeliberationEffect;
-use super::event::{DeliberationEvent, RoleResult};
+use super::event::{DeliberationEvent, ProducerValidationResult, RoleResult};
 use super::state::{
     DeliberationOutput, DeliberationRole, DeliberationState, DeliberationTerminalOutput,
-    RevisionFeedback,
+    ProducerValidationState, RevisionFeedback,
 };
 
 /// The deliberation machine. All durable data travels in `DeliberationState`.
@@ -82,6 +95,31 @@ impl DeliberationMachine {
                 reason: reason.clone(),
             }],
             state: DeliberationState::Failed { kind, reason },
+        }
+    }
+
+    fn producer_accepted_transition(
+        request: super::state::DeliberationRequest,
+        revision_count: usize,
+        feedback: Vec<RevisionFeedback>,
+        producer_validation: ProducerValidationState,
+        content: String,
+        artifact_changed: bool,
+    ) -> Transition<DeliberationState, DeliberationEffect> {
+        Transition {
+            effects: vec![DeliberationEffect::ValidateProducer {
+                content: content.clone(),
+                artifact_changed,
+            }],
+            state: DeliberationState::Waiting {
+                request,
+                role: DeliberationRole::Producer,
+                producer_content: Some(content),
+                critic_content: None,
+                revision_count,
+                feedback,
+                producer_validation,
+            },
         }
     }
 }
@@ -119,40 +157,148 @@ impl Machine for DeliberationMachine {
                     critic_content: None,
                     revision_count: 0,
                     feedback: vec![],
+                    producer_validation: ProducerValidationState {
+                        attempt: 0,
+                        feedback: vec![],
+                    },
                 },
             },
 
-            // Producer accepted → hand off to Critic.
+            // Producer accepted → validate the accepted content before Critic sees it.
             (
                 DeliberationState::Waiting {
                     request,
                     role: DeliberationRole::Producer,
                     revision_count,
                     feedback,
+                    producer_validation,
                     ..
                 },
                 DeliberationEvent::RoleReturned {
                     role: DeliberationRole::Producer,
                     result: RoleResult::Accepted { content },
                 },
-            ) => Transition {
+            ) => Self::producer_accepted_transition(
+                request,
+                revision_count,
+                feedback,
+                producer_validation,
+                content,
+                false,
+            ),
+
+            // Producer accepted with artifact metadata from the handler.
+            (
+                DeliberationState::Waiting {
+                    request,
+                    role: DeliberationRole::Producer,
+                    revision_count,
+                    feedback,
+                    producer_validation,
+                    ..
+                },
+                DeliberationEvent::ProducerAccepted {
+                    content,
+                    artifact_changed,
+                },
+            ) => Self::producer_accepted_transition(
+                request,
+                revision_count,
+                feedback,
+                producer_validation,
+                content,
+                artifact_changed,
+            ),
+
+            // Producer validation accepted → hand off to Critic.
+            (
+                DeliberationState::Waiting {
+                    request,
+                    role: DeliberationRole::Producer,
+                    producer_content: Some(producer_content),
+                    revision_count,
+                    feedback,
+                    ..
+                },
+                DeliberationEvent::ProducerValidationReturned {
+                    content,
+                    result: ProducerValidationResult::Valid,
+                },
+            ) if producer_content == content => Transition {
                 effects: vec![DeliberationEffect::RunRole {
                     role: DeliberationRole::Critic,
                     objective: request.objective.clone(),
                     target_files: request.target_files.clone(),
-                    producer_content: Some(content.clone()),
+                    producer_content: Some(producer_content.clone()),
                     critic_content: None,
                     feedback: feedback.clone(),
                 }],
                 state: DeliberationState::Waiting {
                     request,
                     role: DeliberationRole::Critic,
-                    producer_content: Some(content),
+                    producer_content: Some(producer_content),
                     critic_content: None,
                     revision_count,
                     feedback,
+                    producer_validation: ProducerValidationState {
+                        attempt: 0,
+                        feedback: vec![],
+                    },
                 },
             },
+
+            // Producer validation rejected → retry Producer if validation retry budget remains.
+            (
+                DeliberationState::Waiting {
+                    request,
+                    role: DeliberationRole::Producer,
+                    producer_content: Some(producer_content),
+                    revision_count,
+                    feedback,
+                    producer_validation,
+                    ..
+                },
+                DeliberationEvent::ProducerValidationReturned {
+                    content,
+                    result:
+                        ProducerValidationResult::Retry {
+                            feedback_reason,
+                            max_retries,
+                            failure_kind,
+                            failure_reason,
+                        },
+                },
+            ) if producer_content == content => {
+                if producer_validation.attempt < max_retries {
+                    let validation_feedback = vec![RevisionFeedback {
+                        reason: feedback_reason,
+                    }];
+                    Transition {
+                        effects: vec![DeliberationEffect::RunRole {
+                            role: DeliberationRole::Producer,
+                            objective: request.objective.clone(),
+                            target_files: request.target_files.clone(),
+                            producer_content: None,
+                            critic_content: None,
+                            feedback: validation_feedback.clone(),
+                        }],
+                        state: DeliberationState::Waiting {
+                            request,
+                            role: DeliberationRole::Producer,
+                            producer_content: None,
+                            critic_content: None,
+                            revision_count,
+                            feedback,
+                            producer_validation: ProducerValidationState {
+                                attempt: producer_validation.attempt + 1,
+                                feedback: validation_feedback,
+                            },
+                        },
+                    }
+                } else {
+                    Self::failed_transition(failure_kind, failure_reason)
+                }
+            }
 
             // Producer rejected → failed.
             (
@@ -241,6 +387,10 @@ impl Machine for DeliberationMachine {
                     critic_content: Some(critic_content),
                     revision_count,
                     feedback,
+                    producer_validation: ProducerValidationState {
+                        attempt: 0,
+                        feedback: vec![],
+                    },
                 },
             },
 
@@ -277,6 +427,10 @@ impl Machine for DeliberationMachine {
                         critic_content: Some(critic_content),
                         revision_count,
                         feedback,
+                        producer_validation: ProducerValidationState {
+                            attempt: 0,
+                            feedback: vec![],
+                        },
                     },
                 }
             }
@@ -358,6 +512,7 @@ impl Machine for DeliberationMachine {
                     critic_content: Some(_),
                     revision_count,
                     feedback,
+                    producer_validation: _,
                 },
                 DeliberationEvent::RoleReturned {
                     role: DeliberationRole::Referee,
@@ -385,6 +540,10 @@ impl Machine for DeliberationMachine {
                             critic_content: None,
                             revision_count: revision_count + 1,
                             feedback: new_feedback,
+                            producer_validation: ProducerValidationState {
+                                attempt: 0,
+                                feedback: vec![],
+                            },
                         },
                     }
                 } else {

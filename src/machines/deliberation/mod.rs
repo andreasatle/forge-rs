@@ -20,7 +20,12 @@
 //! ## Transitions
 //!
 //! - `Ready + Start` → `Waiting(Producer)` + `RunRole(Producer)`.
-//! - `Waiting(Producer) + RoleReturned(Producer, Accepted)` → `Waiting(Critic)` + `RunRole(Critic)`.
+//! - `Waiting(Producer) + RoleReturned(Producer, Accepted)` → `Waiting(Producer)` + `ValidateProducer`.
+//! - `Waiting(Producer) + ProducerValidationReturned(Valid)` → `Waiting(Critic)` + `RunRole(Critic)`.
+//! - `Waiting(Producer) + ProducerValidationReturned(Retry)` and validation retries remain
+//!   → `Waiting(Producer)` with validation feedback + `RunRole(Producer, feedback)`.
+//! - `Waiting(Producer) + ProducerValidationReturned(Retry)` and validation retries are exhausted
+//!   → `Failed`.
 //! - `Waiting(Producer) + RoleReturned(Producer, Rejected | Failed)` → `Failed`.
 //! - `Waiting(Critic) + RoleReturned(Critic, Accepted)` → `Waiting(Referee)` + `RunRole(Referee)`.
 //! - `Waiting(Critic) + RoleReturned(Critic, Rejected)` → `Waiting(Referee)` with advisory critic feedback.
@@ -50,11 +55,11 @@ mod work_validation;
 mod workspace_context;
 
 pub use effect::DeliberationEffect;
-pub use event::{DeliberationEvent, RoleResult};
+pub use event::{DeliberationEvent, ProducerValidationResult, RoleResult};
 pub use handler::{DeliberationHandler, ProviderBackedDeliberationHandler};
 pub use machine::DeliberationMachine;
 pub use state::{
     DeliberationOutput, DeliberationRequest, DeliberationRole, DeliberationState,
-    DeliberationTerminalOutput, RevisionFeedback,
+    DeliberationTerminalOutput, ProducerValidationState, RevisionFeedback,
 };
 pub(crate) use validation::PlanValidationContext;

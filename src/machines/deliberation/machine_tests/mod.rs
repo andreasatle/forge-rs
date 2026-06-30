@@ -1,8 +1,8 @@
 use super::super::effect::DeliberationEffect;
-use super::super::event::{DeliberationEvent, RoleResult};
+use super::super::event::{DeliberationEvent, ProducerValidationResult, RoleResult};
 use super::super::state::{
     DeliberationRequest, DeliberationRole, DeliberationState, DeliberationTerminalOutput,
-    RevisionFeedback,
+    ProducerValidationState, RevisionFeedback,
 };
 use super::DeliberationMachine;
 use crate::engine::{Machine, Transition, run_machine};
@@ -34,4 +34,35 @@ fn step(
     event: DeliberationEvent,
 ) -> Transition<DeliberationState, DeliberationEffect> {
     machine().transition(state, event)
+}
+
+fn producer_validation() -> ProducerValidationState {
+    ProducerValidationState {
+        attempt: 0,
+        feedback: vec![],
+    }
+}
+
+fn producer_accepts(state: DeliberationState, content: &str) -> DeliberationState {
+    let validating = step(
+        state,
+        DeliberationEvent::RoleReturned {
+            role: DeliberationRole::Producer,
+            result: RoleResult::Accepted {
+                content: content.to_string(),
+            },
+        },
+    );
+    assert!(matches!(
+        validating.effects.as_slice(),
+        [DeliberationEffect::ValidateProducer { .. }]
+    ));
+    step(
+        validating.state,
+        DeliberationEvent::ProducerValidationReturned {
+            content: content.to_string(),
+            result: ProducerValidationResult::Valid,
+        },
+    )
+    .state
 }

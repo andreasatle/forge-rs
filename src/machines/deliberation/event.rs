@@ -36,6 +36,25 @@ pub enum RoleResult {
     },
 }
 
+/// The typed outcome of validating accepted Producer output.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ProducerValidationResult {
+    /// The accepted Producer content satisfies semantic validation.
+    Valid,
+    /// The accepted Producer content failed semantic validation and may be
+    /// retried while the supplied retry budget remains.
+    Retry {
+        /// Feedback to send to the next Producer attempt.
+        feedback_reason: String,
+        /// Maximum semantic validation retries allowed for this validation mode.
+        max_retries: usize,
+        /// Machine-readable terminal failure cause if retries are exhausted.
+        failure_kind: FailureKind,
+        /// Human-readable terminal failure reason if retries are exhausted.
+        failure_reason: String,
+    },
+}
+
 /// Events that drive the deliberation machine forward.
 #[derive(Clone, Debug, PartialEq)]
 pub enum DeliberationEvent {
@@ -47,5 +66,20 @@ pub enum DeliberationEvent {
         role: DeliberationRole,
         /// The outcome of the role's execution.
         result: RoleResult,
+    },
+    /// A Producer role call accepted content and reported artifact mutation
+    /// metadata needed by producer semantic validation.
+    ProducerAccepted {
+        /// The accepted Producer content.
+        content: String,
+        /// Whether the Producer role call changed the artifact workspace.
+        artifact_changed: bool,
+    },
+    /// Accepted Producer content has been semantically validated.
+    ProducerValidationReturned {
+        /// The accepted Producer content that was validated.
+        content: String,
+        /// The validation outcome.
+        result: ProducerValidationResult,
     },
 }

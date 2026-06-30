@@ -5,7 +5,9 @@ use std::sync::Arc;
 use super::*;
 use crate::engine::{Machine, Transition, run_machine, run_machine_with_telemetry};
 use crate::machines::deliberation::effect::DeliberationEffect;
-use crate::machines::deliberation::event::{DeliberationEvent, RoleResult};
+use crate::machines::deliberation::event::{
+    DeliberationEvent, ProducerValidationResult, RoleResult,
+};
 use crate::machines::deliberation::machine::DeliberationMachine;
 use crate::machines::deliberation::state::{
     DeliberationRequest, DeliberationRole, DeliberationState, DeliberationTerminalOutput,
@@ -164,6 +166,13 @@ fn accepted_output(content: &str, artifact_changed: bool) -> RoleRunOutput {
     )
 }
 
+fn validate_producer_effect(content: &str, artifact_changed: bool) -> DeliberationEffect {
+    DeliberationEffect::ValidateProducer {
+        content: content.to_string(),
+        artifact_changed,
+    }
+}
+
 // --- delegation test ---
 
 #[test]
@@ -198,12 +207,9 @@ fn deliberation_handler_delegates_run_role_to_role_runner() {
     assert!(
         matches!(
             event,
-            DeliberationEvent::RoleReturned {
-                result: RoleResult::Accepted { ref content },
-                ..
-            } if content == "generated"
+            DeliberationEvent::ProducerAccepted { ref content, .. } if content == "generated"
         ),
-        "expected RoleReturned with Accepted result, got {event:?}"
+        "expected ProducerAccepted event, got {event:?}"
     );
 }
 
@@ -229,13 +235,7 @@ fn structured_targets_flow_to_worker_role_request() {
         feedback: vec![],
     });
 
-    assert!(matches!(
-        event,
-        DeliberationEvent::RoleReturned {
-            result: RoleResult::Accepted { .. },
-            ..
-        }
-    ));
+    assert!(matches!(event, DeliberationEvent::ProducerAccepted { .. }));
     let req = &handler.runner.requests.borrow()[0];
     assert_eq!(req.objective, "write the implementation");
     assert_eq!(req.target_files, vec!["src/main.rs".to_string()]);
@@ -472,14 +472,19 @@ fn valid_single_task_plan_passes_semantic_validation() {
         "valid plan must not trigger retry"
     );
     assert!(
+        matches!(event, DeliberationEvent::ProducerAccepted { .. }),
+        "valid plan run must produce ProducerAccepted; got {event:?}"
+    );
+    let validation = handler.handle_effect(validate_producer_effect(VALID_SINGLE_TASK, false));
+    assert!(
         matches!(
-            event,
-            DeliberationEvent::RoleReturned {
-                result: RoleResult::Accepted { .. },
+            validation,
+            DeliberationEvent::ProducerValidationReturned {
+                result: ProducerValidationResult::Valid,
                 ..
             }
         ),
-        "valid plan must produce Accepted; got {event:?}"
+        "valid plan must produce Valid validation; got {validation:?}"
     );
 }
 
@@ -504,28 +509,24 @@ fn empty_plan_triggers_revision_feedback() {
 
     assert_eq!(
         handler.runner.requests.borrow().len(),
-        2,
-        "empty plan must trigger exactly one retry"
+        1,
+        "RunRole must execute exactly one provider call"
     );
-    let second_feedback = &handler.runner.requests.borrow()[1].feedback;
+    assert!(matches!(event, DeliberationEvent::ProducerAccepted { .. }));
+    let validation = handler.handle_effect(validate_producer_effect(EMPTY_PLAN, false));
+    let DeliberationEvent::ProducerValidationReturned {
+        result: ProducerValidationResult::Retry {
+            feedback_reason, ..
+        },
+        ..
+    } = validation
+    else {
+        panic!("empty plan must produce Retry validation; got {validation:?}");
+    };
     assert!(
-        !second_feedback.is_empty(),
-        "retry request must carry revision feedback"
-    );
-    assert!(
-        second_feedback[0].reason.contains("no tasks"),
+        feedback_reason.contains("no tasks"),
         "feedback must mention missing tasks; got: {}",
-        second_feedback[0].reason
-    );
-    assert!(
-        matches!(
-            event,
-            DeliberationEvent::RoleReturned {
-                result: RoleResult::Accepted { .. },
-                ..
-            }
-        ),
-        "valid retry must succeed; got {event:?}"
+        feedback_reason
     );
 }
 
@@ -550,24 +551,27 @@ fn unparseable_plan_triggers_revision_feedback() {
 
     assert_eq!(
         handler.runner.requests.borrow().len(),
-        2,
-        "unparseable planner content must trigger a producer retry"
+        1,
+        "RunRole must execute exactly one provider call"
     );
-    let second_feedback = &handler.runner.requests.borrow()[1].feedback;
+    assert!(matches!(event, DeliberationEvent::ProducerAccepted { .. }));
+    let validation = handler.handle_effect(validate_producer_effect(
+        "Just do the work in one step.",
+        false,
+    ));
+    let DeliberationEvent::ProducerValidationReturned {
+        result: ProducerValidationResult::Retry {
+            feedback_reason, ..
+        },
+        ..
+    } = validation
+    else {
+        panic!("unparseable plan must produce Retry validation; got {validation:?}");
+    };
     assert!(
-        second_feedback[0].reason.contains("PlannerOutput JSON"),
+        feedback_reason.contains("PlannerOutput JSON"),
         "retry feedback must explain the parse requirement; got: {}",
-        second_feedback[0].reason
-    );
-    assert!(
-        matches!(
-            event,
-            DeliberationEvent::RoleReturned {
-                result: RoleResult::Accepted { .. },
-                ..
-            }
-        ),
-        "valid retry must succeed; got {event:?}"
+        feedback_reason
     );
 }
 
@@ -620,17 +624,9 @@ fn repeated_unparseable_plans_exhaust_retries_before_review() {
 
 #[test]
 fn repeated_empty_plans_exhaust_retries() {
-    let handler = handler_with_validation(vec![
-        RoleResult::Accepted {
-            content: EMPTY_PLAN.to_string(),
-        },
-        RoleResult::Accepted {
-            content: EMPTY_PLAN.to_string(),
-        },
-        RoleResult::Accepted {
-            content: EMPTY_PLAN.to_string(),
-        },
-    ]);
+    let handler = handler_with_validation(vec![RoleResult::Accepted {
+        content: EMPTY_PLAN.to_string(),
+    }]);
     let effect = run_role_effect(
         DeliberationRole::Producer,
         "create foo.rs",
@@ -642,22 +638,23 @@ fn repeated_empty_plans_exhaust_retries() {
 
     assert_eq!(
         handler.runner.requests.borrow().len(),
-        MAX_PLAN_VALIDATION_RETRIES + 1,
-        "must attempt exactly {} producer calls before failing",
-        MAX_PLAN_VALIDATION_RETRIES + 1
+        1,
+        "RunRole must execute exactly one provider call"
     );
+    assert!(matches!(event, DeliberationEvent::ProducerAccepted { .. }));
+    let validation = handler.handle_effect(validate_producer_effect(EMPTY_PLAN, false));
     assert!(
         matches!(
-            event,
-            DeliberationEvent::RoleReturned {
-                result: RoleResult::Failed {
-                    kind: FailureKind::PlannerValidationFailure,
+            validation,
+            DeliberationEvent::ProducerValidationReturned {
+                result: ProducerValidationResult::Retry {
+                    failure_kind: FailureKind::PlannerValidationFailure,
                     ..
                 },
                 ..
             }
         ),
-        "exhausted retries must produce PlannerValidationFailure; got {event:?}"
+        "invalid plan must produce PlannerValidationFailure retry; got {validation:?}"
     );
 }
 
@@ -734,14 +731,19 @@ fn accepted_work_with_one_file_change_passes_semantic_validation() {
         "valid work must not trigger retry"
     );
     assert!(
+        matches!(event, DeliberationEvent::ProducerAccepted { .. }),
+        "valid work run must produce ProducerAccepted; got {event:?}"
+    );
+    let validation = handler.handle_effect(validate_producer_effect("implemented change", true));
+    assert!(
         matches!(
-            event,
-            DeliberationEvent::RoleReturned {
-                result: RoleResult::Accepted { .. },
+            validation,
+            DeliberationEvent::ProducerValidationReturned {
+                result: ProducerValidationResult::Valid,
                 ..
             }
         ),
-        "valid work must produce Accepted; got {event:?}"
+        "valid work must produce Valid validation; got {validation:?}"
     );
 }
 
@@ -761,30 +763,25 @@ fn accepted_work_with_no_artifact_mutation_triggers_revision_feedback() {
 
     assert_eq!(
         handler.runner.requests.borrow().len(),
-        2,
-        "missing artifact mutation must trigger one retry"
+        1,
+        "RunRole must execute exactly one provider call"
     );
-    let second_feedback = &handler.runner.requests.borrow()[1].feedback;
+    assert!(matches!(event, DeliberationEvent::ProducerAccepted { .. }));
+    let validation =
+        handler.handle_effect(validate_producer_effect("summary without changes", false));
+    let DeliberationEvent::ProducerValidationReturned {
+        result: ProducerValidationResult::Retry {
+            feedback_reason, ..
+        },
+        ..
+    } = validation
+    else {
+        panic!("missing mutation must produce Retry validation; got {validation:?}");
+    };
     assert!(
-        !second_feedback.is_empty(),
-        "retry request must carry revision feedback"
-    );
-    assert!(
-        second_feedback[0]
-            .reason
-            .contains("must modify the artifact"),
+        feedback_reason.contains("must modify the artifact"),
         "feedback must explain the semantic invariant; got: {}",
-        second_feedback[0].reason
-    );
-    assert!(
-        matches!(
-            event,
-            DeliberationEvent::RoleReturned {
-                result: RoleResult::Accepted { .. },
-                ..
-            }
-        ),
-        "valid retry must succeed; got {event:?}"
+        feedback_reason
     );
 }
 
@@ -819,10 +816,7 @@ fn explicit_non_artifact_work_does_not_use_artifact_semantic_validation() {
     assert!(
         matches!(
             event,
-            DeliberationEvent::RoleReturned {
-                result: RoleResult::Accepted { ref content },
-                ..
-            } if content == "summary only"
+            DeliberationEvent::ProducerAccepted { ref content, .. } if content == "summary only"
         ),
         "non-artifact work must accept summary-only Producer output; got {event:?}"
     );
@@ -830,11 +824,7 @@ fn explicit_non_artifact_work_does_not_use_artifact_semantic_validation() {
 
 #[test]
 fn repeated_empty_work_exhausts_semantic_validation_retries() {
-    let handler = handler_with_work_validation(vec![
-        accepted_output("empty work 1", false),
-        accepted_output("empty work 2", false),
-        accepted_output("empty work 3", false),
-    ]);
+    let handler = handler_with_work_validation(vec![accepted_output("empty work 1", false)]);
     let event = handler.handle_effect(run_role_effect(
         DeliberationRole::Producer,
         "implement the change",
@@ -845,22 +835,23 @@ fn repeated_empty_work_exhausts_semantic_validation_retries() {
 
     assert_eq!(
         handler.runner.requests.borrow().len(),
-        MAX_WORK_SEMANTIC_VALIDATION_RETRIES + 1,
-        "must attempt exactly {} producer calls before failing",
-        MAX_WORK_SEMANTIC_VALIDATION_RETRIES + 1
+        1,
+        "RunRole must execute exactly one provider call"
     );
+    assert!(matches!(event, DeliberationEvent::ProducerAccepted { .. }));
+    let validation = handler.handle_effect(validate_producer_effect("empty work 1", false));
     assert!(
         matches!(
-            event,
-            DeliberationEvent::RoleReturned {
-                result: RoleResult::Failed {
-                    kind: FailureKind::WorkSemanticValidationFailure,
+            validation,
+            DeliberationEvent::ProducerValidationReturned {
+                result: ProducerValidationResult::Retry {
+                    failure_kind: FailureKind::WorkSemanticValidationFailure,
                     ..
                 },
                 ..
             }
         ),
-        "exhausted retries must produce WorkSemanticValidationFailure; got {event:?}"
+        "empty work must produce WorkSemanticValidationFailure retry; got {validation:?}"
     );
 }
 
@@ -957,11 +948,5 @@ fn handle_effect_without_telemetry_compiles() {
         None,
         vec![],
     ));
-    assert!(matches!(
-        event,
-        DeliberationEvent::RoleReturned {
-            result: RoleResult::Accepted { .. },
-            ..
-        }
-    ));
+    assert!(matches!(event, DeliberationEvent::ProducerAccepted { .. }));
 }

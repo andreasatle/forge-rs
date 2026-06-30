@@ -30,6 +30,13 @@ pub enum DeliberationEffect {
         /// Accumulated Referee rejection feedback. Empty on the first pass.
         feedback: Vec<RevisionFeedback>,
     },
+    /// Validate accepted Producer output before Critic sees it.
+    ValidateProducer {
+        /// The content accepted by the Producer role.
+        content: String,
+        /// Whether the Producer role mutated the artifact workspace.
+        artifact_changed: bool,
+    },
     /// Signal successful completion to the caller.
     ReturnComplete {
         /// The accepted output to return to the caller.

@@ -14,6 +14,15 @@ pub struct RevisionFeedback {
     pub reason: String,
 }
 
+/// Durable state for producer semantic validation attempts.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ProducerValidationState {
+    /// Number of validation rejections that have already been retried.
+    pub attempt: usize,
+    /// Feedback from the most recent producer semantic validation rejection.
+    pub feedback: Vec<RevisionFeedback>,
+}
+
 /// The input submitted to the deliberation pipeline.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DeliberationRequest {
@@ -86,6 +95,9 @@ pub enum DeliberationState {
         revision_count: usize,
         /// Feedback accumulated from each Referee rejection.
         feedback: Vec<RevisionFeedback>,
+        /// Producer semantic validation retry state. Empty until Producer
+        /// output is being validated or retried.
+        producer_validation: ProducerValidationState,
     },
 
     /// The pipeline finished successfully. Terminal state.

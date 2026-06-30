@@ -2,16 +2,10 @@ use super::*;
 
 #[test]
 fn critic_acceptance_runs_referee() {
-    let after_producer = step(
+    let after_producer = producer_accepts(
         step(ready("write a poem"), DeliberationEvent::Start).state,
-        DeliberationEvent::RoleReturned {
-            role: DeliberationRole::Producer,
-            result: RoleResult::Accepted {
-                content: "draft content".to_string(),
-            },
-        },
-    )
-    .state;
+        "draft content",
+    );
 
     let t = step(
         after_producer,
@@ -56,16 +50,10 @@ fn critic_acceptance_runs_referee() {
 
 #[test]
 fn critic_rejection_routes_to_referee() {
-    let after_producer = step(
+    let after_producer = producer_accepts(
         step(ready("write a poem"), DeliberationEvent::Start).state,
-        DeliberationEvent::RoleReturned {
-            role: DeliberationRole::Producer,
-            result: RoleResult::Accepted {
-                content: "draft content".to_string(),
-            },
-        },
-    )
-    .state;
+        "draft content",
+    );
 
     let t = step(
         after_producer,
@@ -109,16 +97,10 @@ fn critic_rejection_routes_to_referee() {
 
 #[test]
 fn critic_rejection_passes_reason_as_critic_content() {
-    let after_producer = step(
+    let after_producer = producer_accepts(
         step(ready("write a poem"), DeliberationEvent::Start).state,
-        DeliberationEvent::RoleReturned {
-            role: DeliberationRole::Producer,
-            result: RoleResult::Accepted {
-                content: "draft content".to_string(),
-            },
-        },
-    )
-    .state;
+        "draft content",
+    );
 
     let t = step(
         after_producer,
@@ -149,16 +131,10 @@ fn critic_rejection_passes_reason_as_critic_content() {
 
 #[test]
 fn critic_rejection_does_not_emit_return_failed() {
-    let after_producer = step(
+    let after_producer = producer_accepts(
         step(ready("write a poem"), DeliberationEvent::Start).state,
-        DeliberationEvent::RoleReturned {
-            role: DeliberationRole::Producer,
-            result: RoleResult::Accepted {
-                content: "draft content".to_string(),
-            },
-        },
-    )
-    .state;
+        "draft content",
+    );
 
     let t = step(
         after_producer,
@@ -191,6 +167,7 @@ fn critic_missing_producer_content_fails() {
         critic_content: None,
         revision_count: 0,
         feedback: vec![],
+        producer_validation: producer_validation(),
     };
 
     let t = step(
@@ -221,16 +198,10 @@ fn critic_missing_producer_content_fails() {
 
 #[test]
 fn role_mismatch_while_waiting_critic_fails() {
-    let after_producer = step(
+    let after_producer = producer_accepts(
         step(ready("write a poem"), DeliberationEvent::Start).state,
-        DeliberationEvent::RoleReturned {
-            role: DeliberationRole::Producer,
-            result: RoleResult::Accepted {
-                content: "draft".to_string(),
-            },
-        },
-    )
-    .state;
+        "draft",
+    );
 
     let t = step(
         after_producer,
@@ -260,16 +231,10 @@ fn role_mismatch_while_waiting_critic_fails() {
 
 #[test]
 fn critic_failed_is_terminal() {
-    let after_producer = step(
+    let after_producer = producer_accepts(
         step(ready("write a poem"), DeliberationEvent::Start).state,
-        DeliberationEvent::RoleReturned {
-            role: DeliberationRole::Producer,
-            result: RoleResult::Accepted {
-                content: "draft content".to_string(),
-            },
-        },
-    )
-    .state;
+        "draft content",
+    );
 
     let t = step(
         after_producer,

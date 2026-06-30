@@ -3,16 +3,10 @@ use super::*;
 #[test]
 fn referee_acceptance_completes_with_producer_content() {
     let after_critic = step(
-        step(
+        producer_accepts(
             step(ready("write a poem"), DeliberationEvent::Start).state,
-            DeliberationEvent::RoleReturned {
-                role: DeliberationRole::Producer,
-                result: RoleResult::Accepted {
-                    content: "draft content".to_string(),
-                },
-            },
-        )
-        .state,
+            "draft content",
+        ),
         DeliberationEvent::RoleReturned {
             role: DeliberationRole::Critic,
             result: RoleResult::Accepted {
@@ -55,16 +49,10 @@ fn referee_acceptance_completes_with_producer_content() {
 #[test]
 fn referee_rejection_fails_when_no_revisions_allowed() {
     let after_critic = step(
-        step(
+        producer_accepts(
             step(ready("write a poem"), DeliberationEvent::Start).state,
-            DeliberationEvent::RoleReturned {
-                role: DeliberationRole::Producer,
-                result: RoleResult::Accepted {
-                    content: "draft content".to_string(),
-                },
-            },
-        )
-        .state,
+            "draft content",
+        ),
         DeliberationEvent::RoleReturned {
             role: DeliberationRole::Critic,
             result: RoleResult::Accepted {
@@ -111,6 +99,7 @@ fn referee_missing_critic_content_fails() {
         critic_content: None,
         revision_count: 0,
         feedback: vec![],
+        producer_validation: producer_validation(),
     };
 
     let t = step(
@@ -152,6 +141,7 @@ fn role_mismatch_while_waiting_referee_fails() {
         critic_content: Some("looks good".to_string()),
         revision_count: 0,
         feedback: vec![],
+        producer_validation: producer_validation(),
     };
 
     for wrong_role in [DeliberationRole::Producer, DeliberationRole::Critic] {
@@ -197,6 +187,7 @@ fn referee_failed_is_terminal() {
         critic_content: Some("review".to_string()),
         revision_count: 0,
         feedback: vec![],
+        producer_validation: producer_validation(),
     };
 
     let t = step(
@@ -238,6 +229,7 @@ fn referee_rejected_still_revises() {
         critic_content: Some("review".to_string()),
         revision_count: 0,
         feedback: vec![],
+        producer_validation: producer_validation(),
     };
 
     let t = step(

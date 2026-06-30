@@ -1,14 +1,11 @@
 use crate::machines::deliberation::state::DeliberationRole;
-use crate::machines::scheduler::{FailureKind, NodeKind};
+use crate::machines::scheduler::FailureKind;
 use crate::roles::runner::{RoleRequest, RoleRunner};
 use crate::telemetry::{TelemetryEvent, TelemetryRecord, TelemetrySink};
 
 use super::effect::DeliberationEffect;
 use super::event::DeliberationEvent;
-use super::handler::{
-    DeliberationHandler, MAX_PLAN_VALIDATION_RETRIES, MAX_WORK_SEMANTIC_VALIDATION_RETRIES,
-};
-use super::semantic_validation::ProducerSemanticValidationConfig;
+use super::handler::DeliberationHandler;
 
 impl<R: RoleRunner> DeliberationHandler<R> {
     /// Execute one deliberation effect and record role-layer protocol telemetry.
@@ -57,42 +54,6 @@ impl<R: RoleRunner> DeliberationHandler<R> {
                         }
                     };
 
-                if self.node_kind == NodeKind::Plan
-                    && matches!(role, DeliberationRole::Producer)
-                    && self.plan_validation_context.is_some()
-                {
-                    return self.run_plan_producer_with_validation(
-                        ProducerSemanticValidationConfig {
-                            role,
-                            objective,
-                            target_files,
-                            producer_content,
-                            critic_content,
-                            initial_feedback: feedback,
-                            max_retries: MAX_PLAN_VALIDATION_RETRIES,
-                        },
-                        telemetry,
-                    );
-                }
-
-                if self.node_kind == NodeKind::Work
-                    && self.work_requires_artifact_mutation
-                    && matches!(role, DeliberationRole::Producer)
-                {
-                    return self.run_work_producer_with_validation(
-                        ProducerSemanticValidationConfig {
-                            role,
-                            objective,
-                            target_files,
-                            producer_content,
-                            critic_content,
-                            initial_feedback: feedback,
-                            max_retries: MAX_WORK_SEMANTIC_VALIDATION_RETRIES,
-                        },
-                        telemetry,
-                    );
-                }
-
                 let request = RoleRequest {
                     role: role.clone(),
                     objective,
@@ -106,10 +67,23 @@ impl<R: RoleRunner> DeliberationHandler<R> {
                     tool_context,
                 };
                 let output = self.runner.run_role(request, telemetry);
-                DeliberationEvent::RoleReturned {
-                    role,
-                    result: output.result,
+                match (&role, output.result) {
+                    (
+                        DeliberationRole::Producer,
+                        super::event::RoleResult::Accepted { content },
+                    ) => DeliberationEvent::ProducerAccepted {
+                        content,
+                        artifact_changed: output.artifact_changed,
+                    },
+                    (_, result) => DeliberationEvent::RoleReturned { role, result },
                 }
+            }
+            DeliberationEffect::ValidateProducer {
+                content,
+                artifact_changed,
+            } => {
+                let result = self.validate_producer_semantics(&content, artifact_changed);
+                DeliberationEvent::ProducerValidationReturned { content, result }
             }
             DeliberationEffect::ReturnComplete { .. } => {
                 unreachable!(

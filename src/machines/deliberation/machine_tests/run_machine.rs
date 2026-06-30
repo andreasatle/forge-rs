@@ -51,6 +51,12 @@ fn run_machine_deliberation_smoke_test() {
                         content: "approved".to_string(),
                     },
                 },
+                DeliberationEffect::ValidateProducer { content, .. } => {
+                    DeliberationEvent::ProducerValidationReturned {
+                        content,
+                        result: ProducerValidationResult::Valid,
+                    }
+                }
                 DeliberationEffect::ReturnComplete { .. } => {
                     unreachable!("ReturnComplete should not re-enter the loop")
                 }
