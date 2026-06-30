@@ -20,15 +20,9 @@ impl<R> DeliberationHandler<R> {
             return Ok((None, vec![]));
         };
 
-        let view: Box<dyn ArtifactRead> = match role {
-            DeliberationRole::Producer if self.work_attempt.is_some() => {
-                Box::new(self.work_attempt.as_ref().unwrap().workspace.clone())
-            }
-            DeliberationRole::Producer => Box::new(base.clone()),
-            DeliberationRole::Critic | DeliberationRole::Referee if self.work_attempt.is_some() => {
-                Box::new(self.work_attempt.as_ref().unwrap().workspace.clone())
-            }
-            DeliberationRole::Critic | DeliberationRole::Referee => Box::new(base.clone()),
+        let view: Box<dyn ArtifactRead> = match &self.work_attempt {
+            Some(attempt) => Box::new(attempt.workspace.clone()),
+            None => Box::new(base.clone()),
         };
 
         let target_views =
