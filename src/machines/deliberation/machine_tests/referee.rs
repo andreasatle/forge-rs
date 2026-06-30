@@ -97,7 +97,6 @@ fn referee_missing_critic_content_fails() {
         role: DeliberationRole::Referee,
         producer_content: Some("draft".to_string()),
         critic_content: None,
-        revision_count: 0,
         feedback: vec![],
         producer_validation: producer_validation(),
     };
@@ -139,7 +138,6 @@ fn role_mismatch_while_waiting_referee_fails() {
         role: DeliberationRole::Referee,
         producer_content: Some("draft".to_string()),
         critic_content: Some("looks good".to_string()),
-        revision_count: 0,
         feedback: vec![],
         producer_validation: producer_validation(),
     };
@@ -185,7 +183,6 @@ fn referee_failed_is_terminal() {
         role: DeliberationRole::Referee,
         producer_content: Some("draft".to_string()),
         critic_content: Some("review".to_string()),
-        revision_count: 0,
         feedback: vec![],
         producer_validation: producer_validation(),
     };
@@ -227,7 +224,6 @@ fn referee_rejected_still_revises() {
         role: DeliberationRole::Referee,
         producer_content: Some("draft".to_string()),
         critic_content: Some("review".to_string()),
-        revision_count: 0,
         feedback: vec![],
         producer_validation: producer_validation(),
     };
@@ -247,9 +243,9 @@ fn referee_rejected_still_revises() {
             &t.state,
             DeliberationState::Waiting {
                 role: DeliberationRole::Producer,
-                revision_count: 1,
+                feedback,
                 ..
-            }
+            } if feedback.len() == 1
         ),
         "expected Waiting(Producer) revision loop, got {:?}",
         t.state

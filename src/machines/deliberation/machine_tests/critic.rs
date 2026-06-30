@@ -165,7 +165,6 @@ fn critic_missing_producer_content_fails() {
         role: DeliberationRole::Critic,
         producer_content: None,
         critic_content: None,
-        revision_count: 0,
         feedback: vec![],
         producer_validation: producer_validation(),
     };

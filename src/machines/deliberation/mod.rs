@@ -33,7 +33,7 @@
 //! - `Waiting(Critic)` with no producer content → `Failed` ("invalid deliberation state").
 //! - `Waiting(Referee) + RoleReturned(Referee, Accepted)` → `Complete` with producer content.
 //! - `Waiting(Referee) + RoleReturned(Referee, Rejected)` and revisions remain
-//!   → `Waiting(Producer)` with incremented `revision_count` and updated `feedback`
+//!   → `Waiting(Producer)` with updated `feedback`
 //!   + `RunRole(Producer, feedback)`.
 //! - `Waiting(Referee) + RoleReturned(Referee, Rejected)` and limit reached
 //!   → `Failed` ("revision limit exhausted").

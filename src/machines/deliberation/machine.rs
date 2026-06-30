@@ -11,7 +11,7 @@
 //!
 //! ```text
 //! Ready + Start
-//!     → Waiting(Producer, revision_count=0, feedback=[])
+//!     → Waiting(Producer, feedback=[])
 //!     + RunRole(Producer, feedback=[])
 //!
 //! Waiting(Producer) + RoleReturned(Producer, Accepted { content })
@@ -56,10 +56,10 @@
 //!     → Complete { output: pc } + ReturnComplete   ← output is producer content
 //!
 //! Waiting(Referee, …) + RoleReturned(Referee, Rejected { reason })
-//!     revision_count < max_revisions:
-//!         → Waiting(Producer, revision_count+1, feedback+[reason])
+//!     feedback.len() < max_revisions:
+//!         → Waiting(Producer, feedback+[reason])
 //!         + RunRole(Producer, feedback+[reason])
-//!     revision_count >= max_revisions:
+//!     feedback.len() >= max_revisions:
 //!         → Failed("revision limit exhausted") + ReturnFailed
 //!
 //! Waiting(Referee, Some(_), Some(_)) + RoleReturned(Referee, Failed { reason })
@@ -100,7 +100,6 @@ impl DeliberationMachine {
 
     fn producer_accepted_transition(
         request: super::state::DeliberationRequest,
-        revision_count: usize,
         feedback: Vec<RevisionFeedback>,
         producer_validation: ProducerValidationState,
         content: String,
@@ -116,7 +115,6 @@ impl DeliberationMachine {
                 role: DeliberationRole::Producer,
                 producer_content: Some(content),
                 critic_content: None,
-                revision_count,
                 feedback,
                 producer_validation,
             },
@@ -155,7 +153,6 @@ impl Machine for DeliberationMachine {
                     role: DeliberationRole::Producer,
                     producer_content: None,
                     critic_content: None,
-                    revision_count: 0,
                     feedback: vec![],
                     producer_validation: ProducerValidationState {
                         attempt: 0,
@@ -169,7 +166,6 @@ impl Machine for DeliberationMachine {
                 DeliberationState::Waiting {
                     request,
                     role: DeliberationRole::Producer,
-                    revision_count,
                     feedback,
                     producer_validation,
                     ..
@@ -180,7 +176,6 @@ impl Machine for DeliberationMachine {
                 },
             ) => Self::producer_accepted_transition(
                 request,
-                revision_count,
                 feedback,
                 producer_validation,
                 content,
@@ -192,7 +187,6 @@ impl Machine for DeliberationMachine {
                 DeliberationState::Waiting {
                     request,
                     role: DeliberationRole::Producer,
-                    revision_count,
                     feedback,
                     producer_validation,
                     ..
@@ -203,7 +197,6 @@ impl Machine for DeliberationMachine {
                 },
             ) => Self::producer_accepted_transition(
                 request,
-                revision_count,
                 feedback,
                 producer_validation,
                 content,
@@ -216,7 +209,6 @@ impl Machine for DeliberationMachine {
                     request,
                     role: DeliberationRole::Producer,
                     producer_content: Some(producer_content),
-                    revision_count,
                     feedback,
                     ..
                 },
@@ -238,7 +230,6 @@ impl Machine for DeliberationMachine {
                     role: DeliberationRole::Critic,
                     producer_content: Some(producer_content),
                     critic_content: None,
-                    revision_count,
                     feedback,
                     producer_validation: ProducerValidationState {
                         attempt: 0,
@@ -253,7 +244,6 @@ impl Machine for DeliberationMachine {
                     request,
                     role: DeliberationRole::Producer,
                     producer_content: Some(producer_content),
-                    revision_count,
                     feedback,
                     producer_validation,
                     ..
@@ -287,7 +277,6 @@ impl Machine for DeliberationMachine {
                             role: DeliberationRole::Producer,
                             producer_content: None,
                             critic_content: None,
-                            revision_count,
                             feedback,
                             producer_validation: ProducerValidationState {
                                 attempt: producer_validation.attempt + 1,
@@ -360,7 +349,6 @@ impl Machine for DeliberationMachine {
                     request,
                     role: DeliberationRole::Critic,
                     producer_content: Some(producer_content),
-                    revision_count,
                     feedback,
                     ..
                 },
@@ -385,7 +373,6 @@ impl Machine for DeliberationMachine {
                     role: DeliberationRole::Referee,
                     producer_content: Some(producer_content),
                     critic_content: Some(critic_content),
-                    revision_count,
                     feedback,
                     producer_validation: ProducerValidationState {
                         attempt: 0,
@@ -401,7 +388,6 @@ impl Machine for DeliberationMachine {
                     request,
                     role: DeliberationRole::Critic,
                     producer_content: Some(producer_content),
-                    revision_count,
                     feedback,
                     ..
                 },
@@ -425,7 +411,6 @@ impl Machine for DeliberationMachine {
                         role: DeliberationRole::Referee,
                         producer_content: Some(producer_content),
                         critic_content: Some(critic_content),
-                        revision_count,
                         feedback,
                         producer_validation: ProducerValidationState {
                             attempt: 0,
@@ -510,7 +495,6 @@ impl Machine for DeliberationMachine {
                     role: DeliberationRole::Referee,
                     producer_content: Some(_),
                     critic_content: Some(_),
-                    revision_count,
                     feedback,
                     producer_validation: _,
                 },
@@ -519,7 +503,7 @@ impl Machine for DeliberationMachine {
                     result: RoleResult::Rejected { reason },
                 },
             ) => {
-                if revision_count < request.max_revisions {
+                if feedback.len() < request.max_revisions {
                     let mut new_feedback = feedback;
                     new_feedback.push(RevisionFeedback {
                         reason: reason.clone(),
@@ -538,7 +522,6 @@ impl Machine for DeliberationMachine {
                             role: DeliberationRole::Producer,
                             producer_content: None,
                             critic_content: None,
-                            revision_count: revision_count + 1,
                             feedback: new_feedback,
                             producer_validation: ProducerValidationState {
                                 attempt: 0,

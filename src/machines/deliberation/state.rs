@@ -91,9 +91,8 @@ pub enum DeliberationState {
         /// this holds the prefixed rejection reason (`"Critic rejected: {reason}"`),
         /// forwarded to the Referee as advisory input.
         critic_content: Option<String>,
-        /// Number of revision loops completed so far.
-        revision_count: usize,
         /// Feedback accumulated from each Referee rejection.
+        /// The number of used revision loops is derived from this length.
         feedback: Vec<RevisionFeedback>,
         /// Producer semantic validation retry state. Empty until Producer
         /// output is being validated or retried.

@@ -45,9 +45,9 @@ fn referee_rejection_after_critic_rejection_loops_when_revisions_remain() {
             &t.state,
             DeliberationState::Waiting {
                 role: DeliberationRole::Producer,
-                revision_count: 1,
+                feedback,
                 ..
-            }
+            } if feedback.len() == 1
         ),
         "expected Waiting(Producer) revision loop, got {:?}",
         t.state
@@ -121,7 +121,6 @@ fn referee_rejection_loops_to_producer_with_feedback() {
         role: DeliberationRole::Referee,
         producer_content: Some("draft".to_string()),
         critic_content: Some("review".to_string()),
-        revision_count: 0,
         feedback: vec![],
         producer_validation: producer_validation(),
     };
@@ -136,17 +135,15 @@ fn referee_rejection_loops_to_producer_with_feedback() {
         },
     );
 
-    // State must be Waiting(Producer) with revision_count=1 and feedback populated.
+    // State must be Waiting(Producer) with one feedback entry.
     match &t.state {
         DeliberationState::Waiting {
             role: DeliberationRole::Producer,
-            revision_count,
             feedback,
             producer_content,
             critic_content,
             ..
         } => {
-            assert_eq!(*revision_count, 1, "revision_count should be 1");
             assert_eq!(feedback.len(), 1, "feedback should have one entry");
             assert_eq!(
                 feedback[0].reason, "needs changes",
@@ -191,7 +188,6 @@ fn referee_rejection_exhausts_revision_limit() {
         role: DeliberationRole::Referee,
         producer_content: Some("draft".to_string()),
         critic_content: Some("review".to_string()),
-        revision_count: 1, // already at the limit
         feedback: vec![RevisionFeedback {
             reason: "earlier rejection".to_string(),
         }],
@@ -233,7 +229,6 @@ fn max_revisions_zero_fails_on_first_referee_rejection() {
         role: DeliberationRole::Referee,
         producer_content: Some("draft".to_string()),
         critic_content: Some("review".to_string()),
-        revision_count: 0,
         feedback: vec![],
         producer_validation: producer_validation(),
     };

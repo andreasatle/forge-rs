@@ -11,11 +11,10 @@ fn ready_start_runs_producer() {
                 role: DeliberationRole::Producer,
                 producer_content: None,
                 critic_content: None,
-                revision_count: 0,
                 ..
             }
         ),
-        "expected Waiting(Producer, None, None, revision_count=0), got {:?}",
+        "expected Waiting(Producer, None, None), got {:?}",
         t.state
     );
 
@@ -176,7 +175,6 @@ fn producer_validation_retry_exhaustion_fails() {
         role: DeliberationRole::Producer,
         producer_content: Some("draft content".to_string()),
         critic_content: None,
-        revision_count: 0,
         feedback: vec![],
         producer_validation: ProducerValidationState {
             attempt: 2,
