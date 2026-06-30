@@ -119,7 +119,7 @@ fn checkpoint_written_after_node_returned() {
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
 
-    let state = SchedulerState::Running {
+    let state = SchedulerState::Active {
         graph: RunGraph {
             nodes: vec![work_node("W", "do some work")],
             next_id: 0,
@@ -135,11 +135,11 @@ fn checkpoint_written_after_node_returned() {
         checkpoint_path.exists(),
         "graph.json must be written after run"
     );
-    // The checkpoint captures the last non-terminal state (Running, not Complete).
+    // The checkpoint captures the last non-terminal state (Active, not Complete).
     // The final Complete state is a terminal and is never checkpointed.
     let loaded = load_checkpoint(&dir).unwrap();
-    let SchedulerState::Running { graph } = loaded else {
-        panic!("expected Running state in checkpoint");
+    let SchedulerState::Active { graph } = loaded else {
+        panic!("expected Active state in checkpoint");
     };
     assert!(
         graph
@@ -164,7 +164,7 @@ fn checkpoint_load_round_trip() {
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
 
-    let state = SchedulerState::Running {
+    let state = SchedulerState::Active {
         graph: RunGraph {
             nodes: vec![
                 Node {

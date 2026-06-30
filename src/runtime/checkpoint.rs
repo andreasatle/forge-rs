@@ -104,10 +104,27 @@ mod tests {
     #[test]
     fn run_graph_round_trip() {
         let dir = temp_dir("graph-round-trip");
-        let state = SchedulerState::Running {
+        let state = SchedulerState::Active {
             graph: sample_graph(),
         };
         save_checkpoint(&dir, &state).unwrap();
+        let loaded = load_checkpoint(&dir).unwrap();
+        assert_eq!(state, loaded);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn active_state_uses_stable_checkpoint_tag() {
+        let dir = temp_dir("active-checkpoint-tag");
+        let state = SchedulerState::Active {
+            graph: sample_graph(),
+        };
+        save_checkpoint(&dir, &state).unwrap();
+        let raw = std::fs::read_to_string(dir.join("graph.json")).unwrap();
+        assert!(
+            raw.contains("\"Running\""),
+            "checkpoint tag must remain stable; got: {raw}"
+        );
         let loaded = load_checkpoint(&dir).unwrap();
         assert_eq!(state, loaded);
         let _ = std::fs::remove_dir_all(&dir);
@@ -139,7 +156,7 @@ mod tests {
             nodes: vec![original, retry],
             next_id: 2,
         };
-        let state = SchedulerState::Running { graph };
+        let state = SchedulerState::Active { graph };
         save_checkpoint(&dir, &state).unwrap();
         let loaded = load_checkpoint(&dir).unwrap();
         assert_eq!(state, loaded);
@@ -149,7 +166,7 @@ mod tests {
     #[test]
     fn checkpoint_written_is_valid_json() {
         let dir = temp_dir("valid-json");
-        let state = SchedulerState::Running {
+        let state = SchedulerState::Active {
             graph: sample_graph(),
         };
         save_checkpoint(&dir, &state).unwrap();

@@ -6,8 +6,8 @@ fn initial_state_creates_root_plan_node() {
         objective: "plan the project".to_string(),
     };
     let state = SchedulerMachine::initial_state(request);
-    let SchedulerState::Running { graph } = state else {
-        panic!("expected Running");
+    let SchedulerState::Active { graph } = state else {
+        panic!("expected Active");
     };
     assert_eq!(graph.nodes.len(), 1);
     let root = &graph.nodes[0];
@@ -46,8 +46,8 @@ fn plan_node_creates_work_child() {
         },
     );
 
-    let SchedulerState::Running { graph } = t.state else {
-        panic!("expected Running")
+    let SchedulerState::Active { graph } = t.state else {
+        panic!("expected Active")
     };
     assert_eq!(graph.nodes[0].status, NodeStatus::Completed);
     assert_eq!(graph.nodes.len(), 2);
@@ -129,8 +129,8 @@ fn plan_with_valid_dependencies_still_succeeds() {
         },
     );
 
-    let SchedulerState::Running { graph } = t.state else {
-        panic!("expected Running, got {:#?}", t.state);
+    let SchedulerState::Active { graph } = t.state else {
+        panic!("expected Active, got {:#?}", t.state);
     };
     assert_eq!(graph.nodes.len(), 2, "child should be inserted");
     assert_eq!(graph.nodes[0].status, NodeStatus::Completed);
@@ -177,8 +177,8 @@ fn sibling_dependencies_are_resolved_to_graph_ids() {
         },
     );
 
-    let SchedulerState::Running { graph } = t.state else {
-        panic!("expected Running, got {:#?}", t.state);
+    let SchedulerState::Active { graph } = t.state else {
+        panic!("expected Active, got {:#?}", t.state);
     };
     assert_eq!(graph.nodes.len(), 3, "P + two children must be inserted");
     assert_eq!(
@@ -220,7 +220,7 @@ fn planner_can_create_two_work_nodes_with_dependency() {
     };
 
     // Dispatch the root plan node.
-    let t = do_transition(SchedulerState::Running { graph }, SchedulerEvent::Start);
+    let t = do_transition(SchedulerState::Active { graph }, SchedulerEvent::Start);
     let SchedulerState::Waiting { graph, .. } = t.state else {
         panic!("expected Waiting after dispatching root");
     };
@@ -255,8 +255,8 @@ fn planner_can_create_two_work_nodes_with_dependency() {
         },
     );
 
-    let SchedulerState::Running { graph } = t.state else {
-        panic!("expected Running after plan expansion");
+    let SchedulerState::Active { graph } = t.state else {
+        panic!("expected Active after plan expansion");
     };
     assert_eq!(graph.nodes.len(), 3, "root + two children");
 
@@ -278,7 +278,7 @@ fn planner_can_create_two_work_nodes_with_dependency() {
     );
 
     // Dispatch write-tests.
-    let t = do_transition(SchedulerState::Running { graph }, SchedulerEvent::Start);
+    let t = do_transition(SchedulerState::Active { graph }, SchedulerEvent::Start);
     let SchedulerState::Waiting { graph, .. } = t.state else {
         panic!("expected Waiting after dispatching write-tests");
     };
@@ -297,7 +297,7 @@ fn planner_can_create_two_work_nodes_with_dependency() {
         panic!("expected Waiting (Integrating) after write-tests WorkAccepted");
     };
 
-    // Integration succeeds → Running.
+    // Integration succeeds → Active.
     let t = do_transition(
         SchedulerState::Waiting { graph },
         SchedulerEvent::IntegrationReturned {
@@ -309,8 +309,8 @@ fn planner_can_create_two_work_nodes_with_dependency() {
             ),
         },
     );
-    let SchedulerState::Running { graph } = t.state else {
-        panic!("expected Running after write-tests integration");
+    let SchedulerState::Active { graph } = t.state else {
+        panic!("expected Active after write-tests integration");
     };
 
     // Now implement must be the only ready node.
@@ -321,7 +321,7 @@ fn planner_can_create_two_work_nodes_with_dependency() {
     assert_eq!(implement_node.objective, "implement feature");
 
     // Dispatch implement.
-    let t = do_transition(SchedulerState::Running { graph }, SchedulerEvent::Start);
+    let t = do_transition(SchedulerState::Active { graph }, SchedulerEvent::Start);
     let SchedulerState::Waiting { graph, .. } = t.state else {
         panic!("expected Waiting after dispatching implement");
     };
@@ -340,7 +340,7 @@ fn planner_can_create_two_work_nodes_with_dependency() {
         panic!("expected Waiting (Integrating) after implement WorkAccepted");
     };
 
-    // Integration succeeds → Running.
+    // Integration succeeds → Active.
     let t = do_transition(
         SchedulerState::Waiting { graph },
         SchedulerEvent::IntegrationReturned {
@@ -352,12 +352,12 @@ fn planner_can_create_two_work_nodes_with_dependency() {
             ),
         },
     );
-    let SchedulerState::Running { graph } = t.state else {
-        panic!("expected Running after implement integration");
+    let SchedulerState::Active { graph } = t.state else {
+        panic!("expected Active after implement integration");
     };
 
     // All nodes terminal → Complete.
-    let t = do_transition(SchedulerState::Running { graph }, SchedulerEvent::Start);
+    let t = do_transition(SchedulerState::Active { graph }, SchedulerEvent::Start);
     let SchedulerState::Complete { graph } = t.state else {
         panic!("expected Complete, got {:#?}", t.state);
     };
@@ -387,7 +387,7 @@ fn source_work_dispatch_includes_planned_dependent_test_targets() {
         next_id: 0,
     };
 
-    let t = do_transition(SchedulerState::Running { graph }, SchedulerEvent::Start);
+    let t = do_transition(SchedulerState::Active { graph }, SchedulerEvent::Start);
 
     let SchedulerState::Waiting { graph } = t.state else {
         panic!("expected Waiting")
@@ -422,7 +422,7 @@ fn source_work_dispatch_without_planned_test_target_reports_gap() {
         next_id: 0,
     };
 
-    let t = do_transition(SchedulerState::Running { graph }, SchedulerEvent::Start);
+    let t = do_transition(SchedulerState::Active { graph }, SchedulerEvent::Start);
 
     let [
         SchedulerEffect::RunNode {

@@ -251,10 +251,10 @@ fn integration_returned_wrong_node_fails_scheduler() {
 }
 
 #[test]
-fn running_rejects_node_returned() {
+fn active_rejects_node_returned() {
     let graph = single_work_graph();
     let t = do_transition(
-        SchedulerState::Running { graph },
+        SchedulerState::Active { graph },
         SchedulerEvent::NodeReturned {
             node_id: NodeId("A".to_string()),
             outcome: NodeOutcome::WorkAccepted(WorkOutput {
@@ -271,8 +271,8 @@ fn running_rejects_node_returned() {
         "reason should contain 'protocol violation', got: {reason:?}"
     );
     assert!(
-        reason.contains("Running"),
-        "reason should mention Running, got: {reason:?}"
+        reason.contains("Active"),
+        "reason should mention Active, got: {reason:?}"
     );
     assert!(
         reason.contains("NodeReturned"),
@@ -285,10 +285,10 @@ fn running_rejects_node_returned() {
 }
 
 #[test]
-fn running_rejects_integration_returned() {
+fn active_rejects_integration_returned() {
     let graph = single_work_graph();
     let t = do_transition(
-        SchedulerState::Running { graph },
+        SchedulerState::Active { graph },
         SchedulerEvent::IntegrationReturned {
             node_id: NodeId("A".to_string()),
             outcome: IntegrationOutcome::Succeeded(IntegrationOutput {
@@ -305,8 +305,8 @@ fn running_rejects_integration_returned() {
         "reason should contain 'protocol violation', got: {reason:?}"
     );
     assert!(
-        reason.contains("Running"),
-        "reason should mention Running, got: {reason:?}"
+        reason.contains("Active"),
+        "reason should mention Active, got: {reason:?}"
     );
     assert!(
         reason.contains("IntegrationReturned"),
@@ -444,11 +444,11 @@ fn waiting_with_running_node_still_works() {
 // ── Serial active-node invariant tests ───────────────────────────────────
 
 #[test]
-fn running_state_rejects_preexisting_active_node() {
+fn active_state_rejects_preexisting_active_node() {
     let mut graph = single_work_graph();
     graph.nodes[0].status = NodeStatus::Running;
 
-    let t = do_transition(SchedulerState::Running { graph }, SchedulerEvent::Start);
+    let t = do_transition(SchedulerState::Active { graph }, SchedulerEvent::Start);
 
     let SchedulerState::Failed { reason, .. } = t.state else {
         panic!("expected Failed, got {:#?}", t.state);
@@ -472,11 +472,11 @@ fn running_state_rejects_preexisting_active_node() {
 }
 
 #[test]
-fn running_state_rejects_preexisting_integrating_node() {
+fn active_state_rejects_preexisting_integrating_node() {
     let mut graph = single_work_graph();
     graph.nodes[0].status = NodeStatus::Integrating;
 
-    let t = do_transition(SchedulerState::Running { graph }, SchedulerEvent::Start);
+    let t = do_transition(SchedulerState::Active { graph }, SchedulerEvent::Start);
 
     let SchedulerState::Failed { reason, .. } = t.state else {
         panic!("expected Failed, got {:#?}", t.state);

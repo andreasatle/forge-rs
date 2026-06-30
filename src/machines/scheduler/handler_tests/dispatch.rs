@@ -35,7 +35,7 @@ fn plan_node_flows_through_runner() {
 
 #[test]
 fn work_node_flows_through_runner() {
-    let state = SchedulerState::Running {
+    let state = SchedulerState::Active {
         graph: RunGraph {
             nodes: vec![work_node("W", "build artifacts")],
             next_id: 0,
@@ -50,7 +50,7 @@ fn work_node_flows_through_runner() {
 
 #[test]
 fn failed_node_flows_through_runner() {
-    let state = SchedulerState::Running {
+    let state = SchedulerState::Active {
         graph: RunGraph {
             nodes: vec![work_node("F", "fail this step")],
             next_id: 0,

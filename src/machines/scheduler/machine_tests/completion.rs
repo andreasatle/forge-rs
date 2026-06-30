@@ -10,13 +10,13 @@ fn run_request_starts_scheduler_end_to_end() {
     assert!(matches!(output, SchedulerOutput::Complete { .. }));
 }
 
-// ── Running + Start structural tests ──────────────────────────────────────
+// ── Active + Start structural tests ──────────────────────────────────────
 
 #[test]
-fn running_start_all_complete_moves_to_complete() {
+fn active_start_all_complete_moves_to_complete() {
     let mut graph = single_work_graph();
     graph.nodes[0].status = NodeStatus::Completed;
-    let t = do_transition(SchedulerState::Running { graph }, SchedulerEvent::Start);
+    let t = do_transition(SchedulerState::Active { graph }, SchedulerEvent::Start);
     assert!(matches!(t.state, SchedulerState::Complete { .. }));
     assert!(matches!(
         t.effects.as_slice(),
@@ -36,7 +36,7 @@ fn final_run_fails_when_required_test_target_is_absent() {
         next_id: 0,
     };
 
-    let t = do_transition(SchedulerState::Running { graph }, SchedulerEvent::Start);
+    let t = do_transition(SchedulerState::Active { graph }, SchedulerEvent::Start);
 
     let SchedulerState::Failed { reason, .. } = t.state else {
         panic!("expected Failed, got {:#?}", t.state);
@@ -70,17 +70,17 @@ fn final_run_completes_when_required_test_target_completed_separately() {
         next_id: 0,
     };
 
-    let t = do_transition(SchedulerState::Running { graph }, SchedulerEvent::Start);
+    let t = do_transition(SchedulerState::Active { graph }, SchedulerEvent::Start);
     assert!(matches!(t.state, SchedulerState::Complete { .. }));
 }
 
 #[test]
-fn running_start_no_ready_moves_to_failed() {
+fn active_start_no_ready_moves_to_failed() {
     let graph = RunGraph {
         nodes: vec![work_node("B", "blocked", &["A"])],
         next_id: 0,
     };
-    let t = do_transition(SchedulerState::Running { graph }, SchedulerEvent::Start);
+    let t = do_transition(SchedulerState::Active { graph }, SchedulerEvent::Start);
     assert!(matches!(t.state, SchedulerState::Failed { .. }));
     assert!(matches!(
         t.effects.as_slice(),
@@ -89,9 +89,9 @@ fn running_start_no_ready_moves_to_failed() {
 }
 
 #[test]
-fn running_start_dispatches_ready_node_and_waits() {
+fn active_start_dispatches_ready_node_and_waits() {
     let t = do_transition(
-        SchedulerState::Running {
+        SchedulerState::Active {
             graph: single_work_graph(),
         },
         SchedulerEvent::Start,
@@ -130,7 +130,7 @@ fn terminal_failure_produces_failed_scheduler_output() {
         }],
         next_id: 0,
     };
-    let output = run_machine(scheduler_handler(), SchedulerState::Running { graph });
+    let output = run_machine(scheduler_handler(), SchedulerState::Active { graph });
     assert!(matches!(output, SchedulerOutput::Failed { .. }));
 }
 
@@ -187,7 +187,7 @@ fn three_node_chain_completes_via_handler() {
         next_id: 0,
     };
 
-    let output = run_machine(scheduler_handler(), SchedulerState::Running { graph });
+    let output = run_machine(scheduler_handler(), SchedulerState::Active { graph });
 
     let SchedulerOutput::Complete { graph, .. } = output else {
         panic!("expected Complete")
@@ -215,7 +215,7 @@ fn split_remaps_downstream_dependencies_and_chain_completes() {
     };
 
     // Dispatch A.
-    let t = do_transition(SchedulerState::Running { graph }, SchedulerEvent::Start);
+    let t = do_transition(SchedulerState::Active { graph }, SchedulerEvent::Start);
     let SchedulerState::Waiting { graph, .. } = t.state else {
         panic!("expected Waiting after dispatching A")
     };
@@ -234,7 +234,7 @@ fn split_remaps_downstream_dependencies_and_chain_completes() {
         panic!("expected Waiting after A WorkAccepted")
     };
 
-    // Integration succeeds → Running.
+    // Integration succeeds → Active.
     let t = do_transition(
         SchedulerState::Waiting { graph },
         SchedulerEvent::IntegrationReturned {
@@ -244,12 +244,12 @@ fn split_remaps_downstream_dependencies_and_chain_completes() {
             }),
         },
     );
-    let SchedulerState::Running { graph } = t.state else {
-        panic!("expected Running after A integrates")
+    let SchedulerState::Active { graph } = t.state else {
+        panic!("expected Active after A integrates")
     };
 
     // Dispatch B.
-    let t = do_transition(SchedulerState::Running { graph }, SchedulerEvent::Start);
+    let t = do_transition(SchedulerState::Active { graph }, SchedulerEvent::Start);
     let SchedulerState::Waiting { graph, .. } = t.state else {
         panic!("expected Waiting after dispatching B")
     };
@@ -268,8 +268,8 @@ fn split_remaps_downstream_dependencies_and_chain_completes() {
             }),
         },
     );
-    let SchedulerState::Running { graph } = t.state else {
-        panic!("expected Running after Split")
+    let SchedulerState::Active { graph } = t.state else {
+        panic!("expected Active after Split")
     };
 
     // Verify: original B is Failed.
@@ -298,7 +298,7 @@ fn split_remaps_downstream_dependencies_and_chain_completes() {
     );
 
     // Dispatch P (ready because A — P's inherited dependency — is Completed).
-    let t = do_transition(SchedulerState::Running { graph }, SchedulerEvent::Start);
+    let t = do_transition(SchedulerState::Active { graph }, SchedulerEvent::Start);
     let SchedulerState::Waiting { graph, .. } = t.state else {
         panic!("expected Waiting after dispatching P")
     };
@@ -311,12 +311,12 @@ fn split_remaps_downstream_dependencies_and_chain_completes() {
             outcome: NodeOutcome::PlanAccepted(PlanOutput { children: vec![] }),
         },
     );
-    let SchedulerState::Running { graph } = t.state else {
-        panic!("expected Running after P completes")
+    let SchedulerState::Active { graph } = t.state else {
+        panic!("expected Active after P completes")
     };
 
     // Dispatch C (now ready: P is Completed and C depends on P).
-    let t = do_transition(SchedulerState::Running { graph }, SchedulerEvent::Start);
+    let t = do_transition(SchedulerState::Active { graph }, SchedulerEvent::Start);
     let SchedulerState::Waiting { graph, .. } = t.state else {
         panic!("expected Waiting after dispatching C")
     };
@@ -335,7 +335,7 @@ fn split_remaps_downstream_dependencies_and_chain_completes() {
         panic!("expected Waiting after C WorkAccepted")
     };
 
-    // Integration succeeds → Running.
+    // Integration succeeds → Active.
     let t = do_transition(
         SchedulerState::Waiting { graph },
         SchedulerEvent::IntegrationReturned {
@@ -345,12 +345,12 @@ fn split_remaps_downstream_dependencies_and_chain_completes() {
             }),
         },
     );
-    let SchedulerState::Running { graph } = t.state else {
-        panic!("expected Running after C integrates")
+    let SchedulerState::Active { graph } = t.state else {
+        panic!("expected Active after C integrates")
     };
 
     // All nodes terminal → scheduler reaches Complete.
-    let t = do_transition(SchedulerState::Running { graph }, SchedulerEvent::Start);
+    let t = do_transition(SchedulerState::Active { graph }, SchedulerEvent::Start);
     let SchedulerState::Complete { graph } = t.state else {
         panic!("expected Complete, got non-Complete state")
     };
@@ -367,7 +367,7 @@ fn split_remaps_downstream_dependencies_and_chain_completes() {
 fn full_chain_run() {
     let output = run_machine(
         scheduler_handler(),
-        SchedulerState::Running {
+        SchedulerState::Active {
             graph: chain_graph(),
         },
     );
@@ -388,7 +388,7 @@ fn full_chain_run() {
 fn clean_success_has_no_recovery() {
     let output = run_machine(
         scheduler_handler(),
-        SchedulerState::Running {
+        SchedulerState::Active {
             graph: single_work_graph(),
         },
     );

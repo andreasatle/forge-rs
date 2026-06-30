@@ -37,7 +37,7 @@ fn node_failure_reason_preserved_in_full_in_telemetry() {
     let _ = fs::remove_dir_all(&dir);
     let sink = FileTelemetry::new(dir.clone());
 
-    let state = SchedulerState::Running {
+    let state = SchedulerState::Active {
         graph: RunGraph {
             nodes: vec![work_node("fail-node", "do some work")],
             next_id: 0,
@@ -87,7 +87,7 @@ fn telemetry_failure_does_not_change_scheduler_behavior() {
     let _ = fs::remove_dir_all(&dir);
     let shared: Rc<dyn TelemetrySink> = Rc::new(sink);
 
-    let state = SchedulerState::Running {
+    let state = SchedulerState::Active {
         graph: RunGraph {
             nodes: vec![work_node("W", "do some work")],
             next_id: 0,
@@ -129,7 +129,7 @@ fn artifact_commit_still_succeeds_when_telemetry_fails() {
         path: "result.txt".to_string(),
         content: "committed despite telemetry failure\n".to_string(),
     };
-    let state = SchedulerState::Running {
+    let state = SchedulerState::Active {
         graph: RunGraph {
             nodes: vec![work_node("W", "write a file")],
             next_id: 0,

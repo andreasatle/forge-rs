@@ -208,7 +208,7 @@ pub struct RunGraph {
 ///
 /// Callers provide a `RunRequest` to start a new run instead of constructing a
 /// `RunGraph` directly. `SchedulerMachine::initial_state` converts it into a
-/// `SchedulerState::Running` containing a single root `Plan` node.
+/// `SchedulerState::Active` containing a single root `Plan` node.
 pub struct RunRequest {
     /// A natural-language description of what this run should accomplish.
     /// Becomes the objective of the root plan node.
@@ -224,7 +224,7 @@ pub struct RunRequest {
 /// # State flow
 ///
 /// ```text
-/// Running
+/// Active
 ///   │ Start
 ///   ├─ invalid graph ───────────────→ Failed
 ///   ├─ all nodes terminal ──────────→ Complete
@@ -234,12 +234,12 @@ pub struct RunRequest {
 ///              ↓
 ///           Waiting
 ///              │ NodeReturned
-///              ├─ PlanAccepted ────────→ Running  (insert children)
+///              ├─ PlanAccepted ────────→ Active   (insert children)
 ///              ├─ WorkAccepted ────────→ Waiting  (mark Integrating, emit IntegrateWork)
 ///              │    │ IntegrationReturned
-///              │    ├─ Succeeded ──────→ Running  (mark Completed)
-///              │    └─ Failed ─────────→ Running | Failed  (recovery)
-///              ├─ recoverable failure ─→ Running  (insert replacement)
+///              │    ├─ Succeeded ──────→ Active   (mark Completed)
+///              │    └─ Failed ─────────→ Active | Failed  (recovery)
+///              ├─ recoverable failure ─→ Active   (insert replacement)
 ///              └─ Terminal failure ────→ Failed   (cancel dependents)
 /// ```
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -249,7 +249,8 @@ pub enum SchedulerState {
     /// On a `Start` event the scheduler checks whether all nodes are terminal
     /// (→ `Complete`), whether the graph is deadlocked (→ `Failed`), or picks
     /// the first ready node to dispatch (→ `Waiting`).
-    Running {
+    #[serde(rename = "Running")]
+    Active {
         /// The run graph to scan and advance.
         graph: RunGraph,
     },
@@ -277,7 +278,7 @@ pub enum SchedulerState {
     /// - A `Terminal` recovery action (node reported an unrecoverable failure).
     /// - Attempt exhaustion: `Retry`, `ElevateModel`, or `Split` on a node
     ///   already at `MAX_ATTEMPTS`.
-    /// - An invalid graph supplied to `Running + Start` (duplicate IDs or
+    /// - An invalid graph supplied to `Active + Start` (duplicate IDs or
     ///   missing dependency references).
     /// - An invalid node outcome: mismatched kind/outcome (e.g. `WorkAccepted`
     ///   for a `Plan` node, or `PlanAccepted` for a `Work` node).

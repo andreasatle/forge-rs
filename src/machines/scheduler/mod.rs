@@ -1,6 +1,6 @@
 //! Scheduler machine.
 //!
-//! The scheduler drives a `RunGraph` from `Running` to either `Complete` or
+//! The scheduler drives a `RunGraph` from `Active` to either `Complete` or
 //! `Failed`. It owns graph progression: selecting ready nodes, dispatching work
 //! one at a time, receiving node outcomes, and routing recovery decisions.
 //!

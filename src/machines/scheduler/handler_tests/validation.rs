@@ -115,7 +115,7 @@ fn retry_worker_receives_validation_diagnostics_and_can_fix_file() {
         SchedulerHandler::with_artifact(runner, artifact).with_validator(Rc::new(MainPyValidator));
     let mut node = work_node("W", "make main.py valid");
     node.target_files = vec!["main.py".to_string()];
-    let state = SchedulerState::Running {
+    let state = SchedulerState::Active {
         graph: RunGraph {
             nodes: vec![node],
             next_id: 0,

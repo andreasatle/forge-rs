@@ -215,15 +215,15 @@ pub enum IntegrationOutcome {
 /// Events that the scheduler machine can receive.
 ///
 /// `Start` is a synthetic tick injected by the runner when the scheduler is
-/// in `Running` state and no external result is pending. It drives the
-/// machine from `Running` to `Waiting` (by dispatching a ready node), to
+/// in `Active` state and no external result is pending. It drives the
+/// machine from `Active` to `Waiting` (by dispatching a ready node), to
 /// `Complete`, or to `Failed` — all without blocking on an external result.
 ///
 /// `NodeReturned` and `IntegrationReturned` carry real external results that
 /// drive the `Waiting` state forward.
 #[derive(Clone, Debug, PartialEq)]
 pub enum SchedulerEvent {
-    /// A synthetic tick that drives the `Running` state forward. The
+    /// A synthetic tick that drives the `Active` state forward. The
     /// scheduler scans the graph, selects a ready node to dispatch, and
     /// moves to `Waiting`. If no node is ready the run fails; if all nodes
     /// are terminal the run completes.

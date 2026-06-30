@@ -240,7 +240,7 @@ fn no_ready_reports_missing_dependency() {
         nodes: vec![work_node("C", "do C", &["B"])],
         next_id: 0,
     };
-    let t = do_transition(SchedulerState::Running { graph }, SchedulerEvent::Start);
+    let t = do_transition(SchedulerState::Active { graph }, SchedulerEvent::Start);
 
     let SchedulerState::Failed { reason, .. } = t.state else {
         panic!("expected Failed, got {:#?}", t.state);
@@ -265,7 +265,7 @@ fn no_ready_reports_blocked_or_possible_cycle() {
         ],
         next_id: 0,
     };
-    let t = do_transition(SchedulerState::Running { graph }, SchedulerEvent::Start);
+    let t = do_transition(SchedulerState::Active { graph }, SchedulerEvent::Start);
 
     let SchedulerState::Failed { reason, .. } = t.state else {
         panic!("expected Failed, got {:#?}", t.state);
@@ -287,7 +287,7 @@ fn duplicate_node_ids_fail_graph_validation() {
         ],
         next_id: 0,
     };
-    let t = do_transition(SchedulerState::Running { graph }, SchedulerEvent::Start);
+    let t = do_transition(SchedulerState::Active { graph }, SchedulerEvent::Start);
     let SchedulerState::Failed { reason, .. } = t.state else {
         panic!("expected Failed, got {:#?}", t.state);
     };
@@ -311,7 +311,7 @@ fn missing_dependency_fails_graph_validation() {
         nodes: vec![work_node("A", "do something", &["ghost"])],
         next_id: 0,
     };
-    let t = do_transition(SchedulerState::Running { graph }, SchedulerEvent::Start);
+    let t = do_transition(SchedulerState::Active { graph }, SchedulerEvent::Start);
     let SchedulerState::Failed { reason, .. } = t.state else {
         panic!("expected Failed, got {:#?}", t.state);
     };
@@ -339,7 +339,7 @@ fn graph_validation_does_not_parse_node_ids() {
         ],
         next_id: 0,
     };
-    let t = do_transition(SchedulerState::Running { graph }, SchedulerEvent::Start);
+    let t = do_transition(SchedulerState::Active { graph }, SchedulerEvent::Start);
 
     let SchedulerState::Waiting { graph } = t.state else {
         panic!("expected Waiting, got {:#?}", t.state);
@@ -365,7 +365,7 @@ fn retry_origin_with_missing_source_fails_validation() {
         nodes: vec![node_b],
         next_id: 0,
     };
-    let t = do_transition(SchedulerState::Running { graph }, SchedulerEvent::Start);
+    let t = do_transition(SchedulerState::Active { graph }, SchedulerEvent::Start);
 
     let SchedulerState::Failed { reason, .. } = t.state else {
         panic!("expected Failed, got {:#?}", t.state);
@@ -402,7 +402,7 @@ fn elevate_origin_with_missing_source_fails_validation() {
         nodes: vec![node_b],
         next_id: 0,
     };
-    let t = do_transition(SchedulerState::Running { graph }, SchedulerEvent::Start);
+    let t = do_transition(SchedulerState::Active { graph }, SchedulerEvent::Start);
 
     let SchedulerState::Failed { reason, .. } = t.state else {
         panic!("expected Failed, got {:#?}", t.state);
@@ -439,7 +439,7 @@ fn split_origin_with_missing_source_fails_validation() {
         nodes: vec![node_b],
         next_id: 0,
     };
-    let t = do_transition(SchedulerState::Running { graph }, SchedulerEvent::Start);
+    let t = do_transition(SchedulerState::Active { graph }, SchedulerEvent::Start);
 
     let SchedulerState::Failed { reason, .. } = t.state else {
         panic!("expected Failed, got {:#?}", t.state);

@@ -259,7 +259,7 @@ pub(super) fn route_recovery(
             } else {
                 let graph = apply_retry(graph, node_id, failure_kind, &message);
                 Transition {
-                    state: SchedulerState::Running { graph },
+                    state: SchedulerState::Active { graph },
                     effects: vec![],
                 }
             }
@@ -291,7 +291,7 @@ pub(super) fn route_recovery(
             } else {
                 let graph = apply_split(graph, node_id, message);
                 Transition {
-                    state: SchedulerState::Running { graph },
+                    state: SchedulerState::Active { graph },
                     effects: vec![],
                 }
             }
@@ -324,7 +324,7 @@ pub(super) fn route_recovery(
                 } else {
                     let graph = apply_retry(graph, node_id, failure_kind, "");
                     Transition {
-                        state: SchedulerState::Running { graph },
+                        state: SchedulerState::Active { graph },
                         effects: vec![],
                     }
                 }
@@ -347,7 +347,7 @@ pub(super) fn route_recovery(
             } else {
                 let graph = apply_elevate(graph, node_id);
                 Transition {
-                    state: SchedulerState::Running { graph },
+                    state: SchedulerState::Active { graph },
                     effects: vec![],
                 }
             }

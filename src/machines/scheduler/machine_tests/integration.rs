@@ -112,7 +112,7 @@ fn integration_failure_retry_routes_to_replacement() {
     //   - replacement B' is created with the same kind/objective
     //   - B'.attempt == 1, B'.dependencies == B.dependencies
     //   - C's dependency is remapped from B to B'
-    //   - scheduler returns to Running (no panic)
+    //   - scheduler returns to Active (no panic)
     let mut graph = RunGraph {
         nodes: vec![
             work_node("A", "step A", &[]),
@@ -138,8 +138,8 @@ fn integration_failure_retry_routes_to_replacement() {
         },
     );
 
-    let SchedulerState::Running { graph } = t.state else {
-        panic!("expected Running, got {:#?}", t.state);
+    let SchedulerState::Active { graph } = t.state else {
+        panic!("expected Active, got {:#?}", t.state);
     };
 
     let b = graph.nodes.iter().find(|n| n.id.0 == "B").expect("B");
@@ -198,8 +198,8 @@ fn integration_failure_elevate_routes_to_strong_replacement() {
         },
     );
 
-    let SchedulerState::Running { graph } = t.state else {
-        panic!("expected Running, got {:#?}", t.state);
+    let SchedulerState::Active { graph } = t.state else {
+        panic!("expected Active, got {:#?}", t.state);
     };
 
     let b = graph.nodes.iter().find(|n| n.id.0 == "B").expect("B");
@@ -254,8 +254,8 @@ fn integration_failure_split_routes_to_plan_replacement() {
         },
     );
 
-    let SchedulerState::Running { graph } = t.state else {
-        panic!("expected Running, got {:#?}", t.state);
+    let SchedulerState::Active { graph } = t.state else {
+        panic!("expected Active, got {:#?}", t.state);
     };
 
     let b = graph.nodes.iter().find(|n| n.id.0 == "B").expect("B");

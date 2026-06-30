@@ -23,8 +23,8 @@ fn retry_creates_replacement_node() {
         },
     );
 
-    let SchedulerState::Running { graph } = t.state else {
-        panic!("expected Running")
+    let SchedulerState::Active { graph } = t.state else {
+        panic!("expected Active")
     };
     assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
     assert_eq!(graph.nodes.len(), 2);
@@ -60,8 +60,8 @@ fn validation_failure_creates_retry_feedback() {
         },
     );
 
-    let SchedulerState::Running { graph } = t.state else {
-        panic!("expected Running, got {:#?}", t.state);
+    let SchedulerState::Active { graph } = t.state else {
+        panic!("expected Active, got {:#?}", t.state);
     };
     assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
     let retry = &graph.nodes[1];
@@ -117,8 +117,8 @@ fn work_semantic_validation_failure_retries_with_artifact_feedback() {
         },
     );
 
-    let SchedulerState::Running { graph } = t.state else {
-        panic!("expected Running, got {:#?}", t.state);
+    let SchedulerState::Active { graph } = t.state else {
+        panic!("expected Active, got {:#?}", t.state);
     };
     assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
     assert_eq!(graph.nodes.len(), 2, "scheduler must create a retry node");
@@ -177,8 +177,8 @@ fn invalid_work_attempt_update_failure_recovers_with_retry() {
         },
     );
 
-    let SchedulerState::Running { graph } = t.state else {
-        panic!("expected Running, got {:#?}", t.state);
+    let SchedulerState::Active { graph } = t.state else {
+        panic!("expected Active, got {:#?}", t.state);
     };
     assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
     assert_eq!(graph.nodes.len(), 2);
@@ -220,8 +220,8 @@ fn retry_preserves_depth() {
         },
     );
 
-    let SchedulerState::Running { graph } = t.state else {
-        panic!("expected Running, got {:#?}", t.state);
+    let SchedulerState::Active { graph } = t.state else {
+        panic!("expected Active, got {:#?}", t.state);
     };
     assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
     assert_eq!(graph.nodes.len(), 2);
@@ -250,8 +250,8 @@ fn elevate_creates_replacement_node_with_strong_tier() {
         },
     );
 
-    let SchedulerState::Running { graph } = t.state else {
-        panic!("expected Running")
+    let SchedulerState::Active { graph } = t.state else {
+        panic!("expected Active")
     };
     assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
     assert_eq!(graph.nodes.len(), 2);
@@ -286,8 +286,8 @@ fn elevate_preserves_depth() {
         },
     );
 
-    let SchedulerState::Running { graph } = t.state else {
-        panic!("expected Running, got {:#?}", t.state);
+    let SchedulerState::Active { graph } = t.state else {
+        panic!("expected Active, got {:#?}", t.state);
     };
     assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
     assert_eq!(graph.nodes.len(), 2);
@@ -443,8 +443,8 @@ fn split_below_attempt_limit_still_creates_plan_node() {
         },
     );
 
-    let SchedulerState::Running { graph } = t.state else {
-        panic!("expected Running, got {:#?}", t.state);
+    let SchedulerState::Active { graph } = t.state else {
+        panic!("expected Active, got {:#?}", t.state);
     };
 
     // Original W is Failed.
@@ -618,8 +618,8 @@ fn single_tier_elevate_falls_back_to_retry() {
         },
     );
 
-    let SchedulerState::Running { graph } = t.state else {
-        panic!("expected Running, got {:#?}", t.state);
+    let SchedulerState::Active { graph } = t.state else {
+        panic!("expected Active, got {:#?}", t.state);
     };
     assert_eq!(graph.nodes.len(), 2, "must create a replacement node");
     assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
@@ -664,8 +664,8 @@ fn multi_tier_elevate_creates_strong_replacement() {
         },
     );
 
-    let SchedulerState::Running { graph } = t.state else {
-        panic!("expected Running, got {:#?}", t.state);
+    let SchedulerState::Active { graph } = t.state else {
+        panic!("expected Active, got {:#?}", t.state);
     };
     assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
     assert_eq!(graph.nodes.len(), 2);
@@ -754,8 +754,8 @@ fn elevate_at_strong_tier_falls_back_to_retry() {
         },
     );
 
-    let SchedulerState::Running { graph } = t.state else {
-        panic!("expected Running, got {:#?}", t.state);
+    let SchedulerState::Active { graph } = t.state else {
+        panic!("expected Active, got {:#?}", t.state);
     };
     assert_eq!(graph.nodes.len(), 2, "must create a Retry replacement");
     assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
@@ -842,8 +842,8 @@ fn validation_retry_feedback_includes_all_structured_target_files() {
         ),
     );
 
-    let SchedulerState::Running { graph } = t.state else {
-        panic!("expected Running, got {:#?}", t.state);
+    let SchedulerState::Active { graph } = t.state else {
+        panic!("expected Active, got {:#?}", t.state);
     };
     let retry = &graph.nodes[1];
     assert!(
@@ -882,8 +882,8 @@ fn validation_retry_test_target_appears_in_retry_prompt() {
         ),
     );
 
-    let SchedulerState::Running { graph } = t.state else {
-        panic!("expected Running, got {:#?}", t.state);
+    let SchedulerState::Active { graph } = t.state else {
+        panic!("expected Active, got {:#?}", t.state);
     };
     let retry = &graph.nodes[1];
     assert!(
@@ -911,8 +911,8 @@ fn repeated_validation_retries_do_not_duplicate_feedback_blocks() {
             "validation failed\ncommand: val\nexit code: 1\nfirst location: main.py:1:1\ndiagnostics:\nfirst-error\ninstruction: fix the existing file using file tools before accepting",
         ),
     );
-    let SchedulerState::Running { mut graph } = t1.state else {
-        panic!("expected Running after first retry");
+    let SchedulerState::Active { mut graph } = t1.state else {
+        panic!("expected Active after first retry");
     };
 
     let retry1_id = graph.nodes[1].id.clone();
@@ -925,8 +925,8 @@ fn repeated_validation_retries_do_not_duplicate_feedback_blocks() {
             "validation failed\ncommand: val\nexit code: 2\nfirst location: main.py:2:1\ndiagnostics:\nsecond-error\ninstruction: fix the existing file using file tools before accepting",
         ),
     );
-    let SchedulerState::Running { graph } = t2.state else {
-        panic!("expected Running after second retry");
+    let SchedulerState::Active { graph } = t2.state else {
+        panic!("expected Active after second retry");
     };
     let retry2 = &graph.nodes[2];
 
@@ -971,8 +971,8 @@ fn retry_target_files_unchanged_across_retries() {
             "validation failed\ncommand: v\nexit code: 1\nfirst location: (not detected)\ndiagnostics:\n(no diagnostic output)\ninstruction: fix the existing file using file tools before accepting",
         ),
     );
-    let SchedulerState::Running { mut graph } = t1.state else {
-        panic!("expected Running after first retry");
+    let SchedulerState::Active { mut graph } = t1.state else {
+        panic!("expected Active after first retry");
     };
     assert_eq!(
         graph.nodes[1].target_files, original_targets,
@@ -989,8 +989,8 @@ fn retry_target_files_unchanged_across_retries() {
             "validation failed\ncommand: v\nexit code: 2\nfirst location: (not detected)\ndiagnostics:\n(no diagnostic output)\ninstruction: fix the existing file using file tools before accepting",
         ),
     );
-    let SchedulerState::Running { graph } = t2.state else {
-        panic!("expected Running after second retry");
+    let SchedulerState::Active { graph } = t2.state else {
+        panic!("expected Active after second retry");
     };
     assert_eq!(
         graph.nodes[2].target_files, original_targets,

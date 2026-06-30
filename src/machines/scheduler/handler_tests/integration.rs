@@ -173,7 +173,7 @@ fn work_node_workspace_mutation_creates_new_commit() {
         path: "output.txt".to_string(),
         content: "hello from work node\n".to_string(),
     };
-    let state = SchedulerState::Running {
+    let state = SchedulerState::Active {
         graph: RunGraph {
             nodes: vec![work_node("W", "write a file")],
             next_id: 0,
@@ -198,7 +198,7 @@ fn second_work_node_sees_first_work_node_changes() {
         second_view: second_view.clone(),
     };
 
-    let state = SchedulerState::Running {
+    let state = SchedulerState::Active {
         graph: RunGraph {
             nodes: vec![
                 work_node_with_deps("A", "write the file", &[]),
@@ -228,7 +228,7 @@ fn work_node_without_update_preserves_commit() {
     let original_sha = artifact.commit_sha.clone();
     let repo_path = artifact.repo_path.clone();
 
-    let state = SchedulerState::Running {
+    let state = SchedulerState::Active {
         graph: RunGraph {
             nodes: vec![work_node("W", "do some work")],
             next_id: 0,
@@ -258,7 +258,7 @@ fn rejected_work_attempt_records_evidence_and_retry_starts_clean() {
     let runner = DirtyThenRetryRunner {
         saw_clean_retry: saw_clean_retry.clone(),
     };
-    let state = SchedulerState::Running {
+    let state = SchedulerState::Active {
         graph: RunGraph {
             nodes: vec![work_node("W", "dirty then retry")],
             next_id: 0,
@@ -328,7 +328,7 @@ fn revision_exhaustion_records_final_work_attempt_evidence_before_cleanup() {
     // Force scheduler recovery exhaustion so the final referee rejection remains
     // terminal at the scheduler boundary while still exercising one node run.
     node.attempt = 3;
-    let state = SchedulerState::Running {
+    let state = SchedulerState::Active {
         graph: RunGraph {
             nodes: vec![node],
             next_id: 0,
@@ -412,7 +412,7 @@ fn deliberation_revision_stays_inside_single_scheduler_attempt_until_acceptance(
         r#"{"status":"accepted","content":"approved"}"#,
     ]);
     let runner = DeliberatingNodeRunner::new(&provider, &provider);
-    let state = SchedulerState::Running {
+    let state = SchedulerState::Active {
         graph: RunGraph {
             nodes: vec![work_node("W", "revise then accept")],
             next_id: 0,

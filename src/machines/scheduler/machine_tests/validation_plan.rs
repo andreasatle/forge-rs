@@ -51,8 +51,8 @@ fn plan_expansion_stamps_validation_plan_onto_work_children() {
         },
     );
 
-    let SchedulerState::Running { graph } = t.state else {
-        panic!("expected Running");
+    let SchedulerState::Active { graph } = t.state else {
+        panic!("expected Active");
     };
     let work = graph
         .nodes
@@ -81,7 +81,7 @@ fn checkpoint_roundtrip_preserves_validation_plan_in_node() {
     std::fs::create_dir_all(&dir).unwrap();
 
     let plan = one_step_plan();
-    let state = SchedulerState::Running {
+    let state = SchedulerState::Active {
         graph: RunGraph {
             nodes: vec![node_with_plan("W", "work with plan", plan.clone())],
             next_id: 0,
@@ -91,8 +91,8 @@ fn checkpoint_roundtrip_preserves_validation_plan_in_node() {
     save_checkpoint(&dir, &state).unwrap();
     let loaded = load_checkpoint(&dir).unwrap();
 
-    let SchedulerState::Running { graph } = loaded else {
-        panic!("expected Running");
+    let SchedulerState::Active { graph } = loaded else {
+        panic!("expected Active");
     };
     assert_eq!(
         graph.nodes[0].validation_plan.as_ref(),
@@ -129,8 +129,8 @@ fn retry_preserves_validation_plan() {
         },
     );
 
-    let SchedulerState::Running { graph } = t.state else {
-        panic!("expected Running");
+    let SchedulerState::Active { graph } = t.state else {
+        panic!("expected Active");
     };
     let retry = graph
         .nodes
@@ -160,7 +160,7 @@ fn checkpointed_plan_is_independent_of_later_config() {
     std::fs::create_dir_all(&dir).unwrap();
 
     let original_plan = one_step_plan();
-    let state = SchedulerState::Running {
+    let state = SchedulerState::Active {
         graph: RunGraph {
             nodes: vec![node_with_plan("W", "work", original_plan.clone())],
             next_id: 0,
@@ -183,8 +183,8 @@ fn checkpointed_plan_is_independent_of_later_config() {
     };
 
     let loaded = load_checkpoint(&dir).unwrap();
-    let SchedulerState::Running { graph } = loaded else {
-        panic!("expected Running");
+    let SchedulerState::Active { graph } = loaded else {
+        panic!("expected Active");
     };
     assert_ne!(
         graph.nodes[0].validation_plan.as_ref(),

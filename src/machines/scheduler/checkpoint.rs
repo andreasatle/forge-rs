@@ -37,13 +37,13 @@ impl CheckpointService {
         };
         let is_active = matches!(
             state,
-            SchedulerState::Running { .. } | SchedulerState::Waiting { .. }
+            SchedulerState::Active { .. } | SchedulerState::Waiting { .. }
         );
         if !is_active {
             return;
         }
         let graph = match state {
-            SchedulerState::Running { graph } | SchedulerState::Waiting { graph } => graph,
+            SchedulerState::Active { graph } | SchedulerState::Waiting { graph } => graph,
             _ => return,
         };
         let (node_count, completed_count) = node_counts(graph);

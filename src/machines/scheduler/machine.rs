@@ -105,7 +105,7 @@ pub struct SchedulerMachine {
 impl SchedulerMachine {
     /// Build the initial scheduler state from an external run request.
     ///
-    /// Creates a `SchedulerState::Running` containing a single root `Plan` node
+    /// Creates a `SchedulerState::Active` containing a single root `Plan` node
     /// whose objective is taken from the request. All other node fields are set
     /// to their default starting values.
     pub fn initial_state(request: RunRequest) -> SchedulerState {
@@ -124,7 +124,7 @@ impl SchedulerMachine {
             origin: NodeOrigin::Root,
             validation_plan: None,
         };
-        SchedulerState::Running {
+        SchedulerState::Active {
             graph: RunGraph {
                 nodes: vec![root],
                 next_id: 0,
@@ -162,7 +162,7 @@ impl SchedulerMachine {
             //   1. All nodes are terminal → emit ReturnComplete and stop.
             //   2. Some nodes are Pending but none are ready → deadlock; emit ReturnFailed.
             //   3. At least one node is ready → mark it Running, emit RunNode, move to Waiting.
-            (SchedulerState::Running { graph }, SchedulerEvent::Start) => {
+            (SchedulerState::Active { graph }, SchedulerEvent::Start) => {
                 if let Err(reason) = graph::validate_graph_invariants(&graph) {
                     return Transition {
                         state: SchedulerState::Failed {
@@ -320,7 +320,7 @@ impl SchedulerMachine {
                                     graph::mark_node(graph, &node_id, NodeStatus::Completed);
                                 let graph = graph::insert_children(graph, &node_id, plan.children);
                                 Transition {
-                                    state: SchedulerState::Running { graph },
+                                    state: SchedulerState::Active { graph },
                                     effects: vec![],
                                 }
                             }
@@ -406,7 +406,7 @@ impl SchedulerMachine {
                             integration_output.summary,
                         );
                         Transition {
-                            state: SchedulerState::Running { graph },
+                            state: SchedulerState::Active { graph },
                             effects: vec![],
                         }
                     }
@@ -425,17 +425,17 @@ impl SchedulerMachine {
                 }
             }
 
-            (SchedulerState::Running { graph }, SchedulerEvent::NodeReturned { .. }) => {
+            (SchedulerState::Active { graph }, SchedulerEvent::NodeReturned { .. }) => {
                 recovery::failed_transition(
                     graph,
-                    "protocol violation: state Running cannot consume NodeReturned".to_string(),
+                    "protocol violation: state Active cannot consume NodeReturned".to_string(),
                 )
             }
 
-            (SchedulerState::Running { graph }, SchedulerEvent::IntegrationReturned { .. }) => {
+            (SchedulerState::Active { graph }, SchedulerEvent::IntegrationReturned { .. }) => {
                 recovery::failed_transition(
                     graph,
-                    "protocol violation: state Running cannot consume IntegrationReturned"
+                    "protocol violation: state Active cannot consume IntegrationReturned"
                         .to_string(),
                 )
             }

@@ -166,8 +166,8 @@ impl ForgeRuntime {
         let sink: Rc<dyn TelemetrySink> = Rc::new(FileTelemetry::new(run_dir.join("telemetry")));
 
         let graph = match &initial_state {
-            SchedulerState::Running { graph } => graph,
-            _ => unreachable!("normalize_for_resume always returns Running"),
+            SchedulerState::Active { graph } => graph,
+            _ => unreachable!("normalize_for_resume always returns Active"),
         };
         let (node_count, completed_count) = node_counts(graph);
         sink.record(TelemetryRecord::new(

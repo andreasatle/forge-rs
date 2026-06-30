@@ -113,16 +113,16 @@ fn manifest_status_is_running(manifest_path: &Path) -> bool {
 
 /// Convert a checkpointed state into one safe to hand to the engine loop.
 ///
-/// - `Waiting { graph }` becomes `Running { graph }` because the engine
+/// - `Waiting { graph }` becomes `Active { graph }` because the engine
 ///   boots with `Start` events; `Waiting + Start` would be a protocol violation.
 /// - Any node in `Running` or `Integrating` status is reset to `Pending` so the
 ///   scheduler re-dispatches it. All other statuses are unchanged.
 pub fn normalize_for_resume(state: SchedulerState) -> SchedulerState {
     match state {
-        SchedulerState::Running { graph } => SchedulerState::Running {
+        SchedulerState::Active { graph } => SchedulerState::Active {
             graph: reset_active_nodes(graph),
         },
-        SchedulerState::Waiting { graph } => SchedulerState::Running {
+        SchedulerState::Waiting { graph } => SchedulerState::Active {
             graph: reset_active_nodes(graph),
         },
         other => other,
@@ -193,7 +193,7 @@ mod tests {
     }
 
     fn sample_running_state() -> SchedulerState {
-        SchedulerState::Running {
+        SchedulerState::Active {
             graph: RunGraph {
                 nodes: vec![
                     work_node("A", NodeStatus::Completed),
@@ -274,8 +274,8 @@ mod tests {
         save_checkpoint(&run, &sample_running_state()).unwrap();
         let (loaded_dir, loaded_state) = find_resumable_run(&root).unwrap();
         assert_eq!(loaded_dir, run);
-        let SchedulerState::Running { graph } = loaded_state else {
-            panic!("expected Running state");
+        let SchedulerState::Active { graph } = loaded_state else {
+            panic!("expected Active state");
         };
         assert_eq!(graph.nodes.len(), 2);
         let _ = std::fs::remove_dir_all(&root);
@@ -304,7 +304,7 @@ mod tests {
 
     #[test]
     fn normalize_running_nodes_become_pending() {
-        let state = SchedulerState::Running {
+        let state = SchedulerState::Active {
             graph: RunGraph {
                 nodes: vec![
                     work_node("A", NodeStatus::Completed),
@@ -313,8 +313,8 @@ mod tests {
                 next_id: 0,
             },
         };
-        let SchedulerState::Running { graph } = normalize_for_resume(state) else {
-            panic!("expected Running");
+        let SchedulerState::Active { graph } = normalize_for_resume(state) else {
+            panic!("expected Active");
         };
         assert_eq!(graph.nodes[0].status, NodeStatus::Completed);
         assert_eq!(graph.nodes[1].status, NodeStatus::Pending);
@@ -322,7 +322,7 @@ mod tests {
 
     #[test]
     fn normalize_integrating_nodes_become_pending() {
-        let state = SchedulerState::Running {
+        let state = SchedulerState::Active {
             graph: RunGraph {
                 nodes: vec![
                     work_node("A", NodeStatus::Completed),
@@ -331,14 +331,14 @@ mod tests {
                 next_id: 0,
             },
         };
-        let SchedulerState::Running { graph } = normalize_for_resume(state) else {
-            panic!("expected Running");
+        let SchedulerState::Active { graph } = normalize_for_resume(state) else {
+            panic!("expected Active");
         };
         assert_eq!(graph.nodes[1].status, NodeStatus::Pending);
     }
 
     #[test]
-    fn normalize_waiting_becomes_running() {
+    fn normalize_waiting_becomes_active() {
         let graph = RunGraph {
             nodes: vec![
                 work_node("A", NodeStatus::Completed),
@@ -349,10 +349,10 @@ mod tests {
         let state = SchedulerState::Waiting { graph };
         let normalized = normalize_for_resume(state);
         assert!(
-            matches!(normalized, SchedulerState::Running { .. }),
-            "Waiting must become Running after normalization"
+            matches!(normalized, SchedulerState::Active { .. }),
+            "Waiting must become Active after normalization"
         );
-        let SchedulerState::Running { graph } = normalized else {
+        let SchedulerState::Active { graph } = normalized else {
             unreachable!()
         };
         assert_eq!(graph.nodes[1].status, NodeStatus::Pending);
@@ -360,7 +360,7 @@ mod tests {
 
     #[test]
     fn normalize_preserves_completed_and_failed_nodes() {
-        let state = SchedulerState::Running {
+        let state = SchedulerState::Active {
             graph: RunGraph {
                 nodes: vec![
                     work_node("A", NodeStatus::Completed),
@@ -371,8 +371,8 @@ mod tests {
                 next_id: 0,
             },
         };
-        let SchedulerState::Running { graph } = normalize_for_resume(state) else {
-            panic!("expected Running");
+        let SchedulerState::Active { graph } = normalize_for_resume(state) else {
+            panic!("expected Active");
         };
         assert_eq!(graph.nodes[0].status, NodeStatus::Completed);
         assert_eq!(graph.nodes[1].status, NodeStatus::Failed);
