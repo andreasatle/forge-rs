@@ -57,10 +57,6 @@ fn run_machine_deliberation_smoke_test() {
                         result: ProducerValidationResult::Valid,
                     }
                 }
-                DeliberationEffect::ReturnComplete { .. } => {
-                    unreachable!("ReturnComplete should not re-enter the loop")
-                }
-                other => panic!("unexpected effect in smoke test: {:?}", other),
             }
         }
 

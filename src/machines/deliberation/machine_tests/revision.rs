@@ -102,12 +102,14 @@ fn referee_rejection_after_critic_rejection_exhausts_budget_when_no_revisions_re
         "expected Failed with 'revision limit exhausted', got {:?}",
         t.state
     );
-    assert_eq!(t.effects.len(), 1);
     assert!(
-        matches!(&t.effects[0], DeliberationEffect::ReturnFailed { reason, .. } if reason.contains("revision limit exhausted")),
-        "expected ReturnFailed with 'revision limit exhausted', got {:?}",
-        t.effects[0]
+        t.effects.is_empty(),
+        "terminal failure must not emit effects"
     );
+    assert!(matches!(
+        machine().output(&t.state),
+        Some(DeliberationTerminalOutput::Failed { reason, .. }) if reason.contains("revision limit exhausted")
+    ));
 }
 
 #[test]
@@ -214,12 +216,14 @@ fn referee_rejection_exhausts_revision_limit() {
         t.state
     );
 
-    assert_eq!(t.effects.len(), 1);
     assert!(
-        matches!(&t.effects[0], DeliberationEffect::ReturnFailed { reason, .. } if reason.contains("revision limit exhausted")),
-        "expected ReturnFailed with 'revision limit exhausted', got {:?}",
-        t.effects[0]
+        t.effects.is_empty(),
+        "terminal failure must not emit effects"
     );
+    assert!(matches!(
+        machine().output(&t.state),
+        Some(DeliberationTerminalOutput::Failed { reason, .. }) if reason.contains("revision limit exhausted")
+    ));
 }
 
 #[test]
@@ -255,12 +259,14 @@ fn max_revisions_zero_fails_on_first_referee_rejection() {
         t.state
     );
 
-    assert_eq!(t.effects.len(), 1);
     assert!(
-        matches!(&t.effects[0], DeliberationEffect::ReturnFailed { reason, .. } if reason.contains("revision limit exhausted")),
-        "expected ReturnFailed, got {:?}",
-        t.effects[0]
+        t.effects.is_empty(),
+        "terminal failure must not emit effects"
     );
+    assert!(matches!(
+        machine().output(&t.state),
+        Some(DeliberationTerminalOutput::Failed { reason, .. }) if reason.contains("revision limit exhausted")
+    ));
 }
 
 #[test]
@@ -344,10 +350,6 @@ fn revision_then_acceptance_completes_with_revised_producer_content() {
                         result: ProducerValidationResult::Valid,
                     }
                 }
-                DeliberationEffect::ReturnComplete { .. } => {
-                    unreachable!("ReturnComplete should not re-enter the loop")
-                }
-                other => panic!("unexpected effect: {:?}", other),
             }
         }
 

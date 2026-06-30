@@ -8,9 +8,8 @@ use super::handler::DeliberationHandler;
 impl<R: RoleRunner> DeliberationHandler<R> {
     /// Execute one deliberation effect and return the resulting event.
     ///
-    /// `ReturnComplete` and `ReturnFailed` are terminal effects: `run_machine`
-    /// checks `output()` before dispatching effects, so reaching them here is
-    /// a bug in the caller.
+    /// Terminal deliberation outcomes are represented by terminal state plus
+    /// `output()`, so this only dispatches non-terminal effects.
     pub fn handle_effect(&self, effect: DeliberationEffect) -> DeliberationEvent {
         self.handle_effect_with_telemetry(effect, &NoopTelemetry)
     }

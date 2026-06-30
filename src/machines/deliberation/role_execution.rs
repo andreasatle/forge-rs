@@ -85,18 +85,6 @@ impl<R: RoleRunner> DeliberationHandler<R> {
                 let result = self.validate_producer_semantics(&content, artifact_changed);
                 DeliberationEvent::ProducerValidationReturned { content, result }
             }
-            DeliberationEffect::ReturnComplete { .. } => {
-                unreachable!(
-                    "ReturnComplete is a terminal effect; \
-                     run_machine returns before dispatching it"
-                )
-            }
-            DeliberationEffect::ReturnFailed { .. } => {
-                unreachable!(
-                    "ReturnFailed is a terminal effect; \
-                     run_machine returns before dispatching it"
-                )
-            }
         }
     }
 }

@@ -129,7 +129,7 @@ fn critic_rejection_stores_typed_rejected_advisory() {
 }
 
 #[test]
-fn critic_rejection_does_not_emit_return_failed() {
+fn critic_rejection_runs_referee_instead_of_failing() {
     let after_producer = producer_accepts(
         step(ready("write a poem"), DeliberationEvent::Start).state,
         "draft content",
@@ -145,11 +145,16 @@ fn critic_rejection_does_not_emit_return_failed() {
         },
     );
 
-    assert_eq!(t.effects.len(), 1);
     assert!(
-        !matches!(&t.effects[0], DeliberationEffect::ReturnFailed { .. }),
-        "Critic rejection must not emit ReturnFailed, got {:?}",
-        t.effects[0]
+        matches!(
+            &t.effects[..],
+            [DeliberationEffect::RunRole {
+                role: DeliberationRole::Referee,
+                ..
+            }]
+        ),
+        "Critic rejection must run Referee, got {:?}",
+        t.effects
     );
 }
 
@@ -184,9 +189,13 @@ fn critic_missing_producer_content_fails() {
         t.state
     );
 
-    let reason = match &t.effects[0] {
-        DeliberationEffect::ReturnFailed { reason, .. } => reason,
-        other => panic!("expected ReturnFailed, got {:?}", other),
+    assert!(
+        t.effects.is_empty(),
+        "terminal failure must not emit effects"
+    );
+    let reason = match &t.state {
+        DeliberationState::Failed { reason, .. } => reason,
+        other => panic!("expected Failed, got {:?}", other),
     };
     assert!(
         reason.contains("invalid deliberation state"),
@@ -217,9 +226,13 @@ fn role_mismatch_while_waiting_critic_fails() {
         t.state
     );
 
-    let reason = match &t.effects[0] {
-        DeliberationEffect::ReturnFailed { reason, .. } => reason,
-        other => panic!("expected ReturnFailed, got {:?}", other),
+    assert!(
+        t.effects.is_empty(),
+        "terminal failure must not emit effects"
+    );
+    let reason = match &t.state {
+        DeliberationState::Failed { reason, .. } => reason,
+        other => panic!("expected Failed, got {:?}", other),
     };
     assert!(
         reason.contains("protocol violation"),
@@ -250,11 +263,12 @@ fn critic_failed_is_terminal() {
         "expected Failed, got {:?}",
         t.state
     );
-
-    assert_eq!(t.effects.len(), 1);
     assert!(
-        matches!(&t.effects[0], DeliberationEffect::ReturnFailed { reason, .. } if reason == "provider unavailable"),
-        "expected ReturnFailed, got {:?}",
-        t.effects[0]
+        t.effects.is_empty(),
+        "terminal failure must not emit effects"
     );
+    assert!(matches!(
+        machine().output(&t.state),
+        Some(DeliberationTerminalOutput::Failed { reason, .. }) if reason == "provider unavailable"
+    ));
 }

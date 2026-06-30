@@ -29,13 +29,13 @@
 //!         → Waiting(Producer, validation_attempt+1, validation_feedback=[reason])
 //!         + RunRole(Producer, feedback=[reason])
 //!     validation_attempt >= max_validation_retries:
-//!         → Failed + ReturnFailed
+//!         → Failed
 //!
 //! Waiting(Producer) + RoleReturned(Producer, Rejected { reason })
-//!     → Failed + ReturnFailed
+//!     → Failed
 //!
 //! Waiting(Producer) + RoleReturned(Producer, Failed { reason })
-//!     → Failed + ReturnFailed  (execution failure, not semantic rejection)
+//!     → Failed  (execution failure, not semantic rejection)
 //!
 //! Waiting(Critic, Some(pc)) + RoleReturned(Critic, Accepted { content })
 //!     → Waiting(Referee, producer_content=Some(pc), critic_advisory=AcceptedReview)
@@ -47,28 +47,28 @@
 //!     (Critic is advisory; Referee decides)
 //!
 //! Waiting(Critic, Some(_)) + RoleReturned(Critic, Failed { reason })
-//!     → Failed + ReturnFailed  (execution failure, not semantic rejection)
+//!     → Failed  (execution failure, not semantic rejection)
 //!
 //! Waiting(Critic, None) + RoleReturned(Critic, …)
-//!     → Failed + ReturnFailed  (invalid deliberation state)
+//!     → Failed  (invalid deliberation state)
 //!
 //! Waiting(Referee, Some(pc), Some(_)) + RoleReturned(Referee, Accepted)
-//!     → Complete { output: pc } + ReturnComplete   ← output is producer content
+//!     → Complete { output: pc }   ← output is producer content
 //!
 //! Waiting(Referee, …) + RoleReturned(Referee, Rejected { reason })
 //!     feedback.len() < max_revisions:
 //!         → Waiting(Producer, feedback+[reason])
 //!         + RunRole(Producer, feedback+[reason])
 //!     feedback.len() >= max_revisions:
-//!         → Failed("revision limit exhausted") + ReturnFailed
+//!         → Failed("revision limit exhausted")
 //!
 //! Waiting(Referee, Some(_), Some(_)) + RoleReturned(Referee, Failed { reason })
-//!     → Failed + ReturnFailed  (execution failure — must NOT enter the revision loop)
+//!     → Failed  (execution failure — must NOT enter the revision loop)
 //!
 //! Waiting(Referee, None, _) or Waiting(Referee, _, None advisory) + RoleReturned(…)
-//!     → Failed + ReturnFailed  (invalid deliberation state)
+//!     → Failed  (invalid deliberation state)
 //!
-//! Role mismatches → Failed + ReturnFailed (protocol violation)
+//! Role mismatches → Failed (protocol violation)
 //! ```
 
 use crate::engine::{Machine, Transition};
@@ -90,10 +90,7 @@ impl DeliberationMachine {
         reason: String,
     ) -> Transition<DeliberationState, DeliberationEffect> {
         Transition {
-            effects: vec![DeliberationEffect::ReturnFailed {
-                kind,
-                reason: reason.clone(),
-            }],
+            effects: vec![],
             state: DeliberationState::Failed { kind, reason },
         }
     }
@@ -488,9 +485,7 @@ impl Machine for DeliberationMachine {
                     content: producer_content,
                 };
                 Transition {
-                    effects: vec![DeliberationEffect::ReturnComplete {
-                        output: output.clone(),
-                    }],
+                    effects: vec![],
                     state: DeliberationState::Complete { output },
                 }
             }

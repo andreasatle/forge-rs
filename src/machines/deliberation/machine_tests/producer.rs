@@ -225,13 +225,14 @@ fn producer_rejection_fails() {
         "expected Failed, got {:?}",
         t.state
     );
-
-    assert_eq!(t.effects.len(), 1);
     assert!(
-        matches!(&t.effects[0], DeliberationEffect::ReturnFailed { reason, .. } if reason == "out of ideas"),
-        "expected ReturnFailed, got {:?}",
-        t.effects[0]
+        t.effects.is_empty(),
+        "terminal failure must not emit effects"
     );
+    assert!(matches!(
+        machine().output(&t.state),
+        Some(DeliberationTerminalOutput::Failed { reason, .. }) if reason == "out of ideas"
+    ));
 }
 
 #[test]
@@ -254,9 +255,13 @@ fn role_mismatch_while_waiting_producer_fails() {
         t.state
     );
 
-    let reason = match &t.effects[0] {
-        DeliberationEffect::ReturnFailed { reason, .. } => reason,
-        other => panic!("expected ReturnFailed, got {:?}", other),
+    assert!(
+        t.effects.is_empty(),
+        "terminal failure must not emit effects"
+    );
+    let reason = match &t.state {
+        DeliberationState::Failed { reason, .. } => reason,
+        other => panic!("expected Failed, got {:?}", other),
     };
     assert!(
         reason.contains("protocol violation"),
@@ -284,11 +289,12 @@ fn producer_failed_is_terminal() {
         "expected Failed, got {:?}",
         t.state
     );
-
-    assert_eq!(t.effects.len(), 1);
     assert!(
-        matches!(&t.effects[0], DeliberationEffect::ReturnFailed { reason, .. } if reason == "timeout"),
-        "expected ReturnFailed, got {:?}",
-        t.effects[0]
+        t.effects.is_empty(),
+        "terminal failure must not emit effects"
     );
+    assert!(matches!(
+        machine().output(&t.state),
+        Some(DeliberationTerminalOutput::Failed { reason, .. }) if reason == "timeout"
+    ));
 }

@@ -3,8 +3,7 @@
 //! Effects are commands. The machine emits them; the handler executes them and
 //! converts the external result back into a `DeliberationEvent`.
 
-use super::state::{DeliberationOutput, DeliberationRole, RevisionFeedback};
-use crate::machines::scheduler::FailureKind;
+use super::state::{DeliberationRole, RevisionFeedback};
 
 /// Commands emitted by the deliberation machine.
 #[derive(Clone, Debug, PartialEq)]
@@ -36,17 +35,5 @@ pub enum DeliberationEffect {
         content: String,
         /// Whether the Producer role mutated the artifact workspace.
         artifact_changed: bool,
-    },
-    /// Signal successful completion to the caller.
-    ReturnComplete {
-        /// The accepted output to return to the caller.
-        output: DeliberationOutput,
-    },
-    /// Signal failure to the caller.
-    ReturnFailed {
-        /// Machine-readable failure cause.
-        kind: FailureKind,
-        /// Human-readable description of the failure.
-        reason: String,
     },
 }

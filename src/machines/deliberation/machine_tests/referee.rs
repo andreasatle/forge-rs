@@ -35,14 +35,16 @@ fn referee_acceptance_completes_with_producer_content() {
         t.state
     );
 
-    assert_eq!(t.effects.len(), 1);
+    assert!(
+        t.effects.is_empty(),
+        "terminal completion must not emit effects"
+    );
     assert!(
         matches!(
-            &t.effects[0],
-            DeliberationEffect::ReturnComplete { output } if output.content == "draft content"
+            machine().output(&t.state),
+            Some(DeliberationTerminalOutput::Complete(output)) if output.content == "draft content"
         ),
-        "expected ReturnComplete with producer content, got {:?}",
-        t.effects[0]
+        "expected Complete output with producer content"
     );
 }
 
@@ -78,12 +80,14 @@ fn referee_rejection_fails_when_no_revisions_allowed() {
         t.state
     );
 
-    assert_eq!(t.effects.len(), 1);
     assert!(
-        matches!(&t.effects[0], DeliberationEffect::ReturnFailed { reason, .. } if reason.contains("revision limit exhausted")),
-        "expected ReturnFailed with 'revision limit exhausted', got {:?}",
-        t.effects[0]
+        t.effects.is_empty(),
+        "terminal failure must not emit effects"
     );
+    assert!(matches!(
+        machine().output(&t.state),
+        Some(DeliberationTerminalOutput::Failed { reason, .. }) if reason.contains("revision limit exhausted")
+    ));
 }
 
 #[test]
@@ -117,9 +121,13 @@ fn referee_missing_critic_content_fails() {
         t.state
     );
 
-    let reason = match &t.effects[0] {
-        DeliberationEffect::ReturnFailed { reason, .. } => reason,
-        other => panic!("expected ReturnFailed, got {:?}", other),
+    assert!(
+        t.effects.is_empty(),
+        "terminal failure must not emit effects"
+    );
+    let reason = match &t.state {
+        DeliberationState::Failed { reason, .. } => reason,
+        other => panic!("expected Failed, got {:?}", other),
     };
     assert!(
         reason.contains("invalid deliberation state"),
@@ -161,9 +169,13 @@ fn role_mismatch_while_waiting_referee_fails() {
             t.state
         );
 
-        let reason = match &t.effects[0] {
-            DeliberationEffect::ReturnFailed { reason, .. } => reason,
-            other => panic!("expected ReturnFailed, got {:?}", other),
+        assert!(
+            t.effects.is_empty(),
+            "terminal failure must not emit effects"
+        );
+        let reason = match &t.state {
+            DeliberationState::Failed { reason, .. } => reason,
+            other => panic!("expected Failed, got {:?}", other),
         };
         assert!(
             reason.contains("protocol violation"),
@@ -207,13 +219,14 @@ fn referee_failed_is_terminal() {
         "expected Failed (not a revision loop), got {:?}",
         t.state
     );
-
-    assert_eq!(t.effects.len(), 1);
     assert!(
-        matches!(&t.effects[0], DeliberationEffect::ReturnFailed { reason, .. } if reason == "authentication error"),
-        "expected ReturnFailed, got {:?}",
-        t.effects[0]
+        t.effects.is_empty(),
+        "terminal failure must not emit effects"
     );
+    assert!(matches!(
+        machine().output(&t.state),
+        Some(DeliberationTerminalOutput::Failed { reason, .. }) if reason == "authentication error"
+    ));
 }
 
 #[test]
