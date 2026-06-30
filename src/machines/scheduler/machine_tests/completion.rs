@@ -558,3 +558,40 @@ fn split_success_reports_recovery() {
     assert_eq!(recovery_summary.elevate_count, 0);
     assert_eq!(recovery_summary.split_count, 1);
 }
+
+#[test]
+fn event_at_terminal_state_returns_protocol_violation() {
+    // Invariant: transition is total; events delivered to Complete or Failed
+    // must not panic but must return ProtocolViolation instead.
+    let mut terminal_node = work_node("A", "done", &[]);
+    terminal_node.status = NodeStatus::Completed;
+    let terminal_graph = RunGraph {
+        nodes: vec![terminal_node],
+        next_id: 0,
+    };
+    for (label, state) in [
+        (
+            "Complete",
+            SchedulerState::Complete {
+                graph: terminal_graph.clone(),
+            },
+        ),
+        (
+            "Failed",
+            SchedulerState::Failed {
+                graph: terminal_graph.clone(),
+                reason: FailureReason::ProtocolViolation("prior failure".to_string()),
+            },
+        ),
+    ] {
+        let t = do_transition(state, SchedulerEvent::Start);
+        let SchedulerState::Failed { reason, .. } = t.state else {
+            panic!("[{label}] expected Failed, got {:#?}", t.state);
+        };
+        assert!(
+            matches!(reason, FailureReason::ProtocolViolation(_)),
+            "[{label}] expected ProtocolViolation, got {reason:?}"
+        );
+        assert!(t.effects.is_empty(), "[{label}]");
+    }
+}

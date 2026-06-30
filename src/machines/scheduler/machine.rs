@@ -480,8 +480,13 @@ impl SchedulerMachine {
                 )
             }
 
-            (state, event) => {
-                panic!("invalid transition: state={state:#?}, event={event:#?}");
+            (SchedulerState::Complete { graph } | SchedulerState::Failed { graph, .. }, _) => {
+                recovery::failed_transition(
+                    graph,
+                    FailureReason::ProtocolViolation(
+                        "event delivered to terminal state".to_string(),
+                    ),
+                )
             }
         }
     }
