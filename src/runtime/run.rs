@@ -114,7 +114,9 @@ impl ForgeRuntime {
             RunRequest {
                 objective: config.objective.clone(),
             },
-            RunConfig::default(),
+            RunConfig {
+                has_strong_tier: config.provider.strong.is_some(),
+            },
         );
 
         let (output, handler) = run_machine_with_telemetry(handler, initial_state, sink.as_ref());
@@ -162,6 +164,21 @@ impl ForgeRuntime {
     pub fn resume(config: ForgeConfig) -> Result<(), Box<dyn Error>> {
         let runs_root = PathBuf::from(&config.telemetry.directory);
         let (run_dir, initial_state) = find_resumable_run(&runs_root)?;
+        // Re-derive has_strong_tier: it describes what provider tiers exist *now*,
+        // not run history, so stale or pre-fix checkpoints don't silently inherit
+        // the wrong value.
+        let has_strong_tier = config.provider.strong.is_some();
+        let initial_state = match initial_state {
+            SchedulerState::Active { graph, .. } => SchedulerState::Active {
+                graph,
+                run_config: RunConfig { has_strong_tier },
+            },
+            SchedulerState::Waiting { graph, .. } => SchedulerState::Waiting {
+                graph,
+                run_config: RunConfig { has_strong_tier },
+            },
+            other => other,
+        };
         let run_id = run_dir
             .file_name()
             .unwrap_or_default()
@@ -1675,6 +1692,78 @@ mod tests {
         assert!(
             !project_requires_tests(None, None),
             "absent validation must set requires_tests = false"
+        );
+    }
+
+    // ── RunConfig derivation ─────────────────────────────────────────────────
+
+    #[test]
+    fn run_config_has_strong_tier_false_when_provider_strong_is_none() {
+        use crate::machines::scheduler::{RunRequest, SchedulerMachine};
+
+        let provider = unmanaged_provider("http://localhost:8080", "cheap", 512);
+        assert!(
+            provider.strong.is_none(),
+            "test requires no strong tier configured"
+        );
+
+        let run_config = RunConfig {
+            has_strong_tier: provider.strong.is_some(),
+        };
+        let state = SchedulerMachine::initial_state(
+            RunRequest {
+                objective: "test".to_string(),
+            },
+            run_config,
+        );
+
+        let embedded = match &state {
+            SchedulerState::Active { run_config, .. } => run_config,
+            _ => panic!("initial_state must return Active"),
+        };
+        assert!(
+            !embedded.has_strong_tier,
+            "has_strong_tier must be false when provider.strong is None; \
+             RunConfig::default() would give true, causing silent retry on identical model"
+        );
+    }
+
+    #[test]
+    fn run_config_has_strong_tier_true_when_provider_strong_is_some() {
+        use crate::machines::scheduler::{RunRequest, SchedulerMachine};
+
+        let provider = ProviderConfig {
+            cheap: ProviderTierConfig::Unmanaged(UnmanagedProviderConfig {
+                base_url: "http://localhost:8080".to_string(),
+                model: "cheap".to_string(),
+                n_predict: 512,
+            }),
+            strong: Some(ProviderTierConfig::Unmanaged(UnmanagedProviderConfig {
+                base_url: "http://localhost:8081".to_string(),
+                model: "strong".to_string(),
+                n_predict: 1024,
+            })),
+            timeout_seconds: 120,
+            strong_timeout_seconds: None,
+        };
+
+        let run_config = RunConfig {
+            has_strong_tier: provider.strong.is_some(),
+        };
+        let state = SchedulerMachine::initial_state(
+            RunRequest {
+                objective: "test".to_string(),
+            },
+            run_config,
+        );
+
+        let embedded = match &state {
+            SchedulerState::Active { run_config, .. } => run_config,
+            _ => panic!("initial_state must return Active"),
+        };
+        assert!(
+            embedded.has_strong_tier,
+            "has_strong_tier must be true when provider.strong is Some"
         );
     }
 }
