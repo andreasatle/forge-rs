@@ -70,9 +70,11 @@ use crate::machines::scheduler::FailureKind;
 
 use super::effect::DeliberationEffect;
 use super::event::{DeliberationEvent, ProducerValidationResult, RoleResult};
-use super::state::{
-    CriticAdvisory, DeliberationFailureReason, DeliberationOutput, DeliberationRole,
-    DeliberationState, DeliberationTerminalOutput, RevisionFeedback,
+use super::failure::DeliberationFailureReason;
+use super::state::DeliberationState;
+use super::types::{
+    CriticAdvisory, DeliberationOutput, DeliberationRole, DeliberationTerminalOutput,
+    RevisionFeedback,
 };
 
 /// The deliberation machine. All durable data travels in `DeliberationState`.

@@ -1,5 +1,5 @@
+use super::types::DeliberationRole;
 use crate::artifacts::{ArtifactError, ArtifactRead};
-use crate::machines::deliberation::state::DeliberationRole;
 use crate::machines::scheduler::NodeKind;
 use crate::roles::TargetView;
 use crate::roles::runner::RoleToolContext;

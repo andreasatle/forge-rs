@@ -61,6 +61,9 @@ pub use failure::DeliberationFailureReason;
 pub use handler::{DeliberationHandler, ProviderBackedDeliberationHandler};
 pub use machine::DeliberationMachine;
 pub use request::{ArtifactContext, DeliberationContext, DeliberationRequest, SelectedFileContent};
-pub use state::{CriticAdvisory, DeliberationState, RevisionFeedback};
-pub use types::{DeliberationOutput, DeliberationRole, DeliberationTerminalOutput};
+pub use state::DeliberationState;
+pub use types::{
+    CriticAdvisory, DeliberationOutput, DeliberationRole, DeliberationTerminalOutput,
+    RevisionFeedback,
+};
 pub(crate) use validation::PlanValidationContext;

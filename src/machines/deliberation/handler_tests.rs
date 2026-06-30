@@ -8,11 +8,12 @@ use crate::machines::deliberation::effect::DeliberationEffect;
 use crate::machines::deliberation::event::{
     DeliberationEvent, ProducerValidationResult, RoleResult,
 };
+use crate::machines::deliberation::failure::DeliberationFailureReason;
 use crate::machines::deliberation::machine::DeliberationMachine;
 use crate::machines::deliberation::request::DeliberationRequest;
-use crate::machines::deliberation::state::{
-    DeliberationFailureReason, DeliberationRole, DeliberationState, DeliberationTerminalOutput,
-    RevisionFeedback,
+use crate::machines::deliberation::state::DeliberationState;
+use crate::machines::deliberation::types::{
+    DeliberationRole, DeliberationTerminalOutput, RevisionFeedback,
 };
 use crate::machines::scheduler::{FailureKind, NodeKind, TestPlanContext};
 use crate::providers::types::{ProviderError, ProviderResponse};

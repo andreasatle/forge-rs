@@ -2,7 +2,7 @@
 
 use super::{ProjectAdapter, build_file_text_target_views};
 use crate::artifacts::ArtifactRead;
-use crate::machines::deliberation::state::DeliberationRole;
+use crate::machines::deliberation::DeliberationRole;
 use crate::roles::{RolePolicy, TargetView};
 
 const CODING_PLANNER_SYSTEM: &str = "You are a software planning agent. \

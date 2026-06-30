@@ -1,4 +1,4 @@
-use crate::machines::deliberation::state::DeliberationRole;
+use super::types::DeliberationRole;
 use crate::machines::scheduler::FailureKind;
 use crate::roles::runner::{RoleRequest, RoleRunner};
 use crate::telemetry::{TelemetryEvent, TelemetryRecord, TelemetrySink};

@@ -4,7 +4,7 @@
 //! converts the external result back into a `DeliberationEvent`.
 
 use super::request::DeliberationContext;
-use super::state::{DeliberationRole, RevisionFeedback};
+use super::types::{DeliberationRole, RevisionFeedback};
 
 /// Commands emitted by the deliberation machine.
 #[derive(Clone, Debug, PartialEq)]

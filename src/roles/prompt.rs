@@ -1,7 +1,7 @@
 //! Prompt rendering functions for role invocations.
 
-use crate::machines::deliberation::state::{DeliberationRole, RevisionFeedback};
 use crate::machines::deliberation::{ArtifactContext, DeliberationContext};
+use crate::machines::deliberation::{DeliberationRole, RevisionFeedback};
 use crate::machines::scheduler::{NodeKind, TestPlanContext};
 use crate::roles::{TargetView, TargetViewKind};
 use crate::services::extract_json_object;

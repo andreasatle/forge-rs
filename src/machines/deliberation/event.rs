@@ -1,6 +1,6 @@
 //! Events received by the deliberation machine.
 
-use super::state::DeliberationRole;
+use super::types::DeliberationRole;
 use crate::machines::scheduler::FailureKind;
 
 /// The outcome returned by a role after it has run.

@@ -12,7 +12,7 @@ pub use coding::CodingProjectAdapter;
 pub use default::DefaultProjectAdapter;
 
 use crate::artifacts::ArtifactRead;
-use crate::machines::deliberation::state::DeliberationRole;
+use crate::machines::deliberation::DeliberationRole;
 use crate::roles::{RolePolicy, TargetView};
 
 /// Provides project-specific configuration to the Forge runtime.

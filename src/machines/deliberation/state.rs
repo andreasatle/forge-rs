@@ -8,11 +8,8 @@ use crate::machines::scheduler::FailureKind;
 
 use super::request::DeliberationRequest;
 
-pub use super::failure::DeliberationFailureReason;
-pub use super::types::{
-    CriticAdvisory, DeliberationOutput, DeliberationRole, DeliberationTerminalOutput,
-    RevisionFeedback,
-};
+use super::failure::DeliberationFailureReason;
+use super::types::{CriticAdvisory, DeliberationOutput, RevisionFeedback};
 
 /// The lifecycle of the deliberation machine.
 #[derive(Clone, Debug, PartialEq)]

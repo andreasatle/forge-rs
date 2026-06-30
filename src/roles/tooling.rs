@@ -1,7 +1,7 @@
 //! Tool dispatch and policy helpers for role execution.
 
+use crate::machines::deliberation::DeliberationRole;
 use crate::machines::deliberation::event::RoleResult;
-use crate::machines::deliberation::state::DeliberationRole;
 use crate::machines::scheduler::{FailureKind, NodeKind};
 use crate::telemetry::{TelemetryEvent, TelemetryRecord, TelemetrySink};
 use crate::tools::{FileToolExecutor, FileToolPolicy, FileToolRequest, FileToolResponse};
