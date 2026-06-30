@@ -8,10 +8,9 @@ use crate::machines::deliberation::effect::DeliberationEffect;
 use crate::machines::deliberation::event::{
     DeliberationEvent, ProducerValidationResult, RoleResult,
 };
-use crate::machines::deliberation::failure::DeliberationFailureReason;
 use crate::machines::deliberation::machine::DeliberationMachine;
-use crate::machines::deliberation::request::DeliberationRequest;
 use crate::machines::deliberation::state::DeliberationState;
+use crate::machines::deliberation::types::{DeliberationFailureReason, DeliberationRequest};
 use crate::machines::deliberation::types::{
     DeliberationRole, DeliberationTerminalOutput, RevisionFeedback,
 };
@@ -957,4 +956,28 @@ fn handle_effect_without_telemetry_compiles() {
         vec![],
     ));
     assert!(matches!(event, DeliberationEvent::ProducerAccepted { .. }));
+}
+
+#[test]
+fn work_validation_feedback_recommends_write_file_after_failed_replacement() {
+    let feedback = work_validation_feedback(&WorkSemanticValidationError::MissingArtifactMutation);
+
+    assert!(
+        feedback.contains("Use write_file by default")
+            && feedback.contains("replacing most or all of an existing file"),
+        "feedback must make write_file the default for whole-file rewrites; got: {feedback}"
+    );
+    assert!(
+        feedback.contains("Use replace_text only for small, localized edits")
+            && feedback.contains("exact old string that occurs once"),
+        "feedback must restrict replace_text to exact localized edits; got: {feedback}"
+    );
+    assert!(
+        feedback.contains("whitespace, indentation, or formatting differences"),
+        "feedback must mention exact-match whitespace sensitivity; got: {feedback}"
+    );
+    assert!(
+        feedback.contains("switch to write_file instead of retrying another replace_text"),
+        "feedback must recommend write_file after failed whole-file replace_text attempts; got: {feedback}"
+    );
 }

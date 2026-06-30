@@ -70,8 +70,8 @@ use crate::machines::scheduler::FailureKind;
 
 use super::effect::DeliberationEffect;
 use super::event::{DeliberationEvent, ProducerValidationResult, RoleResult};
-use super::failure::DeliberationFailureReason;
 use super::state::DeliberationState;
+use super::types::DeliberationFailureReason;
 use super::types::{
     CriticAdvisory, DeliberationOutput, DeliberationRole, DeliberationTerminalOutput,
     RevisionFeedback,
