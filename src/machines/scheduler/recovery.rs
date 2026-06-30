@@ -9,24 +9,21 @@ use crate::engine::Transition;
 use super::effect::SchedulerEffect;
 use super::event::{FailureKind, RecoveryAction};
 use super::graph::{
-    MAX_ATTEMPTS, attempts_exhausted, cancel_pending_dependents, get_node, graph_has_capacity,
-    graph_size_limit_reason, mark_node, push_node, remap_pending_dependencies,
+    MAX_ATTEMPTS, MAX_GRAPH_NODES, MAX_PLAN_DEPTH, attempts_exhausted, cancel_pending_dependents,
+    get_node, graph_has_capacity, mark_node, push_node, remap_pending_dependencies,
     validate_split_depth,
 };
 use super::state::{
-    ModelTier, Node, NodeId, NodeKind, NodeOrigin, NodeStatus, RetryFeedback, RunConfig, RunGraph,
-    SchedulerState,
+    FailureReason, ModelTier, Node, NodeId, NodeKind, NodeOrigin, NodeStatus, RetryFeedback,
+    RunConfig, RunGraph, SchedulerState,
 };
 
 pub(super) fn failed_transition(
     graph: RunGraph,
-    reason: String,
+    reason: FailureReason,
 ) -> Transition<SchedulerState, SchedulerEffect> {
     Transition {
-        state: SchedulerState::Failed {
-            graph: graph.clone(),
-            reason: reason.clone(),
-        },
+        state: SchedulerState::Failed { graph, reason },
         effects: vec![],
     }
 }
@@ -222,21 +219,26 @@ pub(super) fn route_recovery(
         RecoveryAction::Retry { message } => {
             let exhausted = attempts_exhausted(get_node(&graph, node_id));
             if exhausted {
-                let reason = format!(
-                    "node {} exhausted all {} attempts (Retry)",
-                    node_id.0, MAX_ATTEMPTS
-                );
                 let graph = mark_node(graph, node_id, NodeStatus::Failed);
                 Transition {
                     state: SchedulerState::Failed {
-                        graph: graph.clone(),
-                        reason: reason.clone(),
+                        graph,
+                        reason: FailureReason::AttemptsExhausted {
+                            node_id: node_id.0.clone(),
+                            max_attempts: MAX_ATTEMPTS,
+                            recovery_action: "Retry".to_string(),
+                        },
                     },
                     effects: vec![],
                 }
             } else if !graph_has_capacity(&graph, 1) {
                 let graph = mark_node(graph, node_id, NodeStatus::Failed);
-                failed_transition(graph, graph_size_limit_reason(1))
+                failed_transition(
+                    graph,
+                    FailureReason::GraphCapacityExceeded {
+                        limit: MAX_GRAPH_NODES,
+                    },
+                )
             } else {
                 let graph = apply_retry(graph, node_id, failure_kind, &message);
                 Transition {
@@ -249,26 +251,36 @@ pub(super) fn route_recovery(
         RecoveryAction::Split { message } => {
             let node = get_node(&graph, node_id);
             let exhausted = attempts_exhausted(node);
-            let split_depth_result = validate_split_depth(node.plan_depth);
+            let split_depth_ok = validate_split_depth(node.plan_depth).is_ok();
             if exhausted {
-                let reason = format!(
-                    "node {} exhausted all {} attempts (Split)",
-                    node_id.0, MAX_ATTEMPTS
-                );
                 let graph = mark_node(graph, node_id, NodeStatus::Failed);
                 Transition {
                     state: SchedulerState::Failed {
-                        graph: graph.clone(),
-                        reason: reason.clone(),
+                        graph,
+                        reason: FailureReason::AttemptsExhausted {
+                            node_id: node_id.0.clone(),
+                            max_attempts: MAX_ATTEMPTS,
+                            recovery_action: "Split".to_string(),
+                        },
                     },
                     effects: vec![],
                 }
             } else if !graph_has_capacity(&graph, 1) {
                 let graph = mark_node(graph, node_id, NodeStatus::Failed);
-                failed_transition(graph, graph_size_limit_reason(1))
-            } else if let Err(reason) = split_depth_result {
+                failed_transition(
+                    graph,
+                    FailureReason::GraphCapacityExceeded {
+                        limit: MAX_GRAPH_NODES,
+                    },
+                )
+            } else if !split_depth_ok {
                 let graph = mark_node(graph, node_id, NodeStatus::Failed);
-                failed_transition(graph, reason)
+                failed_transition(
+                    graph,
+                    FailureReason::PlanDepthExceeded {
+                        limit: MAX_PLAN_DEPTH,
+                    },
+                )
             } else {
                 let graph = apply_split(graph, node_id, message);
                 Transition {
@@ -287,21 +299,25 @@ pub(super) fn route_recovery(
 
             if !can_elevate {
                 if exhausted {
-                    let reason = format!(
-                        "node {} exhausted all {} attempts; no higher model tier available",
-                        node_id.0, MAX_ATTEMPTS
-                    );
                     let graph = mark_node(graph, node_id, NodeStatus::Failed);
                     Transition {
                         state: SchedulerState::Failed {
-                            graph: graph.clone(),
-                            reason: reason.clone(),
+                            graph,
+                            reason: FailureReason::NoHigherModelTierAvailable {
+                                node_id: node_id.0.clone(),
+                                max_attempts: MAX_ATTEMPTS,
+                            },
                         },
                         effects: vec![],
                     }
                 } else if !graph_has_capacity(&graph, 1) {
                     let graph = mark_node(graph, node_id, NodeStatus::Failed);
-                    failed_transition(graph, graph_size_limit_reason(1))
+                    failed_transition(
+                        graph,
+                        FailureReason::GraphCapacityExceeded {
+                            limit: MAX_GRAPH_NODES,
+                        },
+                    )
                 } else {
                     let graph = apply_retry(graph, node_id, failure_kind, "");
                     Transition {
@@ -310,21 +326,26 @@ pub(super) fn route_recovery(
                     }
                 }
             } else if exhausted {
-                let reason = format!(
-                    "node {} exhausted all {} attempts (ElevateModel)",
-                    node_id.0, MAX_ATTEMPTS
-                );
                 let graph = mark_node(graph, node_id, NodeStatus::Failed);
                 Transition {
                     state: SchedulerState::Failed {
-                        graph: graph.clone(),
-                        reason: reason.clone(),
+                        graph,
+                        reason: FailureReason::AttemptsExhausted {
+                            node_id: node_id.0.clone(),
+                            max_attempts: MAX_ATTEMPTS,
+                            recovery_action: "ElevateModel".to_string(),
+                        },
                     },
                     effects: vec![],
                 }
             } else if !graph_has_capacity(&graph, 1) {
                 let graph = mark_node(graph, node_id, NodeStatus::Failed);
-                failed_transition(graph, graph_size_limit_reason(1))
+                failed_transition(
+                    graph,
+                    FailureReason::GraphCapacityExceeded {
+                        limit: MAX_GRAPH_NODES,
+                    },
+                )
             } else {
                 let graph = apply_elevate(graph, node_id);
                 Transition {
@@ -335,32 +356,18 @@ pub(super) fn route_recovery(
         }
 
         RecoveryAction::Terminal { message } => {
-            let reason = terminal_failure_reason(&failure_reason, &message);
             let graph = mark_node(graph, node_id, NodeStatus::Failed);
             let graph = cancel_pending_dependents(graph, node_id);
             Transition {
                 state: SchedulerState::Failed {
-                    graph: graph.clone(),
-                    reason: reason.clone(),
+                    graph,
+                    reason: FailureReason::TerminalRecovery {
+                        failure_message: failure_reason,
+                        terminal_message: message,
+                    },
                 },
                 effects: vec![],
             }
         }
     }
-}
-
-pub(super) fn terminal_failure_reason(failure_reason: &str, terminal_message: &str) -> String {
-    if terminal_message.is_empty() {
-        return failure_reason.to_string();
-    }
-    if failure_reason.is_empty()
-        || terminal_message == failure_reason
-        || terminal_message.contains(failure_reason)
-    {
-        return terminal_message.to_string();
-    }
-    if failure_reason.contains(terminal_message) {
-        return failure_reason.to_string();
-    }
-    format!("{terminal_message}: {failure_reason}")
 }

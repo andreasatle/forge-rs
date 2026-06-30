@@ -22,13 +22,16 @@ fn plan_node_rejects_work_accepted() {
     let SchedulerState::Failed { reason, .. } = t.state else {
         panic!("expected Failed, got {:#?}", t.state);
     };
+    let FailureReason::ProtocolViolation(detail) = reason else {
+        panic!("expected ProtocolViolation, got {reason:?}");
+    };
     assert!(
-        reason.contains("Plan"),
-        "reason should mention Plan, got: {reason:?}"
+        detail.contains("Plan"),
+        "detail should mention Plan, got: {detail:?}"
     );
     assert!(
-        reason.contains("WorkAccepted"),
-        "reason should mention WorkAccepted, got: {reason:?}"
+        detail.contains("WorkAccepted"),
+        "detail should mention WorkAccepted, got: {detail:?}"
     );
     assert!(t.effects.is_empty());
 }
@@ -50,13 +53,16 @@ fn work_node_rejects_plan_accepted() {
     let SchedulerState::Failed { reason, .. } = t.state else {
         panic!("expected Failed, got {:#?}", t.state);
     };
+    let FailureReason::ProtocolViolation(detail) = reason else {
+        panic!("expected ProtocolViolation, got {reason:?}");
+    };
     assert!(
-        reason.contains("Work"),
-        "reason should mention Work, got: {reason:?}"
+        detail.contains("Work"),
+        "detail should mention Work, got: {detail:?}"
     );
     assert!(
-        reason.contains("PlanAccepted"),
-        "reason should mention PlanAccepted, got: {reason:?}"
+        detail.contains("PlanAccepted"),
+        "detail should mention PlanAccepted, got: {detail:?}"
     );
     assert!(t.effects.is_empty());
 }
@@ -87,21 +93,20 @@ fn node_returned_rejects_integrating_node() {
     let SchedulerState::Failed { reason, .. } = t.state else {
         panic!("expected Failed, got {:#?}", t.state);
     };
+    let FailureReason::ProtocolViolation(detail) = reason else {
+        panic!("expected ProtocolViolation, got {reason:?}");
+    };
     assert!(
-        reason.contains("protocol violation"),
-        "reason should contain 'protocol violation', got: {reason:?}"
+        detail.contains("NodeReturned"),
+        "detail should contain 'NodeReturned', got: {detail:?}"
     );
     assert!(
-        reason.contains("NodeReturned"),
-        "reason should contain 'NodeReturned', got: {reason:?}"
+        detail.contains("Running"),
+        "detail should mention expected status Running, got: {detail:?}"
     );
     assert!(
-        reason.contains("Running"),
-        "reason should mention expected status Running, got: {reason:?}"
-    );
-    assert!(
-        reason.contains("Integrating"),
-        "reason should mention actual status Integrating, got: {reason:?}"
+        detail.contains("Integrating"),
+        "detail should mention actual status Integrating, got: {detail:?}"
     );
     assert!(t.effects.is_empty());
 }
@@ -126,9 +131,12 @@ fn integration_returned_rejects_non_integrating_work() {
     let SchedulerState::Failed { reason, .. } = t.state else {
         panic!("expected Failed, got {:#?}", t.state);
     };
+    let FailureReason::ProtocolViolation(detail) = reason else {
+        panic!("expected ProtocolViolation, got {reason:?}");
+    };
     assert!(
-        reason.contains("Integrating"),
-        "reason should mention Integrating, got: {reason:?}"
+        detail.contains("Integrating"),
+        "detail should mention Integrating, got: {detail:?}"
     );
     assert!(t.effects.is_empty());
 }
@@ -155,9 +163,12 @@ fn integration_returned_rejects_plan_node() {
     let SchedulerState::Failed { reason, .. } = t.state else {
         panic!("expected Failed, got {:#?}", t.state);
     };
+    let FailureReason::ProtocolViolation(detail) = reason else {
+        panic!("expected ProtocolViolation, got {reason:?}");
+    };
     assert!(
-        reason.contains("Work") || reason.contains("Plan"),
-        "reason should mention Work or Plan, got: {reason:?}"
+        detail.contains("Work") || detail.contains("Plan"),
+        "detail should mention Work or Plan, got: {detail:?}"
     );
     assert!(t.effects.is_empty());
 }
@@ -186,17 +197,16 @@ fn node_returned_wrong_node_fails_scheduler() {
     let SchedulerState::Failed { reason, .. } = t.state else {
         panic!("expected Failed, got {:#?}", t.state);
     };
+    let FailureReason::ProtocolViolation(detail) = reason else {
+        panic!("expected ProtocolViolation, got {reason:?}");
+    };
     assert!(
-        reason.contains("protocol violation"),
-        "reason should contain 'protocol violation', got: {reason:?}"
+        detail.contains('A'),
+        "detail should contain expected node A, got: {detail:?}"
     );
     assert!(
-        reason.contains('A'),
-        "reason should contain expected node A, got: {reason:?}"
-    );
-    assert!(
-        reason.contains('B'),
-        "reason should contain received node B, got: {reason:?}"
+        detail.contains('B'),
+        "detail should contain received node B, got: {detail:?}"
     );
     assert!(t.effects.is_empty());
 }
@@ -225,17 +235,16 @@ fn integration_returned_wrong_node_fails_scheduler() {
     let SchedulerState::Failed { reason, .. } = t.state else {
         panic!("expected Failed, got {:#?}", t.state);
     };
+    let FailureReason::ProtocolViolation(detail) = reason else {
+        panic!("expected ProtocolViolation, got {reason:?}");
+    };
     assert!(
-        reason.contains("protocol violation"),
-        "reason should contain 'protocol violation', got: {reason:?}"
+        detail.contains('A'),
+        "detail should contain expected node A, got: {detail:?}"
     );
     assert!(
-        reason.contains('A'),
-        "reason should contain expected node A, got: {reason:?}"
-    );
-    assert!(
-        reason.contains('B'),
-        "reason should contain received node B, got: {reason:?}"
+        detail.contains('B'),
+        "detail should contain received node B, got: {detail:?}"
     );
     assert!(t.effects.is_empty());
 }
@@ -259,17 +268,16 @@ fn active_rejects_node_returned() {
     let SchedulerState::Failed { reason, .. } = t.state else {
         panic!("expected Failed, got {:#?}", t.state);
     };
+    let FailureReason::ProtocolViolation(detail) = reason else {
+        panic!("expected ProtocolViolation, got {reason:?}");
+    };
     assert!(
-        reason.contains("protocol violation"),
-        "reason should contain 'protocol violation', got: {reason:?}"
+        detail.contains("Active"),
+        "detail should mention Active, got: {detail:?}"
     );
     assert!(
-        reason.contains("Active"),
-        "reason should mention Active, got: {reason:?}"
-    );
-    assert!(
-        reason.contains("NodeReturned"),
-        "reason should mention NodeReturned, got: {reason:?}"
+        detail.contains("NodeReturned"),
+        "detail should mention NodeReturned, got: {detail:?}"
     );
     assert!(t.effects.is_empty());
 }
@@ -293,17 +301,16 @@ fn active_rejects_integration_returned() {
     let SchedulerState::Failed { reason, .. } = t.state else {
         panic!("expected Failed, got {:#?}", t.state);
     };
+    let FailureReason::ProtocolViolation(detail) = reason else {
+        panic!("expected ProtocolViolation, got {reason:?}");
+    };
     assert!(
-        reason.contains("protocol violation"),
-        "reason should contain 'protocol violation', got: {reason:?}"
+        detail.contains("Active"),
+        "detail should mention Active, got: {detail:?}"
     );
     assert!(
-        reason.contains("Active"),
-        "reason should mention Active, got: {reason:?}"
-    );
-    assert!(
-        reason.contains("IntegrationReturned"),
-        "reason should mention IntegrationReturned, got: {reason:?}"
+        detail.contains("IntegrationReturned"),
+        "detail should mention IntegrationReturned, got: {detail:?}"
     );
     assert!(t.effects.is_empty());
 }
@@ -322,17 +329,16 @@ fn waiting_rejects_start() {
     let SchedulerState::Failed { reason, .. } = t.state else {
         panic!("expected Failed, got {:#?}", t.state);
     };
+    let FailureReason::ProtocolViolation(detail) = reason else {
+        panic!("expected ProtocolViolation, got {reason:?}");
+    };
     assert!(
-        reason.contains("protocol violation"),
-        "reason should contain 'protocol violation', got: {reason:?}"
+        detail.contains("Waiting"),
+        "detail should mention Waiting, got: {detail:?}"
     );
     assert!(
-        reason.contains("Waiting"),
-        "reason should mention Waiting, got: {reason:?}"
-    );
-    assert!(
-        reason.contains("Start"),
-        "reason should mention Start, got: {reason:?}"
+        detail.contains("Start"),
+        "detail should mention Start, got: {detail:?}"
     );
     assert!(t.effects.is_empty());
 }
@@ -358,13 +364,16 @@ fn waiting_with_no_active_node_fails_before_matching_returned_node() {
     let SchedulerState::Failed { reason, .. } = t.state else {
         panic!("expected Failed, got {:#?}", t.state);
     };
+    let FailureReason::ProtocolViolation(detail) = reason else {
+        panic!("expected ProtocolViolation, got {reason:?}");
+    };
     assert!(
-        reason.contains("invalid waiting state"),
-        "reason should contain 'invalid waiting state', got: {reason:?}"
+        detail.contains("invalid waiting state"),
+        "detail should contain 'invalid waiting state', got: {detail:?}"
     );
     assert!(
-        reason.contains("found none"),
-        "reason should mention that no active node exists, got: {reason:?}"
+        detail.contains("found none"),
+        "detail should mention that no active node exists, got: {detail:?}"
     );
     assert!(t.effects.is_empty());
 }
@@ -397,13 +406,16 @@ fn waiting_with_only_completed_nodes_fails() {
     let SchedulerState::Failed { reason, .. } = t.state else {
         panic!("expected Failed, got {:#?}", t.state);
     };
+    let FailureReason::ProtocolViolation(detail) = reason else {
+        panic!("expected ProtocolViolation, got {reason:?}");
+    };
     assert!(
-        reason.contains("invalid waiting state"),
-        "reason should contain 'invalid waiting state', got: {reason:?}"
+        detail.contains("invalid waiting state"),
+        "detail should contain 'invalid waiting state', got: {detail:?}"
     );
     assert!(
-        reason.contains("found none"),
-        "reason should mention that no active node exists, got: {reason:?}"
+        detail.contains("found none"),
+        "detail should mention that no active node exists, got: {detail:?}"
     );
     assert!(t.effects.is_empty());
 }
@@ -453,17 +465,20 @@ fn active_state_rejects_preexisting_active_node() {
     let SchedulerState::Failed { reason, .. } = t.state else {
         panic!("expected Failed, got {:#?}", t.state);
     };
+    let FailureReason::ProtocolViolation(detail) = reason else {
+        panic!("expected ProtocolViolation, got {reason:?}");
+    };
     assert!(
-        reason.contains("invalid running state"),
-        "reason should contain 'invalid running state', got: {reason:?}"
+        detail.contains("invalid running state"),
+        "detail should contain 'invalid running state', got: {detail:?}"
     );
     assert!(
-        reason.contains('A'),
-        "reason should contain the node id, got: {reason:?}"
+        detail.contains('A'),
+        "detail should contain the node id, got: {detail:?}"
     );
     assert!(
-        reason.contains("Running"),
-        "reason should contain the status, got: {reason:?}"
+        detail.contains("Running"),
+        "detail should contain the status, got: {detail:?}"
     );
     assert!(t.effects.is_empty());
 }
@@ -484,17 +499,20 @@ fn active_state_rejects_preexisting_integrating_node() {
     let SchedulerState::Failed { reason, .. } = t.state else {
         panic!("expected Failed, got {:#?}", t.state);
     };
+    let FailureReason::ProtocolViolation(detail) = reason else {
+        panic!("expected ProtocolViolation, got {reason:?}");
+    };
     assert!(
-        reason.contains("invalid running state"),
-        "reason should contain 'invalid running state', got: {reason:?}"
+        detail.contains("invalid running state"),
+        "detail should contain 'invalid running state', got: {detail:?}"
     );
     assert!(
-        reason.contains('A'),
-        "reason should contain the node id, got: {reason:?}"
+        detail.contains('A'),
+        "detail should contain the node id, got: {detail:?}"
     );
     assert!(
-        reason.contains("Integrating"),
-        "reason should contain the status, got: {reason:?}"
+        detail.contains("Integrating"),
+        "detail should contain the status, got: {detail:?}"
     );
     assert!(t.effects.is_empty());
 }
@@ -522,13 +540,16 @@ fn waiting_state_rejects_no_active_nodes() {
     let SchedulerState::Failed { reason, .. } = t.state else {
         panic!("expected Failed, got {:#?}", t.state);
     };
+    let FailureReason::ProtocolViolation(detail) = reason else {
+        panic!("expected ProtocolViolation, got {reason:?}");
+    };
     assert!(
-        reason.contains("invalid waiting state"),
-        "reason should contain 'invalid waiting state', got: {reason:?}"
+        detail.contains("invalid waiting state"),
+        "detail should contain 'invalid waiting state', got: {detail:?}"
     );
     assert!(
-        reason.contains("found none") || reason.contains("Pending"),
-        "reason should mention 'found none' or equivalent status, got: {reason:?}"
+        detail.contains("found none") || detail.contains("Pending"),
+        "detail should mention 'found none' or equivalent status, got: {detail:?}"
     );
     assert!(t.effects.is_empty());
 }
@@ -559,17 +580,20 @@ fn waiting_state_rejects_multiple_active_nodes() {
     let SchedulerState::Failed { reason, .. } = t.state else {
         panic!("expected Failed, got {:#?}", t.state);
     };
+    let FailureReason::ProtocolViolation(detail) = reason else {
+        panic!("expected ProtocolViolation, got {reason:?}");
+    };
     assert!(
-        reason.contains("multiple active nodes"),
-        "reason should contain 'multiple active nodes', got: {reason:?}"
+        detail.contains("multiple active nodes"),
+        "detail should contain 'multiple active nodes', got: {detail:?}"
     );
     assert!(
-        reason.contains('B'),
-        "reason should contain node id B, got: {reason:?}"
+        detail.contains('B'),
+        "detail should contain node id B, got: {detail:?}"
     );
     assert!(
-        reason.contains('C'),
-        "reason should contain node id C, got: {reason:?}"
+        detail.contains('C'),
+        "detail should contain node id C, got: {detail:?}"
     );
     assert!(t.effects.is_empty());
 }
@@ -599,17 +623,16 @@ fn waiting_state_rejects_return_for_non_active_node() {
     let SchedulerState::Failed { reason, .. } = t.state else {
         panic!("expected Failed, got {:#?}", t.state);
     };
+    let FailureReason::ProtocolViolation(detail) = reason else {
+        panic!("expected ProtocolViolation, got {reason:?}");
+    };
     assert!(
-        reason.contains("protocol violation"),
-        "reason should contain 'protocol violation', got: {reason:?}"
+        detail.contains('B'),
+        "detail should contain returned node id B, got: {detail:?}"
     );
     assert!(
-        reason.contains('B'),
-        "reason should contain returned node id B, got: {reason:?}"
-    );
-    assert!(
-        reason.contains('C'),
-        "reason should contain active node id C, got: {reason:?}"
+        detail.contains('C'),
+        "detail should contain active node id C, got: {detail:?}"
     );
     assert!(t.effects.is_empty());
 }

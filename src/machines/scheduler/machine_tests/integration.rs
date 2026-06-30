@@ -105,8 +105,15 @@ fn scheduler_output_includes_integration_failure_reason() {
     let SchedulerState::Failed { reason, .. } = t.state else {
         panic!("expected Failed, got {:#?}", t.state);
     };
-    assert!(reason.contains("integration failed"));
-    assert!(reason.contains("validation failed: cargo test failed"));
+    let FailureReason::TerminalRecovery {
+        terminal_message,
+        failure_message,
+    } = reason
+    else {
+        panic!("expected TerminalRecovery, got {reason:?}");
+    };
+    assert_eq!(terminal_message, "integration failed");
+    assert!(failure_message.contains("validation failed: cargo test failed"));
 }
 
 #[test]

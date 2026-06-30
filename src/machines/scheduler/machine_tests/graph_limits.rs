@@ -34,10 +34,10 @@ fn plan_child_depth_limit_fails_scheduler() {
     };
     assert_eq!(graph.nodes.len(), 1, "must not insert child plan");
     assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
-    assert!(
-        reason.contains("plan depth limit") && reason.contains(&MAX_PLAN_DEPTH.to_string()),
-        "unexpected reason: {reason:?}"
-    );
+    let FailureReason::PlanDepthExceeded { limit } = reason else {
+        panic!("expected PlanDepthExceeded, got {reason:?}");
+    };
+    assert_eq!(limit, MAX_PLAN_DEPTH, "unexpected depth limit");
     assert!(t.effects.is_empty());
 }
 
@@ -108,8 +108,10 @@ fn plan_expansion_respects_graph_size_limit() {
             .all(|node| !matches!(node.origin, NodeOrigin::PlanExpansion)),
         "no children should be inserted"
     );
-    assert!(reason.contains("graph size limit"));
-    assert!(reason.contains(&MAX_GRAPH_NODES.to_string()));
+    let FailureReason::GraphCapacityExceeded { limit } = reason else {
+        panic!("expected GraphCapacityExceeded, got {reason:?}");
+    };
+    assert_eq!(limit, MAX_GRAPH_NODES);
     assert!(t.effects.is_empty());
 }
 
@@ -173,11 +175,10 @@ fn recovery_respects_graph_size_limit() {
             }),
             "[{case}] no replacement should be created"
         );
-        assert!(
-            reason.contains("graph size limit"),
-            "[{case}] got: {reason:?}"
-        );
-        assert!(reason.contains(&MAX_GRAPH_NODES.to_string()), "[{case}]");
+        let FailureReason::GraphCapacityExceeded { limit } = reason else {
+            panic!("[{case}] expected GraphCapacityExceeded, got {reason:?}");
+        };
+        assert_eq!(limit, MAX_GRAPH_NODES, "[{case}]");
         assert!(t.effects.is_empty(), "[{case}]");
     }
 }
@@ -214,10 +215,10 @@ fn split_depth_limit_fails_scheduler() {
     };
     assert_eq!(graph.nodes.len(), 1, "must not insert split plan");
     assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
-    assert!(
-        reason.contains("plan depth limit") && reason.contains(&MAX_PLAN_DEPTH.to_string()),
-        "unexpected reason: {reason:?}"
-    );
+    let FailureReason::PlanDepthExceeded { limit } = reason else {
+        panic!("expected PlanDepthExceeded, got {reason:?}");
+    };
+    assert_eq!(limit, MAX_PLAN_DEPTH, "unexpected depth limit");
     assert!(t.effects.is_empty());
 }
 
@@ -239,13 +240,16 @@ fn no_ready_reports_missing_dependency() {
     let SchedulerState::Failed { reason, .. } = t.state else {
         panic!("expected Failed, got {:#?}", t.state);
     };
+    let FailureReason::GraphInvariantViolation(detail) = reason else {
+        panic!("expected GraphInvariantViolation, got {reason:?}");
+    };
     assert!(
-        reason.contains("missing dependency"),
-        "reason should mention missing dependency, got: {reason:?}"
+        detail.contains("missing dependency"),
+        "detail should mention missing dependency, got: {detail:?}"
     );
     assert!(
-        reason.contains('B'),
-        "reason should contain the missing node id, got: {reason:?}"
+        detail.contains('B'),
+        "detail should contain the missing node id, got: {detail:?}"
     );
 }
 
@@ -270,9 +274,12 @@ fn no_ready_reports_blocked_or_possible_cycle() {
     let SchedulerState::Failed { reason, .. } = t.state else {
         panic!("expected Failed, got {:#?}", t.state);
     };
+    let FailureReason::Deadlock(detail) = reason else {
+        panic!("expected Deadlock, got {reason:?}");
+    };
     assert!(
-        reason.contains("blocked") || reason.contains("cycle"),
-        "reason should mention blocked or cycle, got: {reason:?}"
+        detail.contains("blocked") || detail.contains("cycle"),
+        "detail should mention blocked or cycle, got: {detail:?}"
     );
 }
 
@@ -297,13 +304,16 @@ fn duplicate_node_ids_fail_graph_validation() {
     let SchedulerState::Failed { reason, .. } = t.state else {
         panic!("expected Failed, got {:#?}", t.state);
     };
+    let FailureReason::GraphInvariantViolation(detail) = reason else {
+        panic!("expected GraphInvariantViolation, got {reason:?}");
+    };
     assert!(
-        reason.contains("duplicate node id"),
-        "reason should mention duplicate node id, got: {reason:?}"
+        detail.contains("duplicate node id"),
+        "detail should mention duplicate node id, got: {detail:?}"
     );
     assert!(
-        reason.contains('A'),
-        "reason should contain the duplicated id, got: {reason:?}"
+        detail.contains('A'),
+        "detail should contain the duplicated id, got: {detail:?}"
     );
     assert!(t.effects.is_empty());
 }
@@ -324,13 +334,16 @@ fn missing_dependency_fails_graph_validation() {
     let SchedulerState::Failed { reason, .. } = t.state else {
         panic!("expected Failed, got {:#?}", t.state);
     };
+    let FailureReason::GraphInvariantViolation(detail) = reason else {
+        panic!("expected GraphInvariantViolation, got {reason:?}");
+    };
     assert!(
-        reason.contains("missing dependency"),
-        "reason should mention missing dependency, got: {reason:?}"
+        detail.contains("missing dependency"),
+        "detail should mention missing dependency, got: {detail:?}"
     );
     assert!(
-        reason.contains("ghost"),
-        "reason should contain the missing dependency id, got: {reason:?}"
+        detail.contains("ghost"),
+        "detail should contain the missing dependency id, got: {detail:?}"
     );
     assert!(t.effects.is_empty());
 }
@@ -388,21 +401,24 @@ fn retry_origin_with_missing_source_fails_validation() {
     let SchedulerState::Failed { reason, .. } = t.state else {
         panic!("expected Failed, got {:#?}", t.state);
     };
+    let FailureReason::GraphInvariantViolation(detail) = reason else {
+        panic!("expected GraphInvariantViolation, got {reason:?}");
+    };
     assert!(
-        reason.contains("missing origin source"),
-        "reason should contain 'missing origin source', got: {reason:?}"
+        detail.contains("missing origin source"),
+        "detail should contain 'missing origin source', got: {detail:?}"
     );
     assert!(
-        reason.contains("Retry"),
-        "reason should mention Retry, got: {reason:?}"
+        detail.contains("Retry"),
+        "detail should mention Retry, got: {detail:?}"
     );
     assert!(
-        reason.contains('B'),
-        "reason should contain node id B, got: {reason:?}"
+        detail.contains('B'),
+        "detail should contain node id B, got: {detail:?}"
     );
     assert!(
-        reason.contains("missing"),
-        "reason should contain missing source id, got: {reason:?}"
+        detail.contains("missing"),
+        "detail should contain missing source id, got: {detail:?}"
     );
     assert!(t.effects.is_empty());
 }
@@ -428,21 +444,24 @@ fn elevate_origin_with_missing_source_fails_validation() {
     let SchedulerState::Failed { reason, .. } = t.state else {
         panic!("expected Failed, got {:#?}", t.state);
     };
+    let FailureReason::GraphInvariantViolation(detail) = reason else {
+        panic!("expected GraphInvariantViolation, got {reason:?}");
+    };
     assert!(
-        reason.contains("missing origin source"),
-        "reason should contain 'missing origin source', got: {reason:?}"
+        detail.contains("missing origin source"),
+        "detail should contain 'missing origin source', got: {detail:?}"
     );
     assert!(
-        reason.contains("ElevateModel"),
-        "reason should mention ElevateModel, got: {reason:?}"
+        detail.contains("ElevateModel"),
+        "detail should mention ElevateModel, got: {detail:?}"
     );
     assert!(
-        reason.contains('B'),
-        "reason should contain node id B, got: {reason:?}"
+        detail.contains('B'),
+        "detail should contain node id B, got: {detail:?}"
     );
     assert!(
-        reason.contains("missing"),
-        "reason should contain missing source id, got: {reason:?}"
+        detail.contains("missing"),
+        "detail should contain missing source id, got: {detail:?}"
     );
     assert!(t.effects.is_empty());
 }
@@ -468,21 +487,24 @@ fn split_origin_with_missing_source_fails_validation() {
     let SchedulerState::Failed { reason, .. } = t.state else {
         panic!("expected Failed, got {:#?}", t.state);
     };
+    let FailureReason::GraphInvariantViolation(detail) = reason else {
+        panic!("expected GraphInvariantViolation, got {reason:?}");
+    };
     assert!(
-        reason.contains("missing origin source"),
-        "reason should contain 'missing origin source', got: {reason:?}"
+        detail.contains("missing origin source"),
+        "detail should contain 'missing origin source', got: {detail:?}"
     );
     assert!(
-        reason.contains("Split"),
-        "reason should mention Split, got: {reason:?}"
+        detail.contains("Split"),
+        "detail should mention Split, got: {detail:?}"
     );
     assert!(
-        reason.contains('B'),
-        "reason should contain node id B, got: {reason:?}"
+        detail.contains('B'),
+        "detail should contain node id B, got: {detail:?}"
     );
     assert!(
-        reason.contains("missing"),
-        "reason should contain missing source id, got: {reason:?}"
+        detail.contains("missing"),
+        "detail should contain missing source id, got: {detail:?}"
     );
     assert!(t.effects.is_empty());
 }

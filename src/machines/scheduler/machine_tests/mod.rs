@@ -6,7 +6,7 @@ use crate::machines::scheduler::event::{
     NodeRequest, PlanOutput, RecoveryAction, WorkOutput,
 };
 use crate::machines::scheduler::handler::SchedulerHandler;
-use crate::machines::scheduler::state::{Node, RunConfig, RunGraph, RunRequest};
+use crate::machines::scheduler::state::{FailureReason, Node, RunConfig, RunGraph, RunRequest};
 use crate::node_runner::StaticNodeRunner;
 
 fn scheduler_handler() -> SchedulerHandler<StaticNodeRunner> {

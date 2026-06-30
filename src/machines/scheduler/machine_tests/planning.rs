@@ -95,9 +95,12 @@ fn plan_with_unknown_dependency_fails_scheduler() {
         NodeStatus::Running,
         "plan node should be unchanged"
     );
+    let FailureReason::GraphInvariantViolation(detail) = reason else {
+        panic!("expected GraphInvariantViolation, got {reason:?}");
+    };
     assert!(
-        reason.contains("missing"),
-        "reason should mention the missing id, got: {reason:?}"
+        detail.contains("missing"),
+        "detail should mention the missing id, got: {detail:?}"
     );
     assert!(t.effects.is_empty());
 }
@@ -527,13 +530,16 @@ fn ordinary_missing_dependency_still_reports_unknown_node() {
         panic!("expected Failed, got {:#?}", t.state);
     };
     assert_eq!(graph.nodes.len(), 1, "no children should be inserted");
+    let FailureReason::GraphInvariantViolation(detail) = reason else {
+        panic!("expected GraphInvariantViolation, got {reason:?}");
+    };
     assert!(
-        !reason.contains("same-batch sibling dependency"),
-        "unknown dep should not be reported as sibling, got: {reason:?}"
+        !detail.contains("same-batch sibling dependency"),
+        "unknown dep should not be reported as sibling, got: {detail:?}"
     );
     assert!(
-        reason.contains("ghost"),
-        "reason should name the unknown id, got: {reason:?}"
+        detail.contains("ghost"),
+        "detail should name the unknown id, got: {detail:?}"
     );
     assert!(t.effects.is_empty());
 }

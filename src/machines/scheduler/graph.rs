@@ -318,13 +318,7 @@ pub(super) fn plan_child_depth(parent_depth: usize, kind: &NodeKind) -> usize {
     }
 }
 
-pub(super) fn graph_size_limit_reason(additional_nodes: usize) -> String {
-    format!(
-        "graph size limit exceeded: cannot add {additional_nodes} node(s); limit is {MAX_GRAPH_NODES}"
-    )
-}
-
-pub(super) fn plan_depth_limit_reason(depth: usize) -> String {
+fn plan_depth_limit_reason(depth: usize) -> String {
     format!("plan depth limit exceeded: requested depth {depth}; limit is {MAX_PLAN_DEPTH}")
 }
 

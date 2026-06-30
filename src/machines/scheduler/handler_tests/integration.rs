@@ -349,10 +349,10 @@ fn revision_exhaustion_records_final_work_attempt_evidence_before_cleanup() {
     let SchedulerOutput::Failed { graph, reason } = output else {
         panic!("expected terminal scheduler failure after revision exhaustion");
     };
-    assert!(
-        reason.contains("exhausted"),
-        "scheduler failure should mention exhausted recovery attempts; got: {reason}"
-    );
+    let FailureReason::AttemptsExhausted { node_id, .. } = reason else {
+        panic!("expected AttemptsExhausted, got {reason:?}");
+    };
+    assert_eq!(node_id, "W", "exhausted node id");
     assert_eq!(graph.nodes.len(), 1);
     assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
     assert_eq!(graph.nodes[0].attempt, 3);

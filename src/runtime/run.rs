@@ -124,20 +124,25 @@ impl ForgeRuntime {
         let validation_passed = handler.validation_passed();
         print_summary(&output, &config, final_artifact.as_ref(), &run_info);
 
-        let (status, final_commit, failure_reason) = match &output {
+        let failure_reason_str: Option<String> =
+            if let SchedulerOutput::Failed { reason, .. } = &output {
+                Some(reason.to_string())
+            } else {
+                None
+            };
+        let (status, final_commit) = match &output {
             SchedulerOutput::Complete { .. } => (
                 "succeeded",
                 final_artifact.as_ref().map(|a| a.commit_sha.as_str()),
-                None,
             ),
-            SchedulerOutput::Failed { reason, .. } => ("failed", None, Some(reason.as_str())),
+            SchedulerOutput::Failed { .. } => ("failed", None),
         };
         if let Err(e) = finalize_manifest(
             &run_info,
             status,
             final_commit,
             validation_passed,
-            failure_reason,
+            failure_reason_str.as_deref(),
         ) {
             eprintln!("warning: failed to finalize manifest: {e}");
         }
@@ -240,20 +245,25 @@ impl ForgeRuntime {
         let validation_passed = handler.validation_passed();
         print_summary(&output, &config, final_artifact.as_ref(), &run_info);
 
-        let (status, final_commit, failure_reason) = match &output {
+        let failure_reason_str: Option<String> =
+            if let SchedulerOutput::Failed { reason, .. } = &output {
+                Some(reason.to_string())
+            } else {
+                None
+            };
+        let (status, final_commit) = match &output {
             SchedulerOutput::Complete { .. } => (
                 "succeeded",
                 final_artifact.as_ref().map(|a| a.commit_sha.as_str()),
-                None,
             ),
-            SchedulerOutput::Failed { reason, .. } => ("failed", None, Some(reason.as_str())),
+            SchedulerOutput::Failed { .. } => ("failed", None),
         };
         if let Err(e) = finalize_manifest(
             &run_info,
             status,
             final_commit,
             validation_passed,
-            failure_reason,
+            failure_reason_str.as_deref(),
         ) {
             eprintln!("warning: failed to finalize manifest: {e}");
         }
@@ -541,7 +551,7 @@ mod tests {
         UnmanagedProviderConfig,
     };
     use crate::machines::scheduler::machine::{RecoverySummary, SchedulerOutput};
-    use crate::machines::scheduler::state::RunGraph;
+    use crate::machines::scheduler::state::{FailureReason, RunGraph};
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static NEXT_ID: AtomicU64 = AtomicU64::new(0);
@@ -821,7 +831,7 @@ mod tests {
     fn failed_runtime_run_returns_error_or_nonzero_status() {
         let output = SchedulerOutput::Failed {
             graph: empty_graph(),
-            reason: "something went wrong".to_string(),
+            reason: FailureReason::ProtocolViolation("something went wrong".to_string()),
         };
         let result = runtime_result_from_scheduler_output(output);
         assert!(result.is_err(), "Failed output must produce an error");
@@ -835,8 +845,10 @@ mod tests {
     fn runtime_error_includes_provider_failure_reason() {
         let output = SchedulerOutput::Failed {
             graph: empty_graph(),
-            reason: "deliberation failed: provider error (Retryable): connection refused"
-                .to_string(),
+            reason: FailureReason::TerminalRecovery {
+                terminal_message: "deliberation failed".to_string(),
+                failure_message: "provider error (Retryable): connection refused".to_string(),
+            },
         };
         let result = runtime_result_from_scheduler_output(output);
         let err = result.expect_err("failed output must become an error");
@@ -1551,11 +1563,25 @@ mod tests {
         let (output, handler) = run_machine_with_telemetry(handler, initial_state, &NoopTelemetry);
 
         let validation_passed = handler.validation_passed();
-        let (status, failure_reason) = match &output {
-            SchedulerOutput::Complete { .. } => ("succeeded", None),
-            SchedulerOutput::Failed { reason, .. } => ("failed", Some(reason.as_str())),
+        let failure_reason_str: Option<String> =
+            if let SchedulerOutput::Failed { reason, .. } = &output {
+                Some(reason.to_string())
+            } else {
+                None
+            };
+        let status = if matches!(output, SchedulerOutput::Failed { .. }) {
+            "failed"
+        } else {
+            "succeeded"
         };
-        finalize_manifest(&run_info, status, None, validation_passed, failure_reason).unwrap();
+        finalize_manifest(
+            &run_info,
+            status,
+            None,
+            validation_passed,
+            failure_reason_str.as_deref(),
+        )
+        .unwrap();
 
         let content = std::fs::read_to_string(run_info.run_dir.join("manifest.json")).unwrap();
         let v: serde_json::Value = serde_json::from_str(&content).unwrap();

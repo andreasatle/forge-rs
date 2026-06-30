@@ -50,9 +50,12 @@ fn final_run_fails_when_required_test_target_is_absent() {
     let SchedulerState::Failed { reason, .. } = t.state else {
         panic!("expected Failed, got {:#?}", t.state);
     };
+    let FailureReason::RequiredTestTargetsMissing(detail) = reason else {
+        panic!("expected RequiredTestTargetsMissing, got {reason:?}");
+    };
     assert!(
-        reason.contains("test_main.py"),
-        "failure reason should identify missing required test target; got: {reason}"
+        detail.contains("test_main.py"),
+        "failure reason should identify missing required test target; got: {detail}"
     );
     assert!(t.effects.is_empty());
 }
@@ -199,8 +202,15 @@ fn scheduler_output_includes_node_failure_reason() {
     let SchedulerState::Failed { reason, .. } = t.state else {
         panic!("expected Failed, got {:#?}", t.state);
     };
-    assert!(reason.contains("deliberation failed"));
-    assert!(reason.contains("provider error (Retryable): connection refused"));
+    let FailureReason::TerminalRecovery {
+        terminal_message,
+        failure_message,
+    } = reason
+    else {
+        panic!("expected TerminalRecovery, got {reason:?}");
+    };
+    assert_eq!(terminal_message, "deliberation failed");
+    assert!(failure_message.contains("provider error (Retryable): connection refused"));
 }
 
 #[test]

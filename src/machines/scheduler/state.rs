@@ -13,6 +13,8 @@
 //! - `RunGraph::next_id` is an internal generator cursor used when the
 //!   scheduler mints new identifiers.
 
+use std::fmt;
+
 use serde::{Deserialize, Serialize};
 
 use crate::validation::ValidationPlan;
@@ -265,6 +267,110 @@ impl Default for RunConfig {
     }
 }
 
+/// The typed cause of a scheduler run failure.
+///
+/// Replaces the raw `reason: String` in `SchedulerState::Failed` and
+/// `SchedulerOutput::Failed` so callers can distinguish failure causes without
+/// string parsing. The `Display` impl produces a human-readable message for
+/// telemetry and manifests.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum FailureReason {
+    /// A graph invariant was violated (duplicate IDs, missing dependencies, orphaned origins).
+    GraphInvariantViolation(String),
+    /// A protocol error: wrong event for state, wrong outcome for node kind, ID mismatch, etc.
+    ProtocolViolation(String),
+    /// No node is ready to run but the graph is not yet complete; blocked dependency chain or cycle.
+    Deadlock(String),
+    /// A node exhausted all retry attempts under a recoverable recovery action.
+    AttemptsExhausted {
+        /// The ID of the node that exhausted its attempts.
+        node_id: String,
+        /// The attempt limit that was reached.
+        max_attempts: u32,
+        /// The recovery action that triggered the exhaustion check (`"Retry"`, `"Split"`, `"ElevateModel"`).
+        recovery_action: String,
+    },
+    /// ElevateModel was requested but no higher model tier exists and attempts are exhausted.
+    NoHigherModelTierAvailable {
+        /// The ID of the node that could not be elevated.
+        node_id: String,
+        /// The attempt limit at the time of failure.
+        max_attempts: u32,
+    },
+    /// Adding recovery nodes would exceed the graph size limit.
+    GraphCapacityExceeded {
+        /// The maximum number of nodes permitted in a run graph.
+        limit: usize,
+    },
+    /// A plan expansion would exceed the plan depth limit.
+    PlanDepthExceeded {
+        /// The maximum nesting depth permitted for plan nodes.
+        limit: usize,
+    },
+    /// A terminal recovery action halted the run.
+    TerminalRecovery {
+        /// The message from the `Terminal` recovery action.
+        terminal_message: String,
+        /// The original failure message that triggered the terminal recovery.
+        failure_message: String,
+    },
+    /// Required test targets were not completed before the run finished.
+    RequiredTestTargetsMissing(String),
+}
+
+impl fmt::Display for FailureReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::GraphInvariantViolation(detail) => write!(f, "{detail}"),
+            Self::ProtocolViolation(detail) => write!(f, "protocol violation: {detail}"),
+            Self::Deadlock(detail) => write!(f, "{detail}"),
+            Self::AttemptsExhausted {
+                node_id,
+                max_attempts,
+                recovery_action,
+            } => {
+                write!(
+                    f,
+                    "node {node_id} exhausted all {max_attempts} attempts ({recovery_action})"
+                )
+            }
+            Self::NoHigherModelTierAvailable {
+                node_id,
+                max_attempts,
+            } => {
+                write!(
+                    f,
+                    "node {node_id} exhausted all {max_attempts} attempts; no higher model tier available"
+                )
+            }
+            Self::GraphCapacityExceeded { limit } => {
+                write!(f, "graph size limit exceeded; limit is {limit}")
+            }
+            Self::PlanDepthExceeded { limit } => {
+                write!(f, "plan depth limit exceeded; limit is {limit}")
+            }
+            Self::TerminalRecovery {
+                terminal_message,
+                failure_message,
+            } => {
+                if terminal_message.is_empty() {
+                    write!(f, "{failure_message}")
+                } else if failure_message.is_empty()
+                    || terminal_message == failure_message
+                    || terminal_message.contains(failure_message.as_str())
+                {
+                    write!(f, "{terminal_message}")
+                } else if failure_message.contains(terminal_message.as_str()) {
+                    write!(f, "{failure_message}")
+                } else {
+                    write!(f, "{terminal_message}: {failure_message}")
+                }
+            }
+            Self::RequiredTestTargetsMissing(detail) => write!(f, "{detail}"),
+        }
+    }
+}
+
 /// The durable checkpoints of the scheduler state machine.
 ///
 /// Each variant carries exactly the data needed to resume from that point.
@@ -344,7 +450,7 @@ pub enum SchedulerState {
     Failed {
         /// The graph at the point of failure.
         graph: RunGraph,
-        /// A human-readable explanation of why the run was halted.
-        reason: String,
+        /// The typed cause of the failure.
+        reason: FailureReason,
     },
 }

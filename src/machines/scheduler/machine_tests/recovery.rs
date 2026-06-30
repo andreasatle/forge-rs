@@ -368,10 +368,10 @@ fn recovery_exhaustion_fails_scheduler() {
             "[{case}] no replacement node should be created"
         );
         assert_eq!(graph.nodes[0].status, NodeStatus::Failed, "[{case}]");
-        assert!(
-            reason.contains("exhausted"),
-            "[{case}] reason should mention exhaustion, got: {reason:?}"
-        );
+        let FailureReason::AttemptsExhausted { node_id, .. } = reason else {
+            panic!("[{case}] expected AttemptsExhausted, got {reason:?}");
+        };
+        assert_eq!(node_id, "W", "[{case}] exhausted node id");
         assert!(t.effects.is_empty(), "[{case}]");
     }
 }
@@ -600,10 +600,10 @@ fn integration_failure_exhaustion_fails_scheduler() {
             "[{case}] no replacement should be created"
         );
         assert_eq!(graph.nodes[0].status, NodeStatus::Failed, "[{case}]");
-        assert!(
-            reason.contains("exhausted"),
-            "[{case}] reason should mention exhaustion, got: {reason:?}"
-        );
+        let FailureReason::AttemptsExhausted { node_id, .. } = reason else {
+            panic!("[{case}] expected AttemptsExhausted, got {reason:?}");
+        };
+        assert_eq!(node_id, "B", "[{case}] exhausted node id");
         assert!(t.effects.is_empty(), "[{case}]");
     }
 }
@@ -728,14 +728,15 @@ fn single_tier_elevate_exhausted_gives_clear_terminal_failure() {
     };
     assert_eq!(graph.nodes.len(), 1, "no replacement should be created");
     assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
-    assert!(
-        reason.contains("no higher model tier available"),
-        "reason must mention no higher model tier, got: {reason:?}"
-    );
-    assert!(
-        reason.contains("exhausted") || reason.contains(&MAX_ATTEMPTS.to_string()),
-        "reason must mention attempt exhaustion, got: {reason:?}"
-    );
+    let FailureReason::NoHigherModelTierAvailable {
+        node_id,
+        max_attempts,
+    } = reason
+    else {
+        panic!("expected NoHigherModelTierAvailable, got {reason:?}");
+    };
+    assert_eq!(node_id, "W", "exhausted node id");
+    assert_eq!(max_attempts, MAX_ATTEMPTS, "attempt limit");
     assert!(t.effects.is_empty());
 }
 
