@@ -8,10 +8,9 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::artifacts::{ArtifactRead, Workspace};
+use crate::machines::deliberation::DeliberationContext;
 use crate::machines::deliberation::event::RoleResult;
-use crate::machines::deliberation::state::{
-    DeliberationContext, DeliberationRole, RevisionFeedback,
-};
+use crate::machines::deliberation::state::{DeliberationRole, RevisionFeedback};
 use crate::machines::scheduler::{FailureKind, NodeKind, TestPlanContext};
 use crate::node_runner::planner::{try_parse_planner_response, validate_planner_output};
 use crate::providers::{ProviderClient, ProviderErrorKind, ProviderRequest, StructuredOutput};

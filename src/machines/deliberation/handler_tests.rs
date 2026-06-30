@@ -9,9 +9,10 @@ use crate::machines::deliberation::event::{
     DeliberationEvent, ProducerValidationResult, RoleResult,
 };
 use crate::machines::deliberation::machine::DeliberationMachine;
+use crate::machines::deliberation::request::DeliberationRequest;
 use crate::machines::deliberation::state::{
-    DeliberationFailureReason, DeliberationRequest, DeliberationRole, DeliberationState,
-    DeliberationTerminalOutput, RevisionFeedback,
+    DeliberationFailureReason, DeliberationRole, DeliberationState, DeliberationTerminalOutput,
+    RevisionFeedback,
 };
 use crate::machines::scheduler::{FailureKind, NodeKind, TestPlanContext};
 use crate::providers::types::{ProviderError, ProviderResponse};

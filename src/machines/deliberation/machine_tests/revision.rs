@@ -5,7 +5,7 @@ fn referee_rejection_after_critic_rejection_loops_when_revisions_remain() {
     let after_producer = producer_accepts(
         step(
             DeliberationState::Ready {
-                request: crate::machines::deliberation::state::DeliberationRequest {
+                request: crate::machines::deliberation::DeliberationRequest {
                     objective: "write a poem".to_string(),
                     context: crate::machines::deliberation::DeliberationContext::default(),
                     max_revisions: 1,

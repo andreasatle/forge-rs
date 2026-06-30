@@ -44,6 +44,7 @@ pub mod event;
 pub mod handler;
 pub mod machine;
 mod planner_validation;
+pub mod request;
 mod role_execution;
 mod semantic_validation;
 pub mod state;
@@ -56,9 +57,9 @@ pub use effect::DeliberationEffect;
 pub use event::{DeliberationEvent, ProducerValidationResult, RoleResult};
 pub use handler::{DeliberationHandler, ProviderBackedDeliberationHandler};
 pub use machine::DeliberationMachine;
+pub use request::{ArtifactContext, DeliberationContext, DeliberationRequest, SelectedFileContent};
 pub use state::{
-    ArtifactContext, DeliberationContext, DeliberationFailureReason, DeliberationOutput,
-    DeliberationRequest, DeliberationRole, DeliberationState, DeliberationTerminalOutput,
-    ProducerValidationState, RevisionFeedback, SelectedFileContent,
+    DeliberationFailureReason, DeliberationOutput, DeliberationRole, DeliberationState,
+    DeliberationTerminalOutput, ProducerValidationState, RevisionFeedback,
 };
 pub(crate) use validation::PlanValidationContext;

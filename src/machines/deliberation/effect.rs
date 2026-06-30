@@ -3,7 +3,8 @@
 //! Effects are commands. The machine emits them; the handler executes them and
 //! converts the external result back into a `DeliberationEvent`.
 
-use super::state::{DeliberationContext, DeliberationRole, RevisionFeedback};
+use super::request::DeliberationContext;
+use super::state::{DeliberationRole, RevisionFeedback};
 
 /// Commands emitted by the deliberation machine.
 #[derive(Clone, Debug, PartialEq)]

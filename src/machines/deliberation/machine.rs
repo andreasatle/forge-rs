@@ -95,7 +95,7 @@ impl DeliberationMachine {
     }
 
     fn producer_accepted_transition(
-        request: super::state::DeliberationRequest,
+        request: super::request::DeliberationRequest,
         feedback: Vec<RevisionFeedback>,
         producer_validation: ProducerValidationState,
         content: String,

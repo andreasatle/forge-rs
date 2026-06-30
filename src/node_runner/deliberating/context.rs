@@ -3,9 +3,7 @@
 use std::sync::Arc;
 
 use crate::artifacts::ArtifactView;
-use crate::machines::deliberation::state::{
-    ArtifactContext, DeliberationContext, SelectedFileContent,
-};
+use crate::machines::deliberation::{ArtifactContext, DeliberationContext, SelectedFileContent};
 use crate::node_runner::TestTargetsFn;
 use crate::node_runner::types::NodeRunRequest;
 
