@@ -123,6 +123,7 @@ impl SchedulerMachine {
             summary: None,
             origin: NodeOrigin::Root,
             validation_plan: None,
+            retry_feedback: None,
         };
         SchedulerState::Active {
             graph: RunGraph {
@@ -210,7 +211,15 @@ impl SchedulerMachine {
                         }
                     } else {
                         let node_id = ready[0].clone();
-                        let (kind, objective, target_files, test_plan_context, model_tier, attempt) = {
+                        let (
+                            kind,
+                            objective,
+                            target_files,
+                            test_plan_context,
+                            model_tier,
+                            attempt,
+                            retry_feedback,
+                        ) = {
                             let n = graph::get_node(&graph, &node_id);
                             (
                                 n.kind.clone(),
@@ -219,6 +228,7 @@ impl SchedulerMachine {
                                 graph::test_plan_context_for_node(&graph, &node_id),
                                 n.model_tier,
                                 n.attempt,
+                                n.retry_feedback.clone(),
                             )
                         };
                         let effect = SchedulerEffect::RunNode {
@@ -229,6 +239,7 @@ impl SchedulerMachine {
                             test_plan_context,
                             model_tier,
                             attempt,
+                            retry_feedback,
                         };
                         let graph = graph::mark_node(graph, &node_id, NodeStatus::Running);
                         Transition {

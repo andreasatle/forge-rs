@@ -51,6 +51,7 @@ fn integration_executes_nodes_passing_validation_plan() {
         test_plan_context: TestPlanContext::default(),
         model_tier: ModelTier::Cheap,
         attempt: 0,
+        retry_feedback: None,
     });
 
     let event = h.handle_effect(SchedulerEffect::IntegrateWork {
@@ -96,6 +97,7 @@ fn integration_executes_nodes_failing_validation_plan() {
         test_plan_context: TestPlanContext::default(),
         model_tier: ModelTier::Cheap,
         attempt: 0,
+        retry_feedback: None,
     });
 
     let event = h.handle_effect(SchedulerEffect::IntegrateWork {
@@ -159,6 +161,7 @@ fn integration_executes_validation_plan_with_target_file_scope() {
         test_plan_context: TestPlanContext::default(),
         model_tier: ModelTier::Cheap,
         attempt: 0,
+        retry_feedback: None,
     });
 
     let event = h.handle_effect(SchedulerEffect::IntegrateWork {
@@ -215,6 +218,7 @@ fn preconditioned_step_skipped_when_file_absent() {
         test_plan_context: TestPlanContext::default(),
         model_tier: ModelTier::Cheap,
         attempt: 0,
+        retry_feedback: None,
     });
 
     let event = h.handle_effect(SchedulerEffect::IntegrateWork {

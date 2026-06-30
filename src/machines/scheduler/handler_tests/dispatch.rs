@@ -13,6 +13,7 @@ fn run_node_effect_uses_node_runner() {
         test_plan_context: TestPlanContext::default(),
         model_tier: ModelTier::Cheap,
         attempt: 0,
+        retry_feedback: None,
     };
     let event = h.handle_effect(effect);
     let SchedulerEvent::NodeReturned { outcome, .. } = event else {

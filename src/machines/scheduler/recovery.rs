@@ -14,7 +14,8 @@ use super::graph::{
     validate_split_depth,
 };
 use super::state::{
-    ModelTier, Node, NodeId, NodeKind, NodeOrigin, NodeStatus, RunGraph, SchedulerState,
+    ModelTier, Node, NodeId, NodeKind, NodeOrigin, NodeStatus, RetryFeedback, RunGraph,
+    SchedulerState,
 };
 
 pub(super) fn failed_transition(
@@ -60,13 +61,7 @@ pub(super) fn apply_retry(
             n.validation_plan.clone(),
         )
     };
-    let objective = retry_objective(
-        &kind,
-        &objective,
-        &target_files,
-        failure_kind,
-        retry_message,
-    );
+    let retry_feedback = build_retry_feedback(&kind, failure_kind, retry_message);
     let replacement_id = NodeId(format!("{}-retry-{}", node_id.0, graph.next_id));
     let replacement = Node {
         id: replacement_id.clone(),
@@ -84,50 +79,34 @@ pub(super) fn apply_retry(
             source: node_id.clone(),
         },
         validation_plan,
+        retry_feedback,
     };
     let graph = mark_node(graph, node_id, NodeStatus::Failed);
     let graph = push_node(graph, replacement);
     remap_pending_dependencies(graph, node_id, &replacement_id)
 }
 
-const FEEDBACK_SEPARATOR: &str = "\n\nValidation feedback for retry:";
-
-// Returns the objective text stripped of any previously appended feedback block.
-fn base_objective(objective: &str) -> &str {
-    match objective.find(FEEDBACK_SEPARATOR) {
-        Some(idx) => objective[..idx].trim_end(),
-        None => objective,
-    }
-}
-
-fn retry_objective(
+/// Builds `RetryFeedback` for validation-class failures on Work nodes.
+///
+/// Only `ValidationFailure` and `WorkSemanticValidationFailure` on `Work` nodes
+/// receive feedback; all other failure kinds return `None` so the objective
+/// stays clean.
+fn build_retry_feedback(
     kind: &NodeKind,
-    original_objective: &str,
-    target_files: &[String],
     failure_kind: FailureKind,
     retry_message: &str,
-) -> String {
+) -> Option<RetryFeedback> {
     if *kind != NodeKind::Work
         || !matches!(
             failure_kind,
             FailureKind::ValidationFailure | FailureKind::WorkSemanticValidationFailure
         )
     {
-        return original_objective.to_string();
+        return None;
     }
-
-    let clean_original = base_objective(original_objective);
-
-    let target_text = if target_files.is_empty() {
-        "(none specified)".to_string()
-    } else {
-        target_files.join(", ")
-    };
-
-    format!(
-        "{clean_original}\n\nValidation feedback for retry:\nTarget files: {target_text}\n{diagnostics}",
-        diagnostics = concise_retry_diagnostics(retry_message),
-    )
+    Some(RetryFeedback {
+        diagnostics: concise_retry_diagnostics(retry_message),
+    })
 }
 
 fn concise_retry_diagnostics(message: &str) -> String {
@@ -160,7 +139,7 @@ pub(super) fn apply_split(graph: RunGraph, node_id: &NodeId, message: String) ->
         )
     };
     let split_id = NodeId(format!("{}-split-{}", node_id.0, graph.next_id));
-    // Split creates a new Plan node; validation_plan belongs to Work nodes only.
+    // Split creates a new Plan node; validation_plan and retry_feedback belong to Work nodes only.
     let split_node = Node {
         id: split_id.clone(),
         kind: NodeKind::Plan,
@@ -177,6 +156,7 @@ pub(super) fn apply_split(graph: RunGraph, node_id: &NodeId, message: String) ->
             source: node_id.clone(),
         },
         validation_plan: None,
+        retry_feedback: None,
     };
     let graph = mark_node(graph, node_id, NodeStatus::Failed);
     let graph = push_node(graph, split_node);
@@ -223,6 +203,7 @@ pub(super) fn apply_elevate(graph: RunGraph, node_id: &NodeId) -> RunGraph {
             source: node_id.clone(),
         },
         validation_plan,
+        retry_feedback: None,
     };
     let graph = mark_node(graph, node_id, NodeStatus::Failed);
     let graph = push_node(graph, replacement);

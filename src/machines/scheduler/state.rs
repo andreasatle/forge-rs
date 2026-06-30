@@ -128,6 +128,22 @@ pub enum NodeStatus {
     Cancelled,
 }
 
+/// Structured diagnostic feedback attached to a node that failed validation
+/// and will be retried.
+///
+/// The machine stores this on the retry node instead of appending it to the
+/// objective string. The dispatch layer renders it into the prompt at
+/// dispatch time so the objective remains the original task description.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct RetryFeedback {
+    /// Concise diagnostic output from the failed validation attempt.
+    ///
+    /// Truncated by the machine to a reasonable prompt length. The format
+    /// (command, exit code, diagnostic lines, etc.) is determined by the
+    /// integration layer and not parsed here.
+    pub diagnostics: String,
+}
+
 /// A single unit of work in the run graph.
 ///
 /// Each node carries everything the scheduler and runner need to dispatch,
@@ -186,6 +202,14 @@ pub struct Node {
     /// When `None`, integration falls back to the handler-level validator.
     #[serde(default)]
     pub validation_plan: Option<ValidationPlan>,
+    /// Structured diagnostic feedback from a failed validation attempt.
+    ///
+    /// Set by `apply_retry` when the failure kind is `ValidationFailure` or
+    /// `WorkSemanticValidationFailure`. The objective string is left unchanged;
+    /// the dispatch layer renders this into the prompt at dispatch time.
+    /// `None` for the first attempt and for non-validation retries.
+    #[serde(default)]
+    pub retry_feedback: Option<RetryFeedback>,
 }
 
 /// The complete set of nodes for one Forge run, plus the internal ID cursor.

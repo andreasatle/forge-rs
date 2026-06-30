@@ -78,6 +78,7 @@ fn scheduler_output_includes_integration_failure_reason() {
             summary: None,
             origin: NodeOrigin::Root,
             validation_plan: None,
+            retry_feedback: None,
         }],
         next_id: 0,
     };

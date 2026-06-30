@@ -303,6 +303,7 @@ pub(super) fn insert_children(
             summary: None,
             origin: NodeOrigin::PlanExpansion,
             validation_plan: req.validation_plan,
+            retry_feedback: None,
         });
     }
     graph

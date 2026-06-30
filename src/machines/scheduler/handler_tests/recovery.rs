@@ -54,6 +54,7 @@ fn scheduler_handler_maps_integration_error_to_failed_outcome() {
         test_plan_context: TestPlanContext::default(),
         model_tier: ModelTier::Cheap,
         attempt: 0,
+        retry_feedback: None,
     });
 
     let event = h.handle_effect(SchedulerEffect::IntegrateWork {
@@ -109,6 +110,7 @@ fn scheduler_handler_maps_integration_conflict_to_failed_outcome() {
         test_plan_context: TestPlanContext::default(),
         model_tier: ModelTier::Cheap,
         attempt: 0,
+        retry_feedback: None,
     });
 
     // Advance the branch externally between RunNode and IntegrateWork.

@@ -37,6 +37,8 @@ fn retry_creates_replacement_node() {
 
 #[test]
 fn validation_failure_creates_retry_feedback() {
+    // Invariant: objective is immutable across retries; validation diagnostics
+    // live in retry_feedback so the machine never parses sentinel text back out.
     let mut graph = RunGraph {
         nodes: vec![work_node("W", "fix main", &[])],
         next_id: 0,
@@ -68,15 +70,20 @@ fn validation_failure_creates_retry_feedback() {
     assert_eq!(retry.status, NodeStatus::Pending);
     assert_eq!(retry.attempt, 1);
     assert_eq!(retry.target_files, vec!["main.py"]);
-    assert!(retry.objective.starts_with("fix main"));
-    assert!(retry.objective.contains("Target files: main.py"));
-    assert!(retry.objective.contains("command: validate main.py"));
-    assert!(retry.objective.contains("exit code: 2"));
-    assert!(retry.objective.contains("first location: main.py:1:1"));
-    assert!(retry.objective.contains("invalid syntax"));
+    // Objective is preserved verbatim — no sentinel appended.
+    assert_eq!(retry.objective, "fix main");
+    // Diagnostics are in the typed field, not the objective string.
+    let feedback = retry
+        .retry_feedback
+        .as_ref()
+        .expect("ValidationFailure retry must carry retry_feedback");
+    assert!(feedback.diagnostics.contains("command: validate main.py"));
+    assert!(feedback.diagnostics.contains("exit code: 2"));
+    assert!(feedback.diagnostics.contains("first location: main.py:1:1"));
+    assert!(feedback.diagnostics.contains("invalid syntax"));
     assert!(
-        retry
-            .objective
+        feedback
+            .diagnostics
             .contains("fix the existing file using file tools before accepting")
     );
 }
@@ -133,22 +140,21 @@ fn work_semantic_validation_failure_retries_with_artifact_feedback() {
     );
     assert_eq!(retry.validation_plan.as_ref(), Some(&plan));
     assert!(matches!(retry.origin, NodeOrigin::Retry { .. }));
+    // Objective is preserved verbatim; diagnostics live in retry_feedback.
+    assert_eq!(retry.objective, "modify src/lib.rs");
+    let feedback = retry
+        .retry_feedback
+        .as_ref()
+        .expect("WorkSemanticValidationFailure retry must carry retry_feedback");
     assert!(
-        retry
-            .objective
-            .contains("Target files: src/lib.rs, tests/lib.rs"),
-        "retry objective must preserve target files; got:\n{}",
-        retry.objective
+        feedback.diagnostics.contains("must modify the artifact"),
+        "retry_feedback must tell the Producer to modify the artifact; got:\n{}",
+        feedback.diagnostics
     );
     assert!(
-        retry.objective.contains("must modify the artifact"),
-        "retry objective must tell the Producer to modify the artifact; got:\n{}",
-        retry.objective
-    );
-    assert!(
-        retry.objective.contains("write_file"),
-        "retry objective must tell the Producer to use a file tool; got:\n{}",
-        retry.objective
+        feedback.diagnostics.contains("write_file"),
+        "retry_feedback must tell the Producer to use a file tool; got:\n{}",
+        feedback.diagnostics
     );
 }
 
@@ -185,14 +191,20 @@ fn invalid_work_attempt_update_failure_recovers_with_retry() {
     let retry = &graph.nodes[1];
     assert_eq!(retry.status, NodeStatus::Pending);
     assert!(matches!(retry.origin, NodeOrigin::Retry { .. }));
+    // Objective is preserved verbatim; diagnostics live in retry_feedback.
+    assert_eq!(retry.objective, "modify src/lib.rs");
+    let feedback = retry
+        .retry_feedback
+        .as_ref()
+        .expect("WorkSemanticValidationFailure retry must carry retry_feedback");
     assert!(
-        retry.objective.contains("could not be validated")
-            && retry.objective.contains("switch to write_file")
-            && retry
-                .objective
+        feedback.diagnostics.contains("could not be validated")
+            && feedback.diagnostics.contains("switch to write_file")
+            && feedback
+                .diagnostics
                 .contains("instead of retrying another replace_text"),
-        "retry objective must tell Producer how to recover from invalid WorkAttempt update; got:\n{}",
-        retry.objective
+        "retry_feedback must tell Producer how to recover from invalid WorkAttempt update; got:\n{}",
+        feedback.diagnostics
     );
 }
 
@@ -813,8 +825,9 @@ fn validation_retry_event(node_id: &str, diagnostics: &str) -> SchedulerEvent {
 
 #[test]
 fn validation_retry_feedback_includes_all_structured_target_files() {
-    // Invariant: structured target_files drives the "Target files:" line; every
-    // file present in target_files must appear in the retry objective.
+    // Invariant: structured target_files on the retry node is identical to the
+    // original node's target_files (the dispatch layer renders them into the
+    // prompt, but the scheduler carries them as a typed field, not in objective).
     let mut graph = RunGraph {
         nodes: vec![work_node("W", "fix main", &[])],
         next_id: 0,
@@ -835,26 +848,30 @@ fn validation_retry_feedback_includes_all_structured_target_files() {
     };
     let retry = &graph.nodes[1];
     assert!(
-        retry.objective.contains("main.py"),
-        "main.py must appear in retry objective"
+        retry.target_files.contains(&"main.py".to_string()),
+        "main.py must be in structured target_files"
     );
     assert!(
-        retry.objective.contains("test_main.py"),
-        "test_main.py must appear in retry objective"
+        retry.target_files.contains(&"test_main.py".to_string()),
+        "test_main.py must be in structured target_files"
     );
+    assert_eq!(
+        retry.target_files,
+        vec!["main.py".to_string(), "test_main.py".to_string()],
+        "both files must be present in structured order"
+    );
+    // retry_feedback carries the diagnostics; rendering target_files into the
+    // prompt header happens in dispatch, tested via the handler integration test.
     assert!(
-        retry
-            .objective
-            .contains("Target files: main.py, test_main.py"),
-        "both files must appear together in Target files line; got:\n{}",
-        retry.objective
+        retry.retry_feedback.is_some(),
+        "ValidationFailure retry must carry retry_feedback"
     );
 }
 
 #[test]
 fn validation_retry_test_target_appears_in_retry_prompt() {
-    // Invariant: a test-file target added to structured target_files is visible
-    // to the retry node and is not silently dropped from the feedback.
+    // Invariant: a test-file target added to structured target_files is carried
+    // unchanged onto the retry node and is not silently dropped.
     let mut graph = RunGraph {
         nodes: vec![work_node("W", "write and test a feature", &[])],
         next_id: 0,
@@ -875,16 +892,19 @@ fn validation_retry_test_target_appears_in_retry_prompt() {
     };
     let retry = &graph.nodes[1];
     assert!(
-        retry.objective.contains("tests/lib_test.rs"),
-        "test target must appear in retry objective; got:\n{}",
-        retry.objective
+        retry
+            .target_files
+            .contains(&"tests/lib_test.rs".to_string()),
+        "test target must be preserved in structured target_files; got: {:?}",
+        retry.target_files
     );
 }
 
 #[test]
 fn repeated_validation_retries_do_not_duplicate_feedback_blocks() {
-    // Invariant: each retry replaces the previous feedback block with the latest
-    // diagnostics; old blocks must not accumulate across multiple retries.
+    // Invariant: each retry carries only the most recent validation diagnostics
+    // in retry_feedback; old diagnostics must not accumulate across retries.
+    // The objective field stays immutable (the original task description only).
     let mut graph = RunGraph {
         nodes: vec![work_node("W", "fix main", &[])],
         next_id: 0,
@@ -918,25 +938,24 @@ fn repeated_validation_retries_do_not_duplicate_feedback_blocks() {
     };
     let retry2 = &graph.nodes[2];
 
-    let block_count = retry2
-        .objective
-        .matches("Validation feedback for retry:")
-        .count();
+    // Objective is the original task description — never modified across retries.
     assert_eq!(
-        block_count, 1,
-        "feedback block must appear exactly once after two retries"
+        retry2.objective, "fix main",
+        "objective must remain unchanged"
+    );
+    let feedback = retry2
+        .retry_feedback
+        .as_ref()
+        .expect("second retry must carry retry_feedback");
+    assert!(
+        feedback.diagnostics.contains("second-error"),
+        "latest diagnostics must be present; got:\n{}",
+        feedback.diagnostics
     );
     assert!(
-        retry2.objective.starts_with("fix main"),
-        "clean original objective must lead"
-    );
-    assert!(
-        retry2.objective.contains("second-error"),
-        "latest diagnostics must be present"
-    );
-    assert!(
-        !retry2.objective.contains("first-error"),
-        "stale diagnostics must not accumulate"
+        !feedback.diagnostics.contains("first-error"),
+        "stale diagnostics from first retry must not accumulate; got:\n{}",
+        feedback.diagnostics
     );
 }
 

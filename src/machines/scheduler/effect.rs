@@ -11,7 +11,7 @@
 use crate::validation::ValidationPlan;
 
 use super::event::WorkOutput;
-use super::state::{ModelTier, NodeId, NodeKind, TestPlanContext};
+use super::state::{ModelTier, NodeId, NodeKind, RetryFeedback, TestPlanContext};
 
 /// Commands that the scheduler emits to the outside world.
 ///
@@ -41,6 +41,12 @@ pub enum SchedulerEffect {
         model_tier: ModelTier,
         /// Zero-based retry count; 0 on the first attempt.
         attempt: u32,
+        /// Structured validation feedback to render into the prompt.
+        ///
+        /// `Some` only when the node is a retry triggered by a validation
+        /// failure. The dispatch layer appends this to the objective text;
+        /// the machine keeps the objective field itself immutable.
+        retry_feedback: Option<RetryFeedback>,
     },
 
     /// Dispatch the work produced by a node to the integration handler.

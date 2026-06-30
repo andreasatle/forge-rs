@@ -2,7 +2,9 @@
 
 use crate::artifacts::{Artifact, ArtifactView};
 use crate::machines::scheduler::event::{NodeOutcome, SchedulerEvent};
-use crate::machines::scheduler::state::{ModelTier, NodeId, NodeKind, TestPlanContext};
+use crate::machines::scheduler::state::{
+    ModelTier, NodeId, NodeKind, RetryFeedback, TestPlanContext,
+};
 use crate::node_runner::{NodeRunRequest, NodeRunner, WorkAttempt};
 use crate::telemetry::{ConsoleTelemetry, TelemetrySink};
 
@@ -14,6 +16,7 @@ pub(crate) struct RunNodeDispatch {
     pub(crate) test_plan_context: TestPlanContext,
     pub(crate) model_tier: ModelTier,
     pub(crate) attempt: u32,
+    pub(crate) retry_feedback: Option<RetryFeedback>,
 }
 
 pub(crate) struct DispatchResult {
@@ -41,9 +44,14 @@ pub(crate) fn dispatch_run_node<R: NodeRunner>(
         NodeKind::Plan => "[planner]".to_string(),
         NodeKind::Work => format!("[worker {}]", command.node_id.0),
     };
+    let rendered_objective = render_objective(
+        &command.objective,
+        &command.target_files,
+        command.retry_feedback.as_ref(),
+    );
     let request = NodeRunRequest {
         kind: command.kind,
-        objective: command.objective,
+        objective: rendered_objective,
         target_files: command.target_files,
         test_plan_context: command.test_plan_context,
         model_tier: command.model_tier,
@@ -59,4 +67,28 @@ pub(crate) fn dispatch_run_node<R: NodeRunner>(
             outcome: NodeOutcome::from(result),
         },
     }
+}
+
+/// Renders the prompt objective, appending validation feedback when present.
+///
+/// The machine stores `retry_feedback` separately so the objective field
+/// remains the original task description. This function combines them at
+/// dispatch time so the runner receives the full context.
+fn render_objective(
+    objective: &str,
+    target_files: &[String],
+    retry_feedback: Option<&RetryFeedback>,
+) -> String {
+    let Some(feedback) = retry_feedback else {
+        return objective.to_string();
+    };
+    let target_text = if target_files.is_empty() {
+        "(none specified)".to_string()
+    } else {
+        target_files.join(", ")
+    };
+    format!(
+        "{objective}\n\nValidation feedback for retry:\nTarget files: {target_text}\n{}",
+        feedback.diagnostics
+    )
 }

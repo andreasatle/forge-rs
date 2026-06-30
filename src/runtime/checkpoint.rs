@@ -87,6 +87,7 @@ mod tests {
             summary: None,
             origin: NodeOrigin::Root,
             validation_plan: None,
+            retry_feedback: None,
         }
     }
 

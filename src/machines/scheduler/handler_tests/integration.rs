@@ -150,6 +150,7 @@ fn scheduler_handler_passes_artifact_view_to_node_runner() {
         test_plan_context: TestPlanContext::default(),
         model_tier: ModelTier::Cheap,
         attempt: 0,
+        retry_feedback: None,
     });
 
     let captured = views.borrow();
@@ -473,6 +474,7 @@ fn run_node_does_not_commit_workspace_mutation() {
         test_plan_context: TestPlanContext::default(),
         model_tier: ModelTier::Cheap,
         attempt: 0,
+        retry_feedback: None,
     });
 
     let sha_after = git_output(&repo_path, &["rev-parse", "HEAD"]);
@@ -502,6 +504,7 @@ fn integrate_work_commits_pending_workspace_mutation() {
         test_plan_context: TestPlanContext::default(),
         model_tier: ModelTier::Cheap,
         attempt: 0,
+        retry_feedback: None,
     });
 
     let event = h.handle_effect(SchedulerEffect::IntegrateWork {
@@ -559,6 +562,7 @@ fn second_work_node_sees_first_only_after_integration() {
         test_plan_context: TestPlanContext::default(),
         model_tier: ModelTier::Cheap,
         attempt: 0,
+        retry_feedback: None,
     });
     let sha_before_integrate = git_output(&repo_path, &["rev-parse", "HEAD"]);
     assert_eq!(
@@ -606,6 +610,7 @@ fn work_node_without_update_fails_without_commit() {
         test_plan_context: TestPlanContext::default(),
         model_tier: ModelTier::Cheap,
         attempt: 0,
+        retry_feedback: None,
     });
 
     let event = h.handle_effect(SchedulerEffect::IntegrateWork {

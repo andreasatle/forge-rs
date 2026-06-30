@@ -22,6 +22,7 @@ fn validation_pass_allows_commit() {
         test_plan_context: TestPlanContext::default(),
         model_tier: ModelTier::Cheap,
         attempt: 0,
+        retry_feedback: None,
     });
 
     let event = h.handle_effect(SchedulerEffect::IntegrateWork {
@@ -73,6 +74,7 @@ fn validation_failure_blocks_commit() {
         test_plan_context: TestPlanContext::default(),
         model_tier: ModelTier::Cheap,
         attempt: 0,
+        retry_feedback: None,
     });
 
     let event = h.handle_effect(SchedulerEffect::IntegrateWork {
@@ -186,6 +188,7 @@ fn validation_failure_telemetry_keeps_full_diagnostics() {
         test_plan_context: TestPlanContext::default(),
         model_tier: ModelTier::Cheap,
         attempt: 0,
+        retry_feedback: None,
     });
 
     h.handle_effect(SchedulerEffect::IntegrateWork {
@@ -239,6 +242,7 @@ fn validation_failure_records_attempt_evidence_before_cleanup() {
         test_plan_context: TestPlanContext::default(),
         model_tier: ModelTier::Cheap,
         attempt: 0,
+        retry_feedback: None,
     });
 
     h.handle_effect(SchedulerEffect::IntegrateWork {
@@ -310,6 +314,7 @@ fn validator_runs_after_workspace_mutation() {
         test_plan_context: TestPlanContext::default(),
         model_tier: ModelTier::Cheap,
         attempt: 0,
+        retry_feedback: None,
     });
 
     h.handle_effect(SchedulerEffect::IntegrateWork {
@@ -343,6 +348,7 @@ fn no_diff_fails_before_running_validator() {
         test_plan_context: TestPlanContext::default(),
         model_tier: ModelTier::Cheap,
         attempt: 0,
+        retry_feedback: None,
     });
 
     // StaticNodeRunner does not mutate the WorkAttempt, so integration fails
@@ -390,6 +396,7 @@ fn validation_pass_sets_validation_passed_true() {
         test_plan_context: TestPlanContext::default(),
         model_tier: ModelTier::Cheap,
         attempt: 0,
+        retry_feedback: None,
     });
     assert_eq!(
         h.validation_passed(),
@@ -433,6 +440,7 @@ fn validation_failure_sets_validation_passed_false() {
         test_plan_context: TestPlanContext::default(),
         model_tier: ModelTier::Cheap,
         attempt: 0,
+        retry_feedback: None,
     });
 
     h.handle_effect(SchedulerEffect::IntegrateWork {
@@ -466,6 +474,7 @@ fn no_diff_leaves_validation_passed_none() {
         test_plan_context: TestPlanContext::default(),
         model_tier: ModelTier::Cheap,
         attempt: 0,
+        retry_feedback: None,
     });
 
     h.handle_effect(SchedulerEffect::IntegrateWork {
@@ -504,6 +513,7 @@ fn validation_passed_true_even_when_integration_conflicts() {
         test_plan_context: TestPlanContext::default(),
         model_tier: ModelTier::Cheap,
         attempt: 0,
+        retry_feedback: None,
     });
 
     // Advance the branch externally so the integrate() CAS check fails.
@@ -557,6 +567,7 @@ fn validation_failure_does_not_leave_artifact_changed() {
         test_plan_context: TestPlanContext::default(),
         model_tier: ModelTier::Cheap,
         attempt: 0,
+        retry_feedback: None,
     });
 
     h.handle_effect(SchedulerEffect::IntegrateWork {
@@ -615,6 +626,7 @@ fn timeout_blocks_commit() {
         test_plan_context: TestPlanContext::default(),
         model_tier: ModelTier::Cheap,
         attempt: 0,
+        retry_feedback: None,
     });
 
     let event = h.handle_effect(SchedulerEffect::IntegrateWork {

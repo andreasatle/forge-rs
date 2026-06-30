@@ -130,6 +130,7 @@ fn work_node(id: &str, objective: &str) -> Node {
         summary: None,
         origin: NodeOrigin::Root,
         validation_plan: None,
+        retry_feedback: None,
     }
 }
 
@@ -148,6 +149,7 @@ fn work_node_with_deps(id: &str, objective: &str, deps: &[&str]) -> Node {
         summary: None,
         origin: NodeOrigin::Root,
         validation_plan: None,
+        retry_feedback: None,
     }
 }
 

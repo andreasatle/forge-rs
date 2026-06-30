@@ -41,6 +41,7 @@ fn temporary_workspace_removed_after_successful_integration() {
         test_plan_context: TestPlanContext::default(),
         model_tier: ModelTier::Cheap,
         attempt: 0,
+        retry_feedback: None,
     });
 
     h.handle_effect(SchedulerEffect::IntegrateWork {
@@ -85,6 +86,7 @@ fn temporary_workspace_removed_after_validation_failure() {
         test_plan_context: TestPlanContext::default(),
         model_tier: ModelTier::Cheap,
         attempt: 0,
+        retry_feedback: None,
     });
 
     h.handle_effect(SchedulerEffect::IntegrateWork {
@@ -181,6 +183,7 @@ fn checkpoint_load_round_trip() {
                     summary: Some("done".to_string()),
                     origin: NodeOrigin::Root,
                     validation_plan: None,
+                    retry_feedback: None,
                 },
                 work_node("B", "do B"),
             ],
