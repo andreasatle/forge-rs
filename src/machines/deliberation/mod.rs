@@ -53,7 +53,7 @@ pub mod state;
 pub mod types;
 
 pub use effect::DeliberationEffect;
-pub use event::{DeliberationEvent, ProducerValidationRetry};
+pub use event::DeliberationEvent;
 pub(crate) use handler::PlanValidationContext;
 pub use handler::{DeliberationHandler, ProviderBackedDeliberationHandler};
 pub use machine::DeliberationMachine;
@@ -61,5 +61,5 @@ pub use state::DeliberationState;
 pub use types::{
     ArtifactContext, CriticAdvisory, DeliberationContext, DeliberationFailureReason,
     DeliberationOutput, DeliberationRequest, DeliberationRole, DeliberationTerminalOutput,
-    RevisionFeedback, SelectedFileContent,
+    ProducerValidationRetry, RevisionFeedback, SelectedFileContent,
 };

@@ -14,11 +14,12 @@ use crate::engine::Transition;
 
 use super::RunConfig;
 use super::effect::SchedulerEffect;
-use super::event::{IntegrationFailure, NodeFailure, SchedulerEvent};
+use super::event::SchedulerEvent;
 use super::failure::FailureReason;
 use super::graph::{ModelTier, Node, NodeId, NodeKind, NodeOrigin, NodeStatus, RunGraph};
 use super::request::RunRequest;
 use super::state::SchedulerState;
+use super::types::{IntegrationFailure, NodeFailure};
 use super::{graph, recovery};
 
 // Re-expose constants so the nested test module sees them via `use super::*`.

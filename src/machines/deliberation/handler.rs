@@ -23,8 +23,8 @@ use crate::roles::runner::{ProviderRoleRunner, RoleRequest, RoleRunner, RoleTool
 use crate::telemetry::{NoopTelemetry, TelemetryEvent, TelemetryRecord, TelemetrySink};
 
 use super::effect::DeliberationEffect;
-use super::event::{DeliberationEvent, ProducerValidationRetry};
-use super::types::DeliberationRole;
+use super::event::DeliberationEvent;
+use super::types::{DeliberationRole, ProducerValidationRetry};
 use crate::roles::runner::RoleResult;
 
 /// Maximum retry attempts after the first accepted plan violates structured

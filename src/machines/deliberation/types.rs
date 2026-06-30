@@ -2,6 +2,19 @@
 
 use crate::machines::scheduler::FailureKind;
 
+/// Retry metadata returned when accepted Producer output fails semantic validation.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ProducerValidationRetry {
+    /// Feedback to send to the next Producer attempt.
+    pub feedback_reason: String,
+    /// Maximum semantic validation retries allowed for this validation mode.
+    pub max_retries: usize,
+    /// Machine-readable terminal failure cause if retries are exhausted.
+    pub failure_kind: FailureKind,
+    /// Human-readable terminal failure reason if retries are exhausted.
+    pub failure_reason: String,
+}
+
 /// Machine-readable terminal failure cause for the deliberation pipeline.
 #[derive(Clone, Debug, PartialEq)]
 pub enum DeliberationFailureReason {

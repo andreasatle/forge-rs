@@ -1,8 +1,9 @@
 use super::super::effect::DeliberationEffect;
-use super::super::event::{DeliberationEvent, ProducerValidationRetry};
+use super::super::event::DeliberationEvent;
 use super::super::state::DeliberationState;
 use super::super::types::{
-    CriticAdvisory, DeliberationRole, DeliberationTerminalOutput, RevisionFeedback,
+    CriticAdvisory, DeliberationRole, DeliberationTerminalOutput, ProducerValidationRetry,
+    RevisionFeedback,
 };
 use super::super::types::{DeliberationFailureReason, DeliberationRequest};
 use super::DeliberationMachine;

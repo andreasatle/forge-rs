@@ -5,9 +5,10 @@ use std::sync::Arc;
 use super::*;
 use crate::engine::{Machine, Transition, run_machine, run_machine_with_telemetry};
 use crate::machines::deliberation::effect::DeliberationEffect;
-use crate::machines::deliberation::event::{DeliberationEvent, ProducerValidationRetry};
+use crate::machines::deliberation::event::DeliberationEvent;
 use crate::machines::deliberation::machine::DeliberationMachine;
 use crate::machines::deliberation::state::DeliberationState;
+use crate::machines::deliberation::types::ProducerValidationRetry;
 use crate::machines::deliberation::types::{DeliberationFailureReason, DeliberationRequest};
 use crate::machines::deliberation::types::{
     DeliberationRole, DeliberationTerminalOutput, RevisionFeedback,
