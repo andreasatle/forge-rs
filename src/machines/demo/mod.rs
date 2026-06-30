@@ -7,6 +7,7 @@ pub mod effect;
 pub mod event;
 pub mod machine;
 pub mod state;
+pub mod types;
 
 pub use machine::DemoMachine;
-pub use state::{Task, TaskResult};
+pub use types::{Task, TaskResult};

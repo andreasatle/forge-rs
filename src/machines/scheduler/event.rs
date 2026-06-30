@@ -16,33 +16,7 @@ use crate::validation::ValidationPlan;
 
 use super::state::{NodeId, NodeKind};
 
-/// Machine-readable cause of a node or integration failure.
-///
-/// `message` fields on failure payloads remain human-readable diagnostics only;
-/// recovery policy must switch on this kind instead of parsing message text.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FailureKind {
-    /// Provider transport, timeout, rate-limit, or other retryable provider failure.
-    ProviderFailure,
-    /// Provider failure known not to benefit from retrying, such as bad auth/config.
-    ProviderTerminalFailure,
-    /// Role or planner response violated the expected JSON/protocol contract.
-    ProtocolFailure,
-    /// File/tool loop failure.
-    ToolFailure,
-    /// Project validation command failed.
-    ValidationFailure,
-    /// Planner output violated structured planner validation.
-    PlannerValidationFailure,
-    /// Work producer accepted a result with no artifact file changes.
-    WorkSemanticValidationFailure,
-    /// Deliberation reached a semantic quality limit, such as exhausted revisions.
-    DeliberationFailure,
-    /// Artifact integration failed.
-    IntegrationFailure,
-    /// The user task was semantically rejected by the producing role.
-    UserTaskRejection,
-}
+pub use super::failure::FailureKind;
 
 /// The structured output of a plan node that succeeded.
 ///

@@ -32,9 +32,11 @@
 //! - `RunGraph::next_id` is only an internal generator cursor.
 
 mod checkpoint;
+pub mod config;
 mod dispatch;
 pub mod effect;
 pub mod event;
+pub mod failure;
 mod graph;
 pub mod handler;
 #[cfg(test)]
@@ -43,17 +45,21 @@ mod integration;
 pub mod machine;
 mod progress;
 mod recovery;
+pub mod request;
 pub mod state;
 mod validation;
 
+pub use config::RunConfig;
 pub use effect::SchedulerEffect;
 pub use event::{
-    FailureKind, IntegrationFailure, IntegrationOutcome, IntegrationOutput, NodeFailure,
-    NodeOutcome, NodeRequest, PlanOutput, RecoveryAction, SchedulerEvent, WorkOutput,
+    IntegrationFailure, IntegrationOutcome, IntegrationOutput, NodeFailure, NodeOutcome,
+    NodeRequest, PlanOutput, RecoveryAction, SchedulerEvent, WorkOutput,
 };
+pub use failure::{ExhaustedAction, FailureKind, FailureReason};
 pub use handler::SchedulerHandler;
 pub use machine::{RecoverySummary, SchedulerMachine, SchedulerOutput};
+pub use request::RunRequest;
 pub use state::{
-    ExhaustedAction, FailureReason, ModelTier, Node, NodeId, NodeKind, NodeOrigin, NodeStatus,
-    RunConfig, RunGraph, RunRequest, SchedulerState, TestPlanContext,
+    ModelTier, Node, NodeId, NodeKind, NodeOrigin, NodeStatus, RunGraph, SchedulerState,
+    TestPlanContext,
 };

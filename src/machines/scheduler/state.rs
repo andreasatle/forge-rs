@@ -13,11 +13,13 @@
 //! - `RunGraph::next_id` is an internal generator cursor used when the
 //!   scheduler mints new identifiers.
 
-use std::fmt;
-
 use serde::{Deserialize, Serialize};
 
 use crate::validation::ValidationPlan;
+
+pub use super::config::RunConfig;
+pub use super::failure::{ExhaustedAction, FailureReason};
+pub use super::request::RunRequest;
 
 /// An opaque, stable identifier for a node in the run graph.
 ///
@@ -228,171 +230,6 @@ pub struct RunGraph {
     /// Graph validation treats existing `NodeId` strings as opaque and does
     /// not parse them to verify this cursor.
     pub next_id: u32,
-}
-
-/// The external input to the scheduler.
-///
-/// Callers provide a `RunRequest` to start a new run instead of constructing a
-/// `RunGraph` directly. `SchedulerMachine::initial_state` converts it into a
-/// `SchedulerState::Active` containing a single root `Plan` node.
-pub struct RunRequest {
-    /// A natural-language description of what this run should accomplish.
-    /// Becomes the objective of the root plan node.
-    pub objective: String,
-}
-
-/// Run-scoped policy that is constant for the lifetime of a scheduler run.
-///
-/// Carried inside `Active` and `Waiting` so that `SchedulerMachine::transition`
-/// is fully reproducible from `(state, event)` alone — no out-of-band inputs.
-///
-/// `serde(default)` ensures that checkpoints written before this field existed
-/// can be loaded and will default to the historical behaviour (`has_strong_tier:
-/// true`).
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct RunConfig {
-    /// Whether a distinct strong-tier model is configured.
-    ///
-    /// When `false`, `ElevateModel` recovery cannot produce a meaningfully
-    /// different result and is demoted to a `Retry` instead (or the run is
-    /// failed when attempts are exhausted).
-    pub has_strong_tier: bool,
-}
-
-impl Default for RunConfig {
-    fn default() -> Self {
-        RunConfig {
-            has_strong_tier: true,
-        }
-    }
-}
-
-/// The recovery action that triggered an `AttemptsExhausted` failure.
-///
-/// Stored on `FailureReason::AttemptsExhausted` so callers can distinguish
-/// which kind of recovery exhausted the attempt budget without string parsing.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub enum ExhaustedAction {
-    /// The node's attempt budget was consumed by `Retry` recovery.
-    Retry,
-    /// The node's attempt budget was consumed by `Split` recovery.
-    Split,
-    /// The node's attempt budget was consumed by `ElevateModel` recovery.
-    ElevateModel,
-}
-
-impl fmt::Display for ExhaustedAction {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Retry => write!(f, "Retry"),
-            Self::Split => write!(f, "Split"),
-            Self::ElevateModel => write!(f, "ElevateModel"),
-        }
-    }
-}
-
-/// The typed cause of a scheduler run failure.
-///
-/// Replaces the raw `reason: String` in `SchedulerState::Failed` and
-/// `SchedulerOutput::Failed` so callers can distinguish failure causes without
-/// string parsing. The `Display` impl produces a human-readable message for
-/// telemetry and manifests.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub enum FailureReason {
-    /// A graph invariant was violated (duplicate IDs, missing dependencies, orphaned origins).
-    GraphInvariantViolation(String),
-    /// A protocol error: wrong event for state, wrong outcome for node kind, ID mismatch, etc.
-    ProtocolViolation(String),
-    /// No node is ready to run but the graph is not yet complete; blocked dependency chain or cycle.
-    Deadlock(String),
-    /// A node exhausted all retry attempts under a recoverable recovery action.
-    AttemptsExhausted {
-        /// The ID of the node that exhausted its attempts.
-        node_id: String,
-        /// The attempt limit that was reached.
-        max_attempts: u32,
-        /// The recovery action that triggered the exhaustion check.
-        recovery_action: ExhaustedAction,
-    },
-    /// ElevateModel was requested but no higher model tier exists and attempts are exhausted.
-    NoHigherModelTierAvailable {
-        /// The ID of the node that could not be elevated.
-        node_id: String,
-        /// The attempt limit at the time of failure.
-        max_attempts: u32,
-    },
-    /// Adding recovery nodes would exceed the graph size limit.
-    GraphCapacityExceeded {
-        /// The maximum number of nodes permitted in a run graph.
-        limit: usize,
-    },
-    /// A plan expansion would exceed the plan depth limit.
-    PlanDepthExceeded {
-        /// The maximum nesting depth permitted for plan nodes.
-        limit: usize,
-    },
-    /// A terminal recovery action halted the run.
-    TerminalRecovery {
-        /// The message from the `Terminal` recovery action.
-        terminal_message: String,
-        /// The original failure message that triggered the terminal recovery.
-        failure_message: String,
-    },
-    /// Required test targets were not completed before the run finished.
-    RequiredTestTargetsMissing(String),
-}
-
-impl fmt::Display for FailureReason {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::GraphInvariantViolation(detail) => write!(f, "{detail}"),
-            Self::ProtocolViolation(detail) => write!(f, "protocol violation: {detail}"),
-            Self::Deadlock(detail) => write!(f, "{detail}"),
-            Self::AttemptsExhausted {
-                node_id,
-                max_attempts,
-                recovery_action,
-            } => {
-                write!(
-                    f,
-                    "node {node_id} exhausted all {max_attempts} attempts ({recovery_action})"
-                )
-            }
-            Self::NoHigherModelTierAvailable {
-                node_id,
-                max_attempts,
-            } => {
-                write!(
-                    f,
-                    "node {node_id} exhausted all {max_attempts} attempts; no higher model tier available"
-                )
-            }
-            Self::GraphCapacityExceeded { limit } => {
-                write!(f, "graph size limit exceeded; limit is {limit}")
-            }
-            Self::PlanDepthExceeded { limit } => {
-                write!(f, "plan depth limit exceeded; limit is {limit}")
-            }
-            Self::TerminalRecovery {
-                terminal_message,
-                failure_message,
-            } => {
-                if terminal_message.is_empty() {
-                    write!(f, "{failure_message}")
-                } else if failure_message.is_empty()
-                    || terminal_message == failure_message
-                    || terminal_message.contains(failure_message.as_str())
-                {
-                    write!(f, "{terminal_message}")
-                } else if failure_message.contains(terminal_message.as_str()) {
-                    write!(f, "{failure_message}")
-                } else {
-                    write!(f, "{terminal_message}: {failure_message}")
-                }
-            }
-            Self::RequiredTestTargetsMissing(detail) => write!(f, "{detail}"),
-        }
-    }
 }
 
 /// The durable checkpoints of the scheduler state machine.

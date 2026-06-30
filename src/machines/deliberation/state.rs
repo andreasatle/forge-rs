@@ -9,6 +9,9 @@ use crate::machines::scheduler::FailureKind;
 
 use super::request::DeliberationRequest;
 
+pub use super::failure::DeliberationFailureReason;
+pub use super::types::{DeliberationOutput, DeliberationRole, DeliberationTerminalOutput};
+
 /// Feedback recorded when the Referee rejects a producer draft.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RevisionFeedback {
@@ -23,60 +26,6 @@ pub struct ProducerValidationState {
     pub attempt: usize,
     /// Feedback from the most recent producer semantic validation rejection.
     pub feedback: Vec<RevisionFeedback>,
-}
-
-/// The final output produced by the deliberation pipeline.
-#[derive(Clone, Debug, PartialEq)]
-pub struct DeliberationOutput {
-    /// The accepted producer content.
-    pub content: String,
-}
-
-/// Machine-readable terminal failure cause for the deliberation pipeline.
-#[derive(Clone, Debug, PartialEq)]
-pub enum DeliberationFailureReason {
-    /// A role returned successfully but the Producer rejected the task.
-    ProducerRejected,
-    /// A role returned an execution failure.
-    RoleFailed {
-        /// The role whose execution failed.
-        role: DeliberationRole,
-    },
-    /// Producer semantic validation exhausted its retry budget.
-    ProducerValidationRetriesExhausted,
-    /// Referee rejection exhausted the revision budget.
-    RevisionLimitExhausted,
-    /// The machine received an event that violates the expected role protocol.
-    ProtocolViolation,
-    /// The state/event pair is not a valid transition.
-    InvalidTransition,
-}
-
-/// Terminal result returned by `run_machine` for the deliberation pipeline.
-#[derive(Clone, Debug, PartialEq)]
-pub enum DeliberationTerminalOutput {
-    /// The pipeline completed successfully.
-    Complete(DeliberationOutput),
-    /// The pipeline failed before producing accepted content.
-    Failed {
-        /// Machine-readable failure cause.
-        kind: FailureKind,
-        /// Machine-readable terminal failure reason.
-        reason: DeliberationFailureReason,
-        /// Human-readable diagnostic text.
-        message: String,
-    },
-}
-
-/// The three roles that participate in the deliberation pipeline.
-#[derive(Clone, Debug, PartialEq)]
-pub enum DeliberationRole {
-    /// Generates the initial content for the objective.
-    Producer,
-    /// Evaluates the producer's content and accepts or rejects it.
-    Critic,
-    /// Makes the final acceptance decision after the critic has weighed in.
-    Referee,
 }
 
 /// Advisory output from the Critic stage, preserved with its semantic outcome.
