@@ -3,7 +3,14 @@
 //! Reads the plain-text files written by
 //! [`FileTelemetry`](crate::telemetry::FileTelemetry) under a run's telemetry
 //! directory and prints them to stdout, either as a chronological one-line
-//! summary or as full event content filtered by kind.
+//! summary or as full event content filtered by kind. Each printed record is
+//! set off with a banner so consecutive prompts or failures are easy to tell
+//! apart.
+//!
+//! Prompt bodies are always printed verbatim. Failure content is printed
+//! as-is too, except that a `raw_response` payload — the model's raw JSON
+//! reply — is rendered as YAML when it parses as JSON, since that's
+//! considerably easier to read than a single-line JSON blob.
 
 use std::error::Error;
 use std::path::Path;
@@ -123,27 +130,70 @@ impl std::fmt::Display for EventHeader {
 }
 
 fn is_failure_kind(kind: &str) -> bool {
-    matches!(kind, "Failure" | "FailureClassified" | "ValidationFailed")
+    matches!(
+        kind,
+        "Failure" | "FailureClassified" | "ValidationFailed" | "ParseFailed"
+    )
+}
+
+/// Width of the `=`-rule printed above and below each record's header line.
+const BANNER_WIDTH: usize = 64;
+
+fn print_banner(header: &EventHeader) {
+    let rule = "=".repeat(BANNER_WIDTH);
+    println!("{rule}");
+    println!("{header}");
+    println!("{rule}");
 }
 
 const PROMPT_MARKER: &str = "\nprompt:\n";
 
 fn print_prompt(header: &EventHeader, content: &str) {
-    println!("=== {header} ===");
-    match content.find(PROMPT_MARKER) {
-        Some(idx) => println!(
-            "{}",
-            content[idx + PROMPT_MARKER.len()..].trim_end_matches('\n')
-        ),
-        None => println!("{}", content.trim_end_matches('\n')),
-    }
+    print_banner(header);
+    println!("{}", prompt_body(content));
     println!();
 }
 
+/// Extract the prompt text verbatim, dropping only the preceding
+/// `source:`/`kind:`/`attempt_count:`/`prompt:` field lines.
+fn prompt_body(content: &str) -> &str {
+    match content.find(PROMPT_MARKER) {
+        Some(idx) => content[idx + PROMPT_MARKER.len()..].trim_end_matches('\n'),
+        None => content.trim_end_matches('\n'),
+    }
+}
+
+const RAW_RESPONSE_MARKER: &str = "\nraw_response:\n";
+
 fn print_full(header: &EventHeader, content: &str) {
-    println!("=== {header} ===");
-    println!("{}", content.trim_end_matches('\n'));
+    print_banner(header);
+    println!("{}", failure_body(content));
     println!();
+}
+
+/// Render a failure record's content, converting a `raw_response` payload to
+/// YAML when it parses as JSON. All other fields are left untouched.
+fn failure_body(content: &str) -> String {
+    match content.find(RAW_RESPONSE_MARKER) {
+        Some(idx) => {
+            let split_at = idx + RAW_RESPONSE_MARKER.len();
+            let before = &content[..split_at];
+            let raw_response = content[split_at..].trim_end_matches('\n');
+            match json_to_yaml(raw_response) {
+                Some(yaml) => format!("{before}{yaml}"),
+                None => format!("{before}{raw_response}"),
+            }
+        }
+        None => content.trim_end_matches('\n').to_string(),
+    }
+}
+
+/// Parse `text` as JSON and re-render it as YAML, or `None` if it isn't
+/// valid JSON.
+fn json_to_yaml(text: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(text.trim()).ok()?;
+    let yaml = serde_yaml::to_string(&value).ok()?;
+    Some(yaml.trim_end().to_string())
 }
 
 #[cfg(test)]
@@ -340,8 +390,86 @@ mod tests {
         assert!(is_failure_kind("Failure"));
         assert!(is_failure_kind("FailureClassified"));
         assert!(is_failure_kind("ValidationFailed"));
+        assert!(is_failure_kind("ParseFailed"));
         assert!(!is_failure_kind("RolePromptRendered"));
         assert!(!is_failure_kind("MachineStarted"));
+    }
+
+    #[test]
+    fn prompt_body_extracts_text_after_marker_verbatim() {
+        let content = "source: RoleMachine\nsubsource: Producer\nkind: RolePromptRendered\n\
+            attempt_count: 1\nprompt:\nWrite a function.\n{\"example\":\"json in prompt\"}\n";
+        assert_eq!(
+            prompt_body(content),
+            "Write a function.\n{\"example\":\"json in prompt\"}",
+            "prompt body must be returned byte-for-byte, including any embedded JSON snippets"
+        );
+    }
+
+    #[test]
+    fn prompt_body_falls_back_to_full_content_without_marker() {
+        let content = "source: RoleMachine\nkind: SomethingElse\nfield: value\n";
+        assert_eq!(
+            prompt_body(content),
+            "source: RoleMachine\nkind: SomethingElse\nfield: value"
+        );
+    }
+
+    #[test]
+    fn json_to_yaml_converts_valid_json() {
+        // serde_json orders object keys alphabetically without the
+        // "preserve_order" feature, so `content` sorts before `status`.
+        let yaml = json_to_yaml(r#"{"status":"accepted","content":"done"}"#)
+            .expect("valid JSON must convert");
+        assert_eq!(yaml, "content: done\nstatus: accepted");
+    }
+
+    #[test]
+    fn json_to_yaml_returns_none_for_non_json() {
+        assert!(
+            json_to_yaml("not json at all").is_none(),
+            "plain text must not be reported as convertible"
+        );
+    }
+
+    #[test]
+    fn failure_body_renders_raw_response_json_as_yaml() {
+        let content = "source: RoleMachine\nsubsource: Producer\nkind: ParseFailed\n\
+            attempt_count: 1\nparse_error: missing field `status`\n\
+            raw_response:\n{\"content\":\"done\"}\n";
+        let body = failure_body(content);
+        assert!(
+            body.contains("parse_error: missing field `status`"),
+            "fields before raw_response must be preserved verbatim; got: {body}"
+        );
+        assert!(
+            body.ends_with("content: done"),
+            "raw_response JSON must be rendered as YAML; got: {body}"
+        );
+        assert!(
+            !body.contains("{\"content\":\"done\"}"),
+            "raw JSON form must not remain once converted; got: {body}"
+        );
+    }
+
+    #[test]
+    fn failure_body_leaves_non_json_raw_response_untouched() {
+        let content = "source: RoleMachine\nkind: ParseFailed\nattempt_count: 1\n\
+            parse_error: empty response\nraw_response:\n(empty)\n";
+        let body = failure_body(content);
+        assert!(
+            body.ends_with("(empty)"),
+            "non-JSON raw_response must be printed verbatim; got: {body}"
+        );
+    }
+
+    #[test]
+    fn failure_body_without_raw_response_marker_is_unchanged() {
+        let content = "source: SchedulerMachine\nkind: Failure\ncomponent: Worker\nreason: boom\n";
+        assert_eq!(
+            failure_body(content),
+            "source: SchedulerMachine\nkind: Failure\ncomponent: Worker\nreason: boom"
+        );
     }
 
     #[test]

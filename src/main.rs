@@ -62,7 +62,8 @@ enum Command {
         /// Show only role-prompt-rendered events, with the full prompt body.
         #[arg(long, conflicts_with = "failures")]
         prompts: bool,
-        /// Show only failure-related events, with their full content.
+        /// Show only failure-related events, with their full content
+        /// (raw JSON payloads rendered as YAML for readability).
         #[arg(long)]
         failures: bool,
     },
