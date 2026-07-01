@@ -392,11 +392,24 @@ pub fn parse_tool_request(json: &str) -> Result<FileToolRequest, String> {
     let json = json.trim();
     let json = extract_json_object(json)
         .ok_or_else(|| "no JSON object found in tool request".to_string())?;
-    let req: FileToolRequest = serde_json::from_str(json).map_err(|e| e.to_string())?;
+    let mut req: FileToolRequest = serde_json::from_str(json).map_err(|e| e.to_string())?;
+    if let FileToolRequest::WriteFile { content, .. } = &mut req {
+        *content = unescape_literal_newlines(content);
+    }
     if has_placeholder_fields(&req) {
         return Err("tool request contains placeholder values".to_string());
     }
     Ok(req)
+}
+
+/// Replaces literal two-character `\n` sequences with real newline characters.
+///
+/// Models frequently double-escape newlines when emitting JSON tool calls,
+/// producing a backslash followed by `n` instead of an actual newline byte.
+/// `write_file` content should always land on disk with real newlines, so
+/// this normalization runs once, right after JSON parsing.
+fn unescape_literal_newlines(s: &str) -> String {
+    s.replace("\\n", "\n")
 }
 
 /// Returns `true` if `s` exactly matches a framework placeholder (`$[A-Z_]+`).
@@ -886,7 +899,7 @@ mod tests {
     }
 
     #[test]
-    fn parsed_write_file_escaped_backslash_n_remains_literal() {
+    fn parsed_write_file_escaped_backslash_n_becomes_real_newline() {
         let (_temp, view) = make_view("write-json-literal-backslash-n");
         let mut executor = workspace_executor(&view, FileToolPolicy::default());
         let request = parse_tool_request(
@@ -906,7 +919,7 @@ mod tests {
             }),
             FileToolResponse::FileContents {
                 path: "output.txt".to_owned(),
-                content: r"first line\nsecond line".to_owned(),
+                content: "first line\nsecond line".to_owned(),
             }
         );
     }
