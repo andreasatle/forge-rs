@@ -304,6 +304,7 @@ fn validate_provider_tier(
             if config.base_url.trim().is_empty() {
                 return Err(format!("{field}.unmanaged.base_url must be non-empty").into());
             }
+            validate_http_url(&format!("{field}.unmanaged.base_url"), &config.base_url)?;
             if config.model.trim().is_empty() {
                 return Err(format!("{field}.unmanaged.model must be non-empty").into());
             }
@@ -312,6 +313,9 @@ fn validate_provider_tier(
             let llama = &managed.llama_cpp;
             if llama.command.trim().is_empty() {
                 return Err(format!("{field}.managed.llama_cpp.command must be non-empty").into());
+            }
+            if llama.port == 0 {
+                return Err(format!("{field}.managed.llama_cpp.port must not be 0").into());
             }
             match &llama.model {
                 ManagedLlamaCppModelConfig::Path(path) if path.trim().is_empty() => {
@@ -336,6 +340,27 @@ fn validate_provider_tier(
                 .into());
             }
         }
+    }
+    Ok(())
+}
+
+fn validate_http_url(field: &str, value: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let trimmed = value.trim();
+    let Some((scheme, rest)) = trimmed.split_once("://") else {
+        return Err(format!(
+            "{field} must be a valid URL with an http or https scheme (got '{value}')"
+        )
+        .into());
+    };
+    if scheme != "http" && scheme != "https" {
+        return Err(format!(
+            "{field} must use the http or https scheme, got '{scheme}' (in '{value}')"
+        )
+        .into());
+    }
+    let host = rest.split(['/', '?', '#']).next().unwrap_or("");
+    if host.trim().is_empty() {
+        return Err(format!("{field} must include a host (got '{value}')").into());
     }
     Ok(())
 }
@@ -797,6 +822,130 @@ telemetry:
         assert!(
             msg.contains("command"),
             "error must explain command requirement; got: {msg}"
+        );
+    }
+
+    const MANAGED_LLAMA_CPP_ZERO_PORT_YAML: &str = r#"
+objective: "test"
+artifact:
+  repo_path: ".forge/artifacts/main.git"
+  branch: "main"
+provider:
+  cheap:
+    managed:
+      llama_cpp:
+        command: "llama-server"
+        model:
+          path: "models/coder.gguf"
+        host: "127.0.0.1"
+        port: 0
+        n_predict: 512
+telemetry:
+  directory: "runs"
+"#;
+
+    #[test]
+    fn managed_llama_cpp_rejects_zero_port() {
+        let tmp = TempYaml::new(MANAGED_LLAMA_CPP_ZERO_PORT_YAML);
+        let result = ForgeConfig::from_file(tmp.path());
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("provider.cheap.managed.llama_cpp.port"),
+            "error must name the port field; got: {msg}"
+        );
+        assert!(
+            msg.contains('0'),
+            "error must explain that 0 is rejected; got: {msg}"
+        );
+    }
+
+    const UNMANAGED_BASE_URL_MISSING_SCHEME_YAML: &str = r#"
+objective: "test"
+artifact:
+  repo_path: ".forge/artifacts/main.git"
+  branch: "main"
+provider:
+  cheap:
+    unmanaged:
+      base_url: "localhost:8080"
+      model: "llama-test"
+      n_predict: 512
+telemetry:
+  directory: "runs"
+"#;
+
+    #[test]
+    fn unmanaged_base_url_requires_scheme() {
+        let tmp = TempYaml::new(UNMANAGED_BASE_URL_MISSING_SCHEME_YAML);
+        let result = ForgeConfig::from_file(tmp.path());
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("provider.cheap.unmanaged.base_url"),
+            "error must name the base_url field; got: {msg}"
+        );
+        assert!(
+            msg.contains("http"),
+            "error must mention the http/https scheme requirement; got: {msg}"
+        );
+    }
+
+    const UNMANAGED_BASE_URL_BAD_SCHEME_YAML: &str = r#"
+objective: "test"
+artifact:
+  repo_path: ".forge/artifacts/main.git"
+  branch: "main"
+provider:
+  cheap:
+    unmanaged:
+      base_url: "ftp://localhost:8080"
+      model: "llama-test"
+      n_predict: 512
+telemetry:
+  directory: "runs"
+"#;
+
+    #[test]
+    fn unmanaged_base_url_rejects_unrecognized_scheme() {
+        let tmp = TempYaml::new(UNMANAGED_BASE_URL_BAD_SCHEME_YAML);
+        let result = ForgeConfig::from_file(tmp.path());
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("provider.cheap.unmanaged.base_url"),
+            "error must name the base_url field; got: {msg}"
+        );
+        assert!(
+            msg.contains("ftp"),
+            "error must name the rejected scheme; got: {msg}"
+        );
+    }
+
+    const UNMANAGED_BASE_URL_MISSING_HOST_YAML: &str = r#"
+objective: "test"
+artifact:
+  repo_path: ".forge/artifacts/main.git"
+  branch: "main"
+provider:
+  cheap:
+    unmanaged:
+      base_url: "http://"
+      model: "llama-test"
+      n_predict: 512
+telemetry:
+  directory: "runs"
+"#;
+
+    #[test]
+    fn unmanaged_base_url_requires_host() {
+        let tmp = TempYaml::new(UNMANAGED_BASE_URL_MISSING_HOST_YAML);
+        let result = ForgeConfig::from_file(tmp.path());
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("provider.cheap.unmanaged.base_url"),
+            "error must name the base_url field; got: {msg}"
+        );
+        assert!(
+            msg.contains("host"),
+            "error must explain the host requirement; got: {msg}"
         );
     }
 

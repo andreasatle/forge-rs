@@ -13,8 +13,8 @@ use std::process::Command;
 
 use crate::artifacts::{Artifact, ArtifactView};
 use crate::config::{
-    ForgeConfig, ManagedProviderConfig, ProjectConfig, ProjectKind, ProviderConfig,
-    ProviderTierConfig, ValidationConfig,
+    ForgeConfig, ManagedLlamaCppModelConfig, ManagedProviderConfig, ProjectConfig, ProjectKind,
+    ProviderConfig, ProviderTierConfig, ValidationConfig,
 };
 use crate::language::registry::language_spec;
 
@@ -357,12 +357,30 @@ fn start_managed_provider_servers(
     if let ProviderTierConfig::Managed(managed) = &provider.cheap {
         let config = resolve_managed_llama_cpp(managed);
         servers.push(ManagedProviderServer::start_llama_cpp(&config)?);
+        log_managed_provider_started("cheap", &config);
     }
     if let Some(ProviderTierConfig::Managed(managed)) = &provider.strong {
         let config = resolve_managed_llama_cpp(managed);
         servers.push(ManagedProviderServer::start_llama_cpp(&config)?);
+        log_managed_provider_started("strong", &config);
     }
     Ok(servers)
+}
+
+fn log_managed_provider_started(tier: &str, config: &ManagedLlamaCppRuntimeConfig) {
+    eprintln!(
+        "[provider] {:<7} {:<20} {}:{}",
+        tier,
+        managed_model_display_name(&config.model),
+        config.host,
+        config.port
+    );
+}
+
+/// Strips the repo/directory prefix from a managed model identifier for display.
+fn managed_model_display_name(model: &ManagedLlamaCppModelConfig) -> &str {
+    let identity = model.identity();
+    identity.rsplit('/').next().unwrap_or(identity)
 }
 
 fn runtime_result_from_scheduler_terminal_output(
