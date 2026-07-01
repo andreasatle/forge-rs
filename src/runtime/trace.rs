@@ -65,7 +65,7 @@ pub fn run_trace(
         };
 
         match filter {
-            TraceFilter::All => println!("{header}"),
+            TraceFilter::All => println!("{}", summary_line(&header)),
             TraceFilter::Prompts => {
                 if header.kind == "RolePromptRendered" {
                     print_prompt(&header, &content);
@@ -88,6 +88,9 @@ struct EventHeader {
     source: String,
     subsource: Option<String>,
     kind: String,
+    /// The first field line after `kind:`, truncated for display in the
+    /// default summary. `None` when the event has no further fields.
+    preview: Option<String>,
 }
 
 impl EventHeader {
@@ -107,11 +110,34 @@ impl EventHeader {
         }
         let kind = line.strip_prefix("kind: ")?.to_string();
 
+        // Skip fields that add nothing beyond what's already shown: a
+        // `machine: <name>` field always repeats `source` verbatim (see
+        // `run_machine_with_telemetry`), and a bare `field:` marker (e.g.
+        // `state:`) introduces a multi-line value with no inline text of its
+        // own, so its first content line is used instead.
+        let mut preview_line = lines.next();
+        loop {
+            match preview_line {
+                Some(line) if line.starts_with("machine: ") => preview_line = lines.next(),
+                Some(line) if line.trim_end().ends_with(':') => preview_line = lines.next(),
+                _ => break,
+            }
+        }
+        let preview = preview_line.and_then(|line| {
+            let line = strip_trailing_open_bracket(line.trim());
+            if line.is_empty() {
+                None
+            } else {
+                Some(truncate(line, PREVIEW_MAX_CHARS))
+            }
+        });
+
         Some(Self {
             counter,
             source,
             subsource,
             kind,
+            preview,
         })
     }
 }
@@ -127,6 +153,43 @@ impl std::fmt::Display for EventHeader {
             None => write!(f, "{}  {}  {}", self.counter, self.source, self.kind),
         }
     }
+}
+
+/// Maximum length, in characters, of the preview snippet shown in the
+/// default trace summary.
+const PREVIEW_MAX_CHARS: usize = 80;
+
+/// One line of the default trace summary: the header plus a short preview
+/// of the event's first field, when one is available.
+fn summary_line(header: &EventHeader) -> String {
+    match &header.preview {
+        Some(preview) => format!("{header}  {preview}"),
+        None => header.to_string(),
+    }
+}
+
+/// Drop a trailing, unmatched opening bracket left over from the first line
+/// of a pretty-printed (`{:#?}`) struct or tuple variant, e.g. `Active {`
+/// becomes `Active` and `WorkAccepted(` becomes `WorkAccepted`. The bracket
+/// never closes on the same line, so it adds nothing but visual noise.
+fn strip_trailing_open_bracket(line: &str) -> &str {
+    let stripped = line
+        .strip_suffix('{')
+        .or_else(|| line.strip_suffix('('))
+        .or_else(|| line.strip_suffix('['))
+        .unwrap_or(line);
+    stripped.trim_end()
+}
+
+/// Truncate `s` to at most `max_chars` characters, appending an ellipsis
+/// when truncated.
+fn truncate(s: &str, max_chars: usize) -> String {
+    if s.chars().count() <= max_chars {
+        return s.to_string();
+    }
+    let mut truncated: String = s.chars().take(max_chars).collect();
+    truncated.push('…');
+    truncated
 }
 
 fn is_failure_kind(kind: &str) -> bool {
@@ -333,6 +396,9 @@ mod tests {
         assert_eq!(header.source, "SchedulerMachine");
         assert_eq!(header.subsource, None);
         assert_eq!(header.kind, "MachineStarted");
+        // MachineStarted's only field is `machine:`, which always repeats
+        // `source`; skipping it leaves no further field to preview.
+        assert_eq!(header.preview, None);
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -358,12 +424,176 @@ mod tests {
     }
 
     #[test]
+    fn event_header_preview_skips_redundant_machine_field_and_bare_marker() {
+        let dir = temp_dir("header-multiline-marker");
+        let sink = FileTelemetry::new(dir.clone());
+        sink.record(TelemetryRecord::new(
+            "SchedulerMachine",
+            TelemetryEvent::StateEntered {
+                machine: "SchedulerMachine".into(),
+                state: "Active { graph: .. }".into(),
+            },
+        ));
+        let path = dir.join("000001--scheduler-machine--state-entered.txt");
+        let content = std::fs::read_to_string(&path).unwrap();
+
+        let header = EventHeader::parse(&path, &content).expect("header must parse");
+        assert_eq!(
+            header.preview.as_deref(),
+            Some("Active { graph: .. }"),
+            "preview must skip the redundant `machine:` field (it always repeats `source`) \
+             and the bare `state:` marker, landing on the actual state text"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn event_header_preview_uses_first_non_redundant_single_line_field() {
+        // Failure has no `machine:` field, so its first field (`component:`)
+        // is used directly.
+        let content = "source: SchedulerMachine\nkind: Failure\ncomponent: Worker\nreason: boom\n";
+        let path = Path::new("000001--scheduler-machine--failure.txt");
+
+        let header = EventHeader::parse(path, content).expect("header must parse");
+        assert_eq!(header.preview.as_deref(), Some("component: Worker"));
+    }
+
+    #[test]
+    fn event_header_preview_skips_bare_multiline_marker() {
+        // Synthetic content where a bare `state:` marker (no inline value,
+        // and no preceding `machine:` field) is the first line after `kind:`.
+        let content =
+            "source: SchedulerMachine\nkind: StateEntered\nstate:\nActive { graph: .. }\n";
+        let path = Path::new("000001--scheduler-machine--state-entered.txt");
+
+        let header = EventHeader::parse(path, content).expect("header must parse");
+        assert_eq!(
+            header.preview.as_deref(),
+            Some("Active { graph: .. }"),
+            "a bare multi-line marker must be skipped in favor of its first content line"
+        );
+    }
+
+    #[test]
+    fn event_header_preview_is_none_when_no_further_fields() {
+        let dir = temp_dir("header-no-preview");
+        let sink = FileTelemetry::new(dir.clone());
+        sink.record(TelemetryRecord::new(
+            "RoleMachine",
+            TelemetryEvent::ToolLoopLimitReached,
+        ));
+        let path = dir.join("000001--role-machine--tool-loop-limit-reached.txt");
+        let content = std::fs::read_to_string(&path).unwrap();
+
+        let header = EventHeader::parse(&path, &content).expect("header must parse");
+        assert_eq!(
+            header.preview, None,
+            "an event with no fields after `kind:` must have no preview"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn preview_strips_dangling_brace_from_pretty_printed_struct_variant() {
+        // A real `{:#?}` dump of a struct-like enum variant puts only the
+        // variant name and opening brace on the first line.
+        let content = "source: SchedulerMachine\nkind: StateEntered\nstate:\n\
+            Active {\n    graph: RunGraph {\n        nodes: [],\n    },\n}\n";
+        let path = Path::new("000001--scheduler-machine--state-entered.txt");
+
+        let header = EventHeader::parse(path, content).expect("header must parse");
+        assert_eq!(
+            header.preview.as_deref(),
+            Some("Active"),
+            "the dangling `{{` left by pretty-printed Debug output must be stripped"
+        );
+    }
+
+    #[test]
+    fn preview_strips_dangling_paren_from_pretty_printed_tuple_variant() {
+        let content = "source: SchedulerMachine\nkind: EventReceived\nevent:\n\
+            WorkAccepted(\n    NodeId(\n        \"root\",\n    ),\n)\n";
+        let path = Path::new("000001--scheduler-machine--event-received.txt");
+
+        let header = EventHeader::parse(path, content).expect("header must parse");
+        assert_eq!(header.preview.as_deref(), Some("WorkAccepted"));
+    }
+
+    #[test]
+    fn strip_trailing_open_bracket_removes_brace_and_trailing_space() {
+        assert_eq!(strip_trailing_open_bracket("Active {"), "Active");
+    }
+
+    #[test]
+    fn strip_trailing_open_bracket_removes_paren() {
+        assert_eq!(strip_trailing_open_bracket("WorkAccepted("), "WorkAccepted");
+    }
+
+    #[test]
+    fn strip_trailing_open_bracket_leaves_complete_line_unchanged() {
+        assert_eq!(
+            strip_trailing_open_bracket("component: Worker"),
+            "component: Worker"
+        );
+    }
+
+    #[test]
+    fn strip_trailing_open_bracket_returns_empty_for_bare_bracket() {
+        assert_eq!(strip_trailing_open_bracket("{"), "");
+    }
+
+    #[test]
+    fn truncate_leaves_short_strings_unchanged() {
+        assert_eq!(truncate("short", 80), "short");
+    }
+
+    #[test]
+    fn truncate_shortens_long_strings_with_ellipsis() {
+        let long = "a".repeat(100);
+        let truncated = truncate(&long, 10);
+        assert_eq!(truncated, format!("{}…", "a".repeat(10)));
+    }
+
+    #[test]
+    fn summary_line_appends_preview_when_present() {
+        let header = EventHeader {
+            counter: "000001".to_string(),
+            source: "SchedulerMachine".to_string(),
+            subsource: None,
+            kind: "MachineStarted".to_string(),
+            preview: Some("machine: SchedulerHandler".to_string()),
+        };
+        assert_eq!(
+            summary_line(&header),
+            "000001  SchedulerMachine  MachineStarted  machine: SchedulerHandler"
+        );
+    }
+
+    #[test]
+    fn summary_line_omits_trailing_separator_without_preview() {
+        let header = EventHeader {
+            counter: "000001".to_string(),
+            source: "SchedulerMachine".to_string(),
+            subsource: None,
+            kind: "ValidationStarted".to_string(),
+            preview: None,
+        };
+        assert_eq!(
+            summary_line(&header),
+            "000001  SchedulerMachine  ValidationStarted"
+        );
+    }
+
+    #[test]
     fn event_header_display_includes_subsource_slash_separated() {
         let header = EventHeader {
             counter: "000001".to_string(),
             source: "RoleMachine".to_string(),
             subsource: Some("Producer".to_string()),
             kind: "RolePromptRendered".to_string(),
+            preview: None,
         };
         assert_eq!(
             header.to_string(),
@@ -378,6 +608,7 @@ mod tests {
             source: "SchedulerMachine".to_string(),
             subsource: None,
             kind: "MachineStarted".to_string(),
+            preview: None,
         };
         assert_eq!(
             header.to_string(),
