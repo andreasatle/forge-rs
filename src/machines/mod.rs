@@ -14,5 +14,4 @@
 //! that remember where they are over time.
 
 pub mod deliberation;
-pub mod demo;
 pub mod scheduler;

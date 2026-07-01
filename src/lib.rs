@@ -15,7 +15,7 @@
 //! # Module map
 //!
 //! - [`engine`] — the `Machine` trait, `Transition` type, and runner loop
-//! - [`machines`] — concrete state machines (scheduler, demo, …)
+//! - [`machines`] — concrete state machines (scheduler, deliberation)
 //! - [`providers`] — `ProviderClient` trait and typed request/response/error types
 //! - [`project`] — [`ProjectAdapter`](project::ProjectAdapter) seam for project-specific config
 //! - [`services`] — stateless data-transformation utilities
