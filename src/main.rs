@@ -6,8 +6,9 @@
 //!   forge show    <config.yaml>            — display the current artifact contents
 //!   forge history <config.yaml>            — print commit history (newest first)
 //!   forge reset   <config.yaml>            — delete and recreate the artifact repository
-//!   forge trace   <config.yaml>                — summarize the latest run's telemetry
-//!   forge trace   <config.yaml> --run <run-id>  — summarize a specific past run
+//!   forge trace   <config.yaml>                — node/attempt-grouped view of the latest run
+//!   forge trace   <config.yaml> --run <run-id>  — trace a specific past run
+//!   forge trace   <config.yaml> --summary       — print the old flat chronological event list
 //!   forge trace   <config.yaml> --prompts       — print full role-prompt-rendered events
 //!   forge trace   <config.yaml> --failures      — print full failure-related events
 //!
@@ -59,12 +60,16 @@ enum Command {
         /// Run id to trace instead of the latest run.
         #[arg(long)]
         run: Option<String>,
+        /// Print the old flat chronological one-line-per-event view instead
+        /// of the default node/attempt-grouped view.
+        #[arg(long, conflicts_with_all = ["prompts", "failures"])]
+        summary: bool,
         /// Show only role-prompt-rendered events, with the full prompt body.
-        #[arg(long, conflicts_with = "failures")]
+        #[arg(long, conflicts_with_all = ["failures", "summary"])]
         prompts: bool,
         /// Show only failure-related events, with their full content
         /// (raw JSON payloads rendered as YAML for readability).
-        #[arg(long)]
+        #[arg(long, conflicts_with = "summary")]
         failures: bool,
     },
 }
@@ -86,6 +91,7 @@ fn main() {
         Command::Trace {
             config,
             run,
+            summary,
             prompts,
             failures,
         } => {
@@ -93,8 +99,10 @@ fn main() {
                 TraceFilter::Prompts
             } else if failures {
                 TraceFilter::Failures
+            } else if summary {
+                TraceFilter::Summary
             } else {
-                TraceFilter::All
+                TraceFilter::Default
             };
             run_config_command(&config, move |config| {
                 run_trace(&config.telemetry.directory, run.as_deref(), filter)
