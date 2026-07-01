@@ -20,7 +20,7 @@ impl<'a, P: ProviderClient> Machine for DeliberatingMachine<'a, P> {
     type Output = DeliberationTerminalOutput;
 
     fn start_event(&self) -> DeliberationEvent {
-        DeliberationEvent::Start
+        DeliberationMachine.start_event()
     }
 
     fn transition(

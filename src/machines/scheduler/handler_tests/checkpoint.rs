@@ -113,7 +113,7 @@ fn temporary_workspace_removed_after_validation_failure() {
 
 #[test]
 fn checkpoint_written_after_node_returned() {
-    use crate::engine::run_machine;
+    use crate::machines::scheduler::run_scheduler;
     use crate::runtime::checkpoint::load_checkpoint;
 
     let seq = NEXT_TEST_ID.fetch_add(1, Ordering::Relaxed);
@@ -128,7 +128,7 @@ fn checkpoint_written_after_node_returned() {
         },
         run_config: RunConfig::default(),
     };
-    run_machine(
+    run_scheduler(
         SchedulerHandler::new(StaticNodeRunner).with_checkpoint_dir(dir.clone()),
         state,
     );

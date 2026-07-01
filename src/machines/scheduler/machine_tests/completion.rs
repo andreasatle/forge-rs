@@ -6,7 +6,7 @@ fn run_request_starts_scheduler_end_to_end() {
         objective: "plan demo".to_string(),
     };
     let state = SchedulerMachine::initial_state(request, RunConfig::default());
-    let output = run_machine(scheduler_handler(), state);
+    let output = run_scheduler(scheduler_handler(), state);
     assert!(matches!(output, SchedulerTerminalOutput::Complete { .. }));
 }
 
@@ -150,7 +150,7 @@ fn terminal_failure_produces_failed_scheduler_terminal_output() {
         }],
         next_id: 0,
     };
-    let output = run_machine(
+    let output = run_scheduler(
         scheduler_handler(),
         SchedulerState::Active {
             graph,
@@ -224,7 +224,7 @@ fn three_node_chain_completes_via_handler() {
         next_id: 0,
     };
 
-    let output = run_machine(
+    let output = run_scheduler(
         scheduler_handler(),
         SchedulerState::Active {
             graph,
@@ -456,7 +456,7 @@ fn split_remaps_downstream_dependencies_and_chain_completes() {
 
 #[test]
 fn full_chain_run() {
-    let output = run_machine(
+    let output = run_scheduler(
         scheduler_handler(),
         SchedulerState::Active {
             graph: chain_graph(),
@@ -478,7 +478,7 @@ fn full_chain_run() {
 
 #[test]
 fn clean_success_has_no_recovery() {
-    let output = run_machine(
+    let output = run_scheduler(
         scheduler_handler(),
         SchedulerState::Active {
             graph: single_work_graph(),

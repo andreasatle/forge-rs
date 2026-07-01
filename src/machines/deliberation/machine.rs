@@ -1,4 +1,11 @@
-//! DeliberationMachine — transition logic and `Machine` implementation.
+//! DeliberationMachine — pure transition logic.
+//!
+//! `DeliberationMachine` does not implement the generic `engine::Machine`
+//! trait itself; it only exposes `start_event`, `transition`, and `output` as
+//! plain methods. `DeliberationHandler` is likewise a bare effect executor.
+//! A small owning wrapper (e.g. `DeliberatingMachine` in
+//! `node_runner::deliberating`) composes the two into something
+//! `engine::run_machine` can drive.
 //!
 //! Deliberation runs Producer → Validator → Critic → Referee before completing.
 //! When the Referee rejects, the machine loops back to Producer with accumulated
@@ -71,7 +78,7 @@
 //! Role mismatches → Failed (protocol violation)
 //! ```
 
-use crate::engine::{Machine, Transition};
+use crate::engine::Transition;
 use crate::machines::scheduler::FailureKind;
 
 use super::effect::DeliberationEffect;
@@ -103,21 +110,19 @@ impl DeliberationMachine {
     }
 }
 
-impl Machine for DeliberationMachine {
-    type State = DeliberationState;
-    type Event = DeliberationEvent;
-    type Effect = DeliberationEffect;
-    type Output = DeliberationTerminalOutput;
-
-    fn start_event(&self) -> Self::Event {
+impl DeliberationMachine {
+    /// Returns the event used to bootstrap the machine on the first tick.
+    pub fn start_event(&self) -> DeliberationEvent {
         DeliberationEvent::Start
     }
 
-    fn transition(
+    /// Pure transition function: given the current state and an event,
+    /// returns the next state and any effects to dispatch.
+    pub fn transition(
         &self,
-        state: Self::State,
-        event: Self::Event,
-    ) -> Transition<Self::State, Self::Effect> {
+        state: DeliberationState,
+        event: DeliberationEvent,
+    ) -> Transition<DeliberationState, DeliberationEffect> {
         match (state, event) {
             // Bootstrap: kick off the Producer.
             (DeliberationState::Ready { request }, DeliberationEvent::Start) => Transition {
@@ -489,11 +494,9 @@ impl Machine for DeliberationMachine {
         }
     }
 
-    fn handle_effect(&self, _effect: Self::Effect) -> Self::Event {
-        panic!("handle_effect called on bare DeliberationMachine — use a test wrapper")
-    }
-
-    fn output(&self, state: &Self::State) -> Option<Self::Output> {
+    /// Inspects the current state and returns `Some(output)` if the machine
+    /// has reached a terminal state, `None` to continue.
+    pub fn output(&self, state: &DeliberationState) -> Option<DeliberationTerminalOutput> {
         match state {
             DeliberationState::Complete { output } => {
                 Some(DeliberationTerminalOutput::Complete(output.clone()))

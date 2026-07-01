@@ -113,7 +113,7 @@ fn retry_worker_receives_validation_diagnostics_and_can_fix_file() {
         run_config: RunConfig::default(),
     };
 
-    let output = run_machine(handler, state);
+    let output = run_scheduler(handler, state);
 
     let SchedulerTerminalOutput::Complete {
         graph,

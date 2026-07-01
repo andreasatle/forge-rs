@@ -16,13 +16,12 @@ use crate::config::{
     ForgeConfig, ManagedProviderConfig, ProjectConfig, ProjectKind, ProviderConfig,
     ProviderTierConfig, ValidationConfig,
 };
-use crate::engine::run_machine_with_telemetry;
 use crate::language::registry::language_spec;
 
 use super::repo::load_or_create_artifact;
-use crate::machines::scheduler::state::SchedulerState;
 use crate::machines::scheduler::{
-    RunConfig, RunRequest, SchedulerHandler, SchedulerMachine, SchedulerTerminalOutput,
+    RunConfig, RunRequest, SchedulerHandler, SchedulerMachine, SchedulerState,
+    SchedulerTerminalOutput, run_scheduler_with_telemetry,
 };
 use crate::node_runner::{DeliberatingNodeRunner, TestTargetsFn};
 use crate::project::{CodingProjectAdapter, DefaultProjectAdapter, ProjectAdapter as _};
@@ -121,7 +120,7 @@ impl ForgeRuntime {
             },
         );
 
-        let (output, handler) = run_machine_with_telemetry(handler, initial_state, sink.as_ref());
+        let (output, handler) = run_scheduler_with_telemetry(handler, initial_state, sink.as_ref());
         print_run_progress_result(&output);
 
         let final_artifact = handler.artifact();
@@ -257,7 +256,7 @@ impl ForgeRuntime {
                 .as_secs_f64(),
         };
 
-        let (output, handler) = run_machine_with_telemetry(handler, initial_state, sink.as_ref());
+        let (output, handler) = run_scheduler_with_telemetry(handler, initial_state, sink.as_ref());
         print_run_progress_result(&output);
 
         let final_artifact = handler.artifact();
@@ -573,8 +572,9 @@ mod tests {
         ArtifactConfig, ForgeConfig, ProjectConfig, ProjectKind, ProviderConfig, TelemetryConfig,
         UnmanagedProviderConfig,
     };
-    use crate::machines::scheduler::machine::{RecoverySummary, SchedulerTerminalOutput};
-    use crate::machines::scheduler::{FailureReason, RunGraph};
+    use crate::machines::scheduler::{
+        FailureReason, RecoverySummary, RunGraph, SchedulerTerminalOutput,
+    };
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static NEXT_ID: AtomicU64 = AtomicU64::new(0);
@@ -1297,7 +1297,8 @@ mod tests {
             },
             RunConfig::default(),
         );
-        let (_output, handler) = run_machine_with_telemetry(handler, initial_state, &NoopTelemetry);
+        let (_output, handler) =
+            run_scheduler_with_telemetry(handler, initial_state, &NoopTelemetry);
 
         let final_artifact = handler
             .artifact()
@@ -1433,7 +1434,8 @@ mod tests {
             },
             RunConfig::default(),
         );
-        let (output, handler) = run_machine_with_telemetry(handler, initial_state, &NoopTelemetry);
+        let (output, handler) =
+            run_scheduler_with_telemetry(handler, initial_state, &NoopTelemetry);
 
         let validation_passed = handler.validation_passed();
         let status = match &output {
@@ -1526,7 +1528,8 @@ mod tests {
             },
             RunConfig::default(),
         );
-        let (output, handler) = run_machine_with_telemetry(handler, initial_state, &NoopTelemetry);
+        let (output, handler) =
+            run_scheduler_with_telemetry(handler, initial_state, &NoopTelemetry);
 
         let validation_passed = handler.validation_passed();
         let status = match &output {
@@ -1583,7 +1586,8 @@ mod tests {
             },
             RunConfig::default(),
         );
-        let (output, handler) = run_machine_with_telemetry(handler, initial_state, &NoopTelemetry);
+        let (output, handler) =
+            run_scheduler_with_telemetry(handler, initial_state, &NoopTelemetry);
 
         let validation_passed = handler.validation_passed();
         let failure_reason_str: Option<String> =

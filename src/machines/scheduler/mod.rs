@@ -17,7 +17,9 @@
 //! - `event.rs` — `SchedulerEvent`, the scheduler transition input vocabulary
 //! - `effect.rs` — `SchedulerEffect` (commands emitted by transitions)
 //! - `types.rs` — scheduler support payload and recovery vocabulary
-//! - `machine.rs` — `SchedulerMachine`, `SchedulerTerminalOutput`, `RecoverySummary`, graph helpers, and the `Machine` implementation
+//! - `machine.rs` — `SchedulerMachine` (pure transition/output), `SchedulerTerminalOutput`, `RecoverySummary`, and graph helpers
+//! - `handler.rs` — `SchedulerHandler`, the impure effect executor
+//! - `driver.rs` — `run_scheduler`/`run_scheduler_with_telemetry`, composing `SchedulerMachine` and `SchedulerHandler` into a drivable `Machine`
 //!
 //! # Output classification
 //!
@@ -40,25 +42,27 @@
 //! - `RunGraph::next_id` is only an internal generator cursor.
 
 mod checkpoint;
-pub mod config;
+mod config;
 mod dispatch;
-pub mod effect;
-pub mod event;
-pub mod failure;
+mod driver;
+mod effect;
+mod event;
+mod failure;
 mod graph;
-pub mod handler;
+mod handler;
 #[cfg(test)]
 mod handler_tests;
 mod integration;
-pub mod machine;
+mod machine;
 mod progress;
 mod recovery;
-pub mod request;
-pub mod state;
-pub mod types;
+mod request;
+mod state;
+mod types;
 mod validation;
 
 pub use config::RunConfig;
+pub use driver::{run_scheduler, run_scheduler_with_telemetry};
 pub use effect::SchedulerEffect;
 pub use event::SchedulerEvent;
 pub use failure::{ExhaustedAction, FailureKind, FailureReason};

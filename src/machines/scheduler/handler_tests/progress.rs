@@ -22,7 +22,7 @@ impl NodeRunner for AlwaysFailRunner {
 
 #[test]
 fn node_failure_reason_preserved_in_full_in_telemetry() {
-    use crate::engine::run_machine_with_telemetry;
+    use crate::machines::scheduler::run_scheduler_with_telemetry;
     use crate::telemetry::FileTelemetry;
 
     let long_reason = "provider error: connection timed out after 3 retries; \
@@ -45,7 +45,7 @@ fn node_failure_reason_preserved_in_full_in_telemetry() {
         run_config: RunConfig::default(),
     };
 
-    run_machine_with_telemetry(
+    run_scheduler_with_telemetry(
         SchedulerHandler::new(AlwaysFailRunner {
             reason: long_reason.to_string(),
         }),
@@ -74,7 +74,7 @@ fn node_failure_reason_preserved_in_full_in_telemetry() {
 
 #[test]
 fn telemetry_failure_does_not_change_scheduler_behavior() {
-    use crate::engine::run_machine_with_telemetry;
+    use crate::machines::scheduler::run_scheduler_with_telemetry;
     use crate::telemetry::FileTelemetry;
 
     let seq = NEXT_TEST_ID.fetch_add(1, Ordering::Relaxed);
@@ -95,7 +95,7 @@ fn telemetry_failure_does_not_change_scheduler_behavior() {
         },
         run_config: RunConfig::default(),
     };
-    let output = run_machine_with_telemetry(
+    let output = run_scheduler_with_telemetry(
         SchedulerHandler::new(StaticNodeRunner).with_telemetry(Rc::clone(&shared)),
         state,
         shared.as_ref(),
@@ -109,7 +109,7 @@ fn telemetry_failure_does_not_change_scheduler_behavior() {
 
 #[test]
 fn artifact_commit_still_succeeds_when_telemetry_fails() {
-    use crate::engine::run_machine_with_telemetry;
+    use crate::machines::scheduler::run_scheduler_with_telemetry;
     use crate::telemetry::FileTelemetry;
 
     let (_temp, artifact) = fixture("tel-fail-commit");
@@ -138,7 +138,7 @@ fn artifact_commit_still_succeeds_when_telemetry_fails() {
         },
         run_config: RunConfig::default(),
     };
-    let (output, handler) = run_machine_with_telemetry(
+    let (output, handler) = run_scheduler_with_telemetry(
         SchedulerHandler::with_artifact(runner, artifact).with_telemetry(Rc::clone(&shared)),
         state,
         shared.as_ref(),
@@ -196,7 +196,7 @@ impl crate::providers::ProviderClient for ScriptedProvider {
 
 #[test]
 fn scheduler_and_deliberation_share_one_trace() {
-    use crate::engine::run_machine_with_telemetry;
+    use crate::machines::scheduler::run_scheduler_with_telemetry;
     use crate::node_runner::DeliberatingNodeRunner;
     use crate::telemetry::{TelemetryEvent, VecTelemetry};
 
@@ -221,7 +221,7 @@ fn scheduler_and_deliberation_share_one_trace() {
     );
 
     let handler = SchedulerHandler::new(runner).with_telemetry(Rc::clone(&shared));
-    let _ = run_machine_with_telemetry(handler, initial_state, shared.as_ref());
+    let _ = run_scheduler_with_telemetry(handler, initial_state, shared.as_ref());
 
     let records = vec_tel.records();
     let machine_names: Vec<&str> = records
@@ -244,7 +244,7 @@ fn scheduler_and_deliberation_share_one_trace() {
 
 #[test]
 fn nested_machine_events_preserve_order() {
-    use crate::engine::run_machine_with_telemetry;
+    use crate::machines::scheduler::run_scheduler_with_telemetry;
     use crate::node_runner::DeliberatingNodeRunner;
     use crate::telemetry::{TelemetryEvent, VecTelemetry};
 
@@ -269,7 +269,7 @@ fn nested_machine_events_preserve_order() {
     );
 
     let handler = SchedulerHandler::new(runner).with_telemetry(Rc::clone(&shared));
-    let _ = run_machine_with_telemetry(handler, initial_state, shared.as_ref());
+    let _ = run_scheduler_with_telemetry(handler, initial_state, shared.as_ref());
 
     let records = vec_tel.records();
     let machine_seq: Vec<&str> = records
@@ -324,7 +324,7 @@ fn nested_machine_events_preserve_order() {
 
 #[test]
 fn runtime_creates_only_one_file_telemetry() {
-    use crate::engine::run_machine_with_telemetry;
+    use crate::machines::scheduler::run_scheduler_with_telemetry;
     use crate::node_runner::DeliberatingNodeRunner;
     use crate::telemetry::FileTelemetry;
 
@@ -353,7 +353,7 @@ fn runtime_creates_only_one_file_telemetry() {
     );
 
     let handler = SchedulerHandler::new(runner).with_telemetry(Rc::clone(&shared));
-    let _ = run_machine_with_telemetry(handler, initial_state, shared.as_ref());
+    let _ = run_scheduler_with_telemetry(handler, initial_state, shared.as_ref());
 
     // Both scheduler and deliberation events must land in one directory.
     let all_content: String = fs::read_dir(&dir)

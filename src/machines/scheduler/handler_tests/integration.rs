@@ -181,7 +181,7 @@ fn work_node_workspace_mutation_creates_new_commit() {
         },
         run_config: RunConfig::default(),
     };
-    run_machine(SchedulerHandler::with_artifact(runner, artifact), state);
+    run_scheduler(SchedulerHandler::with_artifact(runner, artifact), state);
 
     let new_sha = git_output(&repo_path, &["rev-parse", "HEAD"]);
     assert_ne!(
@@ -210,7 +210,7 @@ fn second_work_node_sees_first_work_node_changes() {
         },
         run_config: RunConfig::default(),
     };
-    run_machine(SchedulerHandler::with_artifact(runner, artifact), state);
+    run_scheduler(SchedulerHandler::with_artifact(runner, artifact), state);
 
     let view = second_view.borrow();
     let view = view
@@ -238,7 +238,7 @@ fn work_node_without_update_preserves_commit() {
         },
         run_config: RunConfig::default(),
     };
-    let output = run_machine(
+    let output = run_scheduler(
         SchedulerHandler::with_artifact(StaticNodeRunner, artifact),
         state,
     );
@@ -270,7 +270,7 @@ fn rejected_work_attempt_records_evidence_and_retry_starts_clean() {
         run_config: RunConfig::default(),
     };
 
-    let output = run_machine(
+    let output = run_scheduler(
         SchedulerHandler::with_artifact(runner, artifact).with_telemetry(telemetry.clone()),
         state,
     );
@@ -341,7 +341,7 @@ fn revision_exhaustion_records_final_work_attempt_evidence_before_cleanup() {
         run_config: RunConfig::default(),
     };
 
-    let output = run_machine(
+    let output = run_scheduler(
         SchedulerHandler::with_artifact(runner, artifact).with_telemetry(telemetry.clone()),
         state,
     );
@@ -426,7 +426,7 @@ fn deliberation_revision_stays_inside_single_scheduler_attempt_until_acceptance(
         run_config: RunConfig::default(),
     };
 
-    let output = run_machine(SchedulerHandler::with_artifact(runner, artifact), state);
+    let output = run_scheduler(SchedulerHandler::with_artifact(runner, artifact), state);
 
     let SchedulerTerminalOutput::Complete {
         graph,

@@ -7,7 +7,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::*;
 use crate::artifacts::{Artifact, ArtifactView, WorkspaceFileOps};
-use crate::engine::{Machine, run_machine};
 use crate::machines::scheduler::effect::SchedulerEffect;
 use crate::machines::scheduler::event::SchedulerEvent;
 use crate::machines::scheduler::graph::{
@@ -15,6 +14,7 @@ use crate::machines::scheduler::graph::{
 };
 use crate::machines::scheduler::machine::{SchedulerMachine, SchedulerTerminalOutput};
 use crate::machines::scheduler::request::RunRequest;
+use crate::machines::scheduler::run_scheduler;
 use crate::machines::scheduler::state::SchedulerState;
 use crate::machines::scheduler::{
     FailureKind, FailureReason, IntegrationFailure, NodeFailure, RecoveryAction, RunConfig,

@@ -29,7 +29,7 @@ fn plan_node_flows_through_runner() {
         },
         RunConfig::default(),
     );
-    let output = run_machine(handler(), state);
+    let output = run_scheduler(handler(), state);
     assert!(
         matches!(output, SchedulerTerminalOutput::Complete { .. }),
         "expected Complete, got {output:#?}"
@@ -45,7 +45,7 @@ fn work_node_flows_through_runner() {
         },
         run_config: RunConfig::default(),
     };
-    let output = run_machine(handler(), state);
+    let output = run_scheduler(handler(), state);
     assert!(
         matches!(output, SchedulerTerminalOutput::Complete { .. }),
         "expected Complete, got {output:#?}"
@@ -61,7 +61,7 @@ fn failed_node_flows_through_runner() {
         },
         run_config: RunConfig::default(),
     };
-    let output = run_machine(handler(), state);
+    let output = run_scheduler(handler(), state);
     assert!(
         matches!(output, SchedulerTerminalOutput::Failed { .. }),
         "expected Failed, got {output:#?}"

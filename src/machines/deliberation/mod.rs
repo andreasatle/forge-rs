@@ -45,12 +45,12 @@
 //! - `WaitingReferee + RefereeFailed` → `Failed` (no revision loop).
 //! - Any role mismatch → `Failed` with a "protocol violation" reason.
 
-pub mod effect;
-pub mod event;
-pub mod handler;
-pub mod machine;
-pub mod state;
-pub mod types;
+mod effect;
+mod event;
+mod handler;
+mod machine;
+mod state;
+mod types;
 
 pub use effect::DeliberationEffect;
 pub use event::DeliberationEvent;

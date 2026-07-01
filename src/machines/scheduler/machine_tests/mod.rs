@@ -1,11 +1,10 @@
 use super::*;
-use crate::engine::run_machine;
 use crate::machines::scheduler::graph::{Node, RunGraph};
 use crate::machines::scheduler::handler::SchedulerHandler;
 use crate::machines::scheduler::request::RunRequest;
 use crate::machines::scheduler::{
     ExhaustedAction, FailureKind, FailureReason, IntegrationFailure, IntegrationOutput,
-    NodeFailure, NodeRequest, PlanOutput, RecoveryAction, RunConfig, WorkOutput,
+    NodeFailure, NodeRequest, PlanOutput, RecoveryAction, RunConfig, WorkOutput, run_scheduler,
 };
 use crate::node_runner::StaticNodeRunner;
 

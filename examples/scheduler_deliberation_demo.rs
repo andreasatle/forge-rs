@@ -17,9 +17,9 @@
 //!
 //! Requires llama-server running at http://localhost:8080.
 
-use forge_rs::engine::run_machine_with_telemetry;
 use forge_rs::machines::scheduler::{
     RunConfig, RunRequest, SchedulerHandler, SchedulerMachine, SchedulerTerminalOutput,
+    run_scheduler_with_telemetry,
 };
 use forge_rs::node_runner::DeliberatingNodeRunner;
 use forge_rs::providers::{LlamaCppProvider, RetryingProvider};
@@ -87,7 +87,7 @@ fn main() {
     let _ = std::fs::remove_dir_all(&telemetry_dir);
     let sink = FileTelemetry::new(telemetry_dir.clone());
 
-    let (output, _handler) = run_machine_with_telemetry(handler, initial_state, &sink);
+    let (output, _handler) = run_scheduler_with_telemetry(handler, initial_state, &sink);
     print_terminal_output(output);
 
     println!();

@@ -1,20 +1,23 @@
 //! Effect handler for the scheduler machine.
 //!
-//! [`SchedulerHandler`] implements [`Machine`] by delegating pure transition
-//! logic to [`SchedulerMachine`] and routing side effects through focused
-//! scheduler services.
+//! [`SchedulerHandler`] executes [`SchedulerEffect`] values and, for
+//! progress-carrying events, wraps [`SchedulerMachine`]'s pure transition with
+//! checkpoint persistence. It does not implement the generic
+//! [`Machine`](crate::engine::Machine) trait itself; a private driver
+//! composes this handler with [`SchedulerMachine`] into something
+//! [`crate::engine::run_machine`] can drive.
 
 use std::path::PathBuf;
 use std::rc::Rc;
 
 use crate::artifacts::Artifact;
-use crate::engine::{Machine, Transition};
+use crate::engine::Transition;
 use crate::machines::scheduler::checkpoint::CheckpointService;
 use crate::machines::scheduler::dispatch::{RunNodeDispatch, dispatch_run_node};
 use crate::machines::scheduler::effect::SchedulerEffect;
 use crate::machines::scheduler::event::SchedulerEvent;
 use crate::machines::scheduler::integration::IntegrationService;
-use crate::machines::scheduler::machine::{SchedulerMachine, SchedulerTerminalOutput};
+use crate::machines::scheduler::machine::SchedulerMachine;
 use crate::machines::scheduler::progress::{is_progress_event, print_returned_progress};
 use crate::machines::scheduler::state::SchedulerState;
 use crate::node_runner::NodeRunner;
@@ -107,21 +110,12 @@ impl<R: NodeRunner> SchedulerHandler<R> {
     }
 }
 
-impl<R: NodeRunner> Machine for SchedulerHandler<R> {
-    type State = SchedulerState;
-    type Event = SchedulerEvent;
-    type Effect = SchedulerEffect;
-    type Output = SchedulerTerminalOutput;
-
-    fn name(&self) -> String {
-        "SchedulerMachine".to_string()
-    }
-
-    fn start_event(&self) -> SchedulerEvent {
-        SchedulerMachine.start_event()
-    }
-
-    fn transition(
+impl<R: NodeRunner> SchedulerHandler<R> {
+    /// Delegates to `SchedulerMachine`'s pure transition, then persists a
+    /// checkpoint when `event` carries progress (a node or integration
+    /// result). Progress reporting and checkpointing are handler-owned
+    /// orchestration, not part of the pure transition itself.
+    pub(crate) fn transition(
         &self,
         state: SchedulerState,
         event: SchedulerEvent,
@@ -135,7 +129,8 @@ impl<R: NodeRunner> Machine for SchedulerHandler<R> {
         result
     }
 
-    fn handle_effect(&self, effect: SchedulerEffect) -> SchedulerEvent {
+    /// Executes one effect and converts the external result into the next event.
+    pub(crate) fn handle_effect(&self, effect: SchedulerEffect) -> SchedulerEvent {
         match effect {
             SchedulerEffect::RunNode {
                 node_id,
@@ -195,10 +190,6 @@ impl<R: NodeRunner> Machine for SchedulerHandler<R> {
                 validation_plan,
             ),
         }
-    }
-
-    fn output(&self, state: &SchedulerState) -> Option<SchedulerTerminalOutput> {
-        SchedulerMachine.output(state)
     }
 }
 
