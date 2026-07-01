@@ -57,6 +57,7 @@ fn reviewer_can_read_work_attempt_target_file_with_relative_path() {
     let runner = DeliberatingNodeRunner::new(&provider, &provider);
     let request = NodeRunRequest {
         kind: NodeKind::Work,
+        node_id: NodeId("test-node".to_string()),
         objective: "Update the program.".to_string(),
         target_files: vec!["main.py".to_string()],
         test_plan_context: TestPlanContext::default(),

@@ -276,6 +276,59 @@ mod tests {
     }
 
     #[test]
+    fn file_body_includes_node_id_and_attempt_when_present() {
+        let dir = fresh_dir("node-context");
+        let sink = FileTelemetry::new(dir.clone());
+        let mut record = TelemetryRecord::new(
+            "DeliberationMachine",
+            TelemetryEvent::StateEntered {
+                machine: "DeliberationMachine".into(),
+                state: "Ready".into(),
+            },
+        );
+        record.node_id = Some("root-child-0".into());
+        record.attempt = Some(1);
+        sink.record(record);
+
+        let content =
+            std::fs::read_to_string(dir.join("000001--deliberation-machine--state-entered.txt"))
+                .unwrap();
+        assert!(
+            content.contains("node_id: root-child-0"),
+            "file body must include node_id as a top-level field; got: {content}"
+        );
+        assert!(
+            content.contains("attempt: 1"),
+            "file body must include attempt as a top-level field; got: {content}"
+        );
+    }
+
+    #[test]
+    fn file_body_omits_node_id_and_attempt_when_absent() {
+        let dir = fresh_dir("no-node-context");
+        let sink = FileTelemetry::new(dir.clone());
+        sink.record(TelemetryRecord::new(
+            "SchedulerMachine",
+            TelemetryEvent::StateEntered {
+                machine: "SchedulerMachine".into(),
+                state: "Ready".into(),
+            },
+        ));
+
+        let content =
+            std::fs::read_to_string(dir.join("000001--scheduler-machine--state-entered.txt"))
+                .unwrap();
+        assert!(
+            !content.contains("node_id:"),
+            "file body must omit node_id when the record carries none; got: {content}"
+        );
+        assert!(
+            !content.contains("attempt:"),
+            "file body must omit attempt when the record carries none; got: {content}"
+        );
+    }
+
+    #[test]
     fn telemetry_write_failure_does_not_panic() {
         let dir = fresh_dir("write-fail");
         let sink = FileTelemetry::new(dir.clone());

@@ -63,6 +63,7 @@ fn referee_reads_file_and_rejects_default_content_causes_node_failure() {
     let runner = DeliberatingNodeRunner::new(&provider, &provider);
     let request = NodeRunRequest {
         kind: NodeKind::Work,
+        node_id: NodeId("test-node".to_string()),
         objective: "Write a haiku about Python state machines in main.py".to_string(),
         target_files: vec![],
         test_plan_context: TestPlanContext::default(),
@@ -105,6 +106,7 @@ fn producer_read_file_does_not_satisfy_critic_read_requirement() {
     let runner = DeliberatingNodeRunner::new(&provider, &provider);
     let request = NodeRunRequest {
         kind: NodeKind::Work,
+        node_id: NodeId("test-node".to_string()),
         objective: "write the work".to_string(),
         target_files: vec![],
         test_plan_context: TestPlanContext::default(),
@@ -146,6 +148,7 @@ fn planner_no_recreate_violation_sends_revision_feedback_and_retries() {
     let runner = DeliberatingNodeRunner::new(&provider, &provider);
     let request = NodeRunRequest {
         kind: NodeKind::Plan,
+        node_id: NodeId("test-node".to_string()),
         // Objective does not name a specific file so the fast path does not apply
         // and the LLM planner is called with the scripted responses.
         objective: "Write a haiku about Python state machines.".to_string(),
@@ -185,6 +188,7 @@ fn planner_missing_test_target_sends_revision_feedback_and_retries() {
         .with_required_test_targets_fn(Arc::new(|t| CodingProjectAdapter.required_test_targets(t)));
     let request = NodeRunRequest {
         kind: NodeKind::Plan,
+        node_id: NodeId("test-node".to_string()),
         // Objective does not name a specific file so the fast path does not apply
         // and the LLM planner is called with the scripted responses.
         objective: "Print a short haiku about state machines.".to_string(),
@@ -224,6 +228,7 @@ fn planner_explicit_target_violation_sends_revision_feedback_and_retries() {
         .with_required_test_targets_fn(Arc::new(|t| CodingProjectAdapter.required_test_targets(t)));
     let request = NodeRunRequest {
         kind: NodeKind::Plan,
+        node_id: NodeId("test-node".to_string()),
         // Two explicit files → fast path does not apply (needs exactly one source file);
         // ExplicitTargetViolation still fires when the planner targets pyproject.toml.
         objective: "Modify main.py and utils.py to print a short haiku.".to_string(),
@@ -287,6 +292,7 @@ fn planner_no_recreate_violation_exhausts_retries_returns_failed() {
     let runner = DeliberatingNodeRunner::new(&provider, &provider);
     let request = NodeRunRequest {
         kind: NodeKind::Plan,
+        node_id: NodeId("test-node".to_string()),
         // Objective does not name a specific file so the fast path does not apply
         // and the LLM planner is called until retries are exhausted.
         objective: "Write a haiku about Python state machines.".to_string(),

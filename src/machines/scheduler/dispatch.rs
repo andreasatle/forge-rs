@@ -52,6 +52,7 @@ pub(crate) fn dispatch_run_node<R: NodeRunner>(
     );
     let request = NodeRunRequest {
         kind: command.kind,
+        node_id: command.node_id.clone(),
         objective: rendered_objective,
         target_files: command.target_files,
         test_plan_context: command.test_plan_context,

@@ -11,6 +11,7 @@ fn prepared_deliberation_keeps_canonical_objective_and_structured_context_separa
     let required_tests: Arc<TestTargetsFn> = Arc::new(|_| vec!["tests/test_main.py".to_string()]);
     let request = NodeRunRequest {
         kind: NodeKind::Work,
+        node_id: NodeId("test-node".to_string()),
         objective: "do the thing".to_string(),
         target_files: vec!["src/main.py".to_string()],
         test_plan_context: TestPlanContext::default(),
@@ -64,6 +65,7 @@ fn artifact_view_context_is_visible_to_deliberation_prompt() {
     let runner = DeliberatingNodeRunner::new(&provider, &provider);
     let request = NodeRunRequest {
         kind: NodeKind::Work,
+        node_id: NodeId("test-node".to_string()),
         objective: "do the thing".to_string(),
         target_files: vec![],
         test_plan_context: TestPlanContext::default(),
@@ -103,6 +105,7 @@ fn context_file_content_is_included_in_prompt_when_present() {
         .with_context_file_names(vec!["README.md".to_string()]);
     let request = NodeRunRequest {
         kind: NodeKind::Work,
+        node_id: NodeId("test-node".to_string()),
         objective: "do the thing".to_string(),
         target_files: vec![],
         test_plan_context: TestPlanContext::default(),
@@ -143,6 +146,7 @@ fn absent_context_file_is_silently_omitted_from_prompt() {
         .with_context_file_names(vec!["README.md".to_string()]);
     let request = NodeRunRequest {
         kind: NodeKind::Work,
+        node_id: NodeId("test-node".to_string()),
         objective: "do something".to_string(),
         target_files: vec![],
         test_plan_context: TestPlanContext::default(),
@@ -177,6 +181,7 @@ fn no_context_file_names_produces_no_extra_content() {
     let runner = DeliberatingNodeRunner::new(&provider, &provider);
     let request = NodeRunRequest {
         kind: NodeKind::Work,
+        node_id: NodeId("test-node".to_string()),
         objective: "do something".to_string(),
         target_files: vec![],
         test_plan_context: TestPlanContext::default(),

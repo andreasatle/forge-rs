@@ -70,6 +70,7 @@ mod tests {
     fn plan_request(objective: &str) -> NodeRunRequest {
         NodeRunRequest {
             kind: NodeKind::Plan,
+            node_id: NodeId("test-node".to_string()),
             objective: objective.to_string(),
             target_files: vec![],
             test_plan_context: TestPlanContext::default(),
@@ -83,6 +84,7 @@ mod tests {
     fn work_request(objective: &str) -> NodeRunRequest {
         NodeRunRequest {
             kind: NodeKind::Work,
+            node_id: NodeId("test-node".to_string()),
             objective: objective.to_string(),
             target_files: vec![],
             test_plan_context: TestPlanContext::default(),
@@ -97,6 +99,7 @@ mod tests {
     fn node_run_request_carries_scheduler_fields() {
         let req = NodeRunRequest {
             kind: NodeKind::Work,
+            node_id: NodeId("test-node".to_string()),
             objective: "test objective".to_string(),
             target_files: vec![],
             test_plan_context: TestPlanContext::default(),
@@ -119,6 +122,7 @@ mod tests {
         };
         let req = NodeRunRequest {
             kind: NodeKind::Work,
+            node_id: NodeId("test-node".to_string()),
             objective: "test".to_string(),
             target_files: vec![],
             test_plan_context: TestPlanContext::default(),

@@ -82,11 +82,16 @@ pub fn run_trace(
     Ok(())
 }
 
-/// Counter, source, optional subsource, and kind parsed from one telemetry file.
+/// Counter, source, optional subsource/node context, and kind parsed from one
+/// telemetry file.
 struct EventHeader {
     counter: String,
     source: String,
     subsource: Option<String>,
+    /// Scheduler node id, present only on events that pertain to a single node.
+    node_id: Option<String>,
+    /// Zero-based node attempt number, present only alongside `node_id`.
+    attempt: Option<String>,
     kind: String,
     /// The first field line after `kind:`, truncated for display in the
     /// default summary. `None` when the event has no further fields.
@@ -94,8 +99,9 @@ struct EventHeader {
 }
 
 impl EventHeader {
-    /// Parse the counter from `path`'s filename and the source/subsource/kind
-    /// from the leading `source:`/`subsource:`/`kind:` lines of `content`.
+    /// Parse the counter from `path`'s filename and the
+    /// source/subsource/node_id/attempt/kind from the leading header lines of
+    /// `content`.
     fn parse(path: &Path, content: &str) -> Option<Self> {
         let counter = path.file_stem()?.to_str()?.split("--").next()?.to_string();
 
@@ -106,6 +112,16 @@ impl EventHeader {
         let mut subsource = None;
         if let Some(sub) = line.strip_prefix("subsource: ") {
             subsource = Some(sub.to_string());
+            line = lines.next()?;
+        }
+        let mut node_id = None;
+        if let Some(id) = line.strip_prefix("node_id: ") {
+            node_id = Some(id.to_string());
+            line = lines.next()?;
+        }
+        let mut attempt = None;
+        if let Some(a) = line.strip_prefix("attempt: ") {
+            attempt = Some(a.to_string());
             line = lines.next()?;
         }
         let kind = line.strip_prefix("kind: ")?.to_string();
@@ -136,6 +152,8 @@ impl EventHeader {
             counter,
             source,
             subsource,
+            node_id,
+            attempt,
             kind,
             preview,
         })
@@ -159,13 +177,20 @@ impl std::fmt::Display for EventHeader {
 /// default trace summary.
 const PREVIEW_MAX_CHARS: usize = 80;
 
-/// One line of the default trace summary: the header plus a short preview
-/// of the event's first field, when one is available.
+/// One line of the default trace summary: the header, `node=`/`attempt=`
+/// context when present, and a short preview of the event's first field.
 fn summary_line(header: &EventHeader) -> String {
-    match &header.preview {
-        Some(preview) => format!("{header}  {preview}"),
-        None => header.to_string(),
+    let mut line = header.to_string();
+    if let Some(node_id) = &header.node_id {
+        line.push_str(&format!("  node={node_id}"));
     }
+    if let Some(attempt) = &header.attempt {
+        line.push_str(&format!("  attempt={attempt}"));
+    }
+    if let Some(preview) = &header.preview {
+        line.push_str(&format!("  {preview}"));
+    }
+    line
 }
 
 /// Drop a trailing, unmatched opening bracket left over from the first line
@@ -424,6 +449,67 @@ mod tests {
     }
 
     #[test]
+    fn event_header_parses_node_id_and_attempt_when_present() {
+        let dir = temp_dir("header-with-node-context");
+        let sink = FileTelemetry::new(dir.clone());
+        let mut record = TelemetryRecord::new(
+            "DeliberationMachine",
+            TelemetryEvent::StateEntered {
+                machine: "DeliberationMachine".into(),
+                state: "Ready".into(),
+            },
+        );
+        record.node_id = Some("root-child-0".into());
+        record.attempt = Some(1);
+        sink.record(record);
+        let path = dir.join("000001--deliberation-machine--state-entered.txt");
+        let content = std::fs::read_to_string(&path).unwrap();
+
+        let header = EventHeader::parse(&path, &content).expect("header must parse");
+        assert_eq!(header.node_id.as_deref(), Some("root-child-0"));
+        assert_eq!(header.attempt.as_deref(), Some("1"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn event_header_leaves_node_id_and_attempt_none_when_absent() {
+        let dir = temp_dir("header-without-node-context");
+        let sink = FileTelemetry::new(dir.clone());
+        sink.record(TelemetryRecord::new(
+            "SchedulerMachine",
+            TelemetryEvent::MachineStarted {
+                machine: "SchedulerHandler".into(),
+            },
+        ));
+        let path = dir.join("000001--scheduler-machine--machine-started.txt");
+        let content = std::fs::read_to_string(&path).unwrap();
+
+        let header = EventHeader::parse(&path, &content).expect("header must parse");
+        assert_eq!(header.node_id, None);
+        assert_eq!(header.attempt, None);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn summary_line_includes_node_and_attempt_when_present() {
+        let header = EventHeader {
+            counter: "000012".to_string(),
+            source: "DeliberationMachine".to_string(),
+            subsource: None,
+            node_id: Some("root-child-0".to_string()),
+            attempt: Some("1".to_string()),
+            kind: "StateEntered".to_string(),
+            preview: None,
+        };
+        assert_eq!(
+            summary_line(&header),
+            "000012  DeliberationMachine  StateEntered  node=root-child-0  attempt=1"
+        );
+    }
+
+    #[test]
     fn event_header_preview_skips_redundant_machine_field_and_bare_marker() {
         let dir = temp_dir("header-multiline-marker");
         let sink = FileTelemetry::new(dir.clone());
@@ -562,6 +648,8 @@ mod tests {
             counter: "000001".to_string(),
             source: "SchedulerMachine".to_string(),
             subsource: None,
+            node_id: None,
+            attempt: None,
             kind: "MachineStarted".to_string(),
             preview: Some("machine: SchedulerHandler".to_string()),
         };
@@ -577,6 +665,8 @@ mod tests {
             counter: "000001".to_string(),
             source: "SchedulerMachine".to_string(),
             subsource: None,
+            node_id: None,
+            attempt: None,
             kind: "ValidationStarted".to_string(),
             preview: None,
         };
@@ -592,6 +682,8 @@ mod tests {
             counter: "000001".to_string(),
             source: "RoleMachine".to_string(),
             subsource: Some("Producer".to_string()),
+            node_id: None,
+            attempt: None,
             kind: "RolePromptRendered".to_string(),
             preview: None,
         };
@@ -607,6 +699,8 @@ mod tests {
             counter: "000002".to_string(),
             source: "SchedulerMachine".to_string(),
             subsource: None,
+            node_id: None,
+            attempt: None,
             kind: "MachineStarted".to_string(),
             preview: None,
         };

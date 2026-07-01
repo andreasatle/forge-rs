@@ -6,6 +6,10 @@ pub struct TelemetryRecord {
     pub source: String,
     /// Optional sub-component within the source (e.g. `Producer`, `Critic`).
     pub subsource: Option<String>,
+    /// Scheduler node id, when the event pertains to a specific node.
+    pub node_id: Option<String>,
+    /// Zero-based node attempt number, when the event pertains to a specific attempt.
+    pub attempt: Option<u32>,
     /// The event emitted by the source.
     pub event: TelemetryEvent,
 }
@@ -16,6 +20,8 @@ impl TelemetryRecord {
         Self {
             source: source.into(),
             subsource: None,
+            node_id: None,
+            attempt: None,
             event,
         }
     }
@@ -29,21 +35,26 @@ impl TelemetryRecord {
         Self {
             source: source.into(),
             subsource: Some(subsource.into()),
+            node_id: None,
+            attempt: None,
             event,
         }
     }
 
-    /// Render the source, optional subsource, and event payload as a plain-text file body.
+    /// Render the source, optional subsource/node context, and event payload
+    /// as a plain-text file body.
     pub fn file_content(&self) -> String {
-        match &self.subsource {
-            Some(sub) => format!(
-                "source: {}\nsubsource: {}\n{}",
-                self.source,
-                sub,
-                self.event.file_content()
-            ),
-            None => format!("source: {}\n{}", self.source, self.event.file_content()),
+        let mut header = format!("source: {}\n", self.source);
+        if let Some(sub) = &self.subsource {
+            header.push_str(&format!("subsource: {sub}\n"));
         }
+        if let Some(node_id) = &self.node_id {
+            header.push_str(&format!("node_id: {node_id}\n"));
+        }
+        if let Some(attempt) = &self.attempt {
+            header.push_str(&format!("attempt: {attempt}\n"));
+        }
+        format!("{header}{}", self.event.file_content())
     }
 }
 

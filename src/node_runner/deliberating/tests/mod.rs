@@ -122,6 +122,7 @@ impl ProviderClient for RecordingProvider {
 fn plan_request(objective: &str) -> NodeRunRequest {
     NodeRunRequest {
         kind: NodeKind::Plan,
+        node_id: NodeId("test-node".to_string()),
         objective: objective.to_string(),
         target_files: vec![],
         test_plan_context: TestPlanContext::default(),
@@ -135,6 +136,7 @@ fn plan_request(objective: &str) -> NodeRunRequest {
 fn work_request(objective: &str) -> NodeRunRequest {
     NodeRunRequest {
         kind: NodeKind::Work,
+        node_id: NodeId("test-node".to_string()),
         objective: objective.to_string(),
         target_files: vec![],
         test_plan_context: TestPlanContext::default(),
@@ -148,6 +150,7 @@ fn work_request(objective: &str) -> NodeRunRequest {
 fn strong_work_request(objective: &str) -> NodeRunRequest {
     NodeRunRequest {
         kind: NodeKind::Work,
+        node_id: NodeId("test-node".to_string()),
         objective: objective.to_string(),
         target_files: vec![],
         test_plan_context: TestPlanContext::default(),
@@ -234,6 +237,7 @@ fn work_request_with_artifact(objective: &str, temp: &TempDir) -> NodeRunRequest
     let view = make_artifact_view(temp, "hello.txt", "world\n");
     NodeRunRequest {
         kind: NodeKind::Work,
+        node_id: NodeId("test-node".to_string()),
         objective: objective.to_string(),
         target_files: vec![],
         test_plan_context: TestPlanContext::default(),
@@ -248,6 +252,7 @@ fn strong_work_request_with_artifact(objective: &str, temp: &TempDir) -> NodeRun
     let view = make_artifact_view(temp, "hello.txt", "world\n");
     NodeRunRequest {
         kind: NodeKind::Work,
+        node_id: NodeId("test-node".to_string()),
         objective: objective.to_string(),
         target_files: vec![],
         test_plan_context: TestPlanContext::default(),
@@ -278,4 +283,5 @@ mod failure;
 mod fast_plan;
 mod output;
 mod request;
+mod telemetry;
 mod validation;

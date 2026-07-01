@@ -5,7 +5,7 @@ use std::rc::Rc;
 
 use crate::artifacts::{ArtifactView, Workspace};
 use crate::machines::scheduler::{
-    ModelTier, NodeFailure, NodeKind, PlanOutput, TestPlanContext, WorkOutput,
+    ModelTier, NodeFailure, NodeId, NodeKind, PlanOutput, TestPlanContext, WorkOutput,
 };
 
 /// A request to run a single scheduler node.
@@ -15,6 +15,11 @@ use crate::machines::scheduler::{
 pub struct NodeRunRequest {
     /// Whether the node should plan or execute.
     pub kind: NodeKind,
+    /// Identifier of the scheduler node this request was dispatched for.
+    ///
+    /// Carried for telemetry enrichment; runners must not use this for
+    /// control flow.
+    pub node_id: NodeId,
     /// Natural-language description of what the node should accomplish.
     pub objective: String,
     /// Structured target files this node is expected and allowed to touch.

@@ -15,6 +15,7 @@ fn fast_plan_bypasses_provider_and_emits_telemetry() {
     let result = runner.run_node(
         NodeRunRequest {
             kind: NodeKind::Plan,
+            node_id: NodeId("test-node".to_string()),
             objective: "Create a simple Python program in main.py that prints a greeting."
                 .to_string(),
             target_files: vec![],
@@ -66,6 +67,7 @@ fn fast_plan_with_tests_required_adds_test_task_and_emits_telemetry() {
     let result = runner.run_node(
         NodeRunRequest {
             kind: NodeKind::Plan,
+            node_id: NodeId("test-node".to_string()),
             objective: "Create a simple Python program in main.py that prints a greeting."
                 .to_string(),
             target_files: vec![],
@@ -130,6 +132,7 @@ fn multi_file_objective_falls_through_to_llm_planner() {
     let result = runner.run_node(
         NodeRunRequest {
             kind: NodeKind::Plan,
+            node_id: NodeId("test-node".to_string()),
             objective: "Modify main.py and utils.py to add logging.".to_string(),
             target_files: vec![],
             test_plan_context: TestPlanContext::default(),

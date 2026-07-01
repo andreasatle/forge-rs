@@ -322,6 +322,82 @@ fn nested_machine_events_preserve_order() {
     );
 }
 
+/// SchedulerMachine's `EffectEmitted` records for `RunNode` must carry the
+/// dispatched node's id and attempt, so a viewer can tell which node a
+/// scheduler-level effect belongs to without decoding the pretty-printed
+/// effect body. `StateEntered`/`EventReceived` describe the whole run graph,
+/// not a single node, so they must stay unstamped.
+#[test]
+fn scheduler_effect_emitted_carries_node_context_for_run_node() {
+    use crate::machines::scheduler::run_scheduler_with_telemetry;
+    use crate::node_runner::DeliberatingNodeRunner;
+    use crate::telemetry::{TelemetryEvent, VecTelemetry};
+
+    let vec_tel = Rc::new(VecTelemetry::new());
+    let shared: Rc<dyn TelemetrySink> = vec_tel.clone();
+
+    // Plan node + work node, each requiring 3 provider calls (producer, critic, referee).
+    let provider = ScriptedProvider::from_strs(&[
+        r#"{"tasks":[{"id":"implement","objective":"implement it","operation":"create","targets":["output.txt"],"depends_on":[]}]}"#,
+        r#"{"status":"accepted","content":"looks good"}"#,
+        r#"{"status":"accepted","content":"approved"}"#,
+        r#"{"status":"accepted","content":"work completed"}"#,
+        r#"{"status":"accepted","content":"looks good"}"#,
+        r#"{"status":"accepted","content":"approved"}"#,
+    ]);
+    let runner = DeliberatingNodeRunner::new(&provider, &provider);
+    let initial_state = SchedulerMachine::initial_state(
+        RunRequest {
+            objective: "do something".to_string(),
+        },
+        RunConfig::default(),
+    );
+
+    let handler = SchedulerHandler::new(runner).with_telemetry(Rc::clone(&shared));
+    let _ = run_scheduler_with_telemetry(handler, initial_state, shared.as_ref());
+
+    let records = vec_tel.records();
+    let run_node_effects: Vec<_> = records
+        .iter()
+        .filter(|record| {
+            record.source == "SchedulerMachine"
+                && matches!(record.event, TelemetryEvent::EffectEmitted { .. })
+        })
+        .collect();
+    assert!(
+        !run_node_effects.is_empty(),
+        "the scheduler must emit at least one EffectEmitted record"
+    );
+    for record in &run_node_effects {
+        assert!(
+            record.node_id.is_some(),
+            "SchedulerMachine EffectEmitted must carry node_id for RunNode/IntegrateWork"
+        );
+        assert!(
+            record.attempt.is_some(),
+            "SchedulerMachine EffectEmitted must carry attempt for RunNode/IntegrateWork"
+        );
+    }
+
+    let scheduler_state_or_event_records = records.iter().filter(|record| {
+        record.source == "SchedulerMachine"
+            && matches!(
+                record.event,
+                TelemetryEvent::StateEntered { .. } | TelemetryEvent::EventReceived { .. }
+            )
+    });
+    for record in scheduler_state_or_event_records {
+        assert_eq!(
+            record.node_id, None,
+            "SchedulerMachine StateEntered/EventReceived describe the whole graph and must stay unstamped"
+        );
+        assert_eq!(
+            record.attempt, None,
+            "SchedulerMachine StateEntered/EventReceived describe the whole graph and must stay unstamped"
+        );
+    }
+}
+
 #[test]
 fn runtime_creates_only_one_file_telemetry() {
     use crate::machines::scheduler::run_scheduler_with_telemetry;
