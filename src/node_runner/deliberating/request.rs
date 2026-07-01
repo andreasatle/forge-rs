@@ -35,6 +35,8 @@ pub(crate) fn prepare_deliberation<'a, P: ProviderClient>(
         request: DeliberationRequest {
             objective: request.objective.clone(),
             context,
+            node_kind: request.kind.clone(),
+            test_plan_context: request.test_plan_context.clone(),
             max_revisions: 1,
         },
     };
@@ -107,7 +109,6 @@ fn build_handler<'a, P: ProviderClient>(
             request.kind.clone(),
             policy.clone(),
             plan_validation_context,
-            request.test_plan_context.clone(),
             request.work_attempt.clone(),
         )
     }

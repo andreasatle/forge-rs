@@ -9,7 +9,7 @@
 use std::sync::Arc;
 
 use crate::artifacts::{ArtifactError, ArtifactRead, ArtifactView};
-use crate::machines::scheduler::{FailureKind, NodeKind, TestPlanContext};
+use crate::machines::scheduler::{FailureKind, NodeKind};
 use crate::node_runner::TestTargetsFn;
 use crate::node_runner::WorkAttempt;
 use crate::node_runner::planner::{
@@ -168,13 +168,17 @@ pub struct DeliberationHandler<R> {
     pub(crate) artifact_view: Option<ArtifactView>,
     /// Live candidate workspace for artifact-producing Work.
     pub(crate) work_attempt: Option<WorkAttempt>,
-    /// Whether this deliberation is for a plan node or a work node.
-    /// Forwarded to every Producer RoleRequest to select the correct policy field.
-    pub(crate) node_kind: NodeKind,
     /// Whether Work+Producer accepted output must mutate the artifact workspace.
+    ///
+    /// This reflects the handler's own artifact infrastructure (whether it was
+    /// constructed with a `work_attempt`/`ArtifactView` for artifact-producing
+    /// Work) rather than the intent of any single effect: a handler built via
+    /// `new_non_artifact_work*` has no workspace to validate against and can
+    /// never honor this check, regardless of the `node_kind` carried on an
+    /// incoming `RunRole`/`ValidateProducer` effect. It is not something that
+    /// varies across identical effects dispatched through *correctly*
+    /// constructed handlers of the same kind.
     pub(crate) work_requires_artifact_mutation: bool,
-    /// Structured test-target planning context forwarded to role prompts.
-    pub(crate) test_plan_context: TestPlanContext,
     /// For plan nodes: optional structured validation applied to planner
     /// output before the plan is accepted.
     pub(crate) plan_validation_context: Option<PlanValidationContext>,
@@ -195,9 +199,7 @@ impl<P> DeliberationHandler<ProviderRoleRunner<P>> {
             runner: ProviderRoleRunner::new(provider),
             artifact_view: None,
             work_attempt: None,
-            node_kind: NodeKind::Work,
             work_requires_artifact_mutation: false,
-            test_plan_context: TestPlanContext::default(),
             plan_validation_context: None,
         }
     }
@@ -213,18 +215,17 @@ impl<P> DeliberationHandler<ProviderRoleRunner<P>> {
                 .with_policy(policy),
             artifact_view: None,
             work_attempt: None,
-            node_kind: NodeKind::Work,
             work_requires_artifact_mutation: false,
-            test_plan_context: TestPlanContext::default(),
             plan_validation_context: None,
         }
     }
 
     /// Wrap a provider in a handler with an artifact view for Work nodes, an
     /// explicit token budget forwarded to the role runner, the node kind
-    /// used to select the matching plan/work system prompt from the policy,
-    /// the role policy to inject into the runner, and an optional context used
-    /// to reject planner tasks that violate structured plan rules.
+    /// used to determine whether the handler must validate artifact
+    /// mutation, the role policy to inject into the runner, and an optional
+    /// context used to reject planner tasks that violate structured plan
+    /// rules.
     #[cfg(test)]
     pub(crate) fn new_with_view(
         provider: P,
@@ -233,7 +234,6 @@ impl<P> DeliberationHandler<ProviderRoleRunner<P>> {
         node_kind: NodeKind,
         policy: RolePolicy,
         plan_validation_context: Option<PlanValidationContext>,
-        test_plan_context: TestPlanContext,
     ) -> Self {
         Self::new_with_work_attempt(
             provider,
@@ -242,12 +242,10 @@ impl<P> DeliberationHandler<ProviderRoleRunner<P>> {
             node_kind,
             policy,
             plan_validation_context,
-            test_plan_context,
             None,
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new_with_work_attempt(
         provider: P,
         artifact_view: Option<ArtifactView>,
@@ -255,7 +253,6 @@ impl<P> DeliberationHandler<ProviderRoleRunner<P>> {
         node_kind: NodeKind,
         policy: RolePolicy,
         plan_validation_context: Option<PlanValidationContext>,
-        test_plan_context: TestPlanContext,
         work_attempt: Option<WorkAttempt>,
     ) -> Self {
         assert!(
@@ -269,8 +266,6 @@ impl<P> DeliberationHandler<ProviderRoleRunner<P>> {
             artifact_view,
             work_attempt,
             work_requires_artifact_mutation: node_kind == NodeKind::Work,
-            test_plan_context,
-            node_kind,
             plan_validation_context,
         }
     }
@@ -296,49 +291,54 @@ impl<R: RoleRunner> DeliberationHandler<R> {
                 role,
                 objective,
                 context,
+                node_kind,
+                test_plan_context,
                 producer_content,
                 critic_content,
                 feedback,
             } => {
-                let (tool_context, target_views) =
-                    match self.role_tool_context_and_target_views(&role, &context.target_files) {
-                        Ok(context) => context,
-                        Err(error) => {
-                            let reason = format!(
-                                "WorkAttempt workspace view could not be constructed for \
+                let (tool_context, target_views) = match self.role_tool_context_and_target_views(
+                    &role,
+                    &node_kind,
+                    &context.target_files,
+                ) {
+                    Ok(context) => context,
+                    Err(error) => {
+                        let reason = format!(
+                            "WorkAttempt workspace view could not be constructed for \
                                  {role:?}: {error}. Use write_file by default when creating a \
                                  file or replacing most or all of an existing file. Use \
                                  replace_text only for small, localized edits after reading the \
                                  file and providing an exact old string that occurs once; \
                                  whitespace, indentation, or formatting differences will cause \
                                  replace_text to fail."
-                            );
-                            telemetry.record(TelemetryRecord::new_with_subsource(
-                                "DeliberationHandler",
-                                format!("{role:?}"),
-                                TelemetryEvent::WorkAttemptViewConstructionFailed {
-                                    role: format!("{role:?}"),
-                                    reason: reason.clone(),
-                                },
-                            ));
-                            return failed_role_event(
-                                role,
-                                FailureKind::WorkSemanticValidationFailure,
-                                reason,
-                            );
-                        }
-                    };
+                        );
+                        telemetry.record(TelemetryRecord::new_with_subsource(
+                            "DeliberationHandler",
+                            format!("{role:?}"),
+                            TelemetryEvent::WorkAttemptViewConstructionFailed {
+                                role: format!("{role:?}"),
+                                reason: reason.clone(),
+                            },
+                        ));
+                        return failed_role_event(
+                            role,
+                            FailureKind::WorkSemanticValidationFailure,
+                            reason,
+                        );
+                    }
+                };
 
                 let request = RoleRequest {
                     role: role.clone(),
                     objective,
-                    context,
-                    test_plan_context: self.test_plan_context.clone(),
+                    context: *context,
+                    test_plan_context,
                     target_views,
                     producer_content,
                     critic_content,
                     feedback,
-                    node_kind: self.node_kind.clone(),
+                    node_kind,
                     tool_context,
                 };
                 let output = self.runner.run_role(request, telemetry);
@@ -355,8 +355,10 @@ impl<R: RoleRunner> DeliberationHandler<R> {
             DeliberationEffect::ValidateProducer {
                 content,
                 artifact_changed,
+                node_kind,
             } => {
-                let result = self.validate_producer_semantics(&content, artifact_changed);
+                let result =
+                    self.validate_producer_semantics(&content, artifact_changed, &node_kind);
                 match result {
                     Ok(()) => DeliberationEvent::ProducerValidationAccepted { content },
                     Err(retry) => DeliberationEvent::ProducerValidationRejected { content, retry },
@@ -368,9 +370,10 @@ impl<R: RoleRunner> DeliberationHandler<R> {
     pub(crate) fn role_tool_context_and_target_views(
         &self,
         role: &DeliberationRole,
+        node_kind: &NodeKind,
         target_files: &[String],
     ) -> Result<(Option<RoleToolContext>, Vec<TargetView>), ArtifactError> {
-        if self.node_kind == NodeKind::Plan {
+        if *node_kind == NodeKind::Plan {
             return Ok((None, vec![]));
         }
 
@@ -405,12 +408,13 @@ impl<R: RoleRunner> DeliberationHandler<R> {
         &self,
         content: &str,
         artifact_changed: bool,
+        node_kind: &NodeKind,
     ) -> Result<(), ProducerValidationRetry> {
-        if self.node_kind == NodeKind::Plan && self.plan_validation_context.is_some() {
+        if *node_kind == NodeKind::Plan && self.plan_validation_context.is_some() {
             return self.validate_plan_producer_content(content);
         }
 
-        if self.node_kind == NodeKind::Work && self.work_requires_artifact_mutation {
+        if *node_kind == NodeKind::Work && self.work_requires_artifact_mutation {
             return self.validate_work_producer_output(artifact_changed);
         }
 

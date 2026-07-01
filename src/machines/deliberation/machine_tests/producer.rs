@@ -59,6 +59,7 @@ fn producer_acceptance_runs_validation_then_critic() {
             DeliberationEffect::ValidateProducer {
                 content,
                 artifact_changed: false,
+                ..
             } if content == "draft content"
         ),
         "expected ValidateProducer('draft content'), got {:?}",
@@ -151,6 +152,8 @@ fn producer_validation_retry_exhaustion_fails() {
         request: DeliberationRequest {
             objective: "write a poem".to_string(),
             context: crate::machines::deliberation::DeliberationContext::default(),
+            node_kind: crate::machines::scheduler::NodeKind::Work,
+            test_plan_context: crate::machines::scheduler::TestPlanContext::default(),
             max_revisions: 0,
         },
         producer_content: "draft content".to_string(),

@@ -8,6 +8,8 @@ fn referee_rejection_after_critic_rejection_loops_when_revisions_remain() {
                 request: crate::machines::deliberation::DeliberationRequest {
                     objective: "write a poem".to_string(),
                     context: crate::machines::deliberation::DeliberationContext::default(),
+                    node_kind: crate::machines::scheduler::NodeKind::Work,
+                    test_plan_context: crate::machines::scheduler::TestPlanContext::default(),
                     max_revisions: 1,
                 },
             },
@@ -114,6 +116,8 @@ fn referee_rejection_loops_to_producer_with_feedback() {
         request: DeliberationRequest {
             objective: "write a poem".to_string(),
             context: crate::machines::deliberation::DeliberationContext::default(),
+            node_kind: crate::machines::scheduler::NodeKind::Work,
+            test_plan_context: crate::machines::scheduler::TestPlanContext::default(),
             max_revisions: 1,
         },
         producer_content: "draft".to_string(),
@@ -167,6 +171,8 @@ fn referee_rejection_exhausts_revision_limit() {
         request: DeliberationRequest {
             objective: "write a poem".to_string(),
             context: crate::machines::deliberation::DeliberationContext::default(),
+            node_kind: crate::machines::scheduler::NodeKind::Work,
+            test_plan_context: crate::machines::scheduler::TestPlanContext::default(),
             max_revisions: 1,
         },
         producer_content: "draft".to_string(),
@@ -216,6 +222,8 @@ fn max_revisions_zero_fails_on_first_referee_rejection() {
         request: DeliberationRequest {
             objective: "write a poem".to_string(),
             context: crate::machines::deliberation::DeliberationContext::default(),
+            node_kind: crate::machines::scheduler::NodeKind::Work,
+            test_plan_context: crate::machines::scheduler::TestPlanContext::default(),
             max_revisions: 0,
         },
         producer_content: "draft".to_string(),
@@ -338,6 +346,8 @@ fn revision_then_acceptance_completes_with_revised_producer_content() {
         request: DeliberationRequest {
             objective: "write a poem".to_string(),
             context: crate::machines::deliberation::DeliberationContext::default(),
+            node_kind: crate::machines::scheduler::NodeKind::Work,
+            test_plan_context: crate::machines::scheduler::TestPlanContext::default(),
             max_revisions: 1,
         },
     };

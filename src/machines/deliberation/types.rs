@@ -1,6 +1,6 @@
 //! Shared vocabulary types for the deliberation pipeline.
 
-use crate::machines::scheduler::FailureKind;
+use crate::machines::scheduler::{FailureKind, NodeKind, TestPlanContext};
 
 /// Retry metadata returned when accepted Producer output fails semantic validation.
 #[derive(Clone, Debug, PartialEq)]
@@ -72,6 +72,11 @@ pub struct DeliberationRequest {
     pub objective: String,
     /// Structured prompt/tooling context for this run.
     pub context: DeliberationContext,
+    /// Whether this deliberation is for a plan node or a work node.
+    /// Carried on every emitted `RunRole` so the effect is self-describing.
+    pub node_kind: NodeKind,
+    /// Structured test-target planning context forwarded to role prompts.
+    pub test_plan_context: TestPlanContext,
     /// Maximum number of revision loops allowed.
     ///
     /// `0` means no revisions: the first Referee rejection fails immediately.

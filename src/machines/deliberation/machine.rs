@@ -129,7 +129,9 @@ impl DeliberationMachine {
                 effects: vec![DeliberationEffect::RunRole {
                     role: DeliberationRole::Producer,
                     objective: request.objective.clone(),
-                    context: request.context.clone(),
+                    context: Box::new(request.context.clone()),
+                    node_kind: request.node_kind.clone(),
+                    test_plan_context: request.test_plan_context.clone(),
                     producer_content: None,
                     critic_content: None,
                     feedback: vec![],
@@ -156,6 +158,7 @@ impl DeliberationMachine {
                 effects: vec![DeliberationEffect::ValidateProducer {
                     content: content.clone(),
                     artifact_changed,
+                    node_kind: request.node_kind.clone(),
                 }],
                 state: DeliberationState::WaitingValidator {
                     request,
@@ -178,7 +181,9 @@ impl DeliberationMachine {
                 effects: vec![DeliberationEffect::RunRole {
                     role: DeliberationRole::Critic,
                     objective: request.objective.clone(),
-                    context: request.context.clone(),
+                    context: Box::new(request.context.clone()),
+                    node_kind: request.node_kind.clone(),
+                    test_plan_context: request.test_plan_context.clone(),
                     producer_content: Some(producer_content.clone()),
                     critic_content: None,
                     feedback: feedback.clone(),
@@ -208,7 +213,9 @@ impl DeliberationMachine {
                         effects: vec![DeliberationEffect::RunRole {
                             role: DeliberationRole::Producer,
                             objective: request.objective.clone(),
-                            context: request.context.clone(),
+                            context: Box::new(request.context.clone()),
+                            node_kind: request.node_kind.clone(),
+                            test_plan_context: request.test_plan_context.clone(),
                             producer_content: None,
                             critic_content: None,
                             feedback: validation_feedback.clone(),
@@ -299,7 +306,9 @@ impl DeliberationMachine {
                     effects: vec![DeliberationEffect::RunRole {
                         role: DeliberationRole::Referee,
                         objective: request.objective.clone(),
-                        context: request.context.clone(),
+                        context: Box::new(request.context.clone()),
+                        node_kind: request.node_kind.clone(),
+                        test_plan_context: request.test_plan_context.clone(),
                         producer_content: Some(producer_content.clone()),
                         critic_content: Some(critic_advisory.as_referee_content().to_string()),
                         feedback: feedback.clone(),
@@ -330,7 +339,9 @@ impl DeliberationMachine {
                     effects: vec![DeliberationEffect::RunRole {
                         role: DeliberationRole::Referee,
                         objective: request.objective.clone(),
-                        context: request.context.clone(),
+                        context: Box::new(request.context.clone()),
+                        node_kind: request.node_kind.clone(),
+                        test_plan_context: request.test_plan_context.clone(),
                         producer_content: Some(producer_content.clone()),
                         critic_content: Some(critic_advisory.as_referee_content().to_string()),
                         feedback: feedback.clone(),
@@ -419,7 +430,9 @@ impl DeliberationMachine {
                         effects: vec![DeliberationEffect::RunRole {
                             role: DeliberationRole::Producer,
                             objective: request.objective.clone(),
-                            context: request.context.clone(),
+                            context: Box::new(request.context.clone()),
+                            node_kind: request.node_kind.clone(),
+                            test_plan_context: request.test_plan_context.clone(),
                             producer_content: None,
                             critic_content: None,
                             feedback: new_feedback.clone(),

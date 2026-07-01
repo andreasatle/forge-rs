@@ -126,6 +126,7 @@ impl<P: ProviderClient> Machine for ProvidedMachine<P> {
 
 fn run_role_effect(
     role: DeliberationRole,
+    node_kind: NodeKind,
     objective: &str,
     producer_content: Option<&str>,
     critic_content: Option<&str>,
@@ -134,18 +135,22 @@ fn run_role_effect(
     DeliberationEffect::RunRole {
         role,
         objective: objective.to_string(),
-        context: crate::machines::deliberation::DeliberationContext::default(),
+        context: Box::new(crate::machines::deliberation::DeliberationContext::default()),
+        node_kind,
+        test_plan_context: TestPlanContext::default(),
         producer_content: producer_content.map(|s| s.to_string()),
         critic_content: critic_content.map(|s| s.to_string()),
         feedback,
     }
 }
 
-fn ready(objective: &str, max_revisions: usize) -> DeliberationState {
+fn ready(objective: &str, node_kind: NodeKind, max_revisions: usize) -> DeliberationState {
     DeliberationState::Ready {
         request: DeliberationRequest {
             objective: objective.to_string(),
             context: crate::machines::deliberation::DeliberationContext::default(),
+            node_kind,
+            test_plan_context: TestPlanContext::default(),
             max_revisions,
         },
     }
@@ -167,10 +172,15 @@ fn accepted_output(content: &str, artifact_changed: bool) -> RoleRunOutput {
     )
 }
 
-fn validate_producer_effect(content: &str, artifact_changed: bool) -> DeliberationEffect {
+fn validate_producer_effect(
+    content: &str,
+    artifact_changed: bool,
+    node_kind: NodeKind,
+) -> DeliberationEffect {
     DeliberationEffect::ValidateProducer {
         content: content.to_string(),
         artifact_changed,
+        node_kind,
     }
 }
 
@@ -183,14 +193,13 @@ fn deliberation_handler_delegates_run_role_to_role_runner() {
         runner,
         artifact_view: None,
         work_attempt: None,
-        node_kind: NodeKind::Work,
         work_requires_artifact_mutation: false,
-        test_plan_context: TestPlanContext::default(),
         plan_validation_context: None,
     };
 
     let effect = run_role_effect(
         DeliberationRole::Producer,
+        NodeKind::Work,
         "write a poem",
         None,
         None,
@@ -221,19 +230,19 @@ fn structured_targets_flow_to_worker_role_request() {
         runner,
         artifact_view: None,
         work_attempt: None,
-        node_kind: NodeKind::Work,
         work_requires_artifact_mutation: false,
-        test_plan_context: TestPlanContext::default(),
         plan_validation_context: None,
     };
 
     let event = handler.handle_effect(DeliberationEffect::RunRole {
         role: DeliberationRole::Producer,
         objective: "write the implementation".to_string(),
-        context: crate::machines::deliberation::DeliberationContext {
+        context: Box::new(crate::machines::deliberation::DeliberationContext {
             target_files: vec!["src/main.rs".to_string()],
             ..Default::default()
-        },
+        }),
+        node_kind: NodeKind::Work,
+        test_plan_context: TestPlanContext::default(),
         producer_content: None,
         critic_content: None,
         feedback: vec![],
@@ -258,7 +267,7 @@ fn run_machine_with_provider_handler_success() {
             ]),
         ),
     };
-    let output = run_machine(machine, ready("write a poem", 0));
+    let output = run_machine(machine, ready("write a poem", NodeKind::Work, 0));
     match output {
         DeliberationTerminalOutput::Complete(out) => {
             assert_eq!(out.content, "draft output");
@@ -281,7 +290,7 @@ fn run_machine_with_provider_handler_revision() {
             ]),
         ),
     };
-    let output = run_machine(machine, ready("write a poem", 1));
+    let output = run_machine(machine, ready("write a poem", NodeKind::Work, 1));
     match output {
         DeliberationTerminalOutput::Complete(out) => {
             assert_eq!(out.content, "draft v2");
@@ -309,14 +318,13 @@ fn planner_handler_passes_no_tool_context_for_plan_nodes() {
         runner,
         artifact_view: Some(dummy_view()),
         work_attempt: None,
-        node_kind: NodeKind::Plan,
         work_requires_artifact_mutation: false,
-        test_plan_context: TestPlanContext::default(),
         plan_validation_context: None,
     };
 
     let effect = run_role_effect(
         DeliberationRole::Producer,
+        NodeKind::Plan,
         "plan the work",
         None,
         None,
@@ -338,14 +346,13 @@ fn worker_handler_passes_tool_context_when_view_available() {
         runner,
         artifact_view: Some(dummy_view()),
         work_attempt: None,
-        node_kind: NodeKind::Work,
         work_requires_artifact_mutation: true,
-        test_plan_context: TestPlanContext::default(),
         plan_validation_context: None,
     };
 
     let effect = run_role_effect(
         DeliberationRole::Producer,
+        NodeKind::Work,
         "do the work",
         None,
         None,
@@ -369,14 +376,13 @@ fn planner_handler_no_tool_context_without_view() {
         runner,
         artifact_view: None,
         work_attempt: None,
-        node_kind: NodeKind::Plan,
         work_requires_artifact_mutation: false,
-        test_plan_context: TestPlanContext::default(),
         plan_validation_context: None,
     };
 
     let effect = run_role_effect(
         DeliberationRole::Producer,
+        NodeKind::Plan,
         "plan the work",
         None,
         None,
@@ -401,9 +407,7 @@ fn handler_with_validation(results: Vec<RoleResult>) -> DeliberationHandler<Scri
         runner: ScriptedRoleRunner::new(results),
         artifact_view: None,
         work_attempt: None,
-        node_kind: NodeKind::Plan,
         work_requires_artifact_mutation: false,
-        test_plan_context: TestPlanContext::default(),
         plan_validation_context: Some(PlanValidationContext {
             top_objective: "create foo.rs".to_string(),
             existing_files: vec![],
@@ -419,9 +423,7 @@ fn handler_with_work_validation(
         runner: ScriptedRoleRunner::with_outputs(outputs),
         artifact_view: Some(dummy_view()),
         work_attempt: None,
-        node_kind: NodeKind::Work,
         work_requires_artifact_mutation: true,
-        test_plan_context: TestPlanContext::default(),
         plan_validation_context: None,
     }
 }
@@ -464,6 +466,7 @@ fn valid_single_task_plan_passes_semantic_validation() {
     }]);
     let effect = run_role_effect(
         DeliberationRole::Producer,
+        NodeKind::Plan,
         "create foo.rs",
         None,
         None,
@@ -479,7 +482,11 @@ fn valid_single_task_plan_passes_semantic_validation() {
         matches!(event, DeliberationEvent::ProducerAccepted { .. }),
         "valid plan run must produce ProducerAccepted; got {event:?}"
     );
-    let validation = handler.handle_effect(validate_producer_effect(VALID_SINGLE_TASK, false));
+    let validation = handler.handle_effect(validate_producer_effect(
+        VALID_SINGLE_TASK,
+        false,
+        NodeKind::Plan,
+    ));
     assert!(
         matches!(
             validation,
@@ -501,6 +508,7 @@ fn empty_plan_triggers_revision_feedback() {
     ]);
     let effect = run_role_effect(
         DeliberationRole::Producer,
+        NodeKind::Plan,
         "create foo.rs",
         None,
         None,
@@ -514,7 +522,8 @@ fn empty_plan_triggers_revision_feedback() {
         "RunRole must execute exactly one provider call"
     );
     assert!(matches!(event, DeliberationEvent::ProducerAccepted { .. }));
-    let validation = handler.handle_effect(validate_producer_effect(EMPTY_PLAN, false));
+    let validation =
+        handler.handle_effect(validate_producer_effect(EMPTY_PLAN, false, NodeKind::Plan));
     let DeliberationEvent::ProducerValidationRejected {
         retry: ProducerValidationRetry {
             feedback_reason, ..
@@ -543,6 +552,7 @@ fn unparseable_plan_triggers_revision_feedback() {
     ]);
     let effect = run_role_effect(
         DeliberationRole::Producer,
+        NodeKind::Plan,
         "create foo.rs",
         None,
         None,
@@ -559,6 +569,7 @@ fn unparseable_plan_triggers_revision_feedback() {
     let validation = handler.handle_effect(validate_producer_effect(
         "Just do the work in one step.",
         false,
+        NodeKind::Plan,
     ));
     let DeliberationEvent::ProducerValidationRejected {
         retry: ProducerValidationRetry {
@@ -591,8 +602,11 @@ fn repeated_unparseable_plans_exhaust_retries_before_review() {
             },
         ]),
     };
-    let (output, machine) =
-        run_machine_with_telemetry(machine, ready("create foo.rs", 1), &NoopTelemetry);
+    let (output, machine) = run_machine_with_telemetry(
+        machine,
+        ready("create foo.rs", NodeKind::Plan, 1),
+        &NoopTelemetry,
+    );
 
     assert!(
         matches!(
@@ -631,6 +645,7 @@ fn repeated_empty_plans_exhaust_retries() {
     }]);
     let effect = run_role_effect(
         DeliberationRole::Producer,
+        NodeKind::Plan,
         "create foo.rs",
         None,
         None,
@@ -644,7 +659,8 @@ fn repeated_empty_plans_exhaust_retries() {
         "RunRole must execute exactly one provider call"
     );
     assert!(matches!(event, DeliberationEvent::ProducerAccepted { .. }));
-    let validation = handler.handle_effect(validate_producer_effect(EMPTY_PLAN, false));
+    let validation =
+        handler.handle_effect(validate_producer_effect(EMPTY_PLAN, false, NodeKind::Plan));
     assert!(
         matches!(
             validation,
@@ -679,7 +695,7 @@ fn empty_plan_revision_then_valid_plan_completes() {
             }, // Referee
         ]),
     };
-    let output = run_machine(machine, ready("create foo.rs", 1));
+    let output = run_machine(machine, ready("create foo.rs", NodeKind::Plan, 1));
     assert!(
         matches!(output, DeliberationTerminalOutput::Complete(_)),
         "run must complete after one revision; got {output:?}"
@@ -703,7 +719,7 @@ fn semantic_validation_failure_ends_run_before_critic_or_referee() {
             },
         ]),
     };
-    let output = run_machine(machine, ready("create foo.rs", 1));
+    let output = run_machine(machine, ready("create foo.rs", NodeKind::Plan, 1));
     assert!(
         matches!(
             output,
@@ -722,6 +738,7 @@ fn accepted_work_with_one_file_change_passes_semantic_validation() {
     let handler = handler_with_work_validation(vec![accepted_output("implemented change", true)]);
     let event = handler.handle_effect(run_role_effect(
         DeliberationRole::Producer,
+        NodeKind::Work,
         "implement the change",
         None,
         None,
@@ -737,7 +754,11 @@ fn accepted_work_with_one_file_change_passes_semantic_validation() {
         matches!(event, DeliberationEvent::ProducerAccepted { .. }),
         "valid work run must produce ProducerAccepted; got {event:?}"
     );
-    let validation = handler.handle_effect(validate_producer_effect("implemented change", true));
+    let validation = handler.handle_effect(validate_producer_effect(
+        "implemented change",
+        true,
+        NodeKind::Work,
+    ));
     assert!(
         matches!(
             validation,
@@ -755,6 +776,7 @@ fn accepted_work_with_no_artifact_mutation_triggers_revision_feedback() {
     ]);
     let event = handler.handle_effect(run_role_effect(
         DeliberationRole::Producer,
+        NodeKind::Work,
         "implement the change",
         None,
         None,
@@ -767,8 +789,11 @@ fn accepted_work_with_no_artifact_mutation_triggers_revision_feedback() {
         "RunRole must execute exactly one provider call"
     );
     assert!(matches!(event, DeliberationEvent::ProducerAccepted { .. }));
-    let validation =
-        handler.handle_effect(validate_producer_effect("summary without changes", false));
+    let validation = handler.handle_effect(validate_producer_effect(
+        "summary without changes",
+        false,
+        NodeKind::Work,
+    ));
     let DeliberationEvent::ProducerValidationRejected {
         retry: ProducerValidationRetry {
             feedback_reason, ..
@@ -795,7 +820,6 @@ fn artifact_work_constructor_requires_artifact_view() {
         NodeKind::Work,
         crate::roles::policy::RolePolicy::default(),
         None,
-        TestPlanContext::default(),
     );
 }
 
@@ -807,6 +831,7 @@ fn explicit_non_artifact_work_does_not_use_artifact_semantic_validation() {
         ]));
     let event = handler.handle_effect(run_role_effect(
         DeliberationRole::Producer,
+        NodeKind::Work,
         "summarize something",
         None,
         None,
@@ -827,6 +852,7 @@ fn repeated_empty_work_exhausts_semantic_validation_retries() {
     let handler = handler_with_work_validation(vec![accepted_output("empty work 1", false)]);
     let event = handler.handle_effect(run_role_effect(
         DeliberationRole::Producer,
+        NodeKind::Work,
         "implement the change",
         None,
         None,
@@ -839,7 +865,11 @@ fn repeated_empty_work_exhausts_semantic_validation_retries() {
         "RunRole must execute exactly one provider call"
     );
     assert!(matches!(event, DeliberationEvent::ProducerAccepted { .. }));
-    let validation = handler.handle_effect(validate_producer_effect("empty work 1", false));
+    let validation = handler.handle_effect(validate_producer_effect(
+        "empty work 1",
+        false,
+        NodeKind::Work,
+    ));
     assert!(
         matches!(
             validation,
@@ -864,8 +894,11 @@ fn critic_and_referee_are_not_invoked_while_work_semantic_validation_fails() {
             accepted_output("empty work 3", false),
         ]),
     };
-    let (output, machine) =
-        run_machine_with_telemetry(machine, ready("implement the change", 1), &NoopTelemetry);
+    let (output, machine) = run_machine_with_telemetry(
+        machine,
+        ready("implement the change", NodeKind::Work, 1),
+        &NoopTelemetry,
+    );
 
     assert!(
         matches!(
@@ -907,8 +940,11 @@ fn valid_revised_work_proceeds_to_critic_and_referee() {
             accepted_output("approved", false),
         ]),
     };
-    let (output, machine) =
-        run_machine_with_telemetry(machine, ready("implement the change", 1), &NoopTelemetry);
+    let (output, machine) = run_machine_with_telemetry(
+        machine,
+        ready("implement the change", NodeKind::Work, 1),
+        &NoopTelemetry,
+    );
 
     assert!(
         matches!(output, DeliberationTerminalOutput::Complete(_)),
@@ -944,12 +980,99 @@ fn handle_effect_without_telemetry_compiles() {
         ]));
     let event = handler.handle_effect(run_role_effect(
         DeliberationRole::Producer,
+        NodeKind::Work,
         "test",
         None,
         None,
         vec![],
     ));
     assert!(matches!(event, DeliberationEvent::ProducerAccepted { .. }));
+}
+
+// --- RunRole effect self-description ---
+
+#[test]
+fn run_role_effect_carries_node_kind_and_test_plan_context() {
+    // Invariant: node_kind and test_plan_context must be readable directly
+    // from a RunRole effect value, not only from the handler that happens to
+    // execute it. A reader with just the effect must be able to predict the
+    // RoleRequest that will be built from it.
+    let test_plan_context = TestPlanContext {
+        required_test_targets: vec!["tests/foo_test.rs".to_string()],
+        planned_test_targets: vec!["tests/bar_test.rs".to_string()],
+    };
+    let effect = DeliberationEffect::RunRole {
+        role: DeliberationRole::Producer,
+        objective: "do work".to_string(),
+        context: Box::new(crate::machines::deliberation::DeliberationContext::default()),
+        node_kind: NodeKind::Plan,
+        test_plan_context: test_plan_context.clone(),
+        producer_content: None,
+        critic_content: None,
+        feedback: vec![],
+    };
+
+    match effect {
+        DeliberationEffect::RunRole {
+            node_kind,
+            test_plan_context: carried_test_plan_context,
+            ..
+        } => {
+            assert_eq!(node_kind, NodeKind::Plan);
+            assert_eq!(carried_test_plan_context, test_plan_context);
+        }
+        other => panic!("expected RunRole, got {other:?}"),
+    }
+}
+
+#[test]
+fn pooled_handler_builds_role_request_from_effect_not_construction_state() {
+    // Regression test for the RunRole effect-completeness gap: a single
+    // handler instance dispatching two RunRole effects that differ only in
+    // node_kind must produce RoleRequests whose node_kind matches each
+    // effect, not a value fixed at handler construction. DeliberationHandler
+    // holds no node_kind field, so there is nothing for a pooled/reused
+    // handler to get wrong here.
+    let runner = ScriptedRoleRunner::with_outputs(vec![
+        accepted_output("plan output", false),
+        accepted_output("work output", false),
+    ]);
+    let handler = DeliberationHandler {
+        runner,
+        artifact_view: None,
+        work_attempt: None,
+        work_requires_artifact_mutation: false,
+        plan_validation_context: None,
+    };
+
+    handler.handle_effect(run_role_effect(
+        DeliberationRole::Producer,
+        NodeKind::Plan,
+        "plan the work",
+        None,
+        None,
+        vec![],
+    ));
+    handler.handle_effect(run_role_effect(
+        DeliberationRole::Producer,
+        NodeKind::Work,
+        "do the work",
+        None,
+        None,
+        vec![],
+    ));
+
+    let requests = handler.runner.requests.borrow();
+    assert_eq!(
+        requests[0].node_kind,
+        NodeKind::Plan,
+        "first RunRole effect declared Plan"
+    );
+    assert_eq!(
+        requests[1].node_kind,
+        NodeKind::Work,
+        "second RunRole effect declared Work, same handler instance"
+    );
 }
 
 #[test]

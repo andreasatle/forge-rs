@@ -93,6 +93,8 @@ fn role_mismatch_while_waiting_referee_fails() {
         request: DeliberationRequest {
             objective: "write a poem".to_string(),
             context: crate::machines::deliberation::DeliberationContext::default(),
+            node_kind: crate::machines::scheduler::NodeKind::Work,
+            test_plan_context: crate::machines::scheduler::TestPlanContext::default(),
             max_revisions: 0,
         },
         producer_content: "draft".to_string(),
@@ -139,6 +141,8 @@ fn referee_failed_is_terminal() {
         request: DeliberationRequest {
             objective: "write a poem".to_string(),
             context: crate::machines::deliberation::DeliberationContext::default(),
+            node_kind: crate::machines::scheduler::NodeKind::Work,
+            test_plan_context: crate::machines::scheduler::TestPlanContext::default(),
             max_revisions: 1,
         },
         producer_content: "draft".to_string(),
@@ -193,6 +197,8 @@ fn referee_rejected_still_revises() {
         request: DeliberationRequest {
             objective: "write a poem".to_string(),
             context: crate::machines::deliberation::DeliberationContext::default(),
+            node_kind: crate::machines::scheduler::NodeKind::Work,
+            test_plan_context: crate::machines::scheduler::TestPlanContext::default(),
             max_revisions: 1,
         },
         producer_content: "draft".to_string(),

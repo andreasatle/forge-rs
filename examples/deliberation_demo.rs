@@ -14,6 +14,7 @@ use forge_rs::machines::deliberation::{
     DeliberationRequest, DeliberationState, DeliberationTerminalOutput,
     ProviderBackedDeliberationHandler,
 };
+use forge_rs::machines::scheduler::{NodeKind, TestPlanContext};
 use forge_rs::providers::{LlamaCppProvider, RetryingProvider};
 use forge_rs::telemetry::FileTelemetry;
 use std::path::PathBuf;
@@ -67,6 +68,8 @@ fn main() {
         request: DeliberationRequest {
             objective: objective.to_string(),
             context: DeliberationContext::default(),
+            node_kind: NodeKind::Work,
+            test_plan_context: TestPlanContext::default(),
             max_revisions,
         },
     };
