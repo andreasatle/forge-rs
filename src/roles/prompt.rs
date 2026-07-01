@@ -96,7 +96,8 @@ pub(super) fn render_tool_section(policy: &FileToolPolicy) -> String {
             "Tool selection guidance:\n\
              - Use write_file by default when creating a file or replacing most or all of an existing file.\n\
              - Use replace_text only for small, localized edits after you have read the file and can provide an exact old string that occurs once.\n\
-             - replace_text matches bytes exactly; whitespace, indentation, or formatting differences will cause it to fail.\n",
+             - replace_text matches bytes exactly; whitespace, indentation, or formatting differences will cause it to fail.\n\
+             - Newlines in write_file content must be real newline characters encoded as \\n in the JSON string, not the literal two-character sequence backslash followed by n. Double-escaping produces a single-line file that fails to parse.\n",
         );
     }
     s.push_str(
