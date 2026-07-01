@@ -990,6 +990,77 @@ fn repeated_validation_retries_do_not_duplicate_feedback_blocks() {
 }
 
 #[test]
+fn repeated_retries_replace_suffix_instead_of_chaining() {
+    // Invariant: a retry id always carries exactly one `-retry-N` suffix,
+    // replacing the previous one rather than accumulating
+    // (`W-retry-2`, never `W-retry-1-retry-2`).
+    let graph = RunGraph {
+        nodes: vec![work_node("W", "do retry", &[])],
+        next_id: 0,
+    };
+
+    let t1 = do_transition(
+        SchedulerState::Waiting {
+            graph: running(graph, "W"),
+            run_config: RunConfig::default(),
+        },
+        SchedulerEvent::NodeFailed {
+            node_id: NodeId("W".to_string()),
+            failure: NodeFailure {
+                kind: FailureKind::DeliberationFailure,
+                message: "first try failed".to_string(),
+                recovery: RecoveryAction::Retry {
+                    message: "try again".to_string(),
+                },
+            },
+        },
+    );
+    let SchedulerState::Active { mut graph, .. } = t1.state else {
+        panic!("expected Active after first retry");
+    };
+    let retry1_id = graph.nodes[1].id.clone();
+    assert_eq!(
+        retry1_id.0.matches("-retry-").count(),
+        1,
+        "first retry id must carry a single -retry- segment: {}",
+        retry1_id.0
+    );
+    graph.nodes[1].status = NodeStatus::Running;
+
+    let t2 = do_transition(
+        SchedulerState::Waiting {
+            graph: running(graph, &retry1_id.0),
+            run_config: RunConfig::default(),
+        },
+        SchedulerEvent::NodeFailed {
+            node_id: retry1_id.clone(),
+            failure: NodeFailure {
+                kind: FailureKind::DeliberationFailure,
+                message: "second try failed".to_string(),
+                recovery: RecoveryAction::Retry {
+                    message: "try again".to_string(),
+                },
+            },
+        },
+    );
+    let SchedulerState::Active { graph, .. } = t2.state else {
+        panic!("expected Active after second retry");
+    };
+    let retry2_id = &graph.nodes[2].id;
+    assert_eq!(
+        retry2_id.0.matches("-retry-").count(),
+        1,
+        "second retry id must not chain -retry- segments: {}",
+        retry2_id.0
+    );
+    assert!(
+        retry2_id.0.starts_with("W-retry-"),
+        "second retry id must be based on the original id, not the intermediate retry id: {}",
+        retry2_id.0
+    );
+}
+
+#[test]
 fn retry_target_files_unchanged_across_retries() {
     // Invariant: structured target_files on the retry node is always identical
     // to the original node's target_files, regardless of retry count.

@@ -61,7 +61,11 @@ pub(super) fn apply_retry(
         )
     };
     let retry_feedback = build_retry_feedback(&kind, failure_kind, retry_message);
-    let replacement_id = NodeId(format!("{}-retry-{}", node_id.0, graph.next_id));
+    let replacement_id = NodeId(format!(
+        "{}-retry-{}",
+        retry_base_id(&node_id.0),
+        graph.next_id
+    ));
     let replacement = Node {
         id: replacement_id.clone(),
         kind,
@@ -83,6 +87,23 @@ pub(super) fn apply_retry(
     let graph = mark_node(graph, node_id, NodeStatus::Failed);
     let graph = push_node(graph, replacement);
     remap_pending_dependencies(graph, node_id, &replacement_id)
+}
+
+/// Strips a trailing `-retry-<digits>` suffix from a node id, so repeated
+/// retries replace the suffix instead of chaining
+/// (`root-child-1-retry-4`, not `root-child-1-retry-2-retry-3-retry-4`).
+fn retry_base_id(id: &str) -> &str {
+    match id.rfind("-retry-") {
+        Some(idx) => {
+            let suffix = &id[idx + "-retry-".len()..];
+            if !suffix.is_empty() && suffix.bytes().all(|b| b.is_ascii_digit()) {
+                &id[..idx]
+            } else {
+                id
+            }
+        }
+        None => id,
+    }
 }
 
 /// Builds `RetryFeedback` for validation-class failures on Work nodes.
