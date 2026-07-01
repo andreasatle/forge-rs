@@ -6,45 +6,108 @@
 //!   forge show    <config.yaml>            — display the current artifact contents
 //!   forge history <config.yaml>            — print commit history (newest first)
 //!   forge reset   <config.yaml>            — delete and recreate the artifact repository
+//!   forge trace   <telemetry-dir>          — print a chronological summary of telemetry events
+//!   forge trace   <telemetry-dir> --prompts   — print full role-prompt-rendered events
+//!   forge trace   <telemetry-dir> --failures  — print full failure-related events
 //!
 //! For smoke-test scenarios, use the examples:
 //!   cargo run --example scheduler_deliberation_demo
 //!   cargo run --example deliberation_demo
 
+use clap::{Parser, Subcommand};
+
 use forge_rs::config::ForgeConfig;
-use forge_rs::runtime::{ForgeRuntime, run_history, run_reset, run_show};
+use forge_rs::runtime::{ForgeRuntime, TraceFilter, run_history, run_reset, run_show, run_trace};
+
+#[derive(Parser)]
+#[command(name = "forge", about = "Drive forge runs from a config file")]
+struct Cli {
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// Run a forge job from the current artifact state.
+    Run {
+        /// Path to the forge config YAML file.
+        config: String,
+        /// Resume a previously interrupted run instead of starting a new one.
+        #[arg(long)]
+        resume: bool,
+    },
+    /// Display the current artifact contents.
+    Show {
+        /// Path to the forge config YAML file.
+        config: String,
+    },
+    /// Print commit history (newest first).
+    History {
+        /// Path to the forge config YAML file.
+        config: String,
+    },
+    /// Delete and recreate the artifact repository.
+    Reset {
+        /// Path to the forge config YAML file.
+        config: String,
+    },
+    /// View telemetry output for a run.
+    Trace {
+        /// Path to a run's telemetry directory (see `Telemetry:` in the run summary).
+        telemetry_dir: String,
+        /// Show only role-prompt-rendered events, with the full prompt body.
+        #[arg(long, conflicts_with = "failures")]
+        prompts: bool,
+        /// Show only failure-related events, with their full content.
+        #[arg(long)]
+        failures: bool,
+    },
+}
 
 fn main() {
-    let args: Vec<String> = std::env::args().collect();
+    let cli = Cli::parse();
 
-    let (cmd, file, resume) = match args.as_slice() {
-        [_, cmd, file] => (cmd.as_str(), file.as_str(), false),
-        [_, cmd, file, flag] if flag == "--resume" => (cmd.as_str(), file.as_str(), true),
-        _ => {
-            eprintln!("Usage: forge <run|show|history|reset> <config.yaml> [--resume]");
-            std::process::exit(1);
+    match cli.command {
+        Command::Run { config, resume } => run_config_command(&config, |config| {
+            if resume {
+                ForgeRuntime::resume(config)
+            } else {
+                ForgeRuntime::run(config)
+            }
+        }),
+        Command::Show { config } => run_config_command(&config, run_show),
+        Command::History { config } => run_config_command(&config, run_history),
+        Command::Reset { config } => run_config_command(&config, run_reset),
+        Command::Trace {
+            telemetry_dir,
+            prompts,
+            failures,
+        } => {
+            let filter = if prompts {
+                TraceFilter::Prompts
+            } else if failures {
+                TraceFilter::Failures
+            } else {
+                TraceFilter::All
+            };
+            handle_result(run_trace(&telemetry_dir, filter));
         }
-    };
+    }
+}
 
-    let config = ForgeConfig::from_file(file).unwrap_or_else(|e| {
+/// Load the config at `path`, then run `f` with it, exiting on either failure.
+fn run_config_command(
+    path: &str,
+    f: impl FnOnce(ForgeConfig) -> Result<(), Box<dyn std::error::Error>>,
+) {
+    let config = ForgeConfig::from_file(path).unwrap_or_else(|e| {
         eprintln!("Error loading config: {e}");
         std::process::exit(1);
     });
+    handle_result(f(config));
+}
 
-    let result = match (cmd, resume) {
-        ("run", false) => ForgeRuntime::run(config),
-        ("run", true) => ForgeRuntime::resume(config),
-        ("show", _) => run_show(config),
-        ("history", _) => run_history(config),
-        ("reset", _) => run_reset(config),
-        (other, _) => {
-            eprintln!(
-                "Unknown command '{other}'. Usage: forge <run|show|history|reset> <config.yaml>"
-            );
-            std::process::exit(1);
-        }
-    };
-
+fn handle_result(result: Result<(), Box<dyn std::error::Error>>) {
     result.unwrap_or_else(|e| {
         eprintln!("Error: {e}");
         std::process::exit(1);
