@@ -13,7 +13,7 @@ validation:
   commands:
     - program: uv
       args: ["run", "ruff", "check"]
-      scope: target_files
+      scope: changed_files
     - program: uv
       args: ["run", "pyright"]
       scope: workspace
