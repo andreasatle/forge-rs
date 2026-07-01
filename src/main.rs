@@ -6,9 +6,10 @@
 //!   forge show    <config.yaml>            — display the current artifact contents
 //!   forge history <config.yaml>            — print commit history (newest first)
 //!   forge reset   <config.yaml>            — delete and recreate the artifact repository
-//!   forge trace   <telemetry-dir>          — print a chronological summary of telemetry events
-//!   forge trace   <telemetry-dir> --prompts   — print full role-prompt-rendered events
-//!   forge trace   <telemetry-dir> --failures  — print full failure-related events
+//!   forge trace   <config.yaml>                — summarize the latest run's telemetry
+//!   forge trace   <config.yaml> --run <run-id>  — summarize a specific past run
+//!   forge trace   <config.yaml> --prompts       — print full role-prompt-rendered events
+//!   forge trace   <config.yaml> --failures      — print full failure-related events
 //!
 //! For smoke-test scenarios, use the examples:
 //!   cargo run --example scheduler_deliberation_demo
@@ -53,8 +54,11 @@ enum Command {
     },
     /// View telemetry output for a run.
     Trace {
-        /// Path to a run's telemetry directory (see `Telemetry:` in the run summary).
-        telemetry_dir: String,
+        /// Path to the forge config YAML file.
+        config: String,
+        /// Run id to trace instead of the latest run.
+        #[arg(long)]
+        run: Option<String>,
         /// Show only role-prompt-rendered events, with the full prompt body.
         #[arg(long, conflicts_with = "failures")]
         prompts: bool,
@@ -79,7 +83,8 @@ fn main() {
         Command::History { config } => run_config_command(&config, run_history),
         Command::Reset { config } => run_config_command(&config, run_reset),
         Command::Trace {
-            telemetry_dir,
+            config,
+            run,
             prompts,
             failures,
         } => {
@@ -90,7 +95,9 @@ fn main() {
             } else {
                 TraceFilter::All
             };
-            handle_result(run_trace(&telemetry_dir, filter));
+            run_config_command(&config, move |config| {
+                run_trace(&config.telemetry.directory, run.as_deref(), filter)
+            });
         }
     }
 }

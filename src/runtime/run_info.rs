@@ -272,6 +272,27 @@ fn update_latest(runs_root: &Path, run_id: &str) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// Resolve `<runs_root>/latest` to the run directory it points at.
+///
+/// On Unix, `latest` is a symlink whose target is the run directory name; the
+/// link is read explicitly (rather than followed) so the returned path is
+/// `<runs_root>/<run_id>`, matching [`RunInfo::run_dir`]. On other platforms
+/// [`create_run`] falls back to writing the run id as plain text into
+/// `latest`, so that case is read as a file instead.
+pub fn latest_run_dir(runs_root: &Path) -> Result<PathBuf, Box<dyn Error>> {
+    let latest = runs_root.join("latest");
+
+    if let Ok(run_id) = std::fs::read_link(&latest) {
+        return Ok(runs_root.join(run_id));
+    }
+    if latest.is_file() {
+        let run_id = std::fs::read_to_string(&latest)?;
+        return Ok(runs_root.join(run_id.trim()));
+    }
+
+    Err(format!("no runs found under {}", runs_root.display()).into())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -520,6 +541,40 @@ mod tests {
         assert!(
             sentinel.exists(),
             "sentinel file from first run must not be deleted"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // ── latest_run_dir ────────────────────────────────────────────────────────
+
+    #[test]
+    fn latest_run_dir_resolves_to_newest_run() {
+        let root = temp_runs_root("latest-resolves");
+        let _ = std::fs::remove_dir_all(&root);
+
+        let _r1 = create_run(&root, "obj", "repo", &provider_metadata()).unwrap();
+        let r2 = create_run(&root, "obj", "repo", &provider_metadata()).unwrap();
+
+        let resolved = latest_run_dir(&root).unwrap();
+        assert_eq!(
+            resolved, r2.run_dir,
+            "latest_run_dir must resolve to the most recently created run"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn latest_run_dir_errors_when_no_runs_exist() {
+        let root = temp_runs_root("latest-missing");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        let result = latest_run_dir(&root);
+        assert!(
+            result.is_err(),
+            "latest_run_dir must fail when no run has ever been created"
         );
 
         let _ = std::fs::remove_dir_all(&root);
