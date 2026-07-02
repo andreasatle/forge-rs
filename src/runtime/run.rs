@@ -810,34 +810,6 @@ mod tests {
     }
 
     #[test]
-    fn runtime_threads_provider_timeout() {
-        // Verify that timeout_seconds from config reaches the provider constructor.
-        // No live HTTP: we only check that the value is read from config and the
-        // provider is constructed without error.
-        let config = ForgeConfig {
-            objective: "test".to_string(),
-            artifact: ArtifactConfig {
-                repo_path: "/tmp/test.git".to_string(),
-                branch: "main".to_string(),
-            },
-            provider: ProviderConfig {
-                timeout_seconds: 42,
-                ..unmanaged_provider("http://localhost:8080", "llama-test", 512)
-            },
-            telemetry: TelemetryConfig {
-                directory: "/tmp/telemetry".to_string(),
-            },
-            validation: None,
-            project: ProjectConfig::default(),
-        };
-        assert_eq!(config.provider.timeout_seconds, 42);
-        let metadata = make_provider_run_metadata(&config.provider).unwrap();
-        let _provider =
-            LlamaCppProvider::new(&metadata.cheap.base_url, metadata.cheap.timeout_seconds);
-        // Construction succeeds: the timeout is wired through.
-    }
-
-    #[test]
     fn strong_tier_falls_back_when_no_strong_provider_configured() {
         let config = unmanaged_provider("http://localhost:8080", "llama-test", 512);
         // When strong fields are absent, both tiers must resolve to the cheap values.

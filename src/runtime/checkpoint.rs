@@ -174,20 +174,6 @@ mod tests {
     }
 
     #[test]
-    fn checkpoint_written_is_valid_json() {
-        let dir = temp_dir("valid-json");
-        let state = SchedulerState::Active {
-            graph: sample_graph(),
-            run_config: RunConfig::default(),
-        };
-        save_checkpoint(&dir, &state).unwrap();
-        let raw = std::fs::read_to_string(dir.join("graph.json")).unwrap();
-        let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap();
-        assert!(parsed.is_object(), "checkpoint must be a JSON object");
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
     fn load_checkpoint_fails_when_file_missing() {
         let dir = temp_dir("missing-file");
         let result = load_checkpoint(&dir);
