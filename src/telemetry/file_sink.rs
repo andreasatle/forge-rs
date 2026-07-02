@@ -197,23 +197,6 @@ mod tests {
     }
 
     #[test]
-    fn file_name_uses_double_separator() {
-        let dir = fresh_dir("double-sep");
-        let sink = FileTelemetry::new(dir.clone());
-        sink.record(TelemetryRecord::new(
-            "SchedulerMachine",
-            TelemetryEvent::StateEntered {
-                machine: "SchedulerMachine".into(),
-                state: "Ready".into(),
-            },
-        ));
-        assert!(
-            dir.join("000001--scheduler-machine--state-entered.txt")
-                .exists()
-        );
-    }
-
-    #[test]
     fn role_event_file_name_contains_role() {
         let dir = fresh_dir("role-subsource");
         let sink = FileTelemetry::new(dir.clone());

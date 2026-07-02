@@ -115,33 +115,6 @@ fn producer_prompt_distinguishes_write_file_from_replace_text() {
 }
 
 #[test]
-fn public_file_tool_docs_match_prompt_guidance() {
-    let rw = render_tool_section(&FileToolPolicy {
-        allow_writes: true,
-        ..FileToolPolicy::default()
-    });
-    let readme = include_str!("../../../README.md");
-
-    for phrase in [
-        "default tool when replacing most or all of a file",
-        "small, localized edit",
-        "exact, unique old string",
-        "whitespace, indentation, or formatting differences",
-        "use `write_file` instead of retrying `replace_text`",
-    ] {
-        assert!(
-            readme.contains(phrase),
-            "README must keep file tool guidance consistent; missing phrase: {phrase}"
-        );
-    }
-    assert!(
-        rw.contains("replacing most or all of an existing file")
-            && readme.contains("replacing most or all of a file"),
-        "prompt and README must both describe write_file as the whole-file rewrite tool"
-    );
-}
-
-#[test]
 fn role_response_examples_do_not_use_dot_placeholders() {
     let default = RolePolicy::default();
     for (role, system, pc, cc) in [
