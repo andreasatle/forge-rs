@@ -3,6 +3,7 @@
 use crate::machines::deliberation::{ArtifactContext, DeliberationContext};
 use crate::machines::deliberation::{DeliberationRole, RevisionFeedback};
 use crate::machines::scheduler::{NodeKind, TestPlanContext};
+use crate::roles::policy::PLANNER_PROTOCOL_FOOTER_WITH_OPERATION;
 use crate::roles::{TargetView, TargetViewKind};
 use crate::services::extract_json_object;
 use crate::tools::{FileToolPolicy, FileToolResponse, parse_tool_request};
@@ -165,8 +166,7 @@ pub(super) fn render_planner_retry_prompt(original_prompt: &str, parse_error: &s
         "{original_prompt}\n\n\
          Your previous response could not be parsed: {parse_error}\n\
          Return only one JSON object matching this schema:\n\
-         PlannerOutput: `tasks` must be a non-empty array.\n\
-         Each task requires `id`, `objective`, and `depends_on`."
+         {PLANNER_PROTOCOL_FOOTER_WITH_OPERATION}"
     )
 }
 
