@@ -17,8 +17,14 @@ pub struct PlannerTask {
     pub id: String,
     /// Natural-language description of what this task should accomplish.
     pub objective: String,
-    /// Concrete artifact operation this task will perform.
-    pub operation: PlannerOperation,
+    /// Concrete artifact operation this task will perform, when the active
+    /// adapter's prompt schema asks for one.
+    ///
+    /// `None` under adapters whose prompt schema omits the field (e.g.
+    /// [`crate::project::DefaultProjectAdapter`]). Not read downstream —
+    /// kept as adapter-supplied metadata.
+    #[serde(default)]
+    pub operation: Option<PlannerOperation>,
     /// Explicit artifact files this task is allowed and expected to touch.
     pub targets: Vec<String>,
     /// Ids of other tasks in the same output that must complete before this one.
@@ -515,6 +521,22 @@ mod tests {
     }
 
     #[test]
+    fn planner_output_without_operation_field_parses_successfully() {
+        // Regression: DefaultProjectAdapter's prompt schema (PLANNER_PROTOCOL_FOOTER)
+        // never asks the model for `operation`, so a response following that
+        // schema must not fail to parse for lacking a field the model was
+        // never told to produce.
+        let json = r#"{"tasks":[{"id":"a","objective":"do alpha","targets":["alpha.txt"],"depends_on":[]}]}"#;
+        let result = try_parse_planner_response(json);
+        assert!(
+            result.is_ok(),
+            "PlannerOutput without an operation field must parse; got {:?}",
+            result
+        );
+        assert_eq!(result.unwrap().tasks[0].operation, None);
+    }
+
+    #[test]
     fn planner_output_does_not_require_nested_json_string() {
         // The planner schema is {"tasks":[...]} directly, not wrapped in
         // {"status":"accepted","content":"<escaped-json>"}.
@@ -612,7 +634,7 @@ mod tests {
         PlannerTask {
             id: id.to_string(),
             objective: objective.to_string(),
-            operation: PlannerOperation::Modify,
+            operation: Some(PlannerOperation::Modify),
             targets: targets.iter().map(|s| s.to_string()).collect(),
             depends_on: depends_on.iter().map(|s| s.to_string()).collect(),
         }
@@ -700,14 +722,14 @@ mod tests {
                 PlannerTask {
                     id: "py-version".to_string(),
                     objective: "Create .python-version file for Python project.".to_string(),
-                    operation: PlannerOperation::Modify,
+                    operation: Some(PlannerOperation::Modify),
                     targets: vec![".python-version".to_string()],
                     depends_on: vec![],
                 },
                 PlannerTask {
                     id: "main".to_string(),
                     objective: "Create main.py with haiku about Python state machines.".to_string(),
-                    operation: PlannerOperation::Modify,
+                    operation: Some(PlannerOperation::Modify),
                     targets: vec!["main.py".to_string()],
                     depends_on: vec![],
                 },
@@ -734,7 +756,7 @@ mod tests {
             tasks: vec![PlannerTask {
                 id: "readme".to_string(),
                 objective: "Document the haiku program setup.".to_string(),
-                operation: PlannerOperation::Modify,
+                operation: Some(PlannerOperation::Modify),
                 targets: vec!["README.md".to_string()],
                 depends_on: vec![],
             }],
@@ -758,7 +780,7 @@ mod tests {
             tasks: vec![PlannerTask {
                 id: "main".to_string(),
                 objective: "Write a haiku about Python state machines in main.py.".to_string(),
-                operation: PlannerOperation::Modify,
+                operation: Some(PlannerOperation::Modify),
                 targets: vec!["main.py".to_string()],
                 depends_on: vec![],
             }],
@@ -789,7 +811,7 @@ mod tests {
             tasks: vec![PlannerTask {
                 id: "main".to_string(),
                 objective: "Modify main.py.".to_string(),
-                operation: PlannerOperation::Modify,
+                operation: Some(PlannerOperation::Modify),
                 targets: vec!["main.py".to_string()],
                 depends_on: vec![],
             }],
@@ -808,14 +830,14 @@ mod tests {
                 PlannerTask {
                     id: "main".to_string(),
                     objective: "Modify main.py.".to_string(),
-                    operation: PlannerOperation::Modify,
+                    operation: Some(PlannerOperation::Modify),
                     targets: vec!["main.py".to_string()],
                     depends_on: vec![],
                 },
                 PlannerTask {
                     id: "tests".to_string(),
                     objective: "Add tests for main.py.".to_string(),
-                    operation: PlannerOperation::Modify,
+                    operation: Some(PlannerOperation::Modify),
                     targets: vec!["test_main.py".to_string()],
                     depends_on: vec!["main".to_string()],
                 },
@@ -834,7 +856,7 @@ mod tests {
             tasks: vec![PlannerTask {
                 id: "main".to_string(),
                 objective: "Modify main.py.".to_string(),
-                operation: PlannerOperation::Modify,
+                operation: Some(PlannerOperation::Modify),
                 targets: vec!["main.py".to_string()],
                 depends_on: vec![],
             }],
@@ -853,21 +875,21 @@ mod tests {
                 PlannerTask {
                     id: "main".to_string(),
                     objective: "Modify main.py.".to_string(),
-                    operation: PlannerOperation::Modify,
+                    operation: Some(PlannerOperation::Modify),
                     targets: vec!["main.py".to_string()],
                     depends_on: vec![],
                 },
                 PlannerTask {
                     id: "config".to_string(),
                     objective: "Modify project config.".to_string(),
-                    operation: PlannerOperation::Modify,
+                    operation: Some(PlannerOperation::Modify),
                     targets: vec!["pyproject.toml".to_string()],
                     depends_on: vec![],
                 },
                 PlannerTask {
                     id: "tests".to_string(),
                     objective: "Add tests for main.py.".to_string(),
-                    operation: PlannerOperation::Create,
+                    operation: Some(PlannerOperation::Create),
                     targets: vec!["test_main.py".to_string()],
                     depends_on: vec!["main".to_string()],
                 },
@@ -894,14 +916,14 @@ mod tests {
                 PlannerTask {
                     id: "main".to_string(),
                     objective: "Modify main.py.".to_string(),
-                    operation: PlannerOperation::Modify,
+                    operation: Some(PlannerOperation::Modify),
                     targets: vec!["main.py".to_string()],
                     depends_on: vec![],
                 },
                 PlannerTask {
                     id: "tests".to_string(),
                     objective: "Add tests for main.py.".to_string(),
-                    operation: PlannerOperation::Create,
+                    operation: Some(PlannerOperation::Create),
                     targets: vec!["test_main.py".to_string()],
                     depends_on: vec!["main".to_string()],
                 },
@@ -923,14 +945,14 @@ mod tests {
                 PlannerTask {
                     id: "main".to_string(),
                     objective: "Modify main.py.".to_string(),
-                    operation: PlannerOperation::Modify,
+                    operation: Some(PlannerOperation::Modify),
                     targets: vec!["main.py".to_string()],
                     depends_on: vec![],
                 },
                 PlannerTask {
                     id: "tests".to_string(),
                     objective: "Add tests for main.py.".to_string(),
-                    operation: PlannerOperation::Create,
+                    operation: Some(PlannerOperation::Create),
                     targets: vec!["test_main.py".to_string()],
                     depends_on: vec!["main".to_string()],
                 },
@@ -951,7 +973,7 @@ mod tests {
             tasks: vec![PlannerTask {
                 id: "config".to_string(),
                 objective: "Update pyproject.toml to add a new dependency.".to_string(),
-                operation: PlannerOperation::Modify,
+                operation: Some(PlannerOperation::Modify),
                 targets: vec!["pyproject.toml".to_string()],
                 depends_on: vec![],
             }],
@@ -969,7 +991,7 @@ mod tests {
             tasks: vec![PlannerTask {
                 id: "any".to_string(),
                 objective: "Create anything at all.".to_string(),
-                operation: PlannerOperation::Modify,
+                operation: Some(PlannerOperation::Modify),
                 targets: vec!["anything.txt".to_string()],
                 depends_on: vec![],
             }],
@@ -989,14 +1011,14 @@ mod tests {
                 PlannerTask {
                     id: "step-one".to_string(),
                     objective: "do step one".to_string(),
-                    operation: PlannerOperation::Modify,
+                    operation: Some(PlannerOperation::Modify),
                     targets: vec!["one.txt".to_string()],
                     depends_on: vec![],
                 },
                 PlannerTask {
                     id: "step-two".to_string(),
                     objective: "do step two".to_string(),
-                    operation: PlannerOperation::Modify,
+                    operation: Some(PlannerOperation::Modify),
                     targets: vec!["two.txt".to_string()],
                     depends_on: vec![],
                 },
@@ -1020,14 +1042,14 @@ mod tests {
                 PlannerTask {
                     id: "tests".to_string(),
                     objective: "write tests".to_string(),
-                    operation: PlannerOperation::Modify,
+                    operation: Some(PlannerOperation::Modify),
                     targets: vec!["tests.txt".to_string()],
                     depends_on: vec![],
                 },
                 PlannerTask {
                     id: "impl".to_string(),
                     objective: "implement".to_string(),
-                    operation: PlannerOperation::Modify,
+                    operation: Some(PlannerOperation::Modify),
                     targets: vec!["impl.txt".to_string()],
                     depends_on: vec!["tests".to_string()],
                 },
