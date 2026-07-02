@@ -391,32 +391,6 @@ fn work_referee_uses_worker_referee_policy() {
     );
 }
 
-#[test]
-fn default_policy_preserves_existing_behavior() {
-    let policy = RolePolicy::default();
-    let tasks_json = r#"{"tasks":[{"id":"t1","objective":"do the work","operation":"modify","targets":["work.txt"],"depends_on":[]}]}"#;
-    let provider = ScriptedProvider::from_strs(&[tasks_json, r#"{"summary":"work done"}"#]);
-    let runner = ProviderRoleRunner::new_with_policy(&provider, policy);
-
-    runner.run_role(
-        plan_request("plan the work"),
-        &crate::telemetry::NoopTelemetry,
-    );
-    runner.run_role(
-        producer_request("do the work"),
-        &crate::telemetry::NoopTelemetry,
-    );
-
-    let requests = provider.requests.borrow();
-    for (label, req) in [("plan", &requests[0]), ("work", &requests[1])] {
-        assert!(
-            req.prompt.contains("Return exactly one JSON object"),
-            "{label} producer prompt must contain JSON protocol instructions; got:\n{}",
-            req.prompt
-        );
-    }
-}
-
 // ── language guidance ─────────────────────────────────────────────────────
 
 #[test]

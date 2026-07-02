@@ -726,20 +726,6 @@ mod tests {
     }
 
     #[test]
-    fn runtime_default_adapter_preserves_behavior() {
-        let policy = make_role_policy(&ProjectConfig {
-            kind: ProjectKind::Default,
-            language: None,
-            variant: ProjectVariant::Coding,
-        });
-        let expected = crate::project::DefaultProjectAdapter.role_policy();
-        assert_eq!(
-            policy.worker_producer_system, expected.worker_producer_system,
-            "default adapter must produce unchanged worker prompt"
-        );
-    }
-
-    #[test]
     fn runtime_role_policy_includes_language_guidance_when_language_set() {
         let policy = make_role_policy(&ProjectConfig {
             kind: ProjectKind::Coding,

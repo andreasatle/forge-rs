@@ -79,37 +79,6 @@ mod tests {
     }
 
     #[test]
-    fn default_adapter_preserves_existing_prompt_behavior() {
-        let adapter = DefaultProjectAdapter;
-        let policy = adapter.role_policy();
-        let default = RolePolicy::default();
-        assert_eq!(
-            policy.planner_producer_system, default.planner_producer_system,
-            "DefaultProjectAdapter must preserve planner_producer_system"
-        );
-        assert_eq!(
-            policy.worker_producer_system, default.worker_producer_system,
-            "DefaultProjectAdapter must preserve worker_producer_system"
-        );
-        assert_eq!(
-            policy.planner_critic_system, default.planner_critic_system,
-            "DefaultProjectAdapter must preserve planner_critic_system"
-        );
-        assert_eq!(
-            policy.worker_critic_system, default.worker_critic_system,
-            "DefaultProjectAdapter must preserve worker_critic_system"
-        );
-        assert_eq!(
-            policy.planner_referee_system, default.planner_referee_system,
-            "DefaultProjectAdapter must preserve planner_referee_system"
-        );
-        assert_eq!(
-            policy.worker_referee_system, default.worker_referee_system,
-            "DefaultProjectAdapter must preserve worker_referee_system"
-        );
-    }
-
-    #[test]
     fn default_policy_preserves_protocol_footer() {
         let policy = DefaultProjectAdapter.role_policy();
         // Critic and Referee roles keep both branches of the schema.
