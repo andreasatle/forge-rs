@@ -393,7 +393,11 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                                     attempt_count: proto.current_attempt(),
                                 },
                             ));
-                            current_prompt = render_planner_retry_prompt(&base_prompt, &err);
+                            current_prompt = render_planner_retry_prompt(
+                                &base_prompt,
+                                &err,
+                                &self.policy.planner_protocol_schema,
+                            );
                         }
                     },
                     Err(parse_error) => {
@@ -425,7 +429,11 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                                 attempt_count: proto.current_attempt(),
                             },
                         ));
-                        current_prompt = render_planner_retry_prompt(&base_prompt, &parse_error);
+                        current_prompt = render_planner_retry_prompt(
+                            &base_prompt,
+                            &parse_error,
+                            &self.policy.planner_protocol_schema,
+                        );
                     }
                 }
             } else {

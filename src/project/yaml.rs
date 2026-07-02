@@ -62,6 +62,7 @@ impl ProjectAdapter for YamlProjectAdapter {
                 "{}\nConstraints:\n{GENERIC_CONSTRAINTS}\n{DEFAULT_SYSTEM}",
                 render_role_prompt(&prompts.worker_referee)
             ),
+            planner_protocol_schema: PLANNER_PROTOCOL_FOOTER_WITH_OPERATION.to_string(),
             language_guidance: None,
             language_constraints: None,
         }

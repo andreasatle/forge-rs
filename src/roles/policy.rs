@@ -57,13 +57,13 @@ Implement the requested change and return a summary describing what you did. \
 There is no rejected response — a valid summary means the work is done. \
 Execution failures are handled by the framework, not the model.";
 
-/// JSON protocol instructions for the Planner (Plan-node Producer) role.
+/// JSON protocol instructions for planner-style roles whose task schema has
+/// no `operation` field — targets alone describe the task.
 ///
-/// The planner returns a [`PlannerOutput`] directly — no `status`/`content`
-/// wrapper. This avoids double-encoding and works correctly under JSON grammar.
-const PLANNER_SYSTEM: &str = "Return exactly one JSON object. No markdown. No code fence. \
-No explanation. No text before or after the JSON.\n\
-PlannerOutput: `tasks` must be a non-empty array.\n\
+/// Framework protocol, shared by every adapter that models tasks without
+/// concrete create/modify/delete operations — see [`PLANNER_PROTOCOL_FOOTER_WITH_OPERATION`].
+/// Callers compose this after [`GENERIC_CONSTRAINTS`], see [`DEFAULT_SYSTEM`].
+pub(crate) const PLANNER_PROTOCOL_FOOTER: &str = "PlannerOutput: `tasks` must be a non-empty array.\n\
 Each task requires `id`, `objective`, `targets`, and `depends_on`.\n\
 Each `targets` array must be non-empty and list exact files the task may create, modify, or delete.";
 
@@ -122,6 +122,11 @@ pub struct RolePolicy {
     pub planner_referee_system: String,
     /// System instruction for Work-node Referee role.
     pub worker_referee_system: String,
+    /// The `PlannerOutput` task-schema footer used inside
+    /// `planner_producer_system`, kept separately so retry prompts can
+    /// re-show the exact schema variant the model was originally given
+    /// (with or without the `operation` field) instead of guessing.
+    pub planner_protocol_schema: String,
     /// Language-specific guidance injected as its own section between the
     /// adapter system prompt and the tool section, when set.
     ///
@@ -145,12 +150,13 @@ pub struct RolePolicy {
 impl Default for RolePolicy {
     fn default() -> Self {
         Self {
-            planner_producer_system: PLANNER_SYSTEM.to_string(),
+            planner_producer_system: format!("{GENERIC_CONSTRAINTS}\n{PLANNER_PROTOCOL_FOOTER}"),
             worker_producer_system: format!("{GENERIC_CONSTRAINTS}\n{WORK_PRODUCER_SYSTEM}"),
             planner_critic_system: format!("{GENERIC_CONSTRAINTS}\n{DEFAULT_SYSTEM}"),
             worker_critic_system: format!("{GENERIC_CONSTRAINTS}\n{DEFAULT_SYSTEM}"),
             planner_referee_system: format!("{GENERIC_CONSTRAINTS}\n{DEFAULT_SYSTEM}"),
             worker_referee_system: format!("{GENERIC_CONSTRAINTS}\n{DEFAULT_SYSTEM}"),
+            planner_protocol_schema: PLANNER_PROTOCOL_FOOTER.to_string(),
             language_guidance: None,
             language_constraints: None,
         }
