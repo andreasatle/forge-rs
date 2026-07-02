@@ -72,7 +72,7 @@ fn empty_role_response_field_fails() {
         ("accepted/content", accepted_json("")),
         ("rejected/reason", rejected_json("")),
     ] {
-        assert_parse_failed(&case, &input);
+        assert_parse_failed(case, &input);
     }
 }
 

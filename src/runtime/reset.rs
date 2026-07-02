@@ -98,7 +98,7 @@ mod tests {
             .unwrap_or(0)
     }
 
-    fn make_forge_config(repo_path: &PathBuf, telemetry_path: &PathBuf) -> ForgeConfig {
+    fn make_forge_config(repo_path: &Path, telemetry_path: &Path) -> ForgeConfig {
         use crate::config::{
             ArtifactConfig, ProjectConfig, ProviderConfig, ProviderTierConfig, TelemetryConfig,
             UnmanagedProviderConfig,
@@ -128,8 +128,8 @@ mod tests {
     }
 
     fn make_forge_config_with_language(
-        repo_path: &PathBuf,
-        telemetry_path: &PathBuf,
+        repo_path: &Path,
+        telemetry_path: &Path,
         language: &str,
     ) -> ForgeConfig {
         use crate::config::{

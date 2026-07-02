@@ -79,9 +79,8 @@ fn producer_prompt_uses_concrete_or_named_tool_examples() {
     let write_file_pos = rw.find("write_file").unwrap();
     let after_write = &rw[write_file_pos..];
     assert!(
-        !after_write.starts_with(&format!(
-            "write_file\",\"path\":\"output.txt\",\"content\":\"...\""
-        )) && after_write.contains("content"),
+        !after_write.starts_with("write_file\",\"path\":\"output.txt\",\"content\":\"...\"")
+            && after_write.contains("content"),
         "write_file example must not use '...' for content; got:\n{after_write}"
     );
     // replace_text must use named <PLACEHOLDER> tokens, not "...".

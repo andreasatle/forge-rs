@@ -186,9 +186,7 @@ mod tests {
         type Effect = &'static str;
         type Output = ();
 
-        fn start_event(&self) -> () {
-            ()
-        }
+        fn start_event(&self) {}
 
         fn transition(&self, state: MeState, _event: ()) -> Transition<MeState, &'static str> {
             match state {
@@ -203,9 +201,7 @@ mod tests {
             }
         }
 
-        fn handle_effect(&self, _effect: &'static str) -> () {
-            ()
-        }
+        fn handle_effect(&self, _effect: &'static str) {}
 
         fn output(&self, state: &MeState) -> Option<()> {
             match state {

@@ -622,7 +622,7 @@ mod tests {
         ))
     }
 
-    fn artifact_config(path: &PathBuf) -> ArtifactConfig {
+    fn artifact_config(path: &Path) -> ArtifactConfig {
         ArtifactConfig {
             repo_path: path.to_str().unwrap().to_string(),
             branch: "main".to_string(),

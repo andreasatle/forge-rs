@@ -69,10 +69,8 @@ fn work_reviewer_exhausts_retries_without_reading_fails() {
     // Reviewer accepts without reading on every attempt; after
     // MAX_PROTOCOL_RETRIES+1 tries the role must fail.
     let (_temp, view) = make_view("reviewer-exhaust-retries");
-    let mut responses = vec![];
-    for _ in 0..=MAX_PROTOCOL_RETRIES + 1 {
-        responses.push(r#"{"status":"accepted","content":"looks good"}"#);
-    }
+    let responses =
+        vec![r#"{"status":"accepted","content":"looks good"}"#; MAX_PROTOCOL_RETRIES + 2];
     let provider = ScriptedProvider::from_strs(&responses);
     let runner = ProviderRoleRunner::new(&provider);
 
@@ -178,17 +176,17 @@ fn failed_read_file_does_not_satisfy_enforcement() {
         parse_failed.is_some(),
         "ParseFailed must be emitted when read_file was attempted but failed"
     );
-    if let Some(r) = parse_failed {
-        if let TelemetryEvent::ParseFailed { parse_error, .. } = &r.event {
-            assert!(
-                parse_error.contains("Critic"),
-                "error must name the role; got: {parse_error}"
-            );
-            assert!(
-                parse_error.contains("1 read_file attempt(s) were made but all failed"),
-                "error must report failed attempt count; got: {parse_error}"
-            );
-        }
+    if let Some(r) = parse_failed
+        && let TelemetryEvent::ParseFailed { parse_error, .. } = &r.event
+    {
+        assert!(
+            parse_error.contains("Critic"),
+            "error must name the role; got: {parse_error}"
+        );
+        assert!(
+            parse_error.contains("1 read_file attempt(s) were made but all failed"),
+            "error must report failed attempt count; got: {parse_error}"
+        );
     }
 }
 
