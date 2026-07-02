@@ -38,6 +38,52 @@ string ::=
 
 ws ::= ([ \t\n] ws)?"#;
 
+/// GBNF grammar constraining the Work-node Producer's inner tool-call loop:
+/// any of the five file tool calls, or the final `{"summary":"..."}`
+/// response. Active for every provider call while tool use is still
+/// permitted; [`PRODUCER_GBNF`] takes over once tool use ends, forcing the
+/// final response.
+///
+/// Field order within each tool call matches the schema described to the
+/// model in [`super::prompt::render_tool_section`].
+pub(crate) const PRODUCER_TOOL_GBNF: &str = r#"root ::= write-file | replace-text | read-file | list-files | delete-file | summary
+write-file ::= "{" ws "\"tool\"" ws ":" ws "\"write_file\"" ws "," ws "\"path\"" ws ":" ws string ws "," ws "\"content\"" ws ":" ws string ws "}" ws
+replace-text ::= "{" ws "\"tool\"" ws ":" ws "\"replace_text\"" ws "," ws "\"path\"" ws ":" ws string ws "," ws "\"old\"" ws ":" ws string ws "," ws "\"new\"" ws ":" ws string ws "}" ws
+read-file ::= "{" ws "\"tool\"" ws ":" ws "\"read_file\"" ws "," ws "\"path\"" ws ":" ws string ws "}" ws
+list-files ::= "{" ws "\"tool\"" ws ":" ws "\"list_files\"" ws "}" ws
+delete-file ::= "{" ws "\"tool\"" ws ":" ws "\"delete_file\"" ws "," ws "\"path\"" ws ":" ws string ws "}" ws
+summary ::= "{" ws "\"summary\"" ws ":" ws string ws "}" ws
+
+string ::=
+  "\"" (
+    [^\\"\x7F\x00-\x1F] |
+    "\\" (["\\/bfnrt] | "u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F])
+  )* "\"" ws
+
+ws ::= ([ \t\n] ws)?"#;
+
+/// GBNF grammar constraining the Critic/Referee inner tool-call loop: the two
+/// read-only tool calls (`read_file`, `list_files`), or the final
+/// accept-or-reject response. Active for every provider call while tool use
+/// is still permitted; [`ROLE_GBNF`] takes over once tool use ends, forcing
+/// the final response.
+///
+/// Critic and Referee never receive write tools, so this grammar omits
+/// `write_file`, `replace_text`, and `delete_file` entirely.
+pub(crate) const REVIEWER_TOOL_GBNF: &str = r#"root ::= read-file | list-files | accepted | rejected
+read-file ::= "{" ws "\"tool\"" ws ":" ws "\"read_file\"" ws "," ws "\"path\"" ws ":" ws string ws "}" ws
+list-files ::= "{" ws "\"tool\"" ws ":" ws "\"list_files\"" ws "}" ws
+accepted ::= "{" ws "\"status\"" ws ":" ws "\"accepted\"" ws "," ws "\"content\"" ws ":" ws string ws "}" ws
+rejected ::= "{" ws "\"status\"" ws ":" ws "\"rejected\"" ws "," ws "\"reason\"" ws ":" ws string ws "}" ws
+
+string ::=
+  "\"" (
+    [^\\"\x7F\x00-\x1F] |
+    "\\" (["\\/bfnrt] | "u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F])
+  )* "\"" ws
+
+ws ::= ([ \t\n] ws)?"#;
+
 /// GBNF grammar constraining output to the `PlannerOutput` schema used by
 /// adapters that model tasks as concrete operations
 /// (`{"tasks":[{"id":...,"objective":...,"operation":"create|modify|delete","targets":[...],"depends_on":[...]}]}`).

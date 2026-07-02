@@ -16,7 +16,7 @@ use crate::providers::{ProviderClient, ProviderErrorKind, ProviderRequest, Struc
 use crate::roles::TargetView;
 use crate::roles::policy::{
     PLANNER_GBNF, PLANNER_NO_OPERATION_GBNF, PLANNER_PROTOCOL_FOOTER_WITH_OPERATION, PRODUCER_GBNF,
-    ROLE_GBNF, RolePolicy,
+    PRODUCER_TOOL_GBNF, REVIEWER_TOOL_GBNF, ROLE_GBNF, RolePolicy,
 };
 use crate::services::extract_json_object;
 use crate::telemetry::{TelemetryEvent, TelemetryRecord, TelemetrySink};
@@ -190,15 +190,34 @@ const MAX_RESPONSE_TOKENS: u32 = 1024;
 /// task schema carries an `operation` field — inferred from
 /// `planner_protocol_schema`, the same field the retry prompt already uses
 /// to show the model the correct schema variant.
+///
+/// `tools_active` selects between the union tool-call-or-final-response
+/// grammar and the final-response-only grammar. It is `true` only while the
+/// role still has a tool loop and tool use remains permitted (`has_tools &&
+/// proto.allow_tool_call()`); the Plan-node Producer never has tools, so it
+/// always uses its single fixed grammar regardless of this flag.
 fn select_grammar(
     node_kind: &NodeKind,
     role: &DeliberationRole,
     policy: &RolePolicy,
+    tools_active: bool,
 ) -> &'static str {
     match role {
-        DeliberationRole::Critic | DeliberationRole::Referee => ROLE_GBNF,
+        DeliberationRole::Critic | DeliberationRole::Referee => {
+            if tools_active {
+                REVIEWER_TOOL_GBNF
+            } else {
+                ROLE_GBNF
+            }
+        }
         DeliberationRole::Producer => match node_kind {
-            NodeKind::Work => PRODUCER_GBNF,
+            NodeKind::Work => {
+                if tools_active {
+                    PRODUCER_TOOL_GBNF
+                } else {
+                    PRODUCER_GBNF
+                }
+            }
             NodeKind::Plan => {
                 if policy.planner_protocol_schema == PLANNER_PROTOCOL_FOOTER_WITH_OPERATION {
                     PLANNER_GBNF
@@ -299,8 +318,6 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
             requires_read_enforcement,
         );
 
-        let grammar = select_grammar(&request.node_kind, &request.role, &self.policy);
-
         loop {
             telemetry.record(TelemetryRecord::new_with_subsource(
                 "RoleMachine",
@@ -310,6 +327,19 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                     attempt_count: proto.current_attempt(),
                 },
             ));
+
+            // Recomputed each iteration: the model may keep calling tools for
+            // as long as they remain permitted, so the union grammar (tool
+            // call OR final response) stays active throughout the tool loop.
+            // It narrows to the final-response-only grammar once tool use
+            // ends (completion pressure, decision pressure, or no tools at
+            // all), forcing the model to return its final response.
+            let grammar = select_grammar(
+                &request.node_kind,
+                &request.role,
+                &self.policy,
+                has_tools && proto.allow_tool_call(),
+            );
 
             let response = match self.provider.call(ProviderRequest {
                 prompt: current_prompt.clone(),

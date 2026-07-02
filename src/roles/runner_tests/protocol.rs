@@ -198,6 +198,83 @@ fn role_runner_requests_schema_specific_grammar_output() {
     );
 }
 
+#[test]
+fn tool_loop_uses_union_grammar_then_narrows_to_final_response_grammar() {
+    // Invariant: while a Work-node Producer still has tool budget, every
+    // provider call must be constrained by the tool-call-or-final-response
+    // union grammar, not the final-response-only grammar — otherwise a real
+    // GBNF-constrained provider could never emit a valid tool call. Once a
+    // write triggers completion pressure, the grammar must narrow to
+    // PRODUCER_GBNF so the model is forced to return its summary.
+    use crate::providers::StructuredOutput;
+    use crate::roles::policy::PRODUCER_TOOL_GBNF;
+
+    let provider = ScriptedProvider::from_strs(&[
+        r#"{"tool":"write_file","path":"out.txt","content":"hello"}"#,
+        r#"{"summary":"wrote out.txt"}"#,
+    ]);
+    let runner = ProviderRoleRunner::new(&provider);
+
+    runner.run_role(
+        with_dummy_tool_context(producer_request("write a file")),
+        &crate::telemetry::NoopTelemetry,
+    );
+
+    let requests = provider.requests.borrow();
+    assert_eq!(requests.len(), 2, "provider must be called twice");
+    assert_eq!(
+        requests[0].output_schema,
+        Some(StructuredOutput::Grammar(PRODUCER_TOOL_GBNF.to_string())),
+        "first call must use the union tool-or-summary grammar while tools remain available"
+    );
+    assert_eq!(
+        requests[1].output_schema,
+        Some(StructuredOutput::Grammar(PRODUCER_GBNF.to_string())),
+        "call after a recorded write (completion pressure) must narrow to the summary-only grammar"
+    );
+}
+
+#[test]
+fn reviewer_tool_loop_uses_union_grammar_then_narrows_to_final_response_grammar() {
+    // Same invariant as the Producer tool loop, but for Critic/Referee: the
+    // union grammar must allow read_file/list_files plus accept-or-reject
+    // while tools remain available, then narrow to ROLE_GBNF once decision
+    // pressure (the read-only tool budget, MAX_READ_ONLY_TOOL_STEPS = 2) ends
+    // the tool loop.
+    use crate::providers::StructuredOutput;
+    use crate::roles::policy::REVIEWER_TOOL_GBNF;
+
+    let provider = ScriptedProvider::from_strs(&[
+        r#"{"tool":"read_file","path":"hello.txt"}"#,
+        r#"{"tool":"list_files"}"#,
+        r#"{"status":"accepted","content":"looks correct"}"#,
+    ]);
+    let runner = ProviderRoleRunner::new(&provider);
+
+    runner.run_role(
+        with_dummy_tool_context(critic_request("review the work", "draft")),
+        &crate::telemetry::NoopTelemetry,
+    );
+
+    let requests = provider.requests.borrow();
+    assert_eq!(requests.len(), 3, "provider must be called three times");
+    assert_eq!(
+        requests[0].output_schema,
+        Some(StructuredOutput::Grammar(REVIEWER_TOOL_GBNF.to_string())),
+        "first call must use the union tool-or-decision grammar while tools remain available"
+    );
+    assert_eq!(
+        requests[1].output_schema,
+        Some(StructuredOutput::Grammar(REVIEWER_TOOL_GBNF.to_string())),
+        "second call must still use the union grammar; read-only budget not yet exhausted"
+    );
+    assert_eq!(
+        requests[2].output_schema,
+        Some(StructuredOutput::Grammar(ROLE_GBNF.to_string())),
+        "call after decision pressure must narrow to the accept-or-reject-only grammar"
+    );
+}
+
 // ── prompt/policy consistency ────────────────────────────────────────────
 
 #[test]
