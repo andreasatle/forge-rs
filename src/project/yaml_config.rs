@@ -2,13 +2,16 @@
 
 use serde::Deserialize;
 
-pub use crate::validation::ValidationTargetRule;
-
 /// Per-role system prompt strings loaded from YAML.
 ///
 /// Mirrors [`crate::roles::RolePolicy`] field-for-field so a
 /// [`ProjectAdapterConfig`] can populate a full role policy without any
 /// prompt text hardcoded in Rust.
+///
+/// The Critic and Referee fields are optional: coding-style adapters share
+/// byte-identical review-agent prompts, so a config that omits them falls
+/// back to the shared `CODING_*` defaults in `crate::roles::policy` instead
+/// of restating the text in every YAML file.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RolePromptsConfig {
@@ -16,21 +19,28 @@ pub struct RolePromptsConfig {
     pub planner_producer: String,
     /// System instruction for the Work-node Producer role.
     pub worker_producer: String,
-    /// System instruction for the Plan-node Critic role.
-    pub planner_critic: String,
-    /// System instruction for the Work-node Critic role.
-    pub worker_critic: String,
-    /// System instruction for the Plan-node Referee role.
-    pub planner_referee: String,
-    /// System instruction for the Work-node Referee role.
-    pub worker_referee: String,
+    /// System instruction for the Plan-node Critic role. Defaults to the
+    /// shared `CODING_PLANNER_CRITIC` prompt when omitted.
+    #[serde(default)]
+    pub planner_critic: Option<String>,
+    /// System instruction for the Work-node Critic role. Defaults to the
+    /// shared `CODING_WORKER_CRITIC` prompt when omitted.
+    #[serde(default)]
+    pub worker_critic: Option<String>,
+    /// System instruction for the Plan-node Referee role. Defaults to the
+    /// shared `CODING_PLANNER_REFEREE` prompt when omitted.
+    #[serde(default)]
+    pub planner_referee: Option<String>,
+    /// System instruction for the Work-node Referee role. Defaults to the
+    /// shared `CODING_WORKER_REFEREE` prompt when omitted.
+    #[serde(default)]
+    pub worker_referee: Option<String>,
 }
 
 /// Full YAML-deserializable configuration for a [`super::YamlProjectAdapter`].
 ///
 /// Covers everything [`crate::project::CodingProjectAdapter`] currently
-/// hardcodes: role prompts, ambient context file names, and validation
-/// target derivation rules.
+/// hardcodes: role prompts and ambient context file names.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectAdapterConfig {
@@ -39,9 +49,6 @@ pub struct ProjectAdapterConfig {
     /// Artifact file names included as ambient context in prompts.
     #[serde(default)]
     pub context_files: Vec<String>,
-    /// Ordered rules deriving validation targets from source targets.
-    #[serde(default)]
-    pub validation_targets: Vec<ValidationTargetRule>,
 }
 
 #[cfg(test)]
@@ -66,48 +73,68 @@ role_prompts:
         let config: ProjectAdapterConfig = serde_yaml::from_str(MINIMAL_YAML).unwrap();
         assert_eq!(config.role_prompts.planner_producer, "plan it");
         assert_eq!(config.role_prompts.worker_producer, "build it");
-        assert_eq!(config.role_prompts.planner_critic, "review the plan");
-        assert_eq!(config.role_prompts.worker_critic, "review the work");
-        assert_eq!(config.role_prompts.planner_referee, "decide the plan");
-        assert_eq!(config.role_prompts.worker_referee, "decide the work");
-    }
-
-    #[test]
-    fn context_files_and_validation_targets_default_to_empty() {
-        // Invariant: a config with only role_prompts still parses, with
-        // context_files and validation_targets defaulting to empty lists.
-        let config: ProjectAdapterConfig = serde_yaml::from_str(MINIMAL_YAML).unwrap();
-        assert!(config.context_files.is_empty());
-        assert!(config.validation_targets.is_empty());
-    }
-
-    #[test]
-    fn parses_context_files_and_validation_targets() {
-        let yaml = format!(
-            "{MINIMAL_YAML}\ncontext_files:\n  - README.md\nvalidation_targets:\n  - pattern: \"{{stem}}.py\"\n    target: \"test_{{stem}}.py\"\n  - pattern: \"{{stem}}.rs\"\n    target: \"{{stem}}_test.rs\"\n"
+        assert_eq!(
+            config.role_prompts.planner_critic,
+            Some("review the plan".to_string())
         );
-        let config: ProjectAdapterConfig = serde_yaml::from_str(&yaml).unwrap();
-        assert_eq!(config.context_files, vec!["README.md".to_string()]);
-        assert_eq!(config.validation_targets.len(), 2);
-        assert_eq!(config.validation_targets[0].pattern, "{stem}.py");
-        assert_eq!(config.validation_targets[0].target, "test_{stem}.py");
-        assert_eq!(config.validation_targets[1].pattern, "{stem}.rs");
-        assert_eq!(config.validation_targets[1].target, "{stem}_test.rs");
+        assert_eq!(
+            config.role_prompts.worker_critic,
+            Some("review the work".to_string())
+        );
+        assert_eq!(
+            config.role_prompts.planner_referee,
+            Some("decide the plan".to_string())
+        );
+        assert_eq!(
+            config.role_prompts.worker_referee,
+            Some("decide the work".to_string())
+        );
     }
 
     #[test]
-    fn missing_role_prompts_field_is_an_error() {
-        // Invariant: role_prompts is required — a missing sub-field fails to parse.
+    fn critic_and_referee_fields_default_to_none_when_omitted() {
+        // Invariant: only planner_producer and worker_producer are required;
+        // Critic and Referee prompts fall back to shared defaults elsewhere.
         let yaml = r#"
 role_prompts:
   planner_producer: "plan it"
   worker_producer: "build it"
-  planner_critic: "review the plan"
-  worker_critic: "review the work"
-  planner_referee: "decide the plan"
+"#;
+        let config: ProjectAdapterConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.role_prompts.planner_critic, None);
+        assert_eq!(config.role_prompts.worker_critic, None);
+        assert_eq!(config.role_prompts.planner_referee, None);
+        assert_eq!(config.role_prompts.worker_referee, None);
+    }
+
+    #[test]
+    fn context_files_defaults_to_empty() {
+        // Invariant: a config with only role_prompts still parses, with
+        // context_files defaulting to an empty list.
+        let config: ProjectAdapterConfig = serde_yaml::from_str(MINIMAL_YAML).unwrap();
+        assert!(config.context_files.is_empty());
+    }
+
+    #[test]
+    fn parses_context_files() {
+        let yaml = format!("{MINIMAL_YAML}\ncontext_files:\n  - README.md\n");
+        let config: ProjectAdapterConfig = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(config.context_files, vec!["README.md".to_string()]);
+    }
+
+    #[test]
+    fn missing_required_producer_field_is_an_error() {
+        // Invariant: planner_producer and worker_producer remain required —
+        // unlike Critic/Referee, they have no shared default to fall back to.
+        let yaml = r#"
+role_prompts:
+  planner_producer: "plan it"
 "#;
         let result: Result<ProjectAdapterConfig, _> = serde_yaml::from_str(yaml);
-        assert!(result.is_err(), "missing worker_referee must fail to parse");
+        assert!(
+            result.is_err(),
+            "missing worker_producer must fail to parse"
+        );
     }
 
     #[test]

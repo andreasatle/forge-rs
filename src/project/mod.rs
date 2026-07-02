@@ -15,7 +15,7 @@ pub use coding::CodingProjectAdapter;
 pub use coding_tdd::CodingTddProjectAdapter;
 pub use default::DefaultProjectAdapter;
 pub use yaml::YamlProjectAdapter;
-pub use yaml_config::{ProjectAdapterConfig, RolePromptsConfig, ValidationTargetRule};
+pub use yaml_config::{ProjectAdapterConfig, RolePromptsConfig};
 
 use crate::artifacts::ArtifactRead;
 use crate::machines::deliberation::DeliberationRole;
@@ -61,23 +61,6 @@ pub trait ProjectAdapter {
     /// prepends its content to the prompt. The default returns no context
     /// files; adapters override this to expose project-specific context.
     fn context_file_names(&self) -> Vec<String> {
-        vec![]
-    }
-
-    /// Returns the test file paths that this project requires for the given
-    /// set of target files.
-    ///
-    /// The adapter filters `targets` to the source files it considers
-    /// code-bearing and returns the corresponding test file path(s) for each.
-    /// The framework uses the returned paths to:
-    /// - include them in the fast-plan output alongside source tasks,
-    /// - validate that planner output covers them when tests are required,
-    /// - exempt them from explicit-target violations.
-    ///
-    /// The default returns an empty list, meaning no tests are required.
-    /// Adapters for coding projects override this to encode their test-file
-    /// naming conventions.
-    fn required_validation_targets(&self, _targets: &[String]) -> Vec<String> {
         vec![]
     }
 }
@@ -208,18 +191,6 @@ mod tests {
         assert!(
             names.contains(&"README.md".to_string()),
             "CodingProjectAdapter must include README.md as a context file; got: {names:?}"
-        );
-    }
-
-    // ── ProjectAdapter::required_validation_targets ────────────────────────────────
-
-    #[test]
-    fn default_adapter_requires_no_validation_targets() {
-        let targets = vec!["main.py".to_string(), "utils.rs".to_string()];
-        let result = DefaultProjectAdapter.required_validation_targets(&targets);
-        assert!(
-            result.is_empty(),
-            "DefaultProjectAdapter must require no test targets; got: {result:?}"
         );
     }
 }

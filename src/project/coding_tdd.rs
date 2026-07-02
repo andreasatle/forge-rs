@@ -32,10 +32,6 @@ impl ProjectAdapter for CodingTddProjectAdapter {
     fn context_file_names(&self) -> Vec<String> {
         coding_tdd_adapter().context_file_names()
     }
-
-    fn required_validation_targets(&self, targets: &[String]) -> Vec<String> {
-        coding_tdd_adapter().required_validation_targets(targets)
-    }
 }
 
 #[cfg(test)]
@@ -86,19 +82,6 @@ mod tests {
             CodingTddProjectAdapter
                 .context_file_names()
                 .contains(&"README.md".to_string())
-        );
-    }
-
-    #[test]
-    fn required_validation_targets_is_empty_without_language_rules() {
-        // Invariant: validation target derivation rules now live in the
-        // active LanguageSpec (see src/language/*.yaml), not in
-        // coding_tdd.yaml — the TDD adapter's own config carries no rules of
-        // its own, same as the non-TDD coding adapter.
-        assert!(
-            CodingTddProjectAdapter
-                .required_validation_targets(&["main.py".to_string()])
-                .is_empty()
         );
     }
 }
