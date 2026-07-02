@@ -118,15 +118,40 @@ pub(super) fn role_subsource(role: &DeliberationRole) -> &'static str {
     }
 }
 
-pub(super) fn render_retry_prompt(original_prompt: &str, parse_error: &str) -> String {
+pub(super) fn render_retry_prompt(
+    original_prompt: &str,
+    parse_error: &str,
+    is_work_producer: bool,
+) -> String {
+    let schema_desc = schema_match_phrase(is_work_producer);
+    let schema = status_schema_lines(is_work_producer);
     format!(
         "{original_prompt}\n\n\
          Your previous response could not be parsed: {parse_error}\n\
-         Return only one JSON object matching one of these schemas:\n\
-         {{\"status\":\"accepted\",\"content\":\"$RESPONSE_SUMMARY\"}}\n\
-         {{\"status\":\"rejected\",\"reason\":\"$REASON_FOR_REJECTION\"}}\n\
+         Return only one JSON object matching {schema_desc}:\n\
+         {schema}\n\
          Do not copy example values. Replace them with task-specific content."
     )
+}
+
+/// The Work-node Producer's job is to implement — it never rejects. Only
+/// Critic and Referee may reject, so the Producer sees only the accepted
+/// schema; every other role sees both.
+fn status_schema_lines(is_work_producer: bool) -> &'static str {
+    if is_work_producer {
+        "{\"status\":\"accepted\",\"content\":\"$RESPONSE_SUMMARY\"}"
+    } else {
+        "{\"status\":\"accepted\",\"content\":\"$RESPONSE_SUMMARY\"}\n\
+         {\"status\":\"rejected\",\"reason\":\"$REASON_FOR_REJECTION\"}"
+    }
+}
+
+fn schema_match_phrase(is_work_producer: bool) -> &'static str {
+    if is_work_producer {
+        "this schema"
+    } else {
+        "one of these schemas"
+    }
 }
 
 pub(super) fn render_reviewer_must_read_prompt(original_prompt: &str, parse_error: &str) -> String {
@@ -150,15 +175,20 @@ pub(super) fn render_planner_retry_prompt(original_prompt: &str, parse_error: &s
 }
 
 /// Formats the observation section that signals completion-pressure mode.
+///
+/// Completion pressure only ever activates for the Work-node Producer (see
+/// [`ProtocolState::record_tool_result`]), so this section shows only the
+/// accepted schema.
+///
+/// [`ProtocolState::record_tool_result`]: super::protocol_state::ProtocolState::record_tool_result
 pub(super) fn format_completion_pressure_section(observation: &str) -> String {
     format!(
         "Framework tool observation:\n{observation}\n\
          This is framework output, not a valid response format.\n\
          The requested change has already been recorded.\n\
          Do not call any more tools.\n\
-         Return exactly one of:\n\
+         Return exactly:\n\
          {{\"status\":\"accepted\",\"content\":\"$RESPONSE_SUMMARY\"}}\n\
-         {{\"status\":\"rejected\",\"reason\":\"$REASON_FOR_REJECTION\"}}\n\
          Do not copy example values. Replace them with task-specific content."
     )
 }
@@ -182,7 +212,6 @@ pub(super) fn render_completion_pressure_violation_note() -> String {
      The requested change has already been recorded.\n\
      Return a final role response:\n\
      {\"status\":\"accepted\",\"content\":\"$RESPONSE_SUMMARY\"}\n\
-     {\"status\":\"rejected\",\"reason\":\"$REASON_FOR_REJECTION\"}\n\
      Do not copy example values. Replace them with task-specific content."
         .to_string()
 }
@@ -198,14 +227,25 @@ pub(super) fn render_decision_pressure_violation_note() -> String {
 }
 
 /// Formats the observation section that signals repeated-observation coercion.
-pub(super) fn format_repeated_observation_coercion_section(observation: &str) -> String {
+///
+/// Reachable by any role, so the schema shown depends on `is_work_producer`.
+pub(super) fn format_repeated_observation_coercion_section(
+    observation: &str,
+    is_work_producer: bool,
+) -> String {
+    let decision_verb = if is_work_producer {
+        "Return accepted JSON now."
+    } else {
+        "Return accepted or rejected JSON now."
+    };
+    let schema_desc = schema_match_phrase(is_work_producer);
+    let schema = status_schema_lines(is_work_producer);
     format!(
         "Framework tool observation:\n{observation}\n\
          You have already inspected this information. Do not call more tools.\n\
-         Return accepted or rejected JSON now.\n\
-         Return exactly one of:\n\
-         {{\"status\":\"accepted\",\"content\":\"$RESPONSE_SUMMARY\"}}\n\
-         {{\"status\":\"rejected\",\"reason\":\"$REASON_FOR_REJECTION\"}}\n\
+         {decision_verb}\n\
+         Return exactly {schema_desc}:\n\
+         {schema}\n\
          Do not copy example values. Replace them with task-specific content."
     )
 }
@@ -224,14 +264,16 @@ pub(super) fn render_completion_pressure_retry_prompt(
     core: &str,
     observation_suffix: &str,
     parse_error: &str,
+    is_work_producer: bool,
 ) -> String {
+    let schema_desc = schema_match_phrase(is_work_producer);
+    let schema = status_schema_lines(is_work_producer);
     format!(
         "{core}{observation_suffix}\n\n\
          Your previous response could not be parsed: {parse_error}\n\
          Tools are no longer available.\n\
-         Return exactly one of:\n\
-         {{\"status\":\"accepted\",\"content\":\"$RESPONSE_SUMMARY\"}}\n\
-         {{\"status\":\"rejected\",\"reason\":\"$REASON_FOR_REJECTION\"}}\n\
+         Return exactly {schema_desc}:\n\
+         {schema}\n\
          Do not copy example values. Replace them with task-specific content."
     )
 }

@@ -61,7 +61,7 @@ fn no_runtime_prompt_contains_dot_placeholder_json_values() {
         &[],
         &[],
     );
-    let retry = render_retry_prompt(&base, "no JSON object found in role response");
+    let retry = render_retry_prompt(&base, "no JSON object found in role response", true);
     no_dot("retry prompt", &retry);
 }
 
@@ -194,7 +194,7 @@ fn role_response_examples_do_not_use_dot_placeholders() {
         &[],
         &[],
     );
-    let retry = render_retry_prompt(&base, "parse error");
+    let retry = render_retry_prompt(&base, "parse error", true);
     assert!(
         !retry.contains("\"content\":\"...\""),
         "retry prompt must not use '...' for accepted content; got:\n{retry}"
@@ -233,7 +233,7 @@ fn prompt_mentions_not_to_copy_example_values() {
         "write-enabled tool section must instruct model not to copy examples; got:\n{rw}"
     );
 
-    let retry = render_retry_prompt(&base, "parse error");
+    let retry = render_retry_prompt(&base, "parse error", true);
     assert!(
         retry.contains("Do not copy example values"),
         "retry prompt must instruct model not to copy examples; got:\n{retry}"
@@ -301,7 +301,9 @@ fn planner_prompt_does_not_show_status_content_schema() {
 }
 
 #[test]
-fn worker_still_uses_status_content_schema() {
+fn worker_producer_uses_accepted_only_schema() {
+    // The Work-node Producer implements; it never rejects. Only Critic and
+    // Referee may reject, so the rejected schema must never reach the Producer.
     let provider = ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"completed"}"#]);
     let runner = ProviderRoleRunner::new(&provider);
 
@@ -321,8 +323,12 @@ fn worker_still_uses_status_content_schema() {
         "worker prompt must still contain accepted schema placeholder; got:\n{prompt}"
     );
     assert!(
-        prompt.contains("$REASON_FOR_REJECTION"),
-        "worker prompt must still contain rejected schema placeholder; got:\n{prompt}"
+        !prompt.contains("$REASON_FOR_REJECTION"),
+        "Work-node Producer prompt must never offer the rejected schema; got:\n{prompt}"
+    );
+    assert!(
+        !prompt.contains("\"rejected\""),
+        "Work-node Producer prompt must never mention the rejected status; got:\n{prompt}"
     );
     assert!(
         !prompt.contains("\"tasks\""),

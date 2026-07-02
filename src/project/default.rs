@@ -110,8 +110,8 @@ mod tests {
     #[test]
     fn default_policy_preserves_protocol_footer() {
         let policy = DefaultProjectAdapter.role_policy();
+        // Critic and Referee roles keep both branches of the schema.
         for system in [
-            policy.worker_producer_system.as_str(),
             policy.planner_critic_system.as_str(),
             policy.worker_critic_system.as_str(),
             policy.planner_referee_system.as_str(),
@@ -123,5 +123,12 @@ mod tests {
             assert!(system.contains("Do not copy example values"));
             assert!(system.contains("Execution failures are handled by the framework"));
         }
+        // The Work-node Producer never rejects, so it keeps only the accepted branch.
+        let worker = policy.worker_producer_system.as_str();
+        assert!(worker.contains("Return exactly one JSON object"));
+        assert!(worker.contains("Accepted: {\"status\":\"accepted\""));
+        assert!(!worker.contains("Rejected: {\"status\":\"rejected\""));
+        assert!(worker.contains("Do not copy example values"));
+        assert!(worker.contains("Execution failures are handled by the framework"));
     }
 }

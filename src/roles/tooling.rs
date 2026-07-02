@@ -176,7 +176,7 @@ pub(super) fn dispatch_tool_step(
 
     let obs_section = if !proto.allow_tool_call() {
         if proto.is_repeated_observation_coercion_active() {
-            format_repeated_observation_coercion_section(&observation)
+            format_repeated_observation_coercion_section(&observation, proto.is_work_producer())
         } else if proto.is_decision_pressure_active() {
             format_decision_pressure_section(&observation)
         } else {

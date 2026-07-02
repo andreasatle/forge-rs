@@ -29,6 +29,10 @@ No explanation. No text before or after the JSON.\n\
 {\"tasks\":[{\"id\":\"task-id\",\"objective\":\"Task objective.\",\"operation\":\"modify\",\"targets\":[\"path/to/file\"],\"depends_on\":[]}]}\n\
 Do not copy example values. Replace them with actual task IDs and objectives.";
 
+// The Work-node Producer's job is to implement — it never rejects. Only the
+// Critic and Referee roles evaluate and may reject, so this schema omits the
+// rejected branch entirely; it must never appear anywhere in a prompt the
+// Work-node Producer can receive.
 const CODING_WORKER_SYSTEM: &str = "You are a software implementation agent. \
 Implement the requested change precisely. \
 Use available file tools to read, modify, and write artifact files. \
@@ -38,11 +42,8 @@ Produce concrete, complete artifact changes — do not leave placeholders or stu
 Return exactly one JSON object. No markdown. No code fence. \
 No explanation. No text before or after the JSON.\n\
 Accepted: {\"status\":\"accepted\",\"content\":\"$RESPONSE_SUMMARY\"}\n\
-Rejected: {\"status\":\"rejected\",\"reason\":\"$REASON_FOR_REJECTION\"}\n\
 Do not copy example values. Replace them with task-specific content.\n\
-Producer returns accepted content. \
-Critic accepts with a review or rejects with a reason. \
-Referee accepts approval or rejects with revision feedback. \
+Implement the requested change and return accepted content describing what you did. \
 Execution failures are handled by the framework, not the model.";
 
 macro_rules! reviewer_contract_guidance {
@@ -400,9 +401,8 @@ mod tests {
     #[test]
     fn coding_adapter_preserves_json_protocol_invariants() {
         let policy = CodingProjectAdapter.role_policy();
-        // All non-planner-producer roles use the status/content wrapper schema.
+        // Critic and Referee roles use the status/content wrapper with both branches.
         for (label, system) in [
-            ("worker", policy.worker_producer_system.as_str()),
             ("planner critic", policy.planner_critic_system.as_str()),
             ("worker critic", policy.worker_critic_system.as_str()),
             ("planner referee", policy.planner_referee_system.as_str()),
@@ -429,6 +429,28 @@ mod tests {
                 "{label} system must include rejected schema placeholder; got:\n{system}"
             );
         }
+        // Work-node Producer never rejects — accepted-only schema, no rejected branch.
+        let worker = policy.worker_producer_system.as_str();
+        assert!(
+            worker.contains("\"status\""),
+            "worker system must contain JSON status field; got:\n{worker}"
+        );
+        assert!(
+            worker.contains("Do not copy example values"),
+            "worker system must include copy-guard instruction; got:\n{worker}"
+        );
+        assert!(
+            !worker.contains("\"...\""),
+            "worker system must not contain dot-placeholder JSON values; got:\n{worker}"
+        );
+        assert!(
+            worker.contains("$RESPONSE_SUMMARY"),
+            "worker system must include accepted schema placeholder; got:\n{worker}"
+        );
+        assert!(
+            !worker.contains("$REASON_FOR_REJECTION"),
+            "worker system must never include the rejected schema placeholder; got:\n{worker}"
+        );
         // Planner uses direct PlannerOutput schema — no status/content wrapper.
         assert!(
             policy.planner_producer_system.contains("\"tasks\""),

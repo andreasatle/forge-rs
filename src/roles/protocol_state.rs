@@ -121,6 +121,10 @@ impl ProtocolState {
         self.repeated_observation_coercion_active
     }
 
+    pub(super) fn is_work_producer(&self) -> bool {
+        self.is_work_producer
+    }
+
     pub(super) fn read_file_attempted(&self) -> usize {
         self.read_file_attempted
     }

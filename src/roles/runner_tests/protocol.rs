@@ -75,10 +75,12 @@ fn protocol_retry_prompt_preserves_context_without_leaking_raw_response() {
         "retry prompt must preserve the original objective; got:\n{retry_prompt}"
     );
     assert!(
-        retry_prompt.contains("\"status\"")
-            && retry_prompt.contains("$RESPONSE_SUMMARY")
-            && retry_prompt.contains("$REASON_FOR_REJECTION"),
+        retry_prompt.contains("\"status\"") && retry_prompt.contains("$RESPONSE_SUMMARY"),
         "retry prompt must preserve the role response schema guidance; got:\n{retry_prompt}"
+    );
+    assert!(
+        !retry_prompt.contains("$REASON_FOR_REJECTION"),
+        "Work-node Producer retry prompt must never offer the rejected schema; got:\n{retry_prompt}"
     );
     assert!(
         !retry_prompt.contains("invalid text"),

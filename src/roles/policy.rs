@@ -22,6 +22,19 @@ Critic accepts with a review or rejects with a reason. \
 Referee accepts approval or rejects with revision feedback. \
 Execution failures are handled by the framework, not the model.";
 
+/// JSON protocol instructions for the Work-node Producer role.
+///
+/// The Work-node Producer's job is to implement — it never rejects. Only the
+/// Critic and Referee roles evaluate and may reject, so this schema omits the
+/// rejected branch entirely; it must never appear anywhere in a prompt the
+/// Work-node Producer can receive.
+const WORK_PRODUCER_SYSTEM: &str = "Return exactly one JSON object. No markdown. No code fence. \
+No explanation. No text before or after the JSON.\n\
+Accepted: {\"status\":\"accepted\",\"content\":\"$RESPONSE_SUMMARY\"}\n\
+Do not copy example values. Replace them with task-specific content.\n\
+Implement the requested change and return accepted content describing what you did. \
+Execution failures are handled by the framework, not the model.";
+
 /// JSON protocol instructions for the Planner (Plan-node Producer) role.
 ///
 /// The planner returns a [`PlannerOutput`] directly — no `status`/`content`
@@ -57,7 +70,7 @@ impl Default for RolePolicy {
     fn default() -> Self {
         Self {
             planner_producer_system: PLANNER_SYSTEM.to_string(),
-            worker_producer_system: DEFAULT_SYSTEM.to_string(),
+            worker_producer_system: WORK_PRODUCER_SYSTEM.to_string(),
             planner_critic_system: DEFAULT_SYSTEM.to_string(),
             worker_critic_system: DEFAULT_SYSTEM.to_string(),
             planner_referee_system: DEFAULT_SYSTEM.to_string(),
@@ -167,7 +180,9 @@ mod tests {
     }
 
     #[test]
-    fn worker_still_uses_status_content_schema() {
+    fn worker_producer_uses_accepted_only_schema() {
+        // The Work-node Producer implements; it never rejects. Only Critic
+        // and Referee evaluate and may reject.
         let policy = RolePolicy::default();
         assert!(
             policy.worker_producer_system.contains("\"status\""),
@@ -180,10 +195,15 @@ mod tests {
             policy.worker_producer_system
         );
         assert!(
-            policy
+            !policy
                 .worker_producer_system
                 .contains("$REASON_FOR_REJECTION"),
-            "worker_producer_system must show rejected schema placeholder; got:\n{}",
+            "worker_producer_system must never show the rejected schema placeholder; got:\n{}",
+            policy.worker_producer_system
+        );
+        assert!(
+            !policy.worker_producer_system.contains("\"rejected\""),
+            "worker_producer_system must never mention the rejected status; got:\n{}",
             policy.worker_producer_system
         );
     }

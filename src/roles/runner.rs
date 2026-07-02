@@ -539,9 +539,10 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                                 &core_prompt,
                                 &observation_suffix,
                                 &effective_error,
+                                is_work_producer,
                             )
                         } else {
-                            render_retry_prompt(&base_prompt, &effective_error)
+                            render_retry_prompt(&base_prompt, &effective_error, is_work_producer)
                         };
                     }
                 }
