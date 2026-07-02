@@ -48,6 +48,7 @@ impl ProjectAdapter for YamlProjectAdapter {
             worker_critic_system: format!("{}\n{DEFAULT_SYSTEM}", prompts.worker_critic),
             planner_referee_system: format!("{}\n{DEFAULT_SYSTEM}", prompts.planner_referee),
             worker_referee_system: format!("{}\n{DEFAULT_SYSTEM}", prompts.worker_referee),
+            language_guidance: None,
         }
     }
 

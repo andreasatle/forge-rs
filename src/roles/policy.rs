@@ -107,6 +107,15 @@ pub struct RolePolicy {
     pub planner_referee_system: String,
     /// System instruction for Work-node Referee role.
     pub worker_referee_system: String,
+    /// Language-specific guidance injected as its own section between the
+    /// adapter system prompt and the tool section, when set.
+    ///
+    /// Sourced from [`LanguageSpec::prompt_guidance`], not from the project
+    /// adapter — adapters describe project-specific behavior, languages
+    /// describe language-specific conventions.
+    ///
+    /// [`LanguageSpec::prompt_guidance`]: crate::language::LanguageSpec::prompt_guidance
+    pub language_guidance: Option<String>,
 }
 
 impl Default for RolePolicy {
@@ -118,6 +127,7 @@ impl Default for RolePolicy {
             worker_critic_system: DEFAULT_SYSTEM.to_string(),
             planner_referee_system: DEFAULT_SYSTEM.to_string(),
             worker_referee_system: DEFAULT_SYSTEM.to_string(),
+            language_guidance: None,
         }
     }
 }

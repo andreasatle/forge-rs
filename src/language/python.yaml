@@ -1,5 +1,11 @@
 prompt_guidance: |
-  Write idiomatic Python. Keep code simple, typed where useful, and covered by tests.
+  Write idiomatic Python. Keep code simple, typed where useful, and covered
+  by tests. Add type hints on function signatures and prefer explicit types
+  over Any. Use standard import order: standard library, then third-party,
+  then local imports, each group separated by a blank line; avoid wildcard
+  imports. Name test files test_<module>.py or <module>_test.py, and name
+  test functions test_<behavior_under_test> so failures read as a
+  description of what broke.
 init:
   gitignore:
     - .venv

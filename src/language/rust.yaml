@@ -1,5 +1,11 @@
 prompt_guidance: |
-  Write idiomatic Rust.
+  Write idiomatic Rust. Prefer owned types and explicit structs/enums over
+  hidden mutation or unnecessary lifetimes. Model failure with Result and
+  typed error enums; reserve panics for genuine invariant violations, not
+  expected failure paths. Use ? for propagation rather than manual matching
+  on every call site. Put unit tests inline in the same file under
+  #[cfg(test)] mod tests; put integration tests that exercise the public API
+  as a separate file under tests/.
 init:
   commands:
     - program: cargo

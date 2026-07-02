@@ -416,10 +416,16 @@ fn coding_project_adapter(variant: ProjectVariant) -> Box<dyn ProjectAdapter> {
 }
 
 fn make_role_policy(project: &ProjectConfig) -> RolePolicy {
-    match project.kind {
+    let mut policy = match project.kind {
         ProjectKind::Default => DefaultProjectAdapter.role_policy(),
         ProjectKind::Coding => coding_project_adapter(project.variant).role_policy(),
-    }
+    };
+    policy.language_guidance = project
+        .language
+        .as_deref()
+        .and_then(language_spec)
+        .map(|spec| spec.prompt_guidance);
+    policy
 }
 
 fn make_context_file_names(project: &ProjectConfig) -> Vec<String> {
@@ -733,6 +739,36 @@ mod tests {
         assert_eq!(
             policy.worker_producer_system, expected.worker_producer_system,
             "default adapter must produce unchanged worker prompt"
+        );
+    }
+
+    #[test]
+    fn runtime_role_policy_includes_language_guidance_when_language_set() {
+        let policy = make_role_policy(&ProjectConfig {
+            kind: ProjectKind::Coding,
+            language: Some("rust".to_string()),
+            variant: ProjectVariant::Coding,
+        });
+        let expected = language_spec("rust")
+            .expect("rust spec must load")
+            .prompt_guidance;
+        assert_eq!(
+            policy.language_guidance,
+            Some(expected),
+            "role policy must carry the rust language spec's prompt_guidance"
+        );
+    }
+
+    #[test]
+    fn runtime_role_policy_has_no_language_guidance_when_language_unset() {
+        let policy = make_role_policy(&ProjectConfig {
+            kind: ProjectKind::Coding,
+            language: None,
+            variant: ProjectVariant::Coding,
+        });
+        assert_eq!(
+            policy.language_guidance, None,
+            "role policy must have no language guidance when no language is configured"
         );
     }
 

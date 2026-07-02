@@ -420,4 +420,66 @@ fn default_policy_preserves_existing_behavior() {
     }
 }
 
+// ── language guidance ─────────────────────────────────────────────────────
+
+#[test]
+fn language_guidance_renders_between_system_prompt_and_tool_section() {
+    // Invariant: when RolePolicy::language_guidance is set, it appears as its
+    // own labeled section positioned after the adapter system prompt and
+    // before the tool section, so it is identifiable in traces.
+    let policy = RolePolicy {
+        worker_producer_system: "SYSTEM_MARKER".to_string(),
+        language_guidance: Some("LANGUAGE_MARKER".to_string()),
+        ..RolePolicy::default()
+    };
+    let provider = ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"completed"}"#]);
+    let runner = ProviderRoleRunner::new_with_policy(&provider, policy);
+
+    runner.run_role(
+        with_dummy_tool_context(producer_request("do the work")),
+        &crate::telemetry::NoopTelemetry,
+    );
+
+    let requests = provider.requests.borrow();
+    let prompt = &requests[0].prompt;
+    assert!(
+        prompt.contains("Language guidance:\nLANGUAGE_MARKER"),
+        "prompt must contain a labeled language guidance section; got:\n{prompt}"
+    );
+    let system_pos = prompt
+        .find("SYSTEM_MARKER")
+        .expect("system prompt must appear in prompt");
+    let guidance_pos = prompt
+        .find("Language guidance:")
+        .expect("language guidance section must appear in prompt");
+    let tool_pos = prompt
+        .find("Available file tools")
+        .expect("tool section must appear in prompt");
+    assert!(
+        system_pos < guidance_pos && guidance_pos < tool_pos,
+        "language guidance must sit between the system prompt and the tool section; got:\n{prompt}"
+    );
+}
+
+#[test]
+fn no_language_guidance_section_when_unset() {
+    // Invariant: RolePolicy::default() carries no language guidance, so the
+    // prompt must not gain a stray "Language guidance:" section.
+    let policy = RolePolicy::default();
+    let provider = ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"completed"}"#]);
+    let runner = ProviderRoleRunner::new_with_policy(&provider, policy);
+
+    runner.run_role(
+        with_dummy_tool_context(producer_request("do the work")),
+        &crate::telemetry::NoopTelemetry,
+    );
+
+    let requests = provider.requests.borrow();
+    let prompt = &requests[0].prompt;
+    assert!(
+        !prompt.contains("Language guidance:"),
+        "prompt must not contain a language guidance section when unset; got:\n{prompt}"
+    );
+}
+
 // ── Step 1: planner tool exclusion (runner-level) ────────────────────────
