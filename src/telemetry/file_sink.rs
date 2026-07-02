@@ -162,100 +162,90 @@ mod tests {
         assert!(content.contains("Idle {}"));
     }
 
-    #[test]
-    fn file_name_contains_source_and_kind() {
-        let dir = fresh_dir("source-and-kind");
-        let sink = FileTelemetry::new(dir.clone());
-        sink.record(TelemetryRecord::new(
-            "SchedulerMachine",
-            TelemetryEvent::StateEntered {
-                machine: "SchedulerMachine".into(),
-                state: "Ready".into(),
-            },
-        ));
-        assert!(
-            dir.join("000001--scheduler-machine--state-entered.txt")
-                .exists()
-        );
+    struct FileShapeCase {
+        record: TelemetryRecord,
+        expected_filename: &'static str,
+        expected_content: &'static [&'static str],
     }
 
     #[test]
-    fn file_contents_include_same_source() {
-        let dir = fresh_dir("matching-source");
-        let sink = FileTelemetry::new(dir.clone());
-        sink.record(TelemetryRecord::new(
-            "RoleMachine",
-            TelemetryEvent::ParseFailed {
-                raw_response: "bad".into(),
-                parse_error: "invalid".into(),
-                attempt_count: 1,
-            },
-        ));
-        let content =
-            std::fs::read_to_string(dir.join("000001--role-machine--parse-failed.txt")).unwrap();
-        assert!(content.contains("source: RoleMachine"));
-    }
-
-    #[test]
-    fn role_event_file_name_contains_role() {
-        let dir = fresh_dir("role-subsource");
+    fn file_telemetry_writes_expected_file_names_and_body_headers() {
+        let dir = fresh_dir("file-shapes");
         let sink = FileTelemetry::new(dir.clone());
 
-        sink.record(TelemetryRecord::new_with_subsource(
-            "RoleMachine",
-            "Producer",
-            TelemetryEvent::RolePromptRendered {
-                prompt: "p".into(),
-                attempt_count: 1,
+        let cases = [
+            FileShapeCase {
+                record: TelemetryRecord::new(
+                    "SchedulerMachine",
+                    TelemetryEvent::StateEntered {
+                        machine: "SchedulerMachine".into(),
+                        state: "Ready".into(),
+                    },
+                ),
+                expected_filename: "000001--scheduler-machine--state-entered.txt",
+                expected_content: &["source: SchedulerMachine", "kind: StateEntered"],
             },
-        ));
-        sink.record(TelemetryRecord::new_with_subsource(
-            "RoleMachine",
-            "Critic",
-            TelemetryEvent::ParseFailed {
-                raw_response: "bad".into(),
-                parse_error: "err".into(),
-                attempt_count: 1,
+            FileShapeCase {
+                record: TelemetryRecord::new_with_subsource(
+                    "RoleMachine",
+                    "Producer",
+                    TelemetryEvent::RolePromptRendered {
+                        prompt: "hello".into(),
+                        attempt_count: 1,
+                    },
+                ),
+                expected_filename: "000002--role-machine--producer--role-prompt-rendered.txt",
+                expected_content: &[
+                    "source: RoleMachine",
+                    "subsource: Producer",
+                    "kind: RolePromptRendered",
+                ],
             },
-        ));
-        sink.record(TelemetryRecord::new_with_subsource(
-            "RoleMachine",
-            "Referee",
-            TelemetryEvent::ParseSucceeded { attempt_count: 1 },
-        ));
+            FileShapeCase {
+                record: TelemetryRecord::new_with_subsource(
+                    "RoleMachine",
+                    "Critic",
+                    TelemetryEvent::ParseFailed {
+                        raw_response: "bad".into(),
+                        parse_error: "err".into(),
+                        attempt_count: 1,
+                    },
+                ),
+                expected_filename: "000003--role-machine--critic--parse-failed.txt",
+                expected_content: &[
+                    "source: RoleMachine",
+                    "subsource: Critic",
+                    "kind: ParseFailed",
+                ],
+            },
+            FileShapeCase {
+                record: TelemetryRecord::new_with_subsource(
+                    "RoleMachine",
+                    "Referee",
+                    TelemetryEvent::ParseSucceeded { attempt_count: 1 },
+                ),
+                expected_filename: "000004--role-machine--referee--parse-succeeded.txt",
+                expected_content: &[
+                    "source: RoleMachine",
+                    "subsource: Referee",
+                    "kind: ParseSucceeded",
+                ],
+            },
+        ];
 
-        assert!(
-            dir.join("000001--role-machine--producer--role-prompt-rendered.txt")
-                .exists()
-        );
-        assert!(
-            dir.join("000002--role-machine--critic--parse-failed.txt")
-                .exists()
-        );
-        assert!(
-            dir.join("000003--role-machine--referee--parse-succeeded.txt")
-                .exists()
-        );
-    }
-
-    #[test]
-    fn file_body_contains_matching_subsource() {
-        let dir = fresh_dir("body-subsource");
-        let sink = FileTelemetry::new(dir.clone());
-        sink.record(TelemetryRecord::new_with_subsource(
-            "RoleMachine",
-            "Producer",
-            TelemetryEvent::RolePromptRendered {
-                prompt: "hello".into(),
-                attempt_count: 1,
-            },
-        ));
-        let content = std::fs::read_to_string(
-            dir.join("000001--role-machine--producer--role-prompt-rendered.txt"),
-        )
-        .unwrap();
-        assert!(content.contains("source: RoleMachine"));
-        assert!(content.contains("subsource: Producer"));
+        for case in cases {
+            sink.record(case.record);
+            let path = dir.join(case.expected_filename);
+            assert!(path.exists(), "expected telemetry file {}", path.display());
+            let content = std::fs::read_to_string(&path).unwrap();
+            for expected in case.expected_content {
+                assert!(
+                    content.contains(expected),
+                    "expected {expected:?} in {}; got: {content}",
+                    path.display()
+                );
+            }
+        }
     }
 
     #[test]
