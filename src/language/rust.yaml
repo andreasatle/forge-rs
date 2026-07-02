@@ -22,3 +22,6 @@ validation:
     - program: cargo
       args: ["test"]
       scope: workspace
+  validation_targets:
+    - pattern: "{stem}.rs"
+      target: "{stem}_test.rs"

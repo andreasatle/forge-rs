@@ -1,7 +1,7 @@
 //! Project adapter driven entirely by a YAML-loaded [`ProjectAdapterConfig`].
 
 use super::ProjectAdapter;
-use super::yaml_config::{ProjectAdapterConfig, ValidationTargetRule};
+use super::yaml_config::ProjectAdapterConfig;
 use crate::roles::RolePolicy;
 use crate::roles::policy::{
     DEFAULT_SYSTEM, PLANNER_PRODUCER_IDENTITY, PLANNER_PROTOCOL_FOOTER_WITH_OPERATION,
@@ -57,61 +57,15 @@ impl ProjectAdapter for YamlProjectAdapter {
     }
 
     fn required_validation_targets(&self, targets: &[String]) -> Vec<String> {
-        targets
-            .iter()
-            .filter_map(|target| derive_validation_target(&self.config.validation_targets, target))
-            .collect()
+        crate::validation::derive_validation_targets(&self.config.validation_targets, targets)
     }
-}
-
-/// Apply `rules` to a single `target` path, returning the derived validation
-/// target if one applies.
-///
-/// A target is skipped (returns `None`) when its basename already matches
-/// the *target* pattern of any rule — this marks it as a derived validation
-/// file rather than a source that needs one. Otherwise the first rule whose
-/// *source* pattern matches wins.
-fn derive_validation_target(rules: &[ValidationTargetRule], target: &str) -> Option<String> {
-    let path = target.replace('\\', "/");
-    let (prefix, basename) = path
-        .rsplit_once('/')
-        .map(|(dir, name)| (format!("{dir}/"), name))
-        .unwrap_or((String::new(), path.as_str()));
-
-    let already_derived = rules
-        .iter()
-        .any(|rule| match_stem(basename, &rule.target).is_some());
-    if already_derived {
-        return None;
-    }
-
-    rules.iter().find_map(|rule| {
-        let stem = match_stem(basename, &rule.pattern)?;
-        Some(format!("{prefix}{}", rule.target.replace("{stem}", &stem)))
-    })
-}
-
-/// Match `basename` against `pattern`, which must contain exactly one
-/// `{stem}` placeholder. Returns the captured stem on success.
-fn match_stem(basename: &str, pattern: &str) -> Option<String> {
-    let (before, after) = pattern.split_once("{stem}")?;
-    if basename.len() < before.len() + after.len() {
-        return None;
-    }
-    if !basename.starts_with(before) || !basename.ends_with(after) {
-        return None;
-    }
-    let stem = &basename[before.len()..basename.len() - after.len()];
-    if stem.is_empty() {
-        return None;
-    }
-    Some(stem.to_string())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::project::yaml_config::RolePromptsConfig;
+    use crate::validation::ValidationTargetRule;
 
     fn role_prompts() -> RolePromptsConfig {
         RolePromptsConfig {
@@ -356,23 +310,5 @@ validation_targets:
     fn from_yaml_str_rejects_invalid_yaml() {
         let result = YamlProjectAdapter::from_yaml_str("not: valid: yaml: [");
         assert!(result.is_err(), "invalid YAML must return an error");
-    }
-
-    // ── match_stem ────────────────────────────────────────────────────────────
-
-    #[test]
-    fn match_stem_rejects_pattern_without_placeholder() {
-        assert_eq!(match_stem("main.py", "main.py"), None);
-    }
-
-    #[test]
-    fn match_stem_rejects_empty_capture() {
-        // Invariant: a pattern that would capture an empty stem does not match.
-        assert_eq!(match_stem(".py", "{stem}.py"), None);
-    }
-
-    #[test]
-    fn match_stem_rejects_non_matching_basename() {
-        assert_eq!(match_stem("main.rs", "{stem}.py"), None);
     }
 }

@@ -2,6 +2,8 @@
 
 use serde::Deserialize;
 
+pub use crate::validation::ValidationTargetRule;
+
 /// Per-role system prompt strings loaded from YAML.
 ///
 /// Mirrors [`crate::roles::RolePolicy`] field-for-field so a
@@ -22,26 +24,6 @@ pub struct RolePromptsConfig {
     pub planner_referee: String,
     /// System instruction for the Work-node Referee role.
     pub worker_referee: String,
-}
-
-/// One source-to-validation-target derivation rule.
-///
-/// `pattern` and `target` each contain exactly one `{stem}` placeholder and
-/// are matched against a file's basename (its directory prefix is preserved
-/// separately). A basename matches when it starts with the text before
-/// `{stem}` and ends with the text after it; the captured middle section is
-/// substituted into `target` to derive the validation target basename.
-///
-/// Example: `pattern: "{stem}.py"`, `target: "test_{stem}.py"` derives
-/// `test_main.py` from `main.py`. `pattern: "{stem}.rs"`,
-/// `target: "{stem}_test.rs"` derives `lib_test.rs` from `lib.rs`.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ValidationTargetRule {
-    /// Source basename pattern, e.g. `"{stem}.py"`.
-    pub pattern: String,
-    /// Validation target basename pattern, e.g. `"test_{stem}.py"`.
-    pub target: String,
 }
 
 /// Full YAML-deserializable configuration for a [`super::YamlProjectAdapter`].

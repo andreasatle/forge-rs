@@ -90,12 +90,15 @@ mod tests {
     }
 
     #[test]
-    fn required_validation_targets_derives_python_test() {
-        // Invariant: validation target derivation is unchanged from the
-        // non-TDD coding adapter.
-        assert_eq!(
-            CodingTddProjectAdapter.required_validation_targets(&["main.py".to_string()]),
-            vec!["test_main.py".to_string()],
+    fn required_validation_targets_is_empty_without_language_rules() {
+        // Invariant: validation target derivation rules now live in the
+        // active LanguageSpec (see src/language/*.yaml), not in
+        // coding_tdd.yaml — the TDD adapter's own config carries no rules of
+        // its own, same as the non-TDD coding adapter.
+        assert!(
+            CodingTddProjectAdapter
+                .required_validation_targets(&["main.py".to_string()])
+                .is_empty()
         );
     }
 }

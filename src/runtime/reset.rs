@@ -230,6 +230,7 @@ mod tests {
                 validation: LanguageValidationSpec {
                     runs_tests: false,
                     commands: vec![],
+                    validation_targets: vec![],
                 },
             },
         );

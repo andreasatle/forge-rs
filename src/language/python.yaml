@@ -31,3 +31,6 @@ validation:
       when_files_present:
         - "test_*.py"
         - "*_test.py"
+  validation_targets:
+    - pattern: "{stem}.py"
+      target: "test_{stem}.py"

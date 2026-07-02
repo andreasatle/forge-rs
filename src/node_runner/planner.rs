@@ -771,8 +771,11 @@ mod tests {
     }
 
     fn python_tests(targets: &[String]) -> Vec<String> {
-        use crate::project::{CodingProjectAdapter, ProjectAdapter};
-        CodingProjectAdapter.required_validation_targets(targets)
+        let rules = crate::language::language_spec("python")
+            .expect("python language spec must load")
+            .validation
+            .validation_targets;
+        crate::validation::derive_validation_targets(&rules, targets)
     }
 
     fn no_tests(_: &[String]) -> Vec<String> {

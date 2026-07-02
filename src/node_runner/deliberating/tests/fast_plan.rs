@@ -1,8 +1,14 @@
 use std::sync::Arc;
 
-use crate::project::{CodingProjectAdapter, ProjectAdapter as _};
-
 use super::*;
+
+fn python_test_targets(targets: &[String]) -> Vec<String> {
+    let rules = crate::language::language_spec("python")
+        .expect("python language spec must load")
+        .validation
+        .validation_targets;
+    crate::validation::derive_validation_targets(&rules, targets)
+}
 
 #[test]
 fn fast_plan_bypasses_provider_and_emits_telemetry() {
@@ -61,9 +67,8 @@ fn fast_plan_bypasses_provider_and_emits_telemetry() {
 #[test]
 fn fast_plan_with_tests_required_adds_test_task_and_emits_telemetry() {
     let provider = ScriptedProvider::from_strs(&[]);
-    let runner = DeliberatingNodeRunner::new(&provider, &provider).with_required_test_targets_fn(
-        Arc::new(|t| CodingProjectAdapter.required_validation_targets(t)),
-    );
+    let runner = DeliberatingNodeRunner::new(&provider, &provider)
+        .with_required_test_targets_fn(Arc::new(python_test_targets));
     let telemetry = crate::telemetry::VecTelemetry::new();
     let result = runner.run_node(
         NodeRunRequest {

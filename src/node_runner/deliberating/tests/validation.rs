@@ -1,8 +1,14 @@
 use std::sync::Arc;
 
-use crate::project::{CodingProjectAdapter, ProjectAdapter as _};
-
 use super::*;
+
+fn python_test_targets(targets: &[String]) -> Vec<String> {
+    let rules = crate::language::language_spec("python")
+        .expect("python language spec must load")
+        .validation
+        .validation_targets;
+    crate::validation::derive_validation_targets(&rules, targets)
+}
 
 #[test]
 fn artifact_worker_without_tool_update_fails_semantic_validation() {
@@ -184,9 +190,8 @@ fn planner_missing_test_target_sends_revision_feedback_and_retries() {
         r#"{"status":"accepted","content":"plan looks good"}"#, // Plan+Critic
         r#"{"status":"accepted","content":"plan approved"}"#, // Plan+Referee
     ]);
-    let runner = DeliberatingNodeRunner::new(&provider, &provider).with_required_test_targets_fn(
-        Arc::new(|t| CodingProjectAdapter.required_validation_targets(t)),
-    );
+    let runner = DeliberatingNodeRunner::new(&provider, &provider)
+        .with_required_test_targets_fn(Arc::new(python_test_targets));
     let request = NodeRunRequest {
         kind: NodeKind::Plan,
         node_id: NodeId("test-node".to_string()),
@@ -225,9 +230,8 @@ fn planner_explicit_target_violation_sends_revision_feedback_and_retries() {
         r#"{"status":"accepted","content":"plan looks good"}"#, // Plan+Critic
         r#"{"status":"accepted","content":"plan approved"}"#, // Plan+Referee
     ]);
-    let runner = DeliberatingNodeRunner::new(&provider, &provider).with_required_test_targets_fn(
-        Arc::new(|t| CodingProjectAdapter.required_validation_targets(t)),
-    );
+    let runner = DeliberatingNodeRunner::new(&provider, &provider)
+        .with_required_test_targets_fn(Arc::new(python_test_targets));
     let request = NodeRunRequest {
         kind: NodeKind::Plan,
         node_id: NodeId("test-node".to_string()),

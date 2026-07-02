@@ -5,9 +5,11 @@
 //! `IntegrationReturned::Failed` without changing artifact history.
 
 mod plan;
+mod target_rule;
 mod validator;
 
 pub use plan::{ValidationPlan, ValidationStage, ValidationStep};
+pub use target_rule::{ValidationTargetRule, derive_validation_targets};
 pub use validator::{
     AlwaysPassValidator, CommandSpec, CommandValidator, ValidationCommandFailure, ValidationResult,
     ValidationScope, Validator,

@@ -442,15 +442,13 @@ fn make_required_test_targets_fn(
     if !project_requires_tests(project.language.as_deref(), validation) {
         return Arc::new(|_| vec![]);
     }
-    match project.kind {
-        ProjectKind::Coding => {
-            let variant = project.variant;
-            Arc::new(move |targets| {
-                coding_project_adapter(variant).required_validation_targets(targets)
-            })
-        }
-        ProjectKind::Default => Arc::new(|_| vec![]),
-    }
+    let rules = project
+        .language
+        .as_deref()
+        .and_then(language_spec)
+        .map(|spec| spec.validation.validation_targets)
+        .unwrap_or_default();
+    Arc::new(move |targets| crate::validation::derive_validation_targets(&rules, targets))
 }
 
 fn project_requires_tests(

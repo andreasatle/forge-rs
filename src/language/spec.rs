@@ -2,7 +2,7 @@
 
 use serde::Deserialize;
 
-use crate::validation::CommandSpec;
+use crate::validation::{CommandSpec, ValidationTargetRule};
 
 /// Complete specification for a language plugin.
 #[derive(Debug, Clone, Deserialize)]
@@ -49,6 +49,10 @@ pub struct LanguageValidationSpec {
     pub runs_tests: bool,
     /// Ordered commands executed to validate the workspace.
     pub commands: Vec<CommandSpec>,
+    /// Ordered rules deriving validation targets (e.g. test files) from
+    /// source targets named in a task.
+    #[serde(default)]
+    pub validation_targets: Vec<ValidationTargetRule>,
 }
 
 #[cfg(test)]
@@ -68,6 +72,7 @@ mod tests {
             validation: LanguageValidationSpec {
                 runs_tests: true,
                 commands: vec![],
+                validation_targets: vec![],
             },
         };
         assert!(
@@ -92,6 +97,7 @@ mod tests {
                     when_files_present: vec![],
                     scope: ValidationScope::Workspace,
                 }],
+                validation_targets: vec![],
             },
         };
         assert!(
