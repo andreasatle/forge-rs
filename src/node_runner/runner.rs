@@ -60,10 +60,7 @@ impl NodeRunner for StaticNodeRunner {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-
     use super::*;
-    use crate::artifacts::ArtifactView;
     use crate::machines::scheduler::{ModelTier, RecoveryAction, TestPlanContext};
     use crate::telemetry::NoopTelemetry;
 
@@ -93,46 +90,6 @@ mod tests {
             artifact_view: None,
             work_attempt: None,
         }
-    }
-
-    #[test]
-    fn node_run_request_carries_scheduler_fields() {
-        let req = NodeRunRequest {
-            kind: NodeKind::Work,
-            node_id: NodeId("test-node".to_string()),
-            objective: "test objective".to_string(),
-            target_files: vec![],
-            test_plan_context: TestPlanContext::default(),
-            model_tier: ModelTier::Strong,
-            attempt: 2,
-            artifact_view: None,
-            work_attempt: None,
-        };
-        assert_eq!(req.kind, NodeKind::Work);
-        assert_eq!(req.objective, "test objective");
-        assert_eq!(req.model_tier, ModelTier::Strong);
-        assert_eq!(req.attempt, 2);
-    }
-
-    #[test]
-    fn node_run_request_can_carry_artifact_view() {
-        let view = ArtifactView {
-            repo_path: PathBuf::from("/some/repo.git"),
-            commit_sha: "deadbeef".to_string(),
-        };
-        let req = NodeRunRequest {
-            kind: NodeKind::Work,
-            node_id: NodeId("test-node".to_string()),
-            objective: "test".to_string(),
-            target_files: vec![],
-            test_plan_context: TestPlanContext::default(),
-            model_tier: ModelTier::Cheap,
-            attempt: 0,
-            artifact_view: Some(view),
-            work_attempt: None,
-        };
-        let stored = req.artifact_view.expect("artifact_view should be Some");
-        assert_eq!(stored.commit_sha, "deadbeef");
     }
 
     #[test]

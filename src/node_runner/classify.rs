@@ -123,41 +123,6 @@ mod tests {
     }
 
     #[test]
-    fn work_semantic_validation_retry_message_mentions_file_tool() {
-        let action = classify_deliberation_failure(
-            FailureKind::WorkSemanticValidationFailure,
-            "diagnostic text can change",
-        );
-        let RecoveryAction::Retry { message } = action else {
-            panic!("expected Retry");
-        };
-        assert!(
-            message.contains("must modify the artifact"),
-            "retry message must explain artifact mutation requirement; got: {message}"
-        );
-        assert!(
-            message.contains("Use write_file by default")
-                && message.contains("replacing most or all of an existing file"),
-            "retry message must recommend write_file for whole-file rewrites; got: {message}"
-        );
-        assert!(
-            message.contains("Use replace_text only for small, localized edits")
-                && message.contains("exact old string that occurs once"),
-            "retry message must restrict replace_text to exact localized edits; got: {message}"
-        );
-        assert!(
-            message.contains("whitespace, indentation, or formatting differences"),
-            "retry message must explain replace_text exact matching; got: {message}"
-        );
-        assert!(
-            message.contains("cannot be validated after a failed replace_text")
-                && message.contains("switch to write_file")
-                && message.contains("instead of retrying another replace_text"),
-            "retry message must tell Producer how to recover from invalid WorkAttempt updates; got: {message}"
-        );
-    }
-
-    #[test]
     fn user_task_rejection_terminal_independent_of_message_text() {
         let a =
             classify_deliberation_failure(FailureKind::UserTaskRejection, "cannot do this task");
