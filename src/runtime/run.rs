@@ -607,8 +607,8 @@ fn print_summary(
 mod tests {
     use super::*;
     use crate::config::{
-        ArtifactConfig, ForgeConfig, ProjectConfig, ProjectKind, ProjectVariant, ProviderConfig,
-        TelemetryConfig, UnmanagedProviderConfig,
+        ArtifactConfig, ProjectConfig, ProjectKind, ProjectVariant, ProviderConfig,
+        UnmanagedProviderConfig,
     };
     use crate::machines::scheduler::{
         FailureReason, RecoverySummary, RunGraph, SchedulerTerminalOutput,
