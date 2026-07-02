@@ -6,11 +6,13 @@
 //! config, or integration movement without changing the runtime wiring.
 
 pub mod coding;
+pub mod coding_tdd;
 pub mod default;
 pub mod yaml;
 pub mod yaml_config;
 
 pub use coding::CodingProjectAdapter;
+pub use coding_tdd::CodingTddProjectAdapter;
 pub use default::DefaultProjectAdapter;
 pub use yaml::YamlProjectAdapter;
 pub use yaml_config::{ProjectAdapterConfig, RolePromptsConfig, ValidationTargetRule};

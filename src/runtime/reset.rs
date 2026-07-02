@@ -159,6 +159,7 @@ mod tests {
             project: ProjectConfig {
                 kind: crate::config::ProjectKind::Coding,
                 language: Some(language.to_string()),
+                variant: crate::config::ProjectVariant::Coding,
             },
         }
     }

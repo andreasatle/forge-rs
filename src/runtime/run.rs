@@ -14,7 +14,7 @@ use std::process::Command;
 use crate::artifacts::{Artifact, ArtifactView};
 use crate::config::{
     ForgeConfig, ManagedLlamaCppModelConfig, ManagedProviderConfig, ProjectConfig, ProjectKind,
-    ProviderConfig, ProviderTierConfig, ValidationConfig,
+    ProjectVariant, ProviderConfig, ProviderTierConfig, ValidationConfig,
 };
 use crate::language::registry::language_spec;
 
@@ -24,7 +24,9 @@ use crate::machines::scheduler::{
     SchedulerTerminalOutput, run_scheduler_with_telemetry,
 };
 use crate::node_runner::{DeliberatingNodeRunner, TestTargetsFn};
-use crate::project::{CodingProjectAdapter, DefaultProjectAdapter, ProjectAdapter as _};
+use crate::project::{
+    CodingProjectAdapter, CodingTddProjectAdapter, DefaultProjectAdapter, ProjectAdapter,
+};
 use crate::providers::{LlamaCppProvider, RetryingProvider};
 use crate::roles::RolePolicy;
 use crate::runtime::checkpoint::node_counts;
@@ -401,17 +403,29 @@ fn print_run_progress_result(output: &SchedulerTerminalOutput) {
     }
 }
 
+/// Selects the bundled coding adapter for `variant`.
+///
+/// [`ProjectKind::Coding`] can be backed by more than one prompt policy;
+/// `variant` picks which one without the framework needing to know anything
+/// about their contents.
+fn coding_project_adapter(variant: ProjectVariant) -> Box<dyn ProjectAdapter> {
+    match variant {
+        ProjectVariant::Coding => Box::new(CodingProjectAdapter),
+        ProjectVariant::CodingTdd => Box::new(CodingTddProjectAdapter),
+    }
+}
+
 fn make_role_policy(project: &ProjectConfig) -> RolePolicy {
     match project.kind {
         ProjectKind::Default => DefaultProjectAdapter.role_policy(),
-        ProjectKind::Coding => CodingProjectAdapter.role_policy(),
+        ProjectKind::Coding => coding_project_adapter(project.variant).role_policy(),
     }
 }
 
 fn make_context_file_names(project: &ProjectConfig) -> Vec<String> {
     match project.kind {
         ProjectKind::Default => DefaultProjectAdapter.context_file_names(),
-        ProjectKind::Coding => CodingProjectAdapter.context_file_names(),
+        ProjectKind::Coding => coding_project_adapter(project.variant).context_file_names(),
     }
 }
 
@@ -424,7 +438,10 @@ fn make_required_test_targets_fn(
     }
     match project.kind {
         ProjectKind::Coding => {
-            Arc::new(|targets| CodingProjectAdapter.required_validation_targets(targets))
+            let variant = project.variant;
+            Arc::new(move |targets| {
+                coding_project_adapter(variant).required_validation_targets(targets)
+            })
         }
         ProjectKind::Default => Arc::new(|_| vec![]),
     }
@@ -587,8 +604,8 @@ fn print_summary(
 mod tests {
     use super::*;
     use crate::config::{
-        ArtifactConfig, ForgeConfig, ProjectConfig, ProjectKind, ProviderConfig, TelemetryConfig,
-        UnmanagedProviderConfig,
+        ArtifactConfig, ForgeConfig, ProjectConfig, ProjectKind, ProjectVariant, ProviderConfig,
+        TelemetryConfig, UnmanagedProviderConfig,
     };
     use crate::machines::scheduler::{
         FailureReason, RecoverySummary, RunGraph, SchedulerTerminalOutput,
@@ -666,6 +683,7 @@ mod tests {
         let policy = make_role_policy(&ProjectConfig {
             kind: ProjectKind::Coding,
             language: None,
+            variant: ProjectVariant::Coding,
         });
         assert!(
             policy.planner_producer_system.contains("software planning"),
@@ -682,10 +700,34 @@ mod tests {
     }
 
     #[test]
+    fn runtime_selects_coding_tdd_adapter() {
+        let policy = make_role_policy(&ProjectConfig {
+            kind: ProjectKind::Coding,
+            language: None,
+            variant: ProjectVariant::CodingTdd,
+        });
+        assert!(
+            policy
+                .planner_producer_system
+                .contains("before the implementation nodes"),
+            "coding_tdd variant must select the TDD planner prompt; got:\n{}",
+            policy.planner_producer_system
+        );
+        assert!(
+            policy
+                .worker_producer_system
+                .contains("import the functions under test"),
+            "coding_tdd variant must select the TDD worker prompt; got:\n{}",
+            policy.worker_producer_system
+        );
+    }
+
+    #[test]
     fn runtime_default_adapter_preserves_behavior() {
         let policy = make_role_policy(&ProjectConfig {
             kind: ProjectKind::Default,
             language: None,
+            variant: ProjectVariant::Coding,
         });
         let expected = crate::project::DefaultProjectAdapter.role_policy();
         assert_eq!(

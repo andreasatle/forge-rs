@@ -15,6 +15,18 @@ pub enum ProjectKind {
     Coding,
 }
 
+/// Selects which bundled coding adapter configuration governs role prompts
+/// when [`ProjectKind::Coding`] is selected.
+#[derive(Debug, Deserialize, Default, PartialEq, Clone, Copy)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectVariant {
+    /// The standard coding adapter, loaded from `coding.yaml`.
+    #[default]
+    Coding,
+    /// The test-driven-development coding adapter, loaded from `coding_tdd.yaml`.
+    CodingTdd,
+}
+
 /// Project-level configuration.
 #[derive(Debug, Deserialize, Default)]
 pub struct ProjectConfig {
@@ -27,6 +39,11 @@ pub struct ProjectConfig {
     /// Mutually exclusive with an explicit `validation` block.
     #[serde(default)]
     pub language: Option<String>,
+    /// Selects which bundled coding adapter configuration to use when
+    /// `kind` is [`ProjectKind::Coding`]. Defaults to [`ProjectVariant::Coding`].
+    /// An unrecognised value is a hard error at config load time.
+    #[serde(default)]
+    pub variant: ProjectVariant,
 }
 
 /// Top-level configuration for a forge run.
@@ -1043,6 +1060,79 @@ project:
             config.project.kind,
             ProjectKind::Coding,
             "project.kind: coding must parse as ProjectKind::Coding"
+        );
+    }
+
+    #[test]
+    fn config_defaults_to_coding_variant() {
+        let tmp = TempYaml::new(EXAMPLE_YAML);
+        let config = ForgeConfig::from_file(tmp.path()).unwrap();
+        assert_eq!(
+            config.project.variant,
+            ProjectVariant::Coding,
+            "absent project.variant must default to ProjectVariant::Coding"
+        );
+    }
+
+    const CODING_TDD_VARIANT_YAML: &str = r#"
+objective: "test"
+artifact:
+  repo_path: ".forge/artifacts/main.git"
+  branch: "main"
+provider:
+  cheap:
+    unmanaged:
+      base_url: "http://localhost:8080"
+      model: "llama-test"
+      n_predict: 512
+telemetry:
+  directory: "runs"
+project:
+  kind: coding
+  variant: coding_tdd
+"#;
+
+    #[test]
+    fn config_parses_coding_tdd_variant() {
+        let tmp = TempYaml::new(CODING_TDD_VARIANT_YAML);
+        let config = ForgeConfig::from_file(tmp.path()).unwrap();
+        assert_eq!(
+            config.project.variant,
+            ProjectVariant::CodingTdd,
+            "project.variant: coding_tdd must parse as ProjectVariant::CodingTdd"
+        );
+    }
+
+    const UNKNOWN_VARIANT_YAML: &str = r#"
+objective: "test"
+artifact:
+  repo_path: ".forge/artifacts/main.git"
+  branch: "main"
+provider:
+  cheap:
+    unmanaged:
+      base_url: "http://localhost:8080"
+      model: "llama-test"
+      n_predict: 512
+telemetry:
+  directory: "runs"
+project:
+  kind: coding
+  variant: bogus
+"#;
+
+    #[test]
+    fn unknown_variant_fails_loudly() {
+        let tmp = TempYaml::new(UNKNOWN_VARIANT_YAML);
+        let result = ForgeConfig::from_file(tmp.path());
+        assert!(
+            result.is_err(),
+            "unrecognised project.variant must be a hard error"
+        );
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("bogus"),
+            "error must name the unrecognised variant; got: {msg}"
         );
     }
 
