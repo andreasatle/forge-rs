@@ -7,9 +7,13 @@
 
 pub mod coding;
 pub mod default;
+pub mod yaml;
+pub mod yaml_config;
 
 pub use coding::CodingProjectAdapter;
 pub use default::DefaultProjectAdapter;
+pub use yaml::YamlProjectAdapter;
+pub use yaml_config::{ProjectAdapterConfig, RolePromptsConfig, ValidationTargetRule};
 
 use crate::artifacts::ArtifactRead;
 use crate::machines::deliberation::DeliberationRole;
