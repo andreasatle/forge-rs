@@ -266,24 +266,25 @@ fn unbalanced_json_object_fails() {
 // --- trailing-whitespace robustness ---
 
 #[test]
-fn role_response_with_trailing_newline_parses() {
-    let input = "{\"status\":\"accepted\",\"content\":\"The task was completed successfully.\"}\n";
-    let result = parse_role_response(input);
-    assert!(
-        matches!(result, RoleResult::Accepted { .. }),
-        "trailing newline must not cause role response parse failure, got {result:?}"
-    );
-}
+fn accepted_role_response_with_trailing_whitespace_parses() {
+    let cases = [
+        (
+            "newline",
+            "{\"status\":\"accepted\",\"content\":\"The task was completed successfully.\"}\n",
+        ),
+        (
+            "spaces and tabs",
+            "{\"status\":\"accepted\",\"content\":\"The task was completed successfully.\"}  \t  ",
+        ),
+    ];
 
-#[test]
-fn role_response_with_trailing_spaces_and_tabs_parses() {
-    let input =
-        "{\"status\":\"accepted\",\"content\":\"The task was completed successfully.\"}  \t  ";
-    let result = parse_role_response(input);
-    assert!(
-        matches!(result, RoleResult::Accepted { .. }),
-        "trailing spaces/tabs must not cause role response parse failure, got {result:?}"
-    );
+    for (name, input) in cases {
+        let result = parse_role_response(input);
+        assert!(
+            matches!(result, RoleResult::Accepted { .. }),
+            "{name}: trailing whitespace must not cause role response parse failure, got {result:?}"
+        );
+    }
 }
 
 #[test]
