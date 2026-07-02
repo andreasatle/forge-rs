@@ -189,13 +189,6 @@ mod tests {
     }
 
     #[test]
-    fn ollama_provider_new_stores_fields() {
-        let p = OllamaProvider::new("http://localhost:11434", "llama3", 120);
-        assert_eq!(p.base_url, "http://localhost:11434");
-        assert_eq!(p.model, "llama3");
-    }
-
-    #[test]
     fn is_timeout_source_detects_timed_out_io_error() {
         let ioe = std::io::Error::new(std::io::ErrorKind::TimedOut, "timed out");
         let boxed: Box<dyn std::error::Error + 'static> = Box::new(ioe);

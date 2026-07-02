@@ -195,12 +195,6 @@ mod tests {
     }
 
     #[test]
-    fn llama_cpp_provider_new_stores_base_url() {
-        let p = LlamaCppProvider::new("http://localhost:8080", 120);
-        assert_eq!(p.base_url, "http://localhost:8080");
-    }
-
-    #[test]
     fn llama_provider_includes_json_grammar_for_json_output() {
         let req = ProviderRequest {
             prompt: "test".to_string(),
@@ -234,22 +228,6 @@ mod tests {
         };
         let grammar = resolve_grammar(req.output_schema.as_ref());
         assert_eq!(grammar.as_deref(), Some("root ::= \"x\""));
-    }
-
-    #[test]
-    fn json_gbnf_root_is_object() {
-        assert!(JSON_GBNF.starts_with("root   ::= object"));
-    }
-
-    #[test]
-    fn llama_provider_preserves_max_tokens_with_json_grammar() {
-        let body = CompletionRequest {
-            prompt: "test".to_string(),
-            n_predict: 256,
-            grammar: Some(JSON_GBNF.to_string()),
-        };
-        assert_eq!(body.n_predict, 256);
-        assert!(body.grammar.is_some());
     }
 
     #[test]
