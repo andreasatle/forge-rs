@@ -11,6 +11,18 @@
 //! [`DeliberationRole::Producer`]: crate::machines::deliberation::DeliberationRole
 //! [`NodeKind`]: crate::machines::scheduler::NodeKind
 
+/// Generic JSON-output-format constraints shared by every role's protocol
+/// footer: exactly one JSON object, no markdown or code fence, and no text
+/// before or after the JSON.
+///
+/// Framework protocol, identical across every role and adapter. Extracted so
+/// it renders as its own labeled `Constraints:` section, distinct from the
+/// role-specific and adapter-specific constraints it is composed with —
+/// rather than being restated inline in [`DEFAULT_SYSTEM`],
+/// [`WORK_PRODUCER_SYSTEM`], and [`PLANNER_PROTOCOL_FOOTER_WITH_OPERATION`].
+pub(crate) const GENERIC_CONSTRAINTS: &str = "Return exactly one JSON object. No markdown. No code fence. \
+No explanation. No text before or after the JSON.";
+
 /// JSON protocol instructions for Worker, Critic, and Referee roles.
 ///
 /// This is framework protocol, not project-specific content: it is identical
@@ -18,9 +30,10 @@
 /// surrounding prompt, so adapters (e.g. the YAML-driven coding adapters)
 /// compose their project-specific text with this constant rather than
 /// re-stating it.
-pub(crate) const DEFAULT_SYSTEM: &str = "Return exactly one JSON object. No markdown. No code fence. \
-No explanation. No text before or after the JSON.\n\
-Accepted: {\"status\":\"accepted\",\"content\":\"$RESPONSE_SUMMARY\"}\n\
+///
+/// Callers compose this after [`GENERIC_CONSTRAINTS`] — the JSON-format
+/// constraint it used to restate inline has been extracted there.
+pub(crate) const DEFAULT_SYSTEM: &str = "Accepted: {\"status\":\"accepted\",\"content\":\"$RESPONSE_SUMMARY\"}\n\
 Rejected: {\"status\":\"rejected\",\"reason\":\"$REASON_FOR_REJECTION\"}\n\
 Do not copy example values. Replace them with task-specific content.\n\
 Producer returns accepted content. \
@@ -36,9 +49,8 @@ Execution failures are handled by the framework, not the model.";
 /// Work-node Producer can receive.
 ///
 /// Framework protocol, shared across adapters — see [`DEFAULT_SYSTEM`].
-pub(crate) const WORK_PRODUCER_SYSTEM: &str = "Return exactly one JSON object. No markdown. No code fence. \
-No explanation. No text before or after the JSON.\n\
-Accepted: {\"status\":\"accepted\",\"content\":\"$RESPONSE_SUMMARY\"}\n\
+/// Callers compose this after [`GENERIC_CONSTRAINTS`], see [`DEFAULT_SYSTEM`].
+pub(crate) const WORK_PRODUCER_SYSTEM: &str = "Accepted: {\"status\":\"accepted\",\"content\":\"$RESPONSE_SUMMARY\"}\n\
 Do not copy example values. Replace them with task-specific content.\n\
 Implement the requested change and return accepted content describing what you did. \
 Execution failures are handled by the framework, not the model.";
@@ -83,9 +95,8 @@ editing them.";
 ///
 /// Framework protocol, shared by every adapter that models tasks as
 /// concrete artifact operations — see [`DEFAULT_SYSTEM`].
-pub(crate) const PLANNER_PROTOCOL_FOOTER_WITH_OPERATION: &str = "Return exactly one JSON object. No markdown. No code fence. \
-No explanation. No text before or after the JSON.\n\
-{\"tasks\":[{\"id\":\"task-id\",\"objective\":\"Task objective.\",\"operation\":\"modify\",\"targets\":[\"path/to/file\"],\"depends_on\":[]}]}\n\
+/// Callers compose this after [`GENERIC_CONSTRAINTS`], see [`DEFAULT_SYSTEM`].
+pub(crate) const PLANNER_PROTOCOL_FOOTER_WITH_OPERATION: &str = "{\"tasks\":[{\"id\":\"task-id\",\"objective\":\"Task objective.\",\"operation\":\"modify\",\"targets\":[\"path/to/file\"],\"depends_on\":[]}]}\n\
 Do not copy example values. Replace them with actual task IDs and objectives.";
 
 /// Per-role system prompt policy.
@@ -116,18 +127,28 @@ pub struct RolePolicy {
     ///
     /// [`LanguageSpec::prompt_guidance`]: crate::language::LanguageSpec::prompt_guidance
     pub language_guidance: Option<String>,
+    /// Language-specific constraints injected as their own section
+    /// immediately after `language_guidance`, when set.
+    ///
+    /// Sourced from [`LanguageSpec::constraints`] — prohibitions and
+    /// conventions distinct from the general guidance in
+    /// `language_guidance`.
+    ///
+    /// [`LanguageSpec::constraints`]: crate::language::LanguageSpec::constraints
+    pub language_constraints: Option<String>,
 }
 
 impl Default for RolePolicy {
     fn default() -> Self {
         Self {
             planner_producer_system: PLANNER_SYSTEM.to_string(),
-            worker_producer_system: WORK_PRODUCER_SYSTEM.to_string(),
-            planner_critic_system: DEFAULT_SYSTEM.to_string(),
-            worker_critic_system: DEFAULT_SYSTEM.to_string(),
-            planner_referee_system: DEFAULT_SYSTEM.to_string(),
-            worker_referee_system: DEFAULT_SYSTEM.to_string(),
+            worker_producer_system: format!("{GENERIC_CONSTRAINTS}\n{WORK_PRODUCER_SYSTEM}"),
+            planner_critic_system: format!("{GENERIC_CONSTRAINTS}\n{DEFAULT_SYSTEM}"),
+            worker_critic_system: format!("{GENERIC_CONSTRAINTS}\n{DEFAULT_SYSTEM}"),
+            planner_referee_system: format!("{GENERIC_CONSTRAINTS}\n{DEFAULT_SYSTEM}"),
+            worker_referee_system: format!("{GENERIC_CONSTRAINTS}\n{DEFAULT_SYSTEM}"),
             language_guidance: None,
+            language_constraints: None,
         }
     }
 }

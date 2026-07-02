@@ -6,6 +6,13 @@ prompt_guidance: |
   imports. Name test files test_<module>.py or <module>_test.py, and name
   test functions test_<behavior_under_test> so failures read as a
   description of what broke.
+constraints: |
+  Do not use wildcard imports (from module import *). Import the functions
+  or classes under test directly from the source module — do not reimplement
+  or copy their logic into the test file. Name test files test_<module>.py
+  or <module>_test.py, and name test functions
+  test_<behavior_under_test>; do not use unittest.TestCase method names like
+  test1 or testFoo.
 init:
   gitignore:
     - .venv

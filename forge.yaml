@@ -8,18 +8,9 @@ provider:
       llama_cpp:
         command: llama-server
         model:
-          hf: lm-kit/qwen-3-8b-instruct-gguf:Q4_K_M
-        host: 127.0.0.1
-        port: 8080
-        n_predict: 512
-  strong:
-    managed:
-      llama_cpp:
-        command: llama-server
-        model:
           hf: lm-kit/qwen-3-14b-instruct-gguf:Q4_K_M
         host: 127.0.0.1
-        port: 8081
+        port: 8080
         n_predict: 1024
 telemetry:
   directory: "runs"

@@ -6,6 +6,13 @@ prompt_guidance: |
   on every call site. Put unit tests inline in the same file under
   #[cfg(test)] mod tests; put integration tests that exercise the public API
   as a separate file under tests/.
+constraints: |
+  Put unit tests inline in the same file under a #[cfg(test)] mod tests
+  block, using `use super::*;` to bring the module under test into scope —
+  do not reimplement or copy the functions under test into the test module.
+  Do not use unwrap() or expect() to handle expected failure paths in
+  non-test code; propagate errors with Result and the ? operator instead.
+  Reserve panics for genuine invariant violations.
 init:
   commands:
     - program: cargo

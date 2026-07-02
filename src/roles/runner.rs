@@ -222,6 +222,12 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
             Some(guidance) => format!("{core_prompt}\n\nLanguage guidance:\n{guidance}"),
             None => core_prompt,
         };
+        let core_prompt = match &self.policy.language_constraints {
+            Some(constraints) => {
+                format!("{core_prompt}\n\nLanguage constraints:\n{constraints}")
+            }
+            None => core_prompt,
+        };
         let base_prompt = if has_tools {
             format!("{core_prompt}\n\n{}", render_tool_section(&policy))
         } else {

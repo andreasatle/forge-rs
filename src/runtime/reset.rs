@@ -197,6 +197,7 @@ mod tests {
             id.clone(),
             LanguageSpec {
                 prompt_guidance: "fake language guidance".to_string(),
+                constraints: String::new(),
                 init: LanguageInitSpec {
                     gitignore: vec!["ignored-build/".to_string()],
                     commands: vec![

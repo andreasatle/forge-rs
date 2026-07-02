@@ -420,11 +420,10 @@ fn make_role_policy(project: &ProjectConfig) -> RolePolicy {
         ProjectKind::Default => DefaultProjectAdapter.role_policy(),
         ProjectKind::Coding => coding_project_adapter(project.variant).role_policy(),
     };
-    policy.language_guidance = project
-        .language
-        .as_deref()
-        .and_then(language_spec)
-        .map(|spec| spec.prompt_guidance);
+    if let Some(spec) = project.language.as_deref().and_then(language_spec) {
+        policy.language_guidance = Some(spec.prompt_guidance);
+        policy.language_constraints = (!spec.constraints.is_empty()).then_some(spec.constraints);
+    }
     policy
 }
 
@@ -767,6 +766,36 @@ mod tests {
         assert_eq!(
             policy.language_guidance, None,
             "role policy must have no language guidance when no language is configured"
+        );
+    }
+
+    #[test]
+    fn runtime_role_policy_includes_language_constraints_when_language_set() {
+        let policy = make_role_policy(&ProjectConfig {
+            kind: ProjectKind::Coding,
+            language: Some("rust".to_string()),
+            variant: ProjectVariant::Coding,
+        });
+        let expected = language_spec("rust")
+            .expect("rust spec must load")
+            .constraints;
+        assert_eq!(
+            policy.language_constraints,
+            Some(expected),
+            "role policy must carry the rust language spec's constraints"
+        );
+    }
+
+    #[test]
+    fn runtime_role_policy_has_no_language_constraints_when_language_unset() {
+        let policy = make_role_policy(&ProjectConfig {
+            kind: ProjectKind::Coding,
+            language: None,
+            variant: ProjectVariant::Coding,
+        });
+        assert_eq!(
+            policy.language_constraints, None,
+            "role policy must have no language constraints when no language is configured"
         );
     }
 

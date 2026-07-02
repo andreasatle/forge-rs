@@ -2,6 +2,21 @@
 
 use serde::Deserialize;
 
+/// A role prompt split into its instructive and constraining halves.
+///
+/// `instructions` describes what the role must do; `constraints` bounds how
+/// it may do it (prohibitions, rejection-grounding rules, scope limits).
+/// [`super::YamlProjectAdapter::role_policy`] renders both as separate
+/// labeled sections rather than concatenating them into one paragraph.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RolePromptConfig {
+    /// What the role must do.
+    pub instructions: String,
+    /// Prohibitions and boundaries on how the role may do it.
+    pub constraints: String,
+}
+
 /// Per-role system prompt strings loaded from YAML.
 ///
 /// Mirrors [`crate::roles::RolePolicy`] field-for-field so a
@@ -11,17 +26,17 @@ use serde::Deserialize;
 #[serde(deny_unknown_fields)]
 pub struct RolePromptsConfig {
     /// System instruction for the Plan-node Producer role.
-    pub planner_producer: String,
+    pub planner_producer: RolePromptConfig,
     /// System instruction for the Work-node Producer role.
-    pub worker_producer: String,
+    pub worker_producer: RolePromptConfig,
     /// System instruction for the Plan-node Critic role.
-    pub planner_critic: String,
+    pub planner_critic: RolePromptConfig,
     /// System instruction for the Work-node Critic role.
-    pub worker_critic: String,
+    pub worker_critic: RolePromptConfig,
     /// System instruction for the Plan-node Referee role.
-    pub planner_referee: String,
+    pub planner_referee: RolePromptConfig,
     /// System instruction for the Work-node Referee role.
-    pub worker_referee: String,
+    pub worker_referee: RolePromptConfig,
 }
 
 /// Full YAML-deserializable configuration for a [`super::YamlProjectAdapter`].
@@ -44,26 +59,75 @@ mod tests {
 
     const MINIMAL_YAML: &str = r#"
 role_prompts:
-  planner_producer: "plan it"
-  worker_producer: "build it"
-  planner_critic: "review the plan"
-  worker_critic: "review the work"
-  planner_referee: "decide the plan"
-  worker_referee: "decide the work"
+  planner_producer:
+    instructions: "plan it"
+    constraints: "plan bounds"
+  worker_producer:
+    instructions: "build it"
+    constraints: "build bounds"
+  planner_critic:
+    instructions: "review the plan"
+    constraints: "review plan bounds"
+  worker_critic:
+    instructions: "review the work"
+    constraints: "review work bounds"
+  planner_referee:
+    instructions: "decide the plan"
+    constraints: "decide plan bounds"
+  worker_referee:
+    instructions: "decide the work"
+    constraints: "decide work bounds"
 "#;
 
     // ── parsing ───────────────────────────────────────────────────────────────
 
     #[test]
     fn parses_role_prompts() {
-        // Invariant: each role prompt field round-trips from YAML unchanged.
+        // Invariant: each role prompt's instructions/constraints round-trip
+        // from YAML unchanged.
         let config: ProjectAdapterConfig = serde_yaml::from_str(MINIMAL_YAML).unwrap();
-        assert_eq!(config.role_prompts.planner_producer, "plan it");
-        assert_eq!(config.role_prompts.worker_producer, "build it");
-        assert_eq!(config.role_prompts.planner_critic, "review the plan");
-        assert_eq!(config.role_prompts.worker_critic, "review the work");
-        assert_eq!(config.role_prompts.planner_referee, "decide the plan");
-        assert_eq!(config.role_prompts.worker_referee, "decide the work");
+        assert_eq!(config.role_prompts.planner_producer.instructions, "plan it");
+        assert_eq!(
+            config.role_prompts.planner_producer.constraints,
+            "plan bounds"
+        );
+        assert_eq!(config.role_prompts.worker_producer.instructions, "build it");
+        assert_eq!(
+            config.role_prompts.worker_producer.constraints,
+            "build bounds"
+        );
+        assert_eq!(
+            config.role_prompts.planner_critic.instructions,
+            "review the plan"
+        );
+        assert_eq!(
+            config.role_prompts.planner_critic.constraints,
+            "review plan bounds"
+        );
+        assert_eq!(
+            config.role_prompts.worker_critic.instructions,
+            "review the work"
+        );
+        assert_eq!(
+            config.role_prompts.worker_critic.constraints,
+            "review work bounds"
+        );
+        assert_eq!(
+            config.role_prompts.planner_referee.instructions,
+            "decide the plan"
+        );
+        assert_eq!(
+            config.role_prompts.planner_referee.constraints,
+            "decide plan bounds"
+        );
+        assert_eq!(
+            config.role_prompts.worker_referee.instructions,
+            "decide the work"
+        );
+        assert_eq!(
+            config.role_prompts.worker_referee.constraints,
+            "decide work bounds"
+        );
     }
 
     #[test]
@@ -83,17 +147,58 @@ role_prompts:
 
     #[test]
     fn missing_role_prompts_field_is_an_error() {
-        // Invariant: role_prompts is required — a missing sub-field fails to parse.
+        // Invariant: role_prompts is required — a missing role fails to parse.
         let yaml = r#"
 role_prompts:
-  planner_producer: "plan it"
-  worker_producer: "build it"
-  planner_critic: "review the plan"
-  worker_critic: "review the work"
-  planner_referee: "decide the plan"
+  planner_producer:
+    instructions: "plan it"
+    constraints: "plan bounds"
+  worker_producer:
+    instructions: "build it"
+    constraints: "build bounds"
+  planner_critic:
+    instructions: "review the plan"
+    constraints: "review plan bounds"
+  worker_critic:
+    instructions: "review the work"
+    constraints: "review work bounds"
+  planner_referee:
+    instructions: "decide the plan"
+    constraints: "decide plan bounds"
 "#;
         let result: Result<ProjectAdapterConfig, _> = serde_yaml::from_str(yaml);
         assert!(result.is_err(), "missing worker_referee must fail to parse");
+    }
+
+    #[test]
+    fn missing_constraints_sub_field_is_an_error() {
+        // Invariant: instructions/constraints are each required — a role
+        // prompt missing one sub-field fails to parse.
+        let yaml = r#"
+role_prompts:
+  planner_producer:
+    instructions: "plan it"
+  worker_producer:
+    instructions: "build it"
+    constraints: "build bounds"
+  planner_critic:
+    instructions: "review the plan"
+    constraints: "review plan bounds"
+  worker_critic:
+    instructions: "review the work"
+    constraints: "review work bounds"
+  planner_referee:
+    instructions: "decide the plan"
+    constraints: "decide plan bounds"
+  worker_referee:
+    instructions: "decide the work"
+    constraints: "decide work bounds"
+"#;
+        let result: Result<ProjectAdapterConfig, _> = serde_yaml::from_str(yaml);
+        assert!(
+            result.is_err(),
+            "missing planner_producer.constraints must fail to parse"
+        );
     }
 
     #[test]

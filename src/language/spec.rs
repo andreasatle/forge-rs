@@ -9,6 +9,12 @@ use crate::validation::{CommandSpec, ValidationTargetRule};
 pub struct LanguageSpec {
     /// Short guidance injected into coding prompts for this language.
     pub prompt_guidance: String,
+    /// Language-specific constraints injected into coding prompts, alongside
+    /// but distinct from `prompt_guidance`: prohibitions and conventions
+    /// (e.g. import style, test naming, inline vs. separate test files)
+    /// rather than general guidance.
+    #[serde(default)]
+    pub constraints: String,
     /// Commands run once to initialize a new project workspace.
     pub init: LanguageInitSpec,
     /// Commands run to validate a workspace before integration.
@@ -65,6 +71,7 @@ mod tests {
     fn validation_includes_test_command_is_true_when_runs_tests_set() {
         let spec = LanguageSpec {
             prompt_guidance: String::new(),
+            constraints: String::new(),
             init: LanguageInitSpec {
                 gitignore: vec![],
                 commands: vec![],
@@ -85,6 +92,7 @@ mod tests {
     fn validation_includes_test_command_is_false_without_runs_tests() {
         let spec = LanguageSpec {
             prompt_guidance: String::new(),
+            constraints: String::new(),
             init: LanguageInitSpec {
                 gitignore: vec![],
                 commands: vec![],
@@ -122,5 +130,22 @@ mod tests {
             spec.validation_includes_test_command(),
             "python validation spec must declare runs_tests: true"
         );
+    }
+
+    #[test]
+    fn constraints_defaults_to_empty_when_omitted_from_yaml() {
+        // Invariant: constraints is optional in language YAML — a spec that
+        // omits it still parses, with constraints defaulting to empty rather
+        // than failing to parse.
+        let yaml = r#"
+prompt_guidance: "guidance"
+init:
+  commands: []
+validation:
+  commands: []
+"#;
+        let spec: LanguageSpec =
+            serde_yaml::from_str(yaml).expect("spec without constraints must parse");
+        assert_eq!(spec.constraints, "");
     }
 }

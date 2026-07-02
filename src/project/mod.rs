@@ -15,7 +15,7 @@ pub use coding::CodingProjectAdapter;
 pub use coding_tdd::CodingTddProjectAdapter;
 pub use default::DefaultProjectAdapter;
 pub use yaml::YamlProjectAdapter;
-pub use yaml_config::{ProjectAdapterConfig, RolePromptsConfig};
+pub use yaml_config::{ProjectAdapterConfig, RolePromptConfig, RolePromptsConfig};
 
 use crate::artifacts::ArtifactRead;
 use crate::machines::deliberation::DeliberationRole;

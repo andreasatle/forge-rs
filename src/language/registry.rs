@@ -58,6 +58,10 @@ mod tests {
             "rust spec must have prompt guidance"
         );
         assert!(
+            !spec.constraints.is_empty(),
+            "rust spec must have constraints"
+        );
+        assert!(
             !spec.init.commands.is_empty(),
             "rust spec must have at least one init command"
         );
@@ -135,6 +139,10 @@ mod tests {
         assert!(
             !spec.prompt_guidance.is_empty(),
             "python spec must have prompt guidance"
+        );
+        assert!(
+            !spec.constraints.is_empty(),
+            "python spec must have constraints"
         );
         assert!(
             !spec.init.commands.is_empty(),

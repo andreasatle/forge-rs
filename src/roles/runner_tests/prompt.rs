@@ -30,6 +30,42 @@ fn role_prompt_includes_feedback() {
 }
 
 #[test]
+fn coding_producer_rendered_prompt_labels_role_context_instructions_and_constraints() {
+    use crate::project::{CodingProjectAdapter, ProjectAdapter as _};
+
+    let policy = CodingProjectAdapter.role_policy();
+    let context = crate::machines::deliberation::DeliberationContext {
+        target_files: vec!["main.py".to_string()],
+        testing_requirement: Some("Run cargo test for Rust changes.".to_string()),
+        artifact: None,
+    };
+    let prompt = render_role_prompt_with_test_plan_context(RolePromptRender {
+        system: &policy.worker_producer_system,
+        role: &DeliberationRole::Producer,
+        objective: "Implement the requested change.",
+        context: &context,
+        producer_content: None,
+        critic_content: None,
+        feedback: &[],
+        target_views: &[],
+        test_plan_context: &TestPlanContext::default(),
+        review_contract: None,
+    });
+    println!("{prompt}");
+
+    for header in ["Role:", "Context:", "Instructions:", "Constraints:"] {
+        assert!(
+            prompt.contains(header),
+            "rendered prompt must include {header} header; got:\n{prompt}"
+        );
+    }
+    assert!(
+        prompt.contains("Role:\nYou are a software implementation agent."),
+        "producer identity must be under an explicit Role header; got:\n{prompt}"
+    );
+}
+
+#[test]
 fn role_prompt_includes_tool_request_as_valid_response_when_tools_available() {
     let provider = ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"completed"}"#]);
     let runner = ProviderRoleRunner::new(&provider);

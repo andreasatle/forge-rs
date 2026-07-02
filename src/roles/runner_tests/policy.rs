@@ -482,4 +482,66 @@ fn no_language_guidance_section_when_unset() {
     );
 }
 
+#[test]
+fn language_constraints_renders_after_language_guidance_section() {
+    // Invariant: when RolePolicy::language_constraints is set, it appears as
+    // its own labeled section positioned after "Language guidance:" and
+    // before the tool section, so it is identifiable in traces and distinct
+    // from general guidance.
+    let policy = RolePolicy {
+        worker_producer_system: "SYSTEM_MARKER".to_string(),
+        language_guidance: Some("LANGUAGE_MARKER".to_string()),
+        language_constraints: Some("CONSTRAINTS_MARKER".to_string()),
+        ..RolePolicy::default()
+    };
+    let provider = ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"completed"}"#]);
+    let runner = ProviderRoleRunner::new_with_policy(&provider, policy);
+
+    runner.run_role(
+        with_dummy_tool_context(producer_request("do the work")),
+        &crate::telemetry::NoopTelemetry,
+    );
+
+    let requests = provider.requests.borrow();
+    let prompt = &requests[0].prompt;
+    assert!(
+        prompt.contains("Language constraints:\nCONSTRAINTS_MARKER"),
+        "prompt must contain a labeled language constraints section; got:\n{prompt}"
+    );
+    let guidance_pos = prompt
+        .find("Language guidance:")
+        .expect("language guidance section must appear in prompt");
+    let constraints_pos = prompt
+        .find("Language constraints:")
+        .expect("language constraints section must appear in prompt");
+    let tool_pos = prompt
+        .find("Available file tools")
+        .expect("tool section must appear in prompt");
+    assert!(
+        guidance_pos < constraints_pos && constraints_pos < tool_pos,
+        "language constraints must sit after language guidance and before the tool section; got:\n{prompt}"
+    );
+}
+
+#[test]
+fn no_language_constraints_section_when_unset() {
+    // Invariant: RolePolicy::default() carries no language constraints, so
+    // the prompt must not gain a stray "Language constraints:" section.
+    let policy = RolePolicy::default();
+    let provider = ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"completed"}"#]);
+    let runner = ProviderRoleRunner::new_with_policy(&provider, policy);
+
+    runner.run_role(
+        with_dummy_tool_context(producer_request("do the work")),
+        &crate::telemetry::NoopTelemetry,
+    );
+
+    let requests = provider.requests.borrow();
+    let prompt = &requests[0].prompt;
+    assert!(
+        !prompt.contains("Language constraints:"),
+        "prompt must not contain a language constraints section when unset; got:\n{prompt}"
+    );
+}
+
 // ── Step 1: planner tool exclusion (runner-level) ────────────────────────

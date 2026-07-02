@@ -372,7 +372,7 @@ pub(super) fn render_role_prompt_with_test_plan_context(input: RolePromptRender<
     if let Some(context) =
         render_deliberation_context(input.context, input.review_contract.is_none())
     {
-        parts.push(context);
+        parts.push(format!("Context:\n{context}"));
     }
     parts.push(format!("Objective: {}", input.objective));
     parts.push(format!("Role: {:?}", input.role));
