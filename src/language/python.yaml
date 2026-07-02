@@ -3,6 +3,8 @@ prompt_guidance: |
 init:
   gitignore:
     - .venv
+    - __pycache__/
+    - "*.pyc"
   commands:
     - program: uv
       args: ["init", "--vcs", "none"]

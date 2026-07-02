@@ -1,6 +1,6 @@
 use std::error::Error;
 
-use crate::artifacts::{Artifact, ArtifactView};
+use crate::artifacts::{Artifact, ArtifactError, ArtifactView};
 use crate::config::ForgeConfig;
 
 /// Display the current artifact contents from the config's artifact repo.
@@ -33,11 +33,18 @@ fn artifact_contents(artifact: &Artifact) -> Result<String, Box<dyn Error>> {
 
     for file in &files {
         let path_str = file.to_str().unwrap_or("");
-        out.push_str(&format!("--- {path_str} ---\n"));
-        let content = view.read_file(path_str)?;
-        out.push_str(&content);
-        if !content.ends_with('\n') {
-            out.push('\n');
+        match view.read_file(path_str) {
+            Ok(content) => {
+                out.push_str(&format!("--- {path_str} ---\n"));
+                out.push_str(&content);
+                if !content.ends_with('\n') {
+                    out.push('\n');
+                }
+            }
+            Err(ArtifactError::Encoding) => {
+                out.push_str(&format!("--- {path_str} --- (binary, skipped)\n"));
+            }
+            Err(e) => return Err(e.into()),
         }
     }
 
@@ -185,6 +192,44 @@ mod tests {
         assert!(
             output.contains("hello from show"),
             "output must include file contents"
+        );
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn show_skips_non_utf8_files_instead_of_aborting() {
+        let base = temp_path("binary-skip");
+        let repo_path = base.join("artifact.git");
+        let _ = std::fs::remove_dir_all(&base);
+
+        let config = ArtifactConfig {
+            repo_path: repo_path.to_str().unwrap().to_string(),
+            branch: "main".to_string(),
+        };
+
+        let artifact = crate::runtime::load_or_create_artifact(&config, None).unwrap();
+
+        let workspace_path = base.join("workspace");
+        let mut workspace = create_workspace(&artifact, workspace_path);
+        workspace.write_file("readme.txt", "hello text\n").unwrap();
+        // Non-UTF-8 bytes are written directly since write_file only accepts &str.
+        std::fs::write(
+            workspace.path().join("bytecode.pyc"),
+            [0xFF, 0xFE, 0x00, 0xFF],
+        )
+        .unwrap();
+        let integrated = integrate(&artifact, &workspace).unwrap();
+
+        let output = artifact_contents(&integrated).unwrap();
+
+        assert!(
+            output.contains("hello text"),
+            "readable file content must still be shown, got: {output}"
+        );
+        assert!(
+            output.contains("--- bytecode.pyc --- (binary, skipped)"),
+            "non-UTF-8 file must be reported as skipped, not abort output, got: {output}"
         );
 
         let _ = std::fs::remove_dir_all(&base);
