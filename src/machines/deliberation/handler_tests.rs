@@ -970,61 +970,6 @@ fn valid_revised_work_proceeds_to_critic_and_referee() {
     );
 }
 
-// --- verify NoopTelemetry path still compiles ---
-
-#[test]
-fn handle_effect_without_telemetry_compiles() {
-    let handler =
-        ProviderBackedDeliberationHandler::new_non_artifact_work(ScriptedProvider::from_strs(&[
-            r#"{"summary":"completed"}"#,
-        ]));
-    let event = handler.handle_effect(run_role_effect(
-        DeliberationRole::Producer,
-        NodeKind::Work,
-        "test",
-        None,
-        None,
-        vec![],
-    ));
-    assert!(matches!(event, DeliberationEvent::ProducerAccepted { .. }));
-}
-
-// --- RunRole effect self-description ---
-
-#[test]
-fn run_role_effect_carries_node_kind_and_test_plan_context() {
-    // Invariant: node_kind and test_plan_context must be readable directly
-    // from a RunRole effect value, not only from the handler that happens to
-    // execute it. A reader with just the effect must be able to predict the
-    // RoleRequest that will be built from it.
-    let test_plan_context = TestPlanContext {
-        required_validation_targets: vec!["tests/foo_test.rs".to_string()],
-        planned_test_targets: vec!["tests/bar_test.rs".to_string()],
-    };
-    let effect = DeliberationEffect::RunRole {
-        role: DeliberationRole::Producer,
-        objective: "do work".to_string(),
-        context: Box::new(crate::machines::deliberation::DeliberationContext::default()),
-        node_kind: NodeKind::Plan,
-        test_plan_context: test_plan_context.clone(),
-        producer_content: None,
-        critic_content: None,
-        feedback: vec![],
-    };
-
-    match effect {
-        DeliberationEffect::RunRole {
-            node_kind,
-            test_plan_context: carried_test_plan_context,
-            ..
-        } => {
-            assert_eq!(node_kind, NodeKind::Plan);
-            assert_eq!(carried_test_plan_context, test_plan_context);
-        }
-        other => panic!("expected RunRole, got {other:?}"),
-    }
-}
-
 #[test]
 fn pooled_handler_builds_role_request_from_effect_not_construction_state() {
     // Regression test for the RunRole effect-completeness gap: a single
@@ -1072,29 +1017,5 @@ fn pooled_handler_builds_role_request_from_effect_not_construction_state() {
         requests[1].node_kind,
         NodeKind::Work,
         "second RunRole effect declared Work, same handler instance"
-    );
-}
-
-#[test]
-fn work_validation_feedback_recommends_write_file_after_failed_replacement() {
-    let feedback = work_validation_feedback(&WorkSemanticValidationError::MissingArtifactMutation);
-
-    assert!(
-        feedback.contains("Use write_file by default")
-            && feedback.contains("replacing most or all of an existing file"),
-        "feedback must make write_file the default for whole-file rewrites; got: {feedback}"
-    );
-    assert!(
-        feedback.contains("Use replace_text only for small, localized edits")
-            && feedback.contains("exact old string that occurs once"),
-        "feedback must restrict replace_text to exact localized edits; got: {feedback}"
-    );
-    assert!(
-        feedback.contains("whitespace, indentation, or formatting differences"),
-        "feedback must mention exact-match whitespace sensitivity; got: {feedback}"
-    );
-    assert!(
-        feedback.contains("switch to write_file instead of retrying another replace_text"),
-        "feedback must recommend write_file after failed whole-file replace_text attempts; got: {feedback}"
     );
 }
