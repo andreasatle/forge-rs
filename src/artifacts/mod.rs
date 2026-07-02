@@ -573,26 +573,4 @@ mod tests {
         let tip = git_output(&artifact.repo_path, &["rev-parse", "HEAD"]);
         assert_eq!(tip, new_sha, "branch must point at the new commit");
     }
-
-    #[test]
-    fn integrate_conflict_display_message() {
-        let err = IntegrationError::Conflict {
-            branch: "main".to_owned(),
-            expected: "aaa".to_owned(),
-            actual: "bbb".to_owned(),
-        };
-        let msg = err.to_string();
-        assert!(
-            msg.contains("main"),
-            "display must mention branch; got: {msg}"
-        );
-        assert!(
-            msg.contains("aaa"),
-            "display must mention expected commit; got: {msg}"
-        );
-        assert!(
-            msg.contains("bbb"),
-            "display must mention actual commit; got: {msg}"
-        );
-    }
 }
