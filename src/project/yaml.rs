@@ -3,6 +3,10 @@
 use super::ProjectAdapter;
 use super::yaml_config::{ProjectAdapterConfig, ValidationTargetRule};
 use crate::roles::RolePolicy;
+use crate::roles::policy::{
+    DEFAULT_SYSTEM, PLANNER_PRODUCER_IDENTITY, PLANNER_PROTOCOL_FOOTER_WITH_OPERATION,
+    WORK_PRODUCER_SYSTEM, WORKER_PRODUCER_IDENTITY,
+};
 
 /// A [`ProjectAdapter`] whose role prompts, context files, and validation
 /// target rules all come from a [`ProjectAdapterConfig`], rather than being
@@ -26,14 +30,24 @@ impl YamlProjectAdapter {
 
 impl ProjectAdapter for YamlProjectAdapter {
     fn role_policy(&self) -> RolePolicy {
+        // Each YAML-configured prompt supplies only the project-specific
+        // portion of the role's system prompt. The generic role-identity and
+        // JSON-protocol portions are framework constants, composed here so
+        // every adapter gets them uniformly without restating them in YAML.
         let prompts = &self.config.role_prompts;
         RolePolicy {
-            planner_producer_system: prompts.planner_producer.clone(),
-            worker_producer_system: prompts.worker_producer.clone(),
-            planner_critic_system: prompts.planner_critic.clone(),
-            worker_critic_system: prompts.worker_critic.clone(),
-            planner_referee_system: prompts.planner_referee.clone(),
-            worker_referee_system: prompts.worker_referee.clone(),
+            planner_producer_system: format!(
+                "{PLANNER_PRODUCER_IDENTITY}\n{}\n{PLANNER_PROTOCOL_FOOTER_WITH_OPERATION}",
+                prompts.planner_producer
+            ),
+            worker_producer_system: format!(
+                "{WORKER_PRODUCER_IDENTITY} {}\n{WORK_PRODUCER_SYSTEM}",
+                prompts.worker_producer
+            ),
+            planner_critic_system: format!("{}\n{DEFAULT_SYSTEM}", prompts.planner_critic),
+            worker_critic_system: format!("{}\n{DEFAULT_SYSTEM}", prompts.worker_critic),
+            planner_referee_system: format!("{}\n{DEFAULT_SYSTEM}", prompts.planner_referee),
+            worker_referee_system: format!("{}\n{DEFAULT_SYSTEM}", prompts.worker_referee),
         }
     }
 
@@ -142,16 +156,37 @@ mod tests {
 
     #[test]
     fn role_policy_maps_each_field_from_config() {
-        // Invariant: every RolePolicy field is sourced from the matching
-        // RolePromptsConfig field, with no field left hardcoded or swapped.
+        // Invariant: every RolePolicy field is composed from the matching
+        // RolePromptsConfig field plus the shared framework protocol
+        // constants, with no field left hardcoded or swapped.
         let adapter = adapter_with_rules(vec![]);
         let policy = adapter.role_policy();
-        assert_eq!(policy.planner_producer_system, "plan it");
-        assert_eq!(policy.worker_producer_system, "build it");
-        assert_eq!(policy.planner_critic_system, "review the plan");
-        assert_eq!(policy.worker_critic_system, "review the work");
-        assert_eq!(policy.planner_referee_system, "decide the plan");
-        assert_eq!(policy.worker_referee_system, "decide the work");
+        assert_eq!(
+            policy.planner_producer_system,
+            format!(
+                "{PLANNER_PRODUCER_IDENTITY}\nplan it\n{PLANNER_PROTOCOL_FOOTER_WITH_OPERATION}"
+            )
+        );
+        assert_eq!(
+            policy.worker_producer_system,
+            format!("{WORKER_PRODUCER_IDENTITY} build it\n{WORK_PRODUCER_SYSTEM}")
+        );
+        assert_eq!(
+            policy.planner_critic_system,
+            format!("review the plan\n{DEFAULT_SYSTEM}")
+        );
+        assert_eq!(
+            policy.worker_critic_system,
+            format!("review the work\n{DEFAULT_SYSTEM}")
+        );
+        assert_eq!(
+            policy.planner_referee_system,
+            format!("decide the plan\n{DEFAULT_SYSTEM}")
+        );
+        assert_eq!(
+            policy.worker_referee_system,
+            format!("decide the work\n{DEFAULT_SYSTEM}")
+        );
     }
 
     // ── context_file_names ────────────────────────────────────────────────────
@@ -303,7 +338,12 @@ validation_targets:
     target: "test_{stem}.py"
 "#;
         let adapter = YamlProjectAdapter::from_yaml_str(yaml).unwrap();
-        assert_eq!(adapter.role_policy().planner_producer_system, "plan it");
+        assert!(
+            adapter
+                .role_policy()
+                .planner_producer_system
+                .contains("plan it")
+        );
         assert_eq!(adapter.context_file_names(), vec!["README.md".to_string()]);
         assert_eq!(
             adapter.required_validation_targets(&["main.py".to_string()]),

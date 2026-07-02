@@ -12,7 +12,13 @@
 //! [`NodeKind`]: crate::machines::scheduler::NodeKind
 
 /// JSON protocol instructions for Worker, Critic, and Referee roles.
-const DEFAULT_SYSTEM: &str = "Return exactly one JSON object. No markdown. No code fence. \
+///
+/// This is framework protocol, not project-specific content: it is identical
+/// regardless of which [`crate::project::ProjectAdapter`] supplies the
+/// surrounding prompt, so adapters (e.g. the YAML-driven coding adapters)
+/// compose their project-specific text with this constant rather than
+/// re-stating it.
+pub(crate) const DEFAULT_SYSTEM: &str = "Return exactly one JSON object. No markdown. No code fence. \
 No explanation. No text before or after the JSON.\n\
 Accepted: {\"status\":\"accepted\",\"content\":\"$RESPONSE_SUMMARY\"}\n\
 Rejected: {\"status\":\"rejected\",\"reason\":\"$REASON_FOR_REJECTION\"}\n\
@@ -28,7 +34,9 @@ Execution failures are handled by the framework, not the model.";
 /// Critic and Referee roles evaluate and may reject, so this schema omits the
 /// rejected branch entirely; it must never appear anywhere in a prompt the
 /// Work-node Producer can receive.
-const WORK_PRODUCER_SYSTEM: &str = "Return exactly one JSON object. No markdown. No code fence. \
+///
+/// Framework protocol, shared across adapters — see [`DEFAULT_SYSTEM`].
+pub(crate) const WORK_PRODUCER_SYSTEM: &str = "Return exactly one JSON object. No markdown. No code fence. \
 No explanation. No text before or after the JSON.\n\
 Accepted: {\"status\":\"accepted\",\"content\":\"$RESPONSE_SUMMARY\"}\n\
 Do not copy example values. Replace them with task-specific content.\n\
@@ -43,6 +51,41 @@ const PLANNER_SYSTEM: &str = "Return exactly one JSON object. No markdown. No co
 No explanation. No text before or after the JSON.\n\
 Every task must include non-empty `targets` listing the exact files the task may create, modify, or delete.\n\
 {\"tasks\":[{\"id\":\"task-id\",\"objective\":\"Task objective.\",\"targets\":[\"path/to/file\"],\"depends_on\":[]}]}\n\
+Do not copy example values. Replace them with actual task IDs and objectives.";
+
+/// Generic role-identity and task-decomposition instruction for the Plan-node
+/// Producer role.
+///
+/// Not specific to any project adapter or language: it describes how to
+/// decompose an objective into a schedulable task graph, without reference to
+/// files, tests, or artifact operations. Adapters compose this with their own
+/// project-specific targeting rules.
+pub(crate) const PLANNER_PRODUCER_IDENTITY: &str = "You are a software planning agent. \
+Decompose the objective into bounded, independent tasks. Each task must address exactly one \
+concern. Express dependencies explicitly. Do not include implementation details in plan nodes \
+— describe what to achieve, not how. Output a structured task list that the execution \
+framework can schedule.";
+
+/// Generic role-identity and tool-usage instruction for the Work-node
+/// Producer role.
+///
+/// Not specific to any project adapter or language: it establishes the role
+/// and that file tools exist and should be used before assuming file
+/// contents, without reference to coding conventions like tests.
+pub(crate) const WORKER_PRODUCER_IDENTITY: &str = "You are a software implementation agent. \
+Implement the requested change precisely. Use available file tools to read, modify, and write \
+artifact files. Use tools before making assumptions about file contents — inspect files before \
+editing them.";
+
+/// JSON protocol instructions for planner-style roles whose task schema
+/// includes an explicit `operation` field (`create`/`modify`/`delete`)
+/// alongside `targets`.
+///
+/// Framework protocol, shared by every adapter that models tasks as
+/// concrete artifact operations — see [`DEFAULT_SYSTEM`].
+pub(crate) const PLANNER_PROTOCOL_FOOTER_WITH_OPERATION: &str = "Return exactly one JSON object. No markdown. No code fence. \
+No explanation. No text before or after the JSON.\n\
+{\"tasks\":[{\"id\":\"task-id\",\"objective\":\"Task objective.\",\"operation\":\"modify\",\"targets\":[\"path/to/file\"],\"depends_on\":[]}]}\n\
 Do not copy example values. Replace them with actual task IDs and objectives.";
 
 /// Per-role system prompt policy.
