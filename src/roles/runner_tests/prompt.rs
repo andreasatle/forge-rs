@@ -200,7 +200,7 @@ fn work_role_prompt_uses_structured_tool_targets() {
 }
 
 #[test]
-fn source_only_producer_prompt_suppresses_generic_test_instruction_for_planned_follow_up_tests() {
+fn producer_system_prompt_is_unconditional_regardless_of_test_plan_coverage() {
     use crate::project::{CodingProjectAdapter, ProjectAdapter as _};
 
     let provider = ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"completed"}"#]);
@@ -216,46 +216,17 @@ fn source_only_producer_prompt_suppresses_generic_test_instruction_for_planned_f
 
     let prompt = &provider.requests.borrow()[0].prompt;
     assert!(
-        !prompt.contains("Code changes require corresponding tests"),
-        "source-only producer prompt must suppress generic test-writing instruction; got:\n{prompt}"
+        prompt.contains("Code changes require corresponding tests"),
+        "the adapter YAML system prompt is the sole source of truth for Producer instructions \
+         and must never be rewritten based on downstream test coverage; got:\n{prompt}"
     );
     assert!(
-        prompt.contains("Node-scoped instructions:")
-            && prompt.contains("Modify only the current node target files: main.py")
-            && prompt.contains(
-                "covered follow-up test files are intentionally out of scope for this node: test_main.py"
-            ),
-        "source-only producer prompt must render node-scoped replacement instruction; got:\n{prompt}"
+        !prompt.contains("Node-scoped instructions:"),
+        "the framework must not inject node-scoping prefixes into the Producer prompt; got:\n{prompt}"
     );
     assert!(
         prompt.contains("Target files: main.py"),
         "producer prompt must keep target-file context; got:\n{prompt}"
-    );
-}
-
-#[test]
-fn producer_prompt_keeps_generic_test_instruction_when_test_file_is_current_target() {
-    use crate::project::{CodingProjectAdapter, ProjectAdapter as _};
-
-    let provider = ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"completed"}"#]);
-    let runner = ProviderRoleRunner::new_with_policy(&provider, CodingProjectAdapter.role_policy());
-    let mut request = producer_request("Implement fibonacci(n: int) and test it.");
-    request.context.target_files = vec!["main.py".to_string(), "test_main.py".to_string()];
-    request.test_plan_context = TestPlanContext {
-        required_validation_targets: vec!["test_main.py".to_string()],
-        planned_test_targets: vec!["test_main.py".to_string()],
-    };
-
-    runner.run_role(request, &crate::telemetry::NoopTelemetry);
-
-    let prompt = &provider.requests.borrow()[0].prompt;
-    assert!(
-        prompt.contains("Code changes require corresponding tests"),
-        "producer prompt must keep generic test instruction when tests are in current scope; got:\n{prompt}"
-    );
-    assert!(
-        !prompt.contains("Node-scoped instructions:"),
-        "producer prompt must not render out-of-scope replacement when test target is current; got:\n{prompt}"
     );
 }
 
