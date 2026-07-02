@@ -3,8 +3,13 @@
 /// The kind of structured output the provider should produce.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StructuredOutput {
-    /// Request JSON-formatted output.
+    /// Request generic JSON-formatted output, with no schema constraint.
     Json,
+    /// Request output constrained by the given GBNF grammar.
+    ///
+    /// Providers that do not support grammar-constrained decoding (e.g.
+    /// Ollama) fall back to generic JSON mode.
+    Grammar(String),
 }
 
 /// A request sent to a provider.

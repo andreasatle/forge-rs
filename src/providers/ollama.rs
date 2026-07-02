@@ -73,6 +73,16 @@ fn classify_transport(err: &ureq::Transport) -> ProviderErrorKind {
     }
 }
 
+/// Resolve the Ollama `format` value for a structured-output request.
+///
+/// Ollama has no GBNF support, so a grammar request falls back to generic
+/// JSON mode rather than being dropped.
+fn resolve_format(output_schema: Option<StructuredOutput>) -> Option<String> {
+    output_schema.map(|schema| match schema {
+        StructuredOutput::Json | StructuredOutput::Grammar(_) => "json".to_string(),
+    })
+}
+
 fn map_generate_response(r: GenerateResponse) -> Result<ProviderResponse, ProviderError> {
     match r.response {
         Some(content) => Ok(ProviderResponse {
@@ -96,9 +106,7 @@ impl ProviderClient for OllamaProvider {
             options: GenerateOptions {
                 num_predict: request.max_tokens,
             },
-            format: request
-                .output_schema
-                .map(|StructuredOutput::Json| "json".to_string()),
+            format: resolve_format(request.output_schema),
         };
 
         let http_response = self
@@ -220,6 +228,16 @@ mod tests {
             json.contains("\"format\":\"json\""),
             "serialized body must include format=json; got: {json}"
         );
+    }
+
+    #[test]
+    fn ollama_provider_falls_back_to_json_format_for_grammar_output() {
+        // Ollama has no GBNF support; a grammar request must still produce
+        // valid JSON via the generic json format, not be silently dropped.
+        let format = resolve_format(Some(StructuredOutput::Grammar(
+            "root ::= \"x\"".to_string(),
+        )));
+        assert_eq!(format.as_deref(), Some("json"));
     }
 
     #[test]

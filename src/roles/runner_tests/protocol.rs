@@ -178,8 +178,9 @@ fn scripted_provider_supports_request_response_objects() {
 }
 
 #[test]
-fn role_runner_requests_json_output() {
+fn role_runner_requests_schema_specific_grammar_output() {
     use crate::providers::StructuredOutput;
+    use crate::roles::policy::PRODUCER_GBNF;
 
     let provider = ScriptedProvider::from_strs(&[r#"{"summary":"completed"}"#]);
     let runner = ProviderRoleRunner::new(&provider);
@@ -192,8 +193,8 @@ fn role_runner_requests_json_output() {
     let requests = provider.requests.borrow();
     assert_eq!(
         requests[0].output_schema,
-        Some(StructuredOutput::Json),
-        "RoleRunner must request Json structured output"
+        Some(StructuredOutput::Grammar(PRODUCER_GBNF.to_string())),
+        "RoleRunner must request the Work-node Producer's GBNF grammar, not generic JSON"
     );
 }
 

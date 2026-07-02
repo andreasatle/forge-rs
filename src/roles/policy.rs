@@ -11,6 +11,67 @@
 //! [`DeliberationRole::Producer`]: crate::machines::deliberation::DeliberationRole
 //! [`NodeKind`]: crate::machines::scheduler::NodeKind
 
+/// GBNF grammar constraining output to the Work-node Producer's
+/// `{"summary": "..."}` schema.
+pub(crate) const PRODUCER_GBNF: &str = r#"root ::= "{" ws "\"summary\"" ws ":" ws string ws "}" ws
+
+string ::=
+  "\"" (
+    [^\\"\x7F\x00-\x1F] |
+    "\\" (["\\/bfnrt] | "u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F])
+  )* "\"" ws
+
+ws ::= ([ \t\n] ws)?"#;
+
+/// GBNF grammar constraining output to the Critic/Referee accept-or-reject
+/// schema: `{"status":"accepted","content":"..."}` or
+/// `{"status":"rejected","reason":"..."}`.
+pub(crate) const ROLE_GBNF: &str = r#"root ::= accepted | rejected
+accepted ::= "{" ws "\"status\"" ws ":" ws "\"accepted\"" ws "," ws "\"content\"" ws ":" ws string ws "}" ws
+rejected ::= "{" ws "\"status\"" ws ":" ws "\"rejected\"" ws "," ws "\"reason\"" ws ":" ws string ws "}" ws
+
+string ::=
+  "\"" (
+    [^\\"\x7F\x00-\x1F] |
+    "\\" (["\\/bfnrt] | "u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F])
+  )* "\"" ws
+
+ws ::= ([ \t\n] ws)?"#;
+
+/// GBNF grammar constraining output to the `PlannerOutput` schema used by
+/// adapters that model tasks as concrete operations
+/// (`{"tasks":[{"id":...,"objective":...,"operation":"create|modify|delete","targets":[...],"depends_on":[...]}]}`).
+pub(crate) const PLANNER_GBNF: &str = r#"root ::= "{" ws "\"tasks\"" ws ":" ws "[" ws task (ws "," ws task)* ws "]" ws "}" ws
+task ::= "{" ws "\"id\"" ws ":" ws string ws "," ws "\"objective\"" ws ":" ws string ws "," ws "\"operation\"" ws ":" ws operation ws "," ws "\"targets\"" ws ":" ws string-array-nonempty ws "," ws "\"depends_on\"" ws ":" ws string-array ws "}" ws
+operation ::= "\"create\"" | "\"modify\"" | "\"delete\""
+string-array-nonempty ::= "[" ws (string (ws "," ws string)*) ws "]" ws
+string-array ::= "[" ws (string (ws "," ws string)*)? ws "]" ws
+
+string ::=
+  "\"" (
+    [^\\"\x7F\x00-\x1F] |
+    "\\" (["\\/bfnrt] | "u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F])
+  )* "\"" ws
+
+ws ::= ([ \t\n] ws)?"#;
+
+/// GBNF grammar constraining output to the `PlannerOutput` schema used by
+/// [`crate::project::DefaultProjectAdapter`], whose tasks have no `operation`
+/// field
+/// (`{"tasks":[{"id":...,"objective":...,"targets":[...],"depends_on":[...]}]}`).
+pub(crate) const PLANNER_NO_OPERATION_GBNF: &str = r#"root ::= "{" ws "\"tasks\"" ws ":" ws "[" ws task (ws "," ws task)* ws "]" ws "}" ws
+task ::= "{" ws "\"id\"" ws ":" ws string ws "," ws "\"objective\"" ws ":" ws string ws "," ws "\"targets\"" ws ":" ws string-array-nonempty ws "," ws "\"depends_on\"" ws ":" ws string-array ws "}" ws
+string-array-nonempty ::= "[" ws (string (ws "," ws string)*) ws "]" ws
+string-array ::= "[" ws (string (ws "," ws string)*)? ws "]" ws
+
+string ::=
+  "\"" (
+    [^\\"\x7F\x00-\x1F] |
+    "\\" (["\\/bfnrt] | "u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F])
+  )* "\"" ws
+
+ws ::= ([ \t\n] ws)?"#;
+
 /// Generic JSON-output-format constraints shared by every role's protocol
 /// footer: exactly one JSON object, no markdown or code fence, and no text
 /// before or after the JSON.

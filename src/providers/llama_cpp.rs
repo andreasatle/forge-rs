@@ -92,6 +92,15 @@ fn is_timeout_source(source: Option<&(dyn std::error::Error + 'static)>) -> bool
         .unwrap_or(false)
 }
 
+/// Resolve the GBNF grammar string to send for a given structured-output
+/// request, falling back to [`JSON_GBNF`] for generic JSON mode.
+fn resolve_grammar(output_schema: Option<&StructuredOutput>) -> Option<String> {
+    output_schema.map(|schema| match schema {
+        StructuredOutput::Json => JSON_GBNF.to_string(),
+        StructuredOutput::Grammar(grammar) => grammar.clone(),
+    })
+}
+
 fn map_completion_response(r: CompletionResponse) -> Result<ProviderResponse, ProviderError> {
     match r.content {
         Some(content) => Ok(ProviderResponse {
@@ -108,10 +117,7 @@ fn map_completion_response(r: CompletionResponse) -> Result<ProviderResponse, Pr
 impl ProviderClient for LlamaCppProvider {
     fn call(&self, request: ProviderRequest) -> Result<ProviderResponse, ProviderError> {
         let url = format!("{}/completion", self.base_url);
-        let grammar = request
-            .output_schema
-            .as_ref()
-            .map(|StructuredOutput::Json| JSON_GBNF.to_string());
+        let grammar = resolve_grammar(request.output_schema.as_ref());
         let body = CompletionRequest {
             prompt: request.prompt,
             n_predict: request.max_tokens,
@@ -201,10 +207,7 @@ mod tests {
             max_tokens: 512,
             output_schema: Some(StructuredOutput::Json),
         };
-        let grammar = req
-            .output_schema
-            .as_ref()
-            .map(|StructuredOutput::Json| JSON_GBNF.to_string());
+        let grammar = resolve_grammar(req.output_schema.as_ref());
         assert!(grammar.is_some());
         let g = grammar.unwrap();
         assert!(g.contains("root"));
@@ -218,11 +221,19 @@ mod tests {
             max_tokens: 512,
             output_schema: None,
         };
-        let grammar = req
-            .output_schema
-            .as_ref()
-            .map(|StructuredOutput::Json| JSON_GBNF.to_string());
+        let grammar = resolve_grammar(req.output_schema.as_ref());
         assert!(grammar.is_none());
+    }
+
+    #[test]
+    fn llama_provider_uses_role_grammar_for_grammar_output() {
+        let req = ProviderRequest {
+            prompt: "test".to_string(),
+            max_tokens: 512,
+            output_schema: Some(StructuredOutput::Grammar("root ::= \"x\"".to_string())),
+        };
+        let grammar = resolve_grammar(req.output_schema.as_ref());
+        assert_eq!(grammar.as_deref(), Some("root ::= \"x\""));
     }
 
     #[test]

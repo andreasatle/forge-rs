@@ -14,7 +14,10 @@ use crate::machines::scheduler::{FailureKind, NodeKind, TestPlanContext};
 use crate::node_runner::planner::{try_parse_planner_response, validate_planner_output};
 use crate::providers::{ProviderClient, ProviderErrorKind, ProviderRequest, StructuredOutput};
 use crate::roles::TargetView;
-use crate::roles::policy::RolePolicy;
+use crate::roles::policy::{
+    PLANNER_GBNF, PLANNER_NO_OPERATION_GBNF, PLANNER_PROTOCOL_FOOTER_WITH_OPERATION, PRODUCER_GBNF,
+    ROLE_GBNF, RolePolicy,
+};
 use crate::services::extract_json_object;
 use crate::telemetry::{TelemetryEvent, TelemetryRecord, TelemetrySink};
 use crate::tools::{FileToolExecutor, parse_tool_request};
@@ -181,6 +184,33 @@ impl<P> ProviderRoleRunner<P> {
 /// Maximum number of tokens to request per provider call.
 const MAX_RESPONSE_TOKENS: u32 = 1024;
 
+/// Select the GBNF grammar constraining a role's output to its exact
+/// response schema, rather than the generic JSON-object grammar.
+///
+/// The Plan-node Producer schema depends on whether the active adapter's
+/// task schema carries an `operation` field — inferred from
+/// `planner_protocol_schema`, the same field the retry prompt already uses
+/// to show the model the correct schema variant.
+fn select_grammar(
+    node_kind: &NodeKind,
+    role: &DeliberationRole,
+    policy: &RolePolicy,
+) -> &'static str {
+    match role {
+        DeliberationRole::Critic | DeliberationRole::Referee => ROLE_GBNF,
+        DeliberationRole::Producer => match node_kind {
+            NodeKind::Work => PRODUCER_GBNF,
+            NodeKind::Plan => {
+                if policy.planner_protocol_schema == PLANNER_PROTOCOL_FOOTER_WITH_OPERATION {
+                    PLANNER_GBNF
+                } else {
+                    PLANNER_NO_OPERATION_GBNF
+                }
+            }
+        },
+    }
+}
+
 impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
     fn run_role(&self, request: RoleRequest, telemetry: &dyn TelemetrySink) -> RoleRunOutput {
         let subsource = role_subsource(&request.role);
@@ -270,6 +300,8 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
             requires_read_enforcement,
         );
 
+        let grammar = select_grammar(&request.node_kind, &request.role, &self.policy);
+
         loop {
             telemetry.record(TelemetryRecord::new_with_subsource(
                 "RoleMachine",
@@ -283,7 +315,7 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
             let response = match self.provider.call(ProviderRequest {
                 prompt: current_prompt.clone(),
                 max_tokens: self.max_tokens,
-                output_schema: Some(StructuredOutput::Json),
+                output_schema: Some(StructuredOutput::Grammar(grammar.to_string())),
             }) {
                 Ok(r) => r,
                 Err(err) => {
