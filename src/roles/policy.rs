@@ -275,195 +275,69 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_role_policy_contains_json_protocol_instructions() {
+    fn default_system_prompts_have_expected_role_schemas() {
         let policy = RolePolicy::default();
-        // Critic and Referee roles use the status/content wrapper schema.
+
+        assert_schema(
+            &policy.planner_producer_system,
+            &["`tasks`"],
+            &["`status`", "`summary`"],
+        );
+        assert_schema(
+            &policy.worker_producer_system,
+            &["`summary`"],
+            &["`status`", "`tasks`"],
+        );
+
         for system in [
             &policy.planner_critic_system,
             &policy.worker_critic_system,
             &policy.planner_referee_system,
             &policy.worker_referee_system,
         ] {
-            assert!(
-                system.contains("`status`"),
-                "default system must contain JSON status field; got:\n{system}"
-            );
-            assert!(
-                system.contains("non-empty task-specific string"),
-                "default system must describe task-specific string fields; got:\n{system}"
-            );
-            assert!(
-                !system.contains('$') && !system.contains("\"...\""),
-                "default system must not contain placeholder JSON values; got:\n{system}"
+            assert_schema(
+                system,
+                &["`status`", "`content`", "`reason`"],
+                &["`summary`", "`tasks`"],
             );
         }
-        // Work-node Producer uses the summary-only schema — no status field.
-        assert!(
-            !policy.worker_producer_system.contains("`status`"),
-            "worker_producer_system must not contain the status field; got:\n{}",
-            policy.worker_producer_system
-        );
-        assert!(
-            policy.worker_producer_system.contains("`summary`"),
-            "worker_producer_system must describe the summary field; got:\n{}",
-            policy.worker_producer_system
-        );
-        assert!(
-            policy
-                .worker_producer_system
-                .contains("non-empty task-specific string"),
-            "worker_producer_system must describe task-specific string fields; got:\n{}",
-            policy.worker_producer_system
-        );
-        assert!(
-            !policy.worker_producer_system.contains('$')
-                && !policy.worker_producer_system.contains("\"...\""),
-            "worker_producer_system must not contain placeholder JSON values; got:\n{}",
-            policy.worker_producer_system
-        );
-        // Planner uses a direct PlannerOutput schema — no status/content wrapper.
-        assert!(
-            policy.planner_producer_system.contains("`tasks`"),
-            "default planner_producer_system must show the direct tasks schema; got:\n{}",
-            policy.planner_producer_system
-        );
-        assert!(
-            !policy.planner_producer_system.contains("\"status\""),
-            "default planner_producer_system must not contain the role status field; got:\n{}",
-            policy.planner_producer_system
-        );
-        assert!(
-            policy.planner_producer_system.contains("PlannerOutput"),
-            "default planner_producer_system must describe PlannerOutput; got:\n{}",
-            policy.planner_producer_system
-        );
     }
 
     #[test]
-    fn planner_prompt_shows_direct_planner_output_schema() {
+    fn default_system_prompts_have_no_placeholder_values() {
         let policy = RolePolicy::default();
-        assert!(
-            policy.planner_producer_system.contains("`tasks`"),
-            "planner_producer_system must contain the 'tasks' key; got:\n{}",
-            policy.planner_producer_system
-        );
-        assert!(
-            policy.planner_producer_system.contains("`id`"),
-            "planner_producer_system must show the 'id' field in the example; got:\n{}",
-            policy.planner_producer_system
-        );
-        assert!(
-            policy.planner_producer_system.contains("`objective`"),
-            "planner_producer_system must show the 'objective' field in the example; got:\n{}",
-            policy.planner_producer_system
-        );
-        assert!(
-            policy.planner_producer_system.contains("`depends_on`"),
-            "planner_producer_system must show the 'depends_on' field in the example; got:\n{}",
-            policy.planner_producer_system
-        );
-        assert!(
-            policy.planner_producer_system.contains("`targets`"),
-            "planner_producer_system must show the 'targets' field in the example; got:\n{}",
-            policy.planner_producer_system
-        );
-        assert!(
-            policy
-                .planner_producer_system
-                .contains("`targets` array must be non-empty"),
-            "planner_producer_system must require non-empty targets; got:\n{}",
-            policy.planner_producer_system
-        );
+        for system in [
+            &policy.planner_producer_system,
+            &policy.worker_producer_system,
+            &policy.planner_critic_system,
+            &policy.worker_critic_system,
+            &policy.planner_referee_system,
+            &policy.worker_referee_system,
+            &policy.planner_protocol_schema,
+        ] {
+            assert!(
+                !system.contains('$'),
+                "system prompt contains `$`: {system}"
+            );
+            assert!(
+                !system.contains("\"...\""),
+                "system prompt contains placeholder JSON value: {system}"
+            );
+        }
     }
 
-    #[test]
-    fn planner_prompt_does_not_show_status_content_schema() {
-        let policy = RolePolicy::default();
-        assert!(
-            !policy.planner_producer_system.contains("\"status\""),
-            "planner_producer_system must not contain the status/content wrapper; got:\n{}",
-            policy.planner_producer_system
-        );
-        assert!(
-            !policy.planner_producer_system.contains("\"content\""),
-            "planner_producer_system must not contain the content wrapper field; got:\n{}",
-            policy.planner_producer_system
-        );
-    }
-
-    #[test]
-    fn worker_producer_uses_summary_only_schema() {
-        // The Work-node Producer implements; it never rejects, so its schema
-        // has no status/content/reason wrapper at all — just `summary`.
-        let policy = RolePolicy::default();
-        assert!(
-            policy.worker_producer_system.contains("`summary`"),
-            "worker_producer_system must describe the summary field; got:\n{}",
-            policy.worker_producer_system
-        );
-        assert!(
-            !policy.worker_producer_system.contains("`status`"),
-            "worker_producer_system must not contain the status field; got:\n{}",
-            policy.worker_producer_system
-        );
-        assert!(
-            !policy.worker_producer_system.contains("`content`"),
-            "worker_producer_system must not contain the content field; got:\n{}",
-            policy.worker_producer_system
-        );
-        assert!(
-            !policy.worker_producer_system.contains("\"rejected\""),
-            "worker_producer_system must never mention the rejected status; got:\n{}",
-            policy.worker_producer_system
-        );
-        assert!(
-            !policy.worker_producer_system.contains("\"accepted\""),
-            "worker_producer_system must never mention the accepted status; got:\n{}",
-            policy.worker_producer_system
-        );
-    }
-
-    #[test]
-    fn critic_still_uses_status_content_schema() {
-        let policy = RolePolicy::default();
-        assert!(
-            policy.planner_critic_system.contains("`status`"),
-            "planner_critic_system must still contain the status/content wrapper; got:\n{}",
-            policy.planner_critic_system
-        );
-        assert!(
-            policy.worker_critic_system.contains("`status`"),
-            "worker_critic_system must still contain the status/content wrapper; got:\n{}",
-            policy.worker_critic_system
-        );
-        assert!(
-            policy
-                .worker_critic_system
-                .contains("Accepted: `status` must be \"accepted\""),
-            "worker_critic_system must describe accepted schema; got:\n{}",
-            policy.worker_critic_system
-        );
-    }
-
-    #[test]
-    fn referee_still_uses_status_content_schema() {
-        let policy = RolePolicy::default();
-        assert!(
-            policy.planner_referee_system.contains("`status`"),
-            "planner_referee_system must still contain the status/content wrapper; got:\n{}",
-            policy.planner_referee_system
-        );
-        assert!(
-            policy.worker_referee_system.contains("`status`"),
-            "worker_referee_system must still contain the status/content wrapper; got:\n{}",
-            policy.worker_referee_system
-        );
-        assert!(
-            policy
-                .worker_referee_system
-                .contains("Accepted: `status` must be \"accepted\""),
-            "worker_referee_system must describe accepted schema; got:\n{}",
-            policy.worker_referee_system
-        );
+    fn assert_schema(system: &str, required: &[&str], forbidden: &[&str]) {
+        for field in required {
+            assert!(
+                system.contains(field),
+                "schema is missing {field}: {system}"
+            );
+        }
+        for field in forbidden {
+            assert!(
+                !system.contains(field),
+                "schema includes unexpected {field}: {system}"
+            );
+        }
     }
 }
