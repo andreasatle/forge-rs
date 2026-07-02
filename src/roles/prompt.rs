@@ -296,7 +296,10 @@ impl NodeReviewContract {
         test_plan_context: &TestPlanContext,
         has_tools: bool,
     ) -> Option<Self> {
-        if !matches!(role, DeliberationRole::Critic | DeliberationRole::Referee) {
+        if !matches!(
+            role,
+            DeliberationRole::Producer | DeliberationRole::Critic | DeliberationRole::Referee
+        ) {
             return None;
         }
 
@@ -369,9 +372,12 @@ pub(super) struct RolePromptRender<'a> {
 
 pub(super) fn render_role_prompt_with_test_plan_context(input: RolePromptRender<'_>) -> String {
     let mut parts = Vec::new();
-    if let Some(context) =
-        render_deliberation_context(input.context, input.review_contract.is_none())
-    {
+    let renders_review_contract = input.review_contract.is_some()
+        && matches!(
+            input.role,
+            DeliberationRole::Critic | DeliberationRole::Referee
+        );
+    if let Some(context) = render_deliberation_context(input.context, !renders_review_contract) {
         parts.push(format!("Context:\n{context}"));
     }
     parts.push(format!("Objective: {}", input.objective));
@@ -380,7 +386,9 @@ pub(super) fn render_role_prompt_with_test_plan_context(input: RolePromptRender<
         parts.push(render_target_state_view(input.target_views));
     }
     if let Some(contract) = input.review_contract {
-        parts.push(render_node_review_contract(contract));
+        if renders_review_contract {
+            parts.push(render_node_review_contract(contract));
+        }
     } else if !input
         .test_plan_context
         .required_validation_targets
@@ -398,8 +406,83 @@ pub(super) fn render_role_prompt_with_test_plan_context(input: RolePromptRender<
         let reasons: Vec<&str> = input.feedback.iter().map(|f| f.reason.as_str()).collect();
         parts.push(format!("Revision feedback: {}", reasons.join("; ")));
     }
-    parts.push(input.system.to_string());
+    parts.extend(render_scoped_system(input.system, input.review_contract));
     parts.join("\n")
+}
+
+fn render_scoped_system(system: &str, contract: Option<&NodeReviewContract>) -> Vec<String> {
+    let Some(contract) = contract else {
+        return vec![system.to_string()];
+    };
+    let scope = PromptScope::from_contract(contract);
+    let rules = [PromptScopeRule {
+        suppressed_text: "Code changes require corresponding tests; create or update test files that verify the changed behavior.",
+        replacement: scoped_follow_up_test_instruction,
+        applies: covers_all_required_tests_with_follow_up,
+    }];
+
+    let mut rendered = system.to_string();
+    let mut replacements = Vec::new();
+    for rule in rules {
+        if (rule.applies)(&scope) && rendered.contains(rule.suppressed_text) {
+            rendered = rendered.replace(rule.suppressed_text, "");
+            replacements.push((rule.replacement)(&scope));
+        }
+    }
+
+    let mut parts = replacements;
+    parts.push(clean_prompt_whitespace(&rendered));
+    parts
+}
+
+struct PromptScope<'a> {
+    target_files: &'a [String],
+    required_validation_targets: &'a [String],
+    covered_test_targets: &'a [String],
+}
+
+impl<'a> PromptScope<'a> {
+    fn from_contract(contract: &'a NodeReviewContract) -> Self {
+        Self {
+            target_files: &contract.target_files,
+            required_validation_targets: &contract.required_validation_targets,
+            covered_test_targets: &contract.covered_test_targets,
+        }
+    }
+}
+
+struct PromptScopeRule {
+    suppressed_text: &'static str,
+    replacement: fn(&PromptScope<'_>) -> String,
+    applies: fn(&PromptScope<'_>) -> bool,
+}
+
+fn scoped_follow_up_test_instruction(scope: &PromptScope<'_>) -> String {
+    format!(
+        "Node-scoped instructions:\nModify only the current node target files: {}.\n\
+         The covered follow-up test files are intentionally out of scope for this node: {}.",
+        render_list_or_none(scope.target_files),
+        render_list_or_none(scope.covered_test_targets)
+    )
+}
+
+fn covers_all_required_tests_with_follow_up(scope: &PromptScope<'_>) -> bool {
+    !scope.required_validation_targets.is_empty()
+        && scope.required_validation_targets.len() == scope.covered_test_targets.len()
+        && scope
+            .required_validation_targets
+            .iter()
+            .all(|target| !scope.target_files.contains(target))
+}
+
+fn clean_prompt_whitespace(s: &str) -> String {
+    s.lines()
+        .map(str::trim_end)
+        .collect::<Vec<_>>()
+        .join("\n")
+        .replace("\n\n\n", "\n\n")
+        .trim()
+        .to_string()
 }
 
 fn render_deliberation_context(
