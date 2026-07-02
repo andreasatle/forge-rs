@@ -6,88 +6,88 @@ use crate::runtime::trace::summary::{
 };
 
 #[test]
-fn summary_line_includes_node_and_attempt_when_present() {
-    let header = EventHeader {
-        counter: "000012".to_string(),
-        source: "DeliberationMachine".to_string(),
-        subsource: None,
-        node_id: Some("root-child-0".to_string()),
-        attempt: Some("1".to_string()),
-        kind: "StateEntered".to_string(),
-        preview: None,
-    };
-    assert_eq!(
-        summary_line(&header),
-        "000012  DeliberationMachine  StateEntered  node=root-child-0  attempt=1"
-    );
+fn summary_line_formats_optional_context_and_preview() {
+    let cases = [
+        (
+            "node and attempt",
+            EventHeader {
+                counter: "000012".to_string(),
+                source: "DeliberationMachine".to_string(),
+                subsource: None,
+                node_id: Some("root-child-0".to_string()),
+                attempt: Some("1".to_string()),
+                kind: "StateEntered".to_string(),
+                preview: None,
+            },
+            "000012  DeliberationMachine  StateEntered  node=root-child-0  attempt=1",
+        ),
+        (
+            "preview",
+            EventHeader {
+                counter: "000001".to_string(),
+                source: "SchedulerMachine".to_string(),
+                subsource: None,
+                node_id: None,
+                attempt: None,
+                kind: "MachineStarted".to_string(),
+                preview: Some("machine: SchedulerHandler".to_string()),
+            },
+            "000001  SchedulerMachine  MachineStarted  machine: SchedulerHandler",
+        ),
+        (
+            "no trailing separator without preview",
+            EventHeader {
+                counter: "000001".to_string(),
+                source: "SchedulerMachine".to_string(),
+                subsource: None,
+                node_id: None,
+                attempt: None,
+                kind: "ValidationStarted".to_string(),
+                preview: None,
+            },
+            "000001  SchedulerMachine  ValidationStarted",
+        ),
+    ];
+
+    for (name, header, expected) in cases {
+        assert_eq!(summary_line(&header), expected, "{name}");
+    }
 }
 
 #[test]
-fn summary_line_appends_preview_when_present() {
-    let header = EventHeader {
-        counter: "000001".to_string(),
-        source: "SchedulerMachine".to_string(),
-        subsource: None,
-        node_id: None,
-        attempt: None,
-        kind: "MachineStarted".to_string(),
-        preview: Some("machine: SchedulerHandler".to_string()),
-    };
-    assert_eq!(
-        summary_line(&header),
-        "000001  SchedulerMachine  MachineStarted  machine: SchedulerHandler"
-    );
-}
+fn event_header_display_formats_optional_subsource() {
+    let cases = [
+        (
+            "with subsource",
+            EventHeader {
+                counter: "000001".to_string(),
+                source: "RoleMachine".to_string(),
+                subsource: Some("Producer".to_string()),
+                node_id: None,
+                attempt: None,
+                kind: "RolePromptRendered".to_string(),
+                preview: None,
+            },
+            "000001  RoleMachine/Producer  RolePromptRendered",
+        ),
+        (
+            "without subsource",
+            EventHeader {
+                counter: "000002".to_string(),
+                source: "SchedulerMachine".to_string(),
+                subsource: None,
+                node_id: None,
+                attempt: None,
+                kind: "MachineStarted".to_string(),
+                preview: None,
+            },
+            "000002  SchedulerMachine  MachineStarted",
+        ),
+    ];
 
-#[test]
-fn summary_line_omits_trailing_separator_without_preview() {
-    let header = EventHeader {
-        counter: "000001".to_string(),
-        source: "SchedulerMachine".to_string(),
-        subsource: None,
-        node_id: None,
-        attempt: None,
-        kind: "ValidationStarted".to_string(),
-        preview: None,
-    };
-    assert_eq!(
-        summary_line(&header),
-        "000001  SchedulerMachine  ValidationStarted"
-    );
-}
-
-#[test]
-fn event_header_display_includes_subsource_slash_separated() {
-    let header = EventHeader {
-        counter: "000001".to_string(),
-        source: "RoleMachine".to_string(),
-        subsource: Some("Producer".to_string()),
-        node_id: None,
-        attempt: None,
-        kind: "RolePromptRendered".to_string(),
-        preview: None,
-    };
-    assert_eq!(
-        header.to_string(),
-        "000001  RoleMachine/Producer  RolePromptRendered"
-    );
-}
-
-#[test]
-fn event_header_display_omits_slash_without_subsource() {
-    let header = EventHeader {
-        counter: "000002".to_string(),
-        source: "SchedulerMachine".to_string(),
-        subsource: None,
-        node_id: None,
-        attempt: None,
-        kind: "MachineStarted".to_string(),
-        preview: None,
-    };
-    assert_eq!(
-        header.to_string(),
-        "000002  SchedulerMachine  MachineStarted"
-    );
+    for (name, header, expected) in cases {
+        assert_eq!(header.to_string(), expected, "{name}");
+    }
 }
 
 #[test]

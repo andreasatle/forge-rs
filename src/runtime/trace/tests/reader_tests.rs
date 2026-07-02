@@ -196,36 +196,37 @@ fn preview_strips_dangling_paren_from_pretty_printed_tuple_variant() {
 }
 
 #[test]
-fn strip_trailing_open_bracket_removes_brace_and_trailing_space() {
-    assert_eq!(strip_trailing_open_bracket("Active {"), "Active");
+fn strip_trailing_open_bracket_handles_preview_line_variants() {
+    let cases = [
+        ("brace and trailing space", "Active {", "Active"),
+        ("paren", "WorkAccepted(", "WorkAccepted"),
+        (
+            "complete line unchanged",
+            "component: Worker",
+            "component: Worker",
+        ),
+        ("bare bracket", "{", ""),
+    ];
+
+    for (name, input, expected) in cases {
+        assert_eq!(strip_trailing_open_bracket(input), expected, "{name}");
+    }
 }
 
 #[test]
-fn strip_trailing_open_bracket_removes_paren() {
-    assert_eq!(strip_trailing_open_bracket("WorkAccepted("), "WorkAccepted");
-}
-
-#[test]
-fn strip_trailing_open_bracket_leaves_complete_line_unchanged() {
-    assert_eq!(
-        strip_trailing_open_bracket("component: Worker"),
-        "component: Worker"
-    );
-}
-
-#[test]
-fn strip_trailing_open_bracket_returns_empty_for_bare_bracket() {
-    assert_eq!(strip_trailing_open_bracket("{"), "");
-}
-
-#[test]
-fn truncate_leaves_short_strings_unchanged() {
-    assert_eq!(truncate("short", 80), "short");
-}
-
-#[test]
-fn truncate_shortens_long_strings_with_ellipsis() {
+fn truncate_handles_short_and_long_strings() {
     let long = "a".repeat(100);
-    let truncated = truncate(&long, 10);
-    assert_eq!(truncated, format!("{}…", "a".repeat(10)));
+    let cases = [
+        ("short unchanged", "short", 80, "short".to_string()),
+        (
+            "long shortened with ellipsis",
+            long.as_str(),
+            10,
+            format!("{}…", "a".repeat(10)),
+        ),
+    ];
+
+    for (name, input, max_chars, expected) in cases {
+        assert_eq!(truncate(input, max_chars), expected, "{name}");
+    }
 }
