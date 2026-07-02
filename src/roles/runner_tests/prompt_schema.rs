@@ -61,7 +61,7 @@ fn no_runtime_prompt_contains_dot_placeholder_json_values() {
         &[],
         &[],
     );
-    let retry = render_retry_prompt(&base, "no JSON object found in role response", true);
+    let retry = render_retry_prompt(&base, "no JSON object found in role response", "oops", true);
     no_dot("retry prompt", &retry);
 }
 
@@ -184,7 +184,7 @@ fn role_response_examples_do_not_use_dot_placeholders() {
         &[],
         &[],
     );
-    let retry = render_retry_prompt(&base, "parse error", true);
+    let retry = render_retry_prompt(&base, "parse error", "not json", true);
     assert!(
         !retry.contains("\"content\":\"...\""),
         "retry prompt must not use '...' for accepted content; got:\n{retry}"
@@ -229,7 +229,7 @@ fn prompt_schema_uses_descriptions_instead_of_placeholder_examples() {
         "tool section must not contain placeholders; got:\n{rw}"
     );
 
-    let retry = render_retry_prompt(&base, "parse error", true);
+    let retry = render_retry_prompt(&base, "parse error", "not json", true);
     assert!(
         retry.contains("`summary` must be a non-empty task-specific string"),
         "retry prompt must describe the summary response; got:\n{retry}"

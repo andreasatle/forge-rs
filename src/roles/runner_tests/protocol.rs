@@ -40,7 +40,7 @@ fn provider_role_runner_retries_malformed_json() {
 }
 
 #[test]
-fn protocol_retry_prompt_preserves_context_without_leaking_raw_response() {
+fn protocol_retry_prompt_preserves_context_and_shows_raw_response() {
     use crate::telemetry::{TelemetryEvent, VecTelemetry};
 
     let provider = ScriptedProvider::from_strs(&["invalid text", r#"{"summary":"recovered"}"#]);
@@ -77,8 +77,8 @@ fn protocol_retry_prompt_preserves_context_without_leaking_raw_response() {
         "Work-node Producer retry prompt must never offer the status/content schema; got:\n{retry_prompt}"
     );
     assert!(
-        !retry_prompt.contains("invalid text"),
-        "retry prompt must not leak the raw invalid provider response; got:\n{retry_prompt}"
+        retry_prompt.contains("invalid text"),
+        "retry prompt must show the model its own raw invalid response; got:\n{retry_prompt}"
     );
     assert!(
         !retry_prompt.contains("\"...\""),

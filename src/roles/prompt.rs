@@ -118,13 +118,16 @@ pub(super) fn role_subsource(role: &DeliberationRole) -> &'static str {
 pub(super) fn render_retry_prompt(
     original_prompt: &str,
     parse_error: &str,
+    raw_response: &str,
     is_work_producer: bool,
 ) -> String {
     let schema_desc = schema_match_phrase(is_work_producer);
     let schema = status_schema_lines(is_work_producer);
     format!(
         "{original_prompt}\n\n\
-         Your previous response could not be parsed: {parse_error}\n\
+         Your previous response could not be parsed: {parse_error}\n\n\
+         Your response was:\n\
+         {raw_response}\n\n\
          Return only one JSON object matching {schema_desc}:\n\
          {schema}"
     )
@@ -163,11 +166,14 @@ pub(super) fn render_reviewer_must_read_prompt(original_prompt: &str, parse_erro
 pub(super) fn render_planner_retry_prompt(
     original_prompt: &str,
     parse_error: &str,
+    raw_response: &str,
     schema: &str,
 ) -> String {
     format!(
         "{original_prompt}\n\n\
-         Your previous response could not be parsed: {parse_error}\n\
+         Your previous response could not be parsed: {parse_error}\n\n\
+         Your response was:\n\
+         {raw_response}\n\n\
          Return only one JSON object matching this schema:\n\
          {schema}"
     )

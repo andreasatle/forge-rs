@@ -396,6 +396,7 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                             current_prompt = render_planner_retry_prompt(
                                 &base_prompt,
                                 &err,
+                                &response.content,
                                 &self.policy.planner_protocol_schema,
                             );
                         }
@@ -432,6 +433,7 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                         current_prompt = render_planner_retry_prompt(
                             &base_prompt,
                             &parse_error,
+                            &response.content,
                             &self.policy.planner_protocol_schema,
                         );
                     }
@@ -569,7 +571,12 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                                 is_work_producer,
                             )
                         } else {
-                            render_retry_prompt(&base_prompt, &effective_error, is_work_producer)
+                            render_retry_prompt(
+                                &base_prompt,
+                                &effective_error,
+                                &response.content,
+                                is_work_producer,
+                            )
                         };
                     }
                 }
