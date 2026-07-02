@@ -15,7 +15,7 @@ fn work_reviewer_prompt_guides_read_file_to_declared_target() {
 
     let prompt = &provider.requests.borrow()[0].prompt;
     assert!(
-        prompt.contains(r#"{"tool":"read_file","path":"main.py"}"#),
+        prompt.contains("Allowed target files: main.py") && prompt.contains("read_file"),
         "Work reviewer prompt must guide read_file to declared target; got:\n{prompt}"
     );
     assert!(

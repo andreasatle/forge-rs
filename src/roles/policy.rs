@@ -33,9 +33,9 @@ No explanation. No text before or after the JSON.";
 ///
 /// Callers compose this after [`GENERIC_CONSTRAINTS`] — the JSON-format
 /// constraint it used to restate inline has been extracted there.
-pub(crate) const DEFAULT_SYSTEM: &str = "Accepted: {\"status\":\"accepted\",\"content\":\"$RESPONSE_SUMMARY\"}\n\
-Rejected: {\"status\":\"rejected\",\"reason\":\"$REASON_FOR_REJECTION\"}\n\
-Do not copy example values. Replace them with task-specific content.\n\
+pub(crate) const DEFAULT_SYSTEM: &str = "Allowed final responses:\n\
+Accepted: `status` must be \"accepted\"; `content` must be a non-empty task-specific string.\n\
+Rejected: `status` must be \"rejected\"; `reason` must be a non-empty task-specific string.\n\
 Producer returns accepted content. \
 Critic accepts with a review or rejects with a reason. \
 Referee accepts approval or rejects with revision feedback. \
@@ -50,8 +50,8 @@ Execution failures are handled by the framework, not the model.";
 ///
 /// Framework protocol, shared across adapters — see [`DEFAULT_SYSTEM`].
 /// Callers compose this after [`GENERIC_CONSTRAINTS`], see [`DEFAULT_SYSTEM`].
-pub(crate) const WORK_PRODUCER_SYSTEM: &str = "Accepted: {\"status\":\"accepted\",\"content\":\"$RESPONSE_SUMMARY\"}\n\
-Do not copy example values. Replace them with task-specific content.\n\
+pub(crate) const WORK_PRODUCER_SYSTEM: &str = "Allowed final response:\n\
+Accepted: `status` must be \"accepted\"; `content` must be a non-empty task-specific string.\n\
 Implement the requested change and return accepted content describing what you did. \
 Execution failures are handled by the framework, not the model.";
 
@@ -61,9 +61,9 @@ Execution failures are handled by the framework, not the model.";
 /// wrapper. This avoids double-encoding and works correctly under JSON grammar.
 const PLANNER_SYSTEM: &str = "Return exactly one JSON object. No markdown. No code fence. \
 No explanation. No text before or after the JSON.\n\
-Every task must include non-empty `targets` listing the exact files the task may create, modify, or delete.\n\
-{\"tasks\":[{\"id\":\"task-id\",\"objective\":\"Task objective.\",\"targets\":[\"path/to/file\"],\"depends_on\":[]}]}\n\
-Do not copy example values. Replace them with actual task IDs and objectives.";
+PlannerOutput: `tasks` must be a non-empty array.\n\
+Each task requires `id`, `objective`, `targets`, and `depends_on`.\n\
+Each `targets` array must be non-empty and list exact files the task may create, modify, or delete.";
 
 /// Generic role-identity and task-decomposition instruction for the Plan-node
 /// Producer role.
@@ -96,8 +96,10 @@ editing them.";
 /// Framework protocol, shared by every adapter that models tasks as
 /// concrete artifact operations — see [`DEFAULT_SYSTEM`].
 /// Callers compose this after [`GENERIC_CONSTRAINTS`], see [`DEFAULT_SYSTEM`].
-pub(crate) const PLANNER_PROTOCOL_FOOTER_WITH_OPERATION: &str = "{\"tasks\":[{\"id\":\"task-id\",\"objective\":\"Task objective.\",\"operation\":\"modify\",\"targets\":[\"path/to/file\"],\"depends_on\":[]}]}\n\
-Do not copy example values. Replace them with actual task IDs and objectives.";
+pub(crate) const PLANNER_PROTOCOL_FOOTER_WITH_OPERATION: &str = "PlannerOutput: `tasks` must be a non-empty array.\n\
+Each task requires `id`, `objective`, `operation`, `targets`, and `depends_on`.\n\
+`operation` must be \"create\", \"modify\", or \"delete\".\n\
+Each `targets` array must be non-empty and list exact files the task may create, modify, or delete.";
 
 /// Per-role system prompt policy.
 ///
@@ -169,21 +171,21 @@ mod tests {
             &policy.worker_referee_system,
         ] {
             assert!(
-                system.contains("\"status\""),
+                system.contains("`status`"),
                 "default system must contain JSON status field; got:\n{system}"
             );
             assert!(
-                system.contains("Do not copy example values"),
-                "default system must include copy-guard instruction; got:\n{system}"
+                system.contains("non-empty task-specific string"),
+                "default system must describe task-specific string fields; got:\n{system}"
             );
             assert!(
-                !system.contains("\"...\""),
-                "default system must not contain dot-placeholder JSON values; got:\n{system}"
+                !system.contains('$') && !system.contains("\"...\""),
+                "default system must not contain placeholder JSON values; got:\n{system}"
             );
         }
         // Planner uses a direct PlannerOutput schema — no status/content wrapper.
         assert!(
-            policy.planner_producer_system.contains("\"tasks\""),
+            policy.planner_producer_system.contains("`tasks`"),
             "default planner_producer_system must show the direct tasks schema; got:\n{}",
             policy.planner_producer_system
         );
@@ -193,10 +195,8 @@ mod tests {
             policy.planner_producer_system
         );
         assert!(
-            policy
-                .planner_producer_system
-                .contains("Do not copy example values"),
-            "default planner_producer_system must include copy-guard instruction; got:\n{}",
+            policy.planner_producer_system.contains("PlannerOutput"),
+            "default planner_producer_system must describe PlannerOutput; got:\n{}",
             policy.planner_producer_system
         );
     }
@@ -205,34 +205,34 @@ mod tests {
     fn planner_prompt_shows_direct_planner_output_schema() {
         let policy = RolePolicy::default();
         assert!(
-            policy.planner_producer_system.contains("\"tasks\""),
+            policy.planner_producer_system.contains("`tasks`"),
             "planner_producer_system must contain the 'tasks' key; got:\n{}",
             policy.planner_producer_system
         );
         assert!(
-            policy.planner_producer_system.contains("\"id\""),
+            policy.planner_producer_system.contains("`id`"),
             "planner_producer_system must show the 'id' field in the example; got:\n{}",
             policy.planner_producer_system
         );
         assert!(
-            policy.planner_producer_system.contains("\"objective\""),
+            policy.planner_producer_system.contains("`objective`"),
             "planner_producer_system must show the 'objective' field in the example; got:\n{}",
             policy.planner_producer_system
         );
         assert!(
-            policy.planner_producer_system.contains("\"depends_on\""),
+            policy.planner_producer_system.contains("`depends_on`"),
             "planner_producer_system must show the 'depends_on' field in the example; got:\n{}",
             policy.planner_producer_system
         );
         assert!(
-            policy.planner_producer_system.contains("\"targets\""),
+            policy.planner_producer_system.contains("`targets`"),
             "planner_producer_system must show the 'targets' field in the example; got:\n{}",
             policy.planner_producer_system
         );
         assert!(
             policy
                 .planner_producer_system
-                .contains("non-empty `targets`"),
+                .contains("`targets` array must be non-empty"),
             "planner_producer_system must require non-empty targets; got:\n{}",
             policy.planner_producer_system
         );
@@ -259,20 +259,22 @@ mod tests {
         // and Referee evaluate and may reject.
         let policy = RolePolicy::default();
         assert!(
-            policy.worker_producer_system.contains("\"status\""),
+            policy.worker_producer_system.contains("`status`"),
             "worker_producer_system must still contain the status/content wrapper; got:\n{}",
             policy.worker_producer_system
         );
         assert!(
-            policy.worker_producer_system.contains("$RESPONSE_SUMMARY"),
-            "worker_producer_system must show accepted schema placeholder; got:\n{}",
+            policy
+                .worker_producer_system
+                .contains("Accepted: `status` must be \"accepted\""),
+            "worker_producer_system must describe accepted schema; got:\n{}",
             policy.worker_producer_system
         );
         assert!(
             !policy
                 .worker_producer_system
-                .contains("$REASON_FOR_REJECTION"),
-            "worker_producer_system must never show the rejected schema placeholder; got:\n{}",
+                .contains("Rejected: `status` must be \"rejected\""),
+            "worker_producer_system must never show the rejected schema; got:\n{}",
             policy.worker_producer_system
         );
         assert!(
@@ -286,18 +288,20 @@ mod tests {
     fn critic_still_uses_status_content_schema() {
         let policy = RolePolicy::default();
         assert!(
-            policy.planner_critic_system.contains("\"status\""),
+            policy.planner_critic_system.contains("`status`"),
             "planner_critic_system must still contain the status/content wrapper; got:\n{}",
             policy.planner_critic_system
         );
         assert!(
-            policy.worker_critic_system.contains("\"status\""),
+            policy.worker_critic_system.contains("`status`"),
             "worker_critic_system must still contain the status/content wrapper; got:\n{}",
             policy.worker_critic_system
         );
         assert!(
-            policy.worker_critic_system.contains("$RESPONSE_SUMMARY"),
-            "worker_critic_system must show accepted schema placeholder; got:\n{}",
+            policy
+                .worker_critic_system
+                .contains("Accepted: `status` must be \"accepted\""),
+            "worker_critic_system must describe accepted schema; got:\n{}",
             policy.worker_critic_system
         );
     }
@@ -306,18 +310,20 @@ mod tests {
     fn referee_still_uses_status_content_schema() {
         let policy = RolePolicy::default();
         assert!(
-            policy.planner_referee_system.contains("\"status\""),
+            policy.planner_referee_system.contains("`status`"),
             "planner_referee_system must still contain the status/content wrapper; got:\n{}",
             policy.planner_referee_system
         );
         assert!(
-            policy.worker_referee_system.contains("\"status\""),
+            policy.worker_referee_system.contains("`status`"),
             "worker_referee_system must still contain the status/content wrapper; got:\n{}",
             policy.worker_referee_system
         );
         assert!(
-            policy.worker_referee_system.contains("$RESPONSE_SUMMARY"),
-            "worker_referee_system must show accepted schema placeholder; got:\n{}",
+            policy
+                .worker_referee_system
+                .contains("Accepted: `status` must be \"accepted\""),
+            "worker_referee_system must describe accepted schema; got:\n{}",
             policy.worker_referee_system
         );
     }

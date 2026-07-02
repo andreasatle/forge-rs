@@ -24,7 +24,7 @@ fn role_prompt_includes_feedback() {
         "expected prompt to include objective, got: {prompt}"
     );
     assert!(
-        prompt.contains("\"status\""),
+        prompt.contains("`status`"),
         "expected prompt to include JSON schema instructions, got: {prompt}"
     );
 }
@@ -83,7 +83,7 @@ fn role_prompt_includes_tool_request_as_valid_response_when_tools_available() {
     );
     assert!(
         prompt.contains("list_files"),
-        "prompt must include example tool requests"
+        "prompt must include tool request variants"
     );
 }
 
@@ -103,7 +103,7 @@ fn role_prompt_has_single_protocol_wrapper() {
         "prompt must not contain InstructedProvider outer wrapper text"
     );
     assert!(
-        prompt.contains("\"status\""),
+        prompt.contains("`status`"),
         "prompt must still contain the role protocol instructions"
     );
 }
@@ -157,7 +157,7 @@ fn tool_prompt_matches_policy() {
 }
 
 #[test]
-fn tool_prompt_for_target_main_py_shows_exact_read_file_path() {
+fn tool_prompt_for_target_main_py_shows_allowed_target_path() {
     let policy = FileToolPolicy {
         allowed_paths: Some(vec!["main.py".to_string()]),
         ..FileToolPolicy::default()
@@ -166,12 +166,12 @@ fn tool_prompt_for_target_main_py_shows_exact_read_file_path() {
     let section = super::render_tool_section(&policy);
 
     assert!(
-        section.contains(r#"{"tool":"read_file","path":"main.py"}"#),
-        "target-aware tool section must show exact read_file path; got:\n{section}"
+        section.contains("Allowed target files: main.py"),
+        "target-aware tool section must list exact allowed path; got:\n{section}"
     );
     assert!(
-        !section.contains(r#"{"tool":"read_file","path":"path/to/file.txt"}"#),
-        "target-aware tool section must not show generic read_file placeholder; got:\n{section}"
+        !section.contains("path/to/file.txt"),
+        "target-aware tool section must not show generic path placeholder; got:\n{section}"
     );
 }
 
@@ -190,12 +190,12 @@ fn work_role_prompt_uses_structured_tool_targets() {
 
     let prompt = &provider.requests.borrow()[0].prompt;
     assert!(
-        prompt.contains(r#"{"tool":"read_file","path":"main.py"}"#),
-        "Work prompt must render declared target in read_file example; got:\n{prompt}"
+        prompt.contains("Allowed target files: main.py"),
+        "Work prompt must render declared target in allowed target list; got:\n{prompt}"
     );
     assert!(
-        prompt.contains(r#"{"tool":"write_file","path":"main.py""#),
-        "Work prompt must render declared target in write_file example; got:\n{prompt}"
+        prompt.contains("write_file"),
+        "Work prompt must include write_file ToolRequest variant; got:\n{prompt}"
     );
 }
 

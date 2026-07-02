@@ -13,12 +13,12 @@ fn default_role_policy_matches_current_prompt_behavior() {
         &[],
     );
     assert!(
-        prompt.contains("\"status\""),
+        prompt.contains("`status`"),
         "default policy must include JSON status field; got:\n{prompt}"
     );
     assert!(
-        prompt.contains("Do not copy example values"),
-        "default policy must include copy-guard instruction; got:\n{prompt}"
+        prompt.contains("Accepted: `status` must be \"accepted\""),
+        "default policy must describe accepted response; got:\n{prompt}"
     );
     assert!(
         !prompt.contains("\"...\""),
@@ -140,12 +140,12 @@ fn default_policy_keeps_json_protocol_instructions() {
             "{label} default policy must include JSON-only instruction; got:\n{prompt}"
         );
         assert!(
-            prompt.contains("$RESPONSE_SUMMARY"),
-            "{label} default policy must include accepted schema placeholder; got:\n{prompt}"
+            prompt.contains("Accepted: `status` must be \"accepted\""),
+            "{label} default policy must describe accepted schema; got:\n{prompt}"
         );
         assert!(
-            prompt.contains("$REASON_FOR_REJECTION"),
-            "{label} default policy must include rejected schema placeholder; got:\n{prompt}"
+            prompt.contains("Rejected: `status` must be \"rejected\""),
+            "{label} default policy must describe rejected schema; got:\n{prompt}"
         );
     }
     // Work-node Producer uses the accepted-only schema — it never rejects.
@@ -163,12 +163,12 @@ fn default_policy_keeps_json_protocol_instructions() {
         "worker default policy must include JSON-only instruction; got:\n{worker_prompt}"
     );
     assert!(
-        worker_prompt.contains("$RESPONSE_SUMMARY"),
-        "worker default policy must include accepted schema placeholder; got:\n{worker_prompt}"
+        worker_prompt.contains("Accepted: `status` must be \"accepted\""),
+        "worker default policy must describe accepted schema; got:\n{worker_prompt}"
     );
     assert!(
-        !worker_prompt.contains("$REASON_FOR_REJECTION"),
-        "worker default policy must never include the rejected schema placeholder; got:\n{worker_prompt}"
+        !worker_prompt.contains("Rejected: `status` must be \"rejected\""),
+        "worker default policy must never include the rejected schema; got:\n{worker_prompt}"
     );
     // Planner uses direct PlannerOutput schema — no status/content wrapper.
     let planner_prompt = render_role_prompt(
@@ -185,7 +185,7 @@ fn default_policy_keeps_json_protocol_instructions() {
         "planner default policy must include JSON-only instruction; got:\n{planner_prompt}"
     );
     assert!(
-        planner_prompt.contains("\"tasks\""),
+        planner_prompt.contains("`tasks`"),
         "planner default policy must include direct tasks schema; got:\n{planner_prompt}"
     );
     assert!(

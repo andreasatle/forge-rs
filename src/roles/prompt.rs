@@ -53,8 +53,8 @@ pub(super) fn format_observation_section(observation: &str, mutation_recorded: b
     let base = format!(
         "Framework tool observation:\n{observation}\n\
          This is framework output, not a valid response format.\n\
-         If the requested change is complete, return exactly:\n\
-         {{\"status\":\"accepted\",\"content\":\"Summarize the completed change.\"}}\n\
+         If the requested change is complete, return exactly one JSON object using an Accepted final response.\n\
+         Accepted: `status` must be \"accepted\"; `content` must be a non-empty task-specific string.\n\
          Only call another tool if more information is strictly required."
     );
     if mutation_recorded {
@@ -70,28 +70,21 @@ pub(super) fn format_observation_section(observation: &str, mutation_recorded: b
 
 /// Returns the tool-availability section appended to a prompt when tools are enabled.
 pub(super) fn render_tool_section(policy: &FileToolPolicy) -> String {
-    let example_path = policy
-        .allowed_paths
-        .as_ref()
-        .and_then(|paths| paths.first())
-        .map(String::as_str)
-        .unwrap_or("path/to/file.txt");
-    let mut s = String::from(
-        "Available file tools:\n\
-         {\"tool\":\"list_files\"}\n",
-    );
+    let mut s = String::from("Available file tools:\n");
     if let Some(allowed) = &policy.allowed_paths {
         s.push_str(&format!("Allowed target files: {}\n", allowed.join(", ")));
     }
-    s.push_str(&format!(
-        "{{\"tool\":\"read_file\",\"path\":\"{example_path}\"}}\n"
-    ));
+    s.push_str(
+        "ToolRequest variants:\n\
+         - list_files: `tool` must be \"list_files\".\n\
+         - read_file: `tool` must be \"read_file\"; `path` must be a target file path string.\n",
+    );
     if policy.allow_writes {
-        s.push_str(&format!(
-            "{{\"tool\":\"write_file\",\"path\":\"{example_path}\",\"content\":\"$FILE_CONTENT\"}}\n\
-             {{\"tool\":\"replace_text\",\"path\":\"{example_path}\",\"old\":\"$EXACT_EXISTING_TEXT\",\"new\":\"$REPLACEMENT_TEXT\"}}\n\
-             {{\"tool\":\"delete_file\",\"path\":\"{example_path}\"}}\n"
-        ));
+        s.push_str(
+            "- write_file: `tool` must be \"write_file\"; `path` must be a target file path string; `content` must be the complete file content string.\n\
+             - replace_text: `tool` must be \"replace_text\"; `path` must be a target file path string; `old` must be the exact existing text; `new` must be the replacement text.\n\
+             - delete_file: `tool` must be \"delete_file\"; `path` must be a target file path string.\n",
+        );
         s.push_str(
             "Tool selection guidance:\n\
              - Use write_file by default when creating a file or replacing most or all of an existing file.\n\
@@ -104,8 +97,7 @@ pub(super) fn render_tool_section(policy: &FileToolPolicy) -> String {
         "You may return either:\n\
          1. a tool request JSON, or\n\
          2. a final role result JSON.\n\
-         Return exactly one JSON object.\n\
-         Do not copy example values. Replace them with actual file paths and content.",
+         Return exactly one JSON object.",
     );
     s
 }
@@ -129,8 +121,7 @@ pub(super) fn render_retry_prompt(
         "{original_prompt}\n\n\
          Your previous response could not be parsed: {parse_error}\n\
          Return only one JSON object matching {schema_desc}:\n\
-         {schema}\n\
-         Do not copy example values. Replace them with task-specific content."
+         {schema}"
     )
 }
 
@@ -139,10 +130,10 @@ pub(super) fn render_retry_prompt(
 /// schema; every other role sees both.
 fn status_schema_lines(is_work_producer: bool) -> &'static str {
     if is_work_producer {
-        "{\"status\":\"accepted\",\"content\":\"$RESPONSE_SUMMARY\"}"
+        "Accepted: `status` must be \"accepted\"; `content` must be a non-empty task-specific string."
     } else {
-        "{\"status\":\"accepted\",\"content\":\"$RESPONSE_SUMMARY\"}\n\
-         {\"status\":\"rejected\",\"reason\":\"$REASON_FOR_REJECTION\"}"
+        "Accepted: `status` must be \"accepted\"; `content` must be a non-empty task-specific string.\n\
+         Rejected: `status` must be \"rejected\"; `reason` must be a non-empty task-specific string."
     }
 }
 
@@ -169,8 +160,8 @@ pub(super) fn render_planner_retry_prompt(original_prompt: &str, parse_error: &s
         "{original_prompt}\n\n\
          Your previous response could not be parsed: {parse_error}\n\
          Return only one JSON object matching this schema:\n\
-         {{\"tasks\":[{{\"id\":\"task-id\",\"objective\":\"Task objective.\",\"depends_on\":[]}}]}}\n\
-         Do not copy example values. Replace them with actual task IDs and objectives."
+         PlannerOutput: `tasks` must be a non-empty array.\n\
+         Each task requires `id`, `objective`, and `depends_on`."
     )
 }
 
@@ -187,9 +178,8 @@ pub(super) fn format_completion_pressure_section(observation: &str) -> String {
          This is framework output, not a valid response format.\n\
          The requested change has already been recorded.\n\
          Do not call any more tools.\n\
-         Return exactly:\n\
-         {{\"status\":\"accepted\",\"content\":\"$RESPONSE_SUMMARY\"}}\n\
-         Do not copy example values. Replace them with task-specific content."
+         Return exactly one JSON object using an Accepted final response.\n\
+         Accepted: `status` must be \"accepted\"; `content` must be a non-empty task-specific string."
     )
 }
 
@@ -200,29 +190,26 @@ pub(super) fn format_decision_pressure_section(observation: &str) -> String {
          This is framework output, not a valid response format.\n\
          You have gathered sufficient evidence to make a decision.\n\
          Do not call any more tools.\n\
-         Return exactly one of:\n\
-         {{\"status\":\"accepted\",\"content\":\"$RESPONSE_SUMMARY\"}}\n\
-         {{\"status\":\"rejected\",\"reason\":\"$REASON_FOR_REJECTION\"}}\n\
-         Do not copy example values. Replace them with task-specific content."
+         Return exactly one JSON object using one final response variant:\n\
+         Accepted: `status` must be \"accepted\"; `content` must be a non-empty task-specific string.\n\
+         Rejected: `status` must be \"rejected\"; `reason` must be a non-empty task-specific string."
     )
 }
 
 pub(super) fn render_completion_pressure_violation_note() -> String {
     "Tools are no longer available.\n\
      The requested change has already been recorded.\n\
-     Return a final role response:\n\
-     {\"status\":\"accepted\",\"content\":\"$RESPONSE_SUMMARY\"}\n\
-     Do not copy example values. Replace them with task-specific content."
+     Return exactly one JSON object using this final role response:\n\
+     Accepted: `status` must be \"accepted\"; `content` must be a non-empty task-specific string."
         .to_string()
 }
 
 pub(super) fn render_decision_pressure_violation_note() -> String {
     "Tools are no longer available.\n\
      You have gathered sufficient evidence to make a decision.\n\
-     Return a final role response:\n\
-     {\"status\":\"accepted\",\"content\":\"$RESPONSE_SUMMARY\"}\n\
-     {\"status\":\"rejected\",\"reason\":\"$REASON_FOR_REJECTION\"}\n\
-     Do not copy example values. Replace them with task-specific content."
+     Return exactly one JSON object using one final role response:\n\
+     Accepted: `status` must be \"accepted\"; `content` must be a non-empty task-specific string.\n\
+     Rejected: `status` must be \"rejected\"; `reason` must be a non-empty task-specific string."
         .to_string()
 }
 
@@ -245,8 +232,7 @@ pub(super) fn format_repeated_observation_coercion_section(
          You have already inspected this information. Do not call more tools.\n\
          {decision_verb}\n\
          Return exactly {schema_desc}:\n\
-         {schema}\n\
-         Do not copy example values. Replace them with task-specific content."
+         {schema}"
     )
 }
 
@@ -273,8 +259,7 @@ pub(super) fn render_completion_pressure_retry_prompt(
          Your previous response could not be parsed: {parse_error}\n\
          Tools are no longer available.\n\
          Return exactly {schema_desc}:\n\
-         {schema}\n\
-         Do not copy example values. Replace them with task-specific content."
+         {schema}"
     )
 }
 

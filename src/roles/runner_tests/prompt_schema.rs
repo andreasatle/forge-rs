@@ -66,35 +66,26 @@ fn no_runtime_prompt_contains_dot_placeholder_json_values() {
 }
 
 #[test]
-fn producer_prompt_uses_concrete_or_named_tool_examples() {
+fn producer_prompt_describes_tool_request_variants() {
     let rw = render_tool_section(&FileToolPolicy {
         allow_writes: true,
         ..FileToolPolicy::default()
     });
-    // write_file must show a concrete content value, not "...".
     assert!(
-        rw.contains("write_file"),
-        "write-enabled section must include write_file"
-    );
-    let write_file_pos = rw.find("write_file").unwrap();
-    let after_write = &rw[write_file_pos..];
-    assert!(
-        !after_write.starts_with("write_file\",\"path\":\"output.txt\",\"content\":\"...\"")
-            && after_write.contains("content"),
-        "write_file example must not use '...' for content; got:\n{after_write}"
-    );
-    // replace_text must use named <PLACEHOLDER> tokens, not "...".
-    assert!(
-        rw.contains("replace_text"),
-        "write-enabled section must include replace_text"
+        rw.contains("ToolRequest variants"),
+        "tool section must describe tool request variants; got:\n{rw}"
     );
     assert!(
-        !rw.contains("\"old\":\"...\""),
-        "replace_text old must not be '...'; got:\n{rw}"
+        rw.contains("write_file") && rw.contains("complete file content string"),
+        "write-enabled section must describe write_file fields; got:\n{rw}"
     );
     assert!(
-        !rw.contains("\"new\":\"...\""),
-        "replace_text new must not be '...'; got:\n{rw}"
+        rw.contains("replace_text") && rw.contains("exact existing text"),
+        "write-enabled section must describe replace_text fields; got:\n{rw}"
+    );
+    assert!(
+        !rw.contains('$') && !rw.contains("\"...\""),
+        "tool section must not contain placeholder values; got:\n{rw}"
     );
 }
 
@@ -205,9 +196,7 @@ fn role_response_examples_do_not_use_dot_placeholders() {
 }
 
 #[test]
-fn prompt_mentions_not_to_copy_example_values() {
-    // Every prompt surface that includes JSON examples must explicitly instruct
-    // the model not to copy them verbatim.
+fn prompt_schema_uses_descriptions_instead_of_placeholder_examples() {
     let default = RolePolicy::default();
     let base = render_role_prompt(
         &default.worker_producer_system,
@@ -219,8 +208,12 @@ fn prompt_mentions_not_to_copy_example_values() {
         &[],
     );
     assert!(
-        base.contains("Do not copy example values"),
-        "role prompt must instruct model not to copy examples; got:\n{base}"
+        base.contains("Accepted: `status` must be \"accepted\""),
+        "role prompt must describe accepted response; got:\n{base}"
+    );
+    assert!(
+        !base.contains('$'),
+        "role prompt must not contain placeholders; got:\n{base}"
     );
 
     let rw = render_tool_section(&FileToolPolicy {
@@ -228,14 +221,22 @@ fn prompt_mentions_not_to_copy_example_values() {
         ..FileToolPolicy::default()
     });
     assert!(
-        rw.contains("Do not copy example values"),
-        "write-enabled tool section must instruct model not to copy examples; got:\n{rw}"
+        rw.contains("ToolRequest variants"),
+        "write-enabled tool section must describe tool requests; got:\n{rw}"
+    );
+    assert!(
+        !rw.contains('$'),
+        "tool section must not contain placeholders; got:\n{rw}"
     );
 
     let retry = render_retry_prompt(&base, "parse error", true);
     assert!(
-        retry.contains("Do not copy example values"),
-        "retry prompt must instruct model not to copy examples; got:\n{retry}"
+        retry.contains("Accepted: `status` must be \"accepted\""),
+        "retry prompt must describe accepted response; got:\n{retry}"
+    );
+    assert!(
+        !retry.contains('$'),
+        "retry prompt must not contain placeholders; got:\n{retry}"
     );
 }
 
@@ -254,23 +255,23 @@ fn planner_prompt_shows_direct_planner_output_schema() {
     let requests = provider.requests.borrow();
     let prompt = &requests[0].prompt;
     assert!(
-        prompt.contains("\"tasks\""),
+        prompt.contains("`tasks`"),
         "planner prompt must show direct tasks schema; got:\n{prompt}"
     );
     assert!(
-        prompt.contains("\"id\""),
+        prompt.contains("`id`"),
         "planner prompt must show id field; got:\n{prompt}"
     );
     assert!(
-        prompt.contains("\"objective\""),
+        prompt.contains("`objective`"),
         "planner prompt must show objective field; got:\n{prompt}"
     );
     assert!(
-        prompt.contains("\"targets\""),
+        prompt.contains("`targets`"),
         "planner prompt must show targets field; got:\n{prompt}"
     );
     assert!(
-        prompt.contains("\"depends_on\""),
+        prompt.contains("`depends_on`"),
         "planner prompt must show depends_on field; got:\n{prompt}"
     );
 }
@@ -314,15 +315,15 @@ fn worker_producer_uses_accepted_only_schema() {
     let requests = provider.requests.borrow();
     let prompt = &requests[0].prompt;
     assert!(
-        prompt.contains("\"status\""),
+        prompt.contains("`status`"),
         "worker prompt must still contain status/content schema; got:\n{prompt}"
     );
     assert!(
-        prompt.contains("$RESPONSE_SUMMARY"),
-        "worker prompt must still contain accepted schema placeholder; got:\n{prompt}"
+        prompt.contains("Accepted: `status` must be \"accepted\""),
+        "worker prompt must describe accepted schema; got:\n{prompt}"
     );
     assert!(
-        !prompt.contains("$REASON_FOR_REJECTION"),
+        !prompt.contains("Rejected: `status` must be \"rejected\""),
         "Work-node Producer prompt must never offer the rejected schema; got:\n{prompt}"
     );
     assert!(
@@ -349,12 +350,12 @@ fn critic_still_uses_status_content_schema() {
     let requests = provider.requests.borrow();
     let prompt = &requests[0].prompt;
     assert!(
-        prompt.contains("\"status\""),
+        prompt.contains("`status`"),
         "critic prompt must still contain status/content schema; got:\n{prompt}"
     );
     assert!(
-        prompt.contains("$RESPONSE_SUMMARY"),
-        "critic prompt must still contain accepted schema placeholder; got:\n{prompt}"
+        prompt.contains("Accepted: `status` must be \"accepted\""),
+        "critic prompt must describe accepted schema; got:\n{prompt}"
     );
 }
 
@@ -371,50 +372,38 @@ fn referee_still_uses_status_content_schema() {
     let requests = provider.requests.borrow();
     let prompt = &requests[0].prompt;
     assert!(
-        prompt.contains("\"status\""),
+        prompt.contains("`status`"),
         "referee prompt must still contain status/content schema; got:\n{prompt}"
     );
     assert!(
-        prompt.contains("$RESPONSE_SUMMARY"),
-        "referee prompt must still contain accepted schema placeholder; got:\n{prompt}"
+        prompt.contains("Accepted: `status` must be \"accepted\""),
+        "referee prompt must describe accepted schema; got:\n{prompt}"
     );
 }
 
 // ── tool observation protocol: anti-echo hardening ───────────────────────
 
 #[test]
-fn write_tool_example_does_not_use_output_txt() {
+fn write_tool_schema_does_not_use_output_txt() {
     let rw = render_tool_section(&FileToolPolicy {
         allow_writes: true,
         ..FileToolPolicy::default()
     });
-    let write_file_pos = rw.find("write_file").expect("write_file must appear");
-    let after_write = &rw[write_file_pos..];
-    let next_brace = after_write
-        .find('}')
-        .expect("write_file line must have closing brace");
-    let write_line = &after_write[..=next_brace];
     assert!(
-        !write_line.contains("output.txt"),
-        "write_file example must not use 'output.txt' as the path; got:\n{write_line}"
+        !rw.contains("output.txt"),
+        "write_file schema must not use 'output.txt' as the path; got:\n{rw}"
     );
 }
 
 #[test]
-fn write_tool_example_does_not_use_hello_world() {
+fn write_tool_schema_does_not_use_hello_world() {
     let rw = render_tool_section(&FileToolPolicy {
         allow_writes: true,
         ..FileToolPolicy::default()
     });
-    let write_file_pos = rw.find("write_file").expect("write_file must appear");
-    let after_write = &rw[write_file_pos..];
-    let next_brace = after_write
-        .find('}')
-        .expect("write_file line must have closing brace");
-    let write_line = &after_write[..=next_brace];
     assert!(
-        !write_line.contains("Hello, world!"),
-        "write_file example must not use 'Hello, world!' as the content; got:\n{write_line}"
+        !rw.contains("Hello, world!"),
+        "write_file schema must not use 'Hello, world!' as the content; got:\n{rw}"
     );
 }
 

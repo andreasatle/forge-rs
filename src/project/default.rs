@@ -32,21 +32,21 @@ mod tests {
             &policy.worker_referee_system,
         ] {
             assert!(
-                system.contains("\"status\""),
+                system.contains("`status`"),
                 "default policy must contain JSON status field; got:\n{system}"
             );
             assert!(
-                system.contains("Do not copy example values"),
-                "default policy must include copy-guard instruction; got:\n{system}"
+                system.contains("non-empty task-specific string"),
+                "default policy must describe task-specific string fields; got:\n{system}"
             );
             assert!(
-                !system.contains("\"...\""),
-                "default policy must not contain dot-placeholder JSON values; got:\n{system}"
+                !system.contains('$') && !system.contains("\"...\""),
+                "default policy must not contain placeholder JSON values; got:\n{system}"
             );
         }
         // Planner uses direct PlannerOutput schema.
         assert!(
-            policy.planner_producer_system.contains("\"tasks\""),
+            policy.planner_producer_system.contains("`tasks`"),
             "default planner_producer_system must show direct tasks schema; got:\n{}",
             policy.planner_producer_system
         );
@@ -56,10 +56,8 @@ mod tests {
             policy.planner_producer_system
         );
         assert!(
-            policy
-                .planner_producer_system
-                .contains("Do not copy example values"),
-            "default planner_producer_system must include copy-guard instruction; got:\n{}",
+            policy.planner_producer_system.contains("PlannerOutput"),
+            "default planner_producer_system must describe PlannerOutput; got:\n{}",
             policy.planner_producer_system
         );
     }
@@ -106,17 +104,15 @@ mod tests {
             policy.worker_referee_system.as_str(),
         ] {
             assert!(system.contains("Return exactly one JSON object"));
-            assert!(system.contains("Accepted: {\"status\":\"accepted\""));
-            assert!(system.contains("Rejected: {\"status\":\"rejected\""));
-            assert!(system.contains("Do not copy example values"));
+            assert!(system.contains("Accepted: `status` must be \"accepted\""));
+            assert!(system.contains("Rejected: `status` must be \"rejected\""));
             assert!(system.contains("Execution failures are handled by the framework"));
         }
         // The Work-node Producer never rejects, so it keeps only the accepted branch.
         let worker = policy.worker_producer_system.as_str();
         assert!(worker.contains("Return exactly one JSON object"));
-        assert!(worker.contains("Accepted: {\"status\":\"accepted\""));
-        assert!(!worker.contains("Rejected: {\"status\":\"rejected\""));
-        assert!(worker.contains("Do not copy example values"));
+        assert!(worker.contains("Accepted: `status` must be \"accepted\""));
+        assert!(!worker.contains("Rejected: `status` must be \"rejected\""));
         assert!(worker.contains("Execution failures are handled by the framework"));
     }
 }
