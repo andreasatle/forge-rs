@@ -402,6 +402,23 @@ pub fn parse_tool_request(json: &str) -> Result<FileToolRequest, String> {
     Ok(req)
 }
 
+/// Returns `true` when `json` is a JSON object carrying a `"tool"` key,
+/// indicating the model intended to issue a tool request even if
+/// [`parse_tool_request`] went on to reject it as malformed.
+///
+/// Used to decide whether a failed tool-request parse should be surfaced to
+/// the model as a malformed tool call, rather than silently falling through
+/// to a misleading "role response could not be parsed" error.
+pub fn looks_like_tool_request(json: &str) -> bool {
+    let Some(json) = extract_json_object(json.trim()) else {
+        return false;
+    };
+    matches!(
+        serde_json::from_str::<serde_json::Value>(json),
+        Ok(serde_json::Value::Object(map)) if map.contains_key("tool")
+    )
+}
+
 /// Replaces literal two-character `\n` sequences with real newline characters.
 ///
 /// Models frequently double-escape newlines when emitting JSON tool calls,

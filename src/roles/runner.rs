@@ -20,7 +20,7 @@ use crate::roles::policy::{
 };
 use crate::services::extract_json_object;
 use crate::telemetry::{TelemetryEvent, TelemetryRecord, TelemetrySink};
-use crate::tools::{FileToolExecutor, parse_tool_request};
+use crate::tools::{FileToolExecutor, looks_like_tool_request, parse_tool_request};
 
 use super::parser::{
     strip_code_fence, try_parse_producer_summary_response, try_parse_role_response,
@@ -28,10 +28,9 @@ use super::parser::{
 #[cfg(test)]
 use super::prompt::render_role_prompt;
 use super::prompt::{
-    NodeReviewContract, RolePromptRender, detect_placeholder_tool_echo,
-    render_completion_pressure_retry_prompt, render_planner_retry_prompt, render_retry_prompt,
-    render_reviewer_must_read_prompt, render_role_prompt_with_test_plan_context,
-    render_tool_section, role_subsource,
+    NodeReviewContract, RolePromptRender, render_completion_pressure_retry_prompt,
+    render_planner_retry_prompt, render_retry_prompt, render_reviewer_must_read_prompt,
+    render_role_prompt_with_test_plan_context, render_tool_section, role_subsource,
 };
 use super::protocol_state::ProtocolState;
 use super::tooling::{
@@ -346,29 +345,40 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
             ));
 
             // Check for a tool request before trying to parse as a role result.
+            // When the response looks like a tool-call attempt (carries a
+            // "tool" field) but fails to parse, capture the reason so a
+            // subsequent role-response parse failure can report the real
+            // cause instead of a misleading "could not be parsed" message.
             let trimmed = strip_code_fence(response.content.trim());
-            if let Some(json_str) = extract_json_object(trimmed)
-                && let Ok(tool_req) = parse_tool_request(json_str)
-            {
-                match dispatch_tool_step(
-                    tool_req,
-                    &response.content,
-                    &mut executor,
-                    &mut proto,
-                    telemetry,
-                    subsource,
-                    &core_prompt,
-                    &mut observation_suffix,
-                    &mut current_prompt,
-                ) {
-                    ToolDispatchOutcome::Continue => continue,
-                    ToolDispatchOutcome::Fail(result) => {
-                        let artifact_changed = extract_artifact_changed(&mut executor);
-                        return RoleRunOutput {
-                            result,
-                            artifact_changed,
-                        };
+            let mut tool_call_error: Option<String> = None;
+            if let Some(json_str) = extract_json_object(trimmed) {
+                match parse_tool_request(json_str) {
+                    Ok(tool_req) => {
+                        match dispatch_tool_step(
+                            tool_req,
+                            &response.content,
+                            &mut executor,
+                            &mut proto,
+                            telemetry,
+                            subsource,
+                            &core_prompt,
+                            &mut observation_suffix,
+                            &mut current_prompt,
+                        ) {
+                            ToolDispatchOutcome::Continue => continue,
+                            ToolDispatchOutcome::Fail(result) => {
+                                let artifact_changed = extract_artifact_changed(&mut executor);
+                                return RoleRunOutput {
+                                    result,
+                                    artifact_changed,
+                                };
+                            }
+                        }
                     }
+                    Err(e) if looks_like_tool_request(json_str) => {
+                        tool_call_error = Some(e);
+                    }
+                    Err(_) => {}
                 }
             }
 
@@ -434,12 +444,16 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                         }
                     },
                     Err(parse_error) => {
+                        let effective_error = match &tool_call_error {
+                            Some(te) => format!("malformed tool call: {te}"),
+                            None => parse_error,
+                        };
                         telemetry.record(TelemetryRecord::new_with_subsource(
                             "RoleMachine",
                             subsource,
                             TelemetryEvent::ParseFailed {
                                 raw_response: response.content.clone(),
-                                parse_error: parse_error.clone(),
+                                parse_error: effective_error.clone(),
                                 attempt_count: proto.current_attempt(),
                             },
                         ));
@@ -448,7 +462,7 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                             return RoleRunOutput {
                                 result: RoleResult::Failed {
                                     kind: FailureKind::ProtocolFailure,
-                                    reason: parse_error,
+                                    reason: effective_error,
                                 },
                                 artifact_changed,
                             };
@@ -458,13 +472,13 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                             "RoleMachine",
                             subsource,
                             TelemetryEvent::ProtocolRetry {
-                                parse_error: parse_error.clone(),
+                                parse_error: effective_error.clone(),
                                 attempt_count: proto.current_attempt(),
                             },
                         ));
                         current_prompt = render_planner_retry_prompt(
                             &base_prompt,
-                            &parse_error,
+                            &effective_error,
                             &response.content,
                             &self.policy.planner_protocol_schema,
                         );
@@ -550,12 +564,13 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                         };
                     }
                     Err(parse_error) => {
-                        // Replace the generic serde error with a more informative
-                        // message when the model echoed a tool-section placeholder
-                        // (e.g. $TARGET_FILE / $FILE_CONTENT) verbatim.
-                        let placeholder_echo = detect_placeholder_tool_echo(trimmed);
-                        let effective_error: String = match &placeholder_echo {
-                            Some(pe) => format!("placeholder tool request: {pe}"),
+                        // Replace the generic role-response parse error with the
+                        // tool-call parse error when the response was actually an
+                        // attempted (but malformed) tool call — e.g. an echoed
+                        // tool-section placeholder ($TARGET_FILE / $FILE_CONTENT)
+                        // or a tool call with an invalid field.
+                        let effective_error: String = match &tool_call_error {
+                            Some(te) => format!("malformed tool call: {te}"),
                             None => parse_error,
                         };
                         telemetry.record(TelemetryRecord::new_with_subsource(

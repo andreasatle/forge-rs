@@ -9,5 +9,6 @@
 mod file;
 
 pub use file::{
-    FileToolExecutor, FileToolPolicy, FileToolRequest, FileToolResponse, parse_tool_request,
+    FileToolExecutor, FileToolPolicy, FileToolRequest, FileToolResponse, looks_like_tool_request,
+    parse_tool_request,
 };

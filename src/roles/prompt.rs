@@ -4,8 +4,7 @@ use crate::machines::deliberation::{ArtifactContext, DeliberationContext};
 use crate::machines::deliberation::{DeliberationRole, RevisionFeedback};
 use crate::machines::scheduler::{NodeKind, TestPlanContext};
 use crate::roles::{TargetView, TargetViewKind};
-use crate::services::extract_json_object;
-use crate::tools::{FileToolPolicy, FileToolResponse, parse_tool_request};
+use crate::tools::{FileToolPolicy, FileToolResponse};
 
 pub(super) fn format_tool_observation(
     response: &FileToolResponse,
@@ -248,15 +247,6 @@ pub(super) fn format_repeated_observation_coercion_section(
          Return exactly {schema_desc}:\n\
          {schema}"
     )
-}
-
-/// Returns `Some(err_msg)` when `s` contains a placeholder tool request.
-pub(super) fn detect_placeholder_tool_echo(s: &str) -> Option<String> {
-    let json = extract_json_object(s)?;
-    match parse_tool_request(json) {
-        Err(e) if e.contains("placeholder") => Some(e),
-        _ => None,
-    }
 }
 
 /// Builds a protocol-retry prompt for use in completion-pressure mode.

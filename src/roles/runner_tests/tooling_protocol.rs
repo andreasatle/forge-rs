@@ -31,6 +31,42 @@ fn placeholder_tool_echo_produces_informative_error_in_retry_prompt() {
 }
 
 #[test]
+fn malformed_tool_call_reports_tool_error_not_role_parse_error() {
+    // A tool call with a recognized "tool" field but a missing required
+    // field (here: read_file with no "path") must surface the tool-call
+    // parse error in the retry prompt, not the unrelated role-response
+    // parse error (e.g. "missing field `summary`") that would otherwise
+    // tell the model to fix the wrong thing.
+    let provider = ScriptedProvider::from_strs(&[
+        r#"{"tool":"read_file"}"#,
+        r#"{"summary":"read the file after fixing the call"}"#,
+    ]);
+    let runner = ProviderRoleRunner::new(&provider);
+
+    let output = runner.run_role(
+        with_dummy_tool_context(producer_request("read a file")),
+        &crate::telemetry::NoopTelemetry,
+    );
+
+    assert!(
+        matches!(output.result, RoleResult::Accepted { .. }),
+        "must recover on retry; got {:?}",
+        output.result
+    );
+    let requests = provider.requests.borrow();
+    assert_eq!(requests.len(), 2, "provider must be called twice");
+    let retry_prompt = &requests[1].prompt;
+    assert!(
+        retry_prompt.contains("malformed tool call"),
+        "retry prompt must attribute the failure to the tool call; got:\n{retry_prompt}"
+    );
+    assert!(
+        !retry_prompt.contains("missing field `summary`"),
+        "retry prompt must not blame the role-response schema for a tool-call failure; got:\n{retry_prompt}"
+    );
+}
+
+#[test]
 fn protocol_failure_after_write_reason_is_prefixed() {
     // Producer calls write_file successfully (completion pressure active), then
     // exhausts all protocol retries returning bad JSON. The terminal failure
