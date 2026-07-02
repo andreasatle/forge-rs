@@ -7,11 +7,6 @@ use serde::Deserialize;
 /// Mirrors [`crate::roles::RolePolicy`] field-for-field so a
 /// [`ProjectAdapterConfig`] can populate a full role policy without any
 /// prompt text hardcoded in Rust.
-///
-/// The Critic and Referee fields are optional: coding-style adapters share
-/// byte-identical review-agent prompts, so a config that omits them falls
-/// back to the shared `CODING_*` defaults in `crate::roles::policy` instead
-/// of restating the text in every YAML file.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RolePromptsConfig {
@@ -19,22 +14,14 @@ pub struct RolePromptsConfig {
     pub planner_producer: String,
     /// System instruction for the Work-node Producer role.
     pub worker_producer: String,
-    /// System instruction for the Plan-node Critic role. Defaults to the
-    /// shared `CODING_PLANNER_CRITIC` prompt when omitted.
-    #[serde(default)]
-    pub planner_critic: Option<String>,
-    /// System instruction for the Work-node Critic role. Defaults to the
-    /// shared `CODING_WORKER_CRITIC` prompt when omitted.
-    #[serde(default)]
-    pub worker_critic: Option<String>,
-    /// System instruction for the Plan-node Referee role. Defaults to the
-    /// shared `CODING_PLANNER_REFEREE` prompt when omitted.
-    #[serde(default)]
-    pub planner_referee: Option<String>,
-    /// System instruction for the Work-node Referee role. Defaults to the
-    /// shared `CODING_WORKER_REFEREE` prompt when omitted.
-    #[serde(default)]
-    pub worker_referee: Option<String>,
+    /// System instruction for the Plan-node Critic role.
+    pub planner_critic: String,
+    /// System instruction for the Work-node Critic role.
+    pub worker_critic: String,
+    /// System instruction for the Plan-node Referee role.
+    pub planner_referee: String,
+    /// System instruction for the Work-node Referee role.
+    pub worker_referee: String,
 }
 
 /// Full YAML-deserializable configuration for a [`super::YamlProjectAdapter`].
@@ -73,38 +60,10 @@ role_prompts:
         let config: ProjectAdapterConfig = serde_yaml::from_str(MINIMAL_YAML).unwrap();
         assert_eq!(config.role_prompts.planner_producer, "plan it");
         assert_eq!(config.role_prompts.worker_producer, "build it");
-        assert_eq!(
-            config.role_prompts.planner_critic,
-            Some("review the plan".to_string())
-        );
-        assert_eq!(
-            config.role_prompts.worker_critic,
-            Some("review the work".to_string())
-        );
-        assert_eq!(
-            config.role_prompts.planner_referee,
-            Some("decide the plan".to_string())
-        );
-        assert_eq!(
-            config.role_prompts.worker_referee,
-            Some("decide the work".to_string())
-        );
-    }
-
-    #[test]
-    fn critic_and_referee_fields_default_to_none_when_omitted() {
-        // Invariant: only planner_producer and worker_producer are required;
-        // Critic and Referee prompts fall back to shared defaults elsewhere.
-        let yaml = r#"
-role_prompts:
-  planner_producer: "plan it"
-  worker_producer: "build it"
-"#;
-        let config: ProjectAdapterConfig = serde_yaml::from_str(yaml).unwrap();
-        assert_eq!(config.role_prompts.planner_critic, None);
-        assert_eq!(config.role_prompts.worker_critic, None);
-        assert_eq!(config.role_prompts.planner_referee, None);
-        assert_eq!(config.role_prompts.worker_referee, None);
+        assert_eq!(config.role_prompts.planner_critic, "review the plan");
+        assert_eq!(config.role_prompts.worker_critic, "review the work");
+        assert_eq!(config.role_prompts.planner_referee, "decide the plan");
+        assert_eq!(config.role_prompts.worker_referee, "decide the work");
     }
 
     #[test]
@@ -123,18 +82,18 @@ role_prompts:
     }
 
     #[test]
-    fn missing_required_producer_field_is_an_error() {
-        // Invariant: planner_producer and worker_producer remain required —
-        // unlike Critic/Referee, they have no shared default to fall back to.
+    fn missing_role_prompts_field_is_an_error() {
+        // Invariant: role_prompts is required — a missing sub-field fails to parse.
         let yaml = r#"
 role_prompts:
   planner_producer: "plan it"
+  worker_producer: "build it"
+  planner_critic: "review the plan"
+  worker_critic: "review the work"
+  planner_referee: "decide the plan"
 "#;
         let result: Result<ProjectAdapterConfig, _> = serde_yaml::from_str(yaml);
-        assert!(
-            result.is_err(),
-            "missing worker_producer must fail to parse"
-        );
+        assert!(result.is_err(), "missing worker_referee must fail to parse");
     }
 
     #[test]

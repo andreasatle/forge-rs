@@ -4,7 +4,6 @@ use super::ProjectAdapter;
 use super::yaml_config::ProjectAdapterConfig;
 use crate::roles::RolePolicy;
 use crate::roles::policy::{
-    CODING_PLANNER_CRITIC, CODING_PLANNER_REFEREE, CODING_WORKER_CRITIC, CODING_WORKER_REFEREE,
     DEFAULT_SYSTEM, PLANNER_PRODUCER_IDENTITY, PLANNER_PROTOCOL_FOOTER_WITH_OPERATION,
     WORK_PRODUCER_SYSTEM, WORKER_PRODUCER_IDENTITY,
 };
@@ -44,34 +43,10 @@ impl ProjectAdapter for YamlProjectAdapter {
                 "{WORKER_PRODUCER_IDENTITY} {}\n{WORK_PRODUCER_SYSTEM}",
                 prompts.worker_producer
             ),
-            planner_critic_system: format!(
-                "{}\n{DEFAULT_SYSTEM}",
-                prompts
-                    .planner_critic
-                    .as_deref()
-                    .unwrap_or(CODING_PLANNER_CRITIC)
-            ),
-            worker_critic_system: format!(
-                "{}\n{DEFAULT_SYSTEM}",
-                prompts
-                    .worker_critic
-                    .as_deref()
-                    .unwrap_or(CODING_WORKER_CRITIC)
-            ),
-            planner_referee_system: format!(
-                "{}\n{DEFAULT_SYSTEM}",
-                prompts
-                    .planner_referee
-                    .as_deref()
-                    .unwrap_or(CODING_PLANNER_REFEREE)
-            ),
-            worker_referee_system: format!(
-                "{}\n{DEFAULT_SYSTEM}",
-                prompts
-                    .worker_referee
-                    .as_deref()
-                    .unwrap_or(CODING_WORKER_REFEREE)
-            ),
+            planner_critic_system: format!("{}\n{DEFAULT_SYSTEM}", prompts.planner_critic),
+            worker_critic_system: format!("{}\n{DEFAULT_SYSTEM}", prompts.worker_critic),
+            planner_referee_system: format!("{}\n{DEFAULT_SYSTEM}", prompts.planner_referee),
+            worker_referee_system: format!("{}\n{DEFAULT_SYSTEM}", prompts.worker_referee),
             language_guidance: None,
         }
     }
@@ -90,10 +65,10 @@ mod tests {
         RolePromptsConfig {
             planner_producer: "plan it".to_string(),
             worker_producer: "build it".to_string(),
-            planner_critic: Some("review the plan".to_string()),
-            worker_critic: Some("review the work".to_string()),
-            planner_referee: Some("decide the plan".to_string()),
-            worker_referee: Some("decide the work".to_string()),
+            planner_critic: "review the plan".to_string(),
+            worker_critic: "review the work".to_string(),
+            planner_referee: "decide the plan".to_string(),
+            worker_referee: "decide the work".to_string(),
         }
     }
 
@@ -137,40 +112,6 @@ mod tests {
         assert_eq!(
             policy.worker_referee_system,
             format!("decide the work\n{DEFAULT_SYSTEM}")
-        );
-    }
-
-    #[test]
-    fn role_policy_falls_back_to_shared_coding_critic_referee_prompts_when_omitted() {
-        // Invariant: omitting Critic/Referee prompts in the config uses the
-        // shared coding-adapter defaults instead of an empty string.
-        let adapter = YamlProjectAdapter::new(ProjectAdapterConfig {
-            role_prompts: RolePromptsConfig {
-                planner_producer: "plan it".to_string(),
-                worker_producer: "build it".to_string(),
-                planner_critic: None,
-                worker_critic: None,
-                planner_referee: None,
-                worker_referee: None,
-            },
-            context_files: vec![],
-        });
-        let policy = adapter.role_policy();
-        assert_eq!(
-            policy.planner_critic_system,
-            format!("{CODING_PLANNER_CRITIC}\n{DEFAULT_SYSTEM}")
-        );
-        assert_eq!(
-            policy.worker_critic_system,
-            format!("{CODING_WORKER_CRITIC}\n{DEFAULT_SYSTEM}")
-        );
-        assert_eq!(
-            policy.planner_referee_system,
-            format!("{CODING_PLANNER_REFEREE}\n{DEFAULT_SYSTEM}")
-        );
-        assert_eq!(
-            policy.worker_referee_system,
-            format!("{CODING_WORKER_REFEREE}\n{DEFAULT_SYSTEM}")
         );
     }
 
