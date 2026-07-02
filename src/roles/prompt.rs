@@ -321,31 +321,6 @@ impl NodeReviewContract {
     }
 }
 
-/// Build a prompt for a single role invocation.
-#[cfg(test)]
-pub(super) fn render_role_prompt(
-    system: &str,
-    role: &DeliberationRole,
-    objective: &str,
-    producer_content: Option<&str>,
-    critic_content: Option<&str>,
-    feedback: &[RevisionFeedback],
-    target_views: &[TargetView],
-) -> String {
-    render_role_prompt_with_test_plan_context(RolePromptRender {
-        system,
-        role,
-        objective,
-        context: &DeliberationContext::default(),
-        producer_content,
-        critic_content,
-        feedback,
-        target_views,
-        test_plan_context: &TestPlanContext::default(),
-        review_contract: None,
-    })
-}
-
 pub(super) struct RolePromptRender<'a> {
     pub(super) system: &'a str,
     pub(super) role: &'a DeliberationRole,

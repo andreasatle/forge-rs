@@ -25,8 +25,6 @@ use crate::tools::{FileToolExecutor, looks_like_tool_request, parse_tool_request
 use super::parser::{
     strip_code_fence, try_parse_producer_summary_response, try_parse_role_response,
 };
-#[cfg(test)]
-use super::prompt::render_role_prompt;
 use super::prompt::{
     NodeReviewContract, RolePromptRender, render_completion_pressure_retry_prompt,
     render_planner_retry_prompt, render_retry_prompt, render_reviewer_must_read_prompt,
@@ -44,7 +42,7 @@ use super::prompt::format_tool_observation;
 #[cfg(test)]
 use super::protocol_state::{MAX_PROTOCOL_RETRIES, MAX_READ_ONLY_TOOL_STEPS, MAX_TOOL_STEPS};
 #[cfg(test)]
-use crate::tools::{FileToolPolicy, FileToolResponse};
+use crate::tools::FileToolResponse;
 
 /// A read-only view of the artifact made available to role tool loops.
 pub struct RoleToolContext {
