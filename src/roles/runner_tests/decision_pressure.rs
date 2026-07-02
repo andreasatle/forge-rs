@@ -183,7 +183,7 @@ fn producer_not_affected_by_decision_pressure() {
     let mut responses: Vec<String> = (0..read_count)
         .map(|i| format!(r#"{{"tool":"read_file","path":"file{i}.txt"}}"#))
         .collect();
-    responses.push(r#"{"status":"accepted","content":"produced the required output"}"#.to_string());
+    responses.push(r#"{"summary":"produced the required output"}"#.to_string());
     let response_strs: Vec<&str> = responses.iter().map(|s| s.as_str()).collect();
     let provider = ScriptedProvider::from_strs(&response_strs);
     let runner = ProviderRoleRunner::new(&provider);

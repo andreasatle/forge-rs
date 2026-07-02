@@ -208,7 +208,7 @@ fn scheduler_and_deliberation_share_one_trace() {
         r#"{"tasks":[{"id":"implement","objective":"implement it","operation":"create","targets":["output.txt"],"depends_on":[]}]}"#,
         r#"{"status":"accepted","content":"looks good"}"#,
         r#"{"status":"accepted","content":"approved"}"#,
-        r#"{"status":"accepted","content":"work completed"}"#,
+        r#"{"summary":"work completed"}"#,
         r#"{"status":"accepted","content":"looks good"}"#,
         r#"{"status":"accepted","content":"approved"}"#,
     ]);
@@ -256,7 +256,7 @@ fn nested_machine_events_preserve_order() {
         r#"{"tasks":[{"id":"implement","objective":"implement it","operation":"create","targets":["output.txt"],"depends_on":[]}]}"#,
         r#"{"status":"accepted","content":"looks good"}"#,
         r#"{"status":"accepted","content":"approved"}"#,
-        r#"{"status":"accepted","content":"work completed"}"#,
+        r#"{"summary":"work completed"}"#,
         r#"{"status":"accepted","content":"looks good"}"#,
         r#"{"status":"accepted","content":"approved"}"#,
     ]);
@@ -341,7 +341,7 @@ fn scheduler_effect_emitted_carries_node_context_for_run_node() {
         r#"{"tasks":[{"id":"implement","objective":"implement it","operation":"create","targets":["output.txt"],"depends_on":[]}]}"#,
         r#"{"status":"accepted","content":"looks good"}"#,
         r#"{"status":"accepted","content":"approved"}"#,
-        r#"{"status":"accepted","content":"work completed"}"#,
+        r#"{"summary":"work completed"}"#,
         r#"{"status":"accepted","content":"looks good"}"#,
         r#"{"status":"accepted","content":"approved"}"#,
     ]);
@@ -416,7 +416,7 @@ fn runtime_creates_only_one_file_telemetry() {
         r#"{"tasks":[{"id":"implement","objective":"implement it","operation":"create","targets":["output.txt"],"depends_on":[]}]}"#,
         r#"{"status":"accepted","content":"looks good"}"#,
         r#"{"status":"accepted","content":"approved"}"#,
-        r#"{"status":"accepted","content":"work completed"}"#,
+        r#"{"summary":"work completed"}"#,
         r#"{"status":"accepted","content":"looks good"}"#,
         r#"{"status":"accepted","content":"approved"}"#,
     ]);

@@ -8,7 +8,7 @@ use super::*;
 #[test]
 fn deliberation_run_stamps_node_context_on_engine_events_only() {
     let provider = ScriptedProvider::from_strs(&[
-        r#"{"status":"accepted","content":"work done"}"#,
+        r#"{"summary":"work done"}"#,
         r#"{"status":"accepted","content":"looks good"}"#,
         r#"{"status":"accepted","content":"approved"}"#,
     ]);

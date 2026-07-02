@@ -261,7 +261,7 @@ fn run_machine_with_provider_handler_success() {
     let machine = ProvidedMachine {
         handler: ProviderBackedDeliberationHandler::new_non_artifact_work(
             ScriptedProvider::from_strs(&[
-                r#"{"status":"accepted","content":"draft output"}"#,
+                r#"{"summary":"draft output"}"#,
                 r#"{"status":"accepted","content":"review done"}"#,
                 r#"{"status":"accepted","content":"approved"}"#,
             ]),
@@ -281,10 +281,10 @@ fn run_machine_with_provider_handler_revision() {
     let machine = ProvidedMachine {
         handler: ProviderBackedDeliberationHandler::new_non_artifact_work(
             ScriptedProvider::from_strs(&[
-                r#"{"status":"accepted","content":"draft v1"}"#,
+                r#"{"summary":"draft v1"}"#,
                 r#"{"status":"accepted","content":"review done"}"#,
                 r#"{"status":"rejected","reason":"needs changes"}"#,
-                r#"{"status":"accepted","content":"draft v2"}"#,
+                r#"{"summary":"draft v2"}"#,
                 r#"{"status":"accepted","content":"review ok"}"#,
                 r#"{"status":"accepted","content":"approved"}"#,
             ]),
@@ -827,7 +827,7 @@ fn artifact_work_constructor_requires_artifact_view() {
 fn explicit_non_artifact_work_does_not_use_artifact_semantic_validation() {
     let handler =
         ProviderBackedDeliberationHandler::new_non_artifact_work(ScriptedProvider::from_strs(&[
-            r#"{"status":"accepted","content":"summary only"}"#,
+            r#"{"summary":"summary only"}"#,
         ]));
     let event = handler.handle_effect(run_role_effect(
         DeliberationRole::Producer,
@@ -976,7 +976,7 @@ fn valid_revised_work_proceeds_to_critic_and_referee() {
 fn handle_effect_without_telemetry_compiles() {
     let handler =
         ProviderBackedDeliberationHandler::new_non_artifact_work(ScriptedProvider::from_strs(&[
-            r#"{"status":"accepted","content":"completed"}"#,
+            r#"{"summary":"completed"}"#,
         ]));
     let event = handler.handle_effect(run_role_effect(
         DeliberationRole::Producer,

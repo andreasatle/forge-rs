@@ -24,7 +24,7 @@ fn deliberating_runner_work_returns_work_output() {
     let temp = TempDir::new("work-output");
     let provider = ScriptedProvider::from_strs(&[
         r#"{"tool":"write_file","path":"output.txt","content":"finished\n"}"#,
-        r#"{"status":"accepted","content":"finished the task"}"#,
+        r#"{"summary":"finished the task"}"#,
         r#"{"tool":"read_file","path":"output.txt"}"#,
         r#"{"status":"accepted","content":"review ok"}"#,
         r#"{"tool":"read_file","path":"output.txt"}"#,
@@ -46,13 +46,13 @@ fn deliberating_runner_revision_uses_latest_producer_content() {
     let temp = TempDir::new("revision-latest");
     let provider = ScriptedProvider::from_strs(&[
         r#"{"tool":"write_file","path":"output.txt","content":"draft v1\n"}"#,
-        r#"{"status":"accepted","content":"draft v1"}"#,
+        r#"{"summary":"draft v1"}"#,
         r#"{"tool":"read_file","path":"output.txt"}"#,
         r#"{"status":"accepted","content":"review done"}"#,
         r#"{"tool":"read_file","path":"output.txt"}"#,
         r#"{"status":"rejected","reason":"needs work"}"#,
         r#"{"tool":"write_file","path":"output.txt","content":"draft v2\n"}"#,
-        r#"{"status":"accepted","content":"draft v2"}"#,
+        r#"{"summary":"draft v2"}"#,
         r#"{"tool":"read_file","path":"output.txt"}"#,
         r#"{"status":"accepted","content":"review ok"}"#,
         r#"{"tool":"read_file","path":"output.txt"}"#,
@@ -72,7 +72,7 @@ fn deliberating_runner_revision_uses_latest_producer_content() {
 #[test]
 fn non_artifact_worker_without_tools_succeeds() {
     let provider = ScriptedProvider::from_strs(&[
-        r#"{"status":"accepted","content":"output content"}"#,
+        r#"{"summary":"output content"}"#,
         r#"{"status":"accepted","content":"output content"}"#,
         r#"{"status":"accepted","content":"output content"}"#,
     ]);

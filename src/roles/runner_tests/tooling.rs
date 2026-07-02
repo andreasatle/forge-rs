@@ -5,7 +5,7 @@ fn role_runner_executes_read_file_tool_then_accepts() {
     let (_temp, view) = make_view("read-file-tool");
     let provider = ScriptedProvider::from_strs(&[
         r#"{"tool":"read_file","path":"hello.txt"}"#,
-        r#"{"status":"accepted","content":"read the file"}"#,
+        r#"{"summary":"read the file"}"#,
     ]);
     let runner = ProviderRoleRunner::new(&provider);
 
@@ -39,7 +39,7 @@ fn role_runner_executes_read_file_tool_then_accepts() {
 fn role_runner_records_workspace_write() {
     let provider = ScriptedProvider::from_strs(&[
         r#"{"tool":"write_file","path":"output.txt","content":"hello"}"#,
-        r#"{"status":"accepted","content":"wrote the file"}"#,
+        r#"{"summary":"wrote the file"}"#,
     ]);
     let runner = ProviderRoleRunner::new(&provider);
 
@@ -63,7 +63,7 @@ fn role_runner_records_workspace_write() {
 fn role_runner_rejects_tool_when_no_artifact_view() {
     let provider = ScriptedProvider::from_strs(&[
         r#"{"tool":"list_files"}"#,
-        r#"{"status":"accepted","content":"used no tools"}"#,
+        r#"{"summary":"used no tools"}"#,
     ]);
     let runner = ProviderRoleRunner::new(&provider);
 
@@ -151,7 +151,7 @@ fn producer_repeated_identical_read_file_triggers_coercion() {
     let provider = ScriptedProvider::from_strs(&[
         r#"{"tool":"read_file","path":"hello.txt"}"#,
         r#"{"tool":"read_file","path":"hello.txt"}"#,
-        r#"{"status":"accepted","content":"read the same file twice"}"#,
+        r#"{"summary":"read the same file twice"}"#,
     ]);
     let runner = ProviderRoleRunner::new(&provider);
 
@@ -222,7 +222,7 @@ fn existing_valid_tool_use_still_works() {
     let provider = ScriptedProvider::from_strs(&[
         r#"{"tool":"list_files"}"#,
         r#"{"tool":"write_file","path":"result.txt","content":"done"}"#,
-        r#"{"status":"accepted","content":"listed files and wrote result"}"#,
+        r#"{"summary":"listed files and wrote result"}"#,
     ]);
     let runner = ProviderRoleRunner::new(&provider);
 
@@ -330,7 +330,7 @@ fn tool_observation_is_bounded_in_role_prompt() {
 
     let provider = ScriptedProvider::from_strs(&[
         r#"{"tool":"read_file","path":"large.txt"}"#,
-        r#"{"status":"accepted","content":"completed"}"#,
+        r#"{"summary":"completed"}"#,
     ]);
     let runner = ProviderRoleRunner::new(&provider);
 

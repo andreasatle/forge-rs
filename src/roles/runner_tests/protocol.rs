@@ -25,10 +25,7 @@ fn provider_error_maps_to_failed() {
 
 #[test]
 fn provider_role_runner_retries_malformed_json() {
-    let provider = ScriptedProvider::from_strs(&[
-        "invalid text",
-        r#"{"status":"accepted","content":"recovered"}"#,
-    ]);
+    let provider = ScriptedProvider::from_strs(&["invalid text", r#"{"summary":"recovered"}"#]);
     let runner = ProviderRoleRunner::new(&provider);
 
     let result = runner
@@ -46,10 +43,7 @@ fn provider_role_runner_retries_malformed_json() {
 fn protocol_retry_prompt_preserves_context_without_leaking_raw_response() {
     use crate::telemetry::{TelemetryEvent, VecTelemetry};
 
-    let provider = ScriptedProvider::from_strs(&[
-        "invalid text",
-        r#"{"status":"accepted","content":"recovered"}"#,
-    ]);
+    let provider = ScriptedProvider::from_strs(&["invalid text", r#"{"summary":"recovered"}"#]);
     let runner = ProviderRoleRunner::new(&provider);
     let telemetry = VecTelemetry::new();
 
@@ -75,12 +69,12 @@ fn protocol_retry_prompt_preserves_context_without_leaking_raw_response() {
         "retry prompt must preserve the original objective; got:\n{retry_prompt}"
     );
     assert!(
-        retry_prompt.contains("Accepted: `status` must be \"accepted\""),
+        retry_prompt.contains("`summary` must be a non-empty task-specific string"),
         "retry prompt must preserve the role response schema guidance; got:\n{retry_prompt}"
     );
     assert!(
-        !retry_prompt.contains("Rejected: `status` must be \"rejected\""),
-        "Work-node Producer retry prompt must never offer the rejected schema; got:\n{retry_prompt}"
+        !retry_prompt.contains("`status`"),
+        "Work-node Producer retry prompt must never offer the status/content schema; got:\n{retry_prompt}"
     );
     assert!(
         !retry_prompt.contains("invalid text"),
@@ -130,8 +124,7 @@ fn provider_role_runner_returns_semantic_rejection_without_retry() {
 
 #[test]
 fn role_runner_uses_provider_response_content() {
-    let provider =
-        ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"the result"}"#]);
+    let provider = ScriptedProvider::from_strs(&[r#"{"summary":"the result"}"#]);
     let runner = ProviderRoleRunner::new(&provider);
 
     let output = runner.run_role(
@@ -150,7 +143,7 @@ fn role_runner_uses_provider_response_content() {
 
 #[test]
 fn role_runner_uses_configured_max_tokens() {
-    let provider = ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"completed"}"#]);
+    let provider = ScriptedProvider::from_strs(&[r#"{"summary":"completed"}"#]);
     let runner = ProviderRoleRunner::new_with_max_tokens(&provider, 256);
 
     runner.run_role(producer_request("test"), &crate::telemetry::NoopTelemetry);
@@ -164,7 +157,7 @@ fn role_runner_uses_configured_max_tokens() {
 
 #[test]
 fn scripted_provider_supports_request_response_objects() {
-    let provider = ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"completed"}"#]);
+    let provider = ScriptedProvider::from_strs(&[r#"{"summary":"completed"}"#]);
     let runner = ProviderRoleRunner::new(&provider);
 
     runner.run_role(
@@ -188,7 +181,7 @@ fn scripted_provider_supports_request_response_objects() {
 fn role_runner_requests_json_output() {
     use crate::providers::StructuredOutput;
 
-    let provider = ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"completed"}"#]);
+    let provider = ScriptedProvider::from_strs(&[r#"{"summary":"completed"}"#]);
     let runner = ProviderRoleRunner::new(&provider);
 
     runner.run_role(
@@ -210,10 +203,8 @@ fn role_runner_requests_json_output() {
 fn tool_request_detection_still_works_with_no_preamble() {
     // Tool requests starting with { are still detected and produce an error observation
     // (since tool_context is None), then the model returns a clean result.
-    let provider = ScriptedProvider::from_strs(&[
-        r#"{"tool":"list_files"}"#,
-        r#"{"status":"accepted","content":"listed files"}"#,
-    ]);
+    let provider =
+        ScriptedProvider::from_strs(&[r#"{"tool":"list_files"}"#, r#"{"summary":"listed files"}"#]);
     let runner = ProviderRoleRunner::new(&provider);
 
     let output = runner.run_role(producer_request("test"), &crate::telemetry::NoopTelemetry);
@@ -236,8 +227,8 @@ fn tool_request_detection_still_works_with_no_preamble() {
 fn preamble_triggers_retry_in_runner_loop() {
     // Preamble causes parse failure; on retry the model returns clean JSON.
     let provider = ScriptedProvider::from_strs(&[
-        "Here is the result:\n{\"status\":\"accepted\",\"content\":\"draft\"}",
-        r#"{"status":"accepted","content":"recovered"}"#,
+        "Here is the result:\n{\"summary\":\"draft\"}",
+        r#"{"summary":"recovered"}"#,
     ]);
     let runner = ProviderRoleRunner::new(&provider);
 

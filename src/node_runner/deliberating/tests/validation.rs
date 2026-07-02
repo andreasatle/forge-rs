@@ -14,9 +14,9 @@ fn python_test_targets(targets: &[String]) -> Vec<String> {
 fn artifact_worker_without_tool_update_fails_semantic_validation() {
     let temp = TempDir::new("artifact-work-missing-update");
     let provider = ScriptedProvider::from_strs(&[
-        r#"{"status":"accepted","content":"summary of the work done"}"#,
-        r#"{"status":"accepted","content":"summary of the work done"}"#,
-        r#"{"status":"accepted","content":"summary of the work done"}"#,
+        r#"{"summary":"summary of the work done"}"#,
+        r#"{"summary":"summary of the work done"}"#,
+        r#"{"summary":"summary of the work done"}"#,
     ]);
     let runner = DeliberatingNodeRunner::new(&provider, &provider);
     let result = runner.run_node(
@@ -48,19 +48,22 @@ fn referee_reads_file_and_rejects_default_content_causes_node_failure() {
     // and the node must fail — WorkAccepted must never be returned.
     let temp = TempDir::new("referee-default-content");
     let view = make_artifact_view(&temp, "main.py", r#"print("Hello from forge-lang-init!")"#);
+    let work_attempt = work_attempt_for_view(&view);
 
-    // Round 1: Producer claims done, Critic reads and accepts, Referee reads
-    // main.py, sees default content, and rejects.
+    // Round 1: Producer writes (still-default) content and claims done, Critic
+    // reads and accepts, Referee reads main.py, sees default content, and rejects.
     // Round 2: same sequence; budget is now exhausted → node fails.
     let provider = ScriptedProvider::from_strs(&[
         // Round 1
-        r#"{"status":"accepted","content":"I wrote the haiku"}"#,
+        r#"{"tool":"write_file","path":"main.py","content":"print(\"Hello from forge-lang-init!\")"}"#,
+        r#"{"summary":"I wrote the haiku"}"#,
         r#"{"tool":"read_file","path":"main.py"}"#,
         r#"{"status":"accepted","content":"file is present"}"#,
         r#"{"tool":"read_file","path":"main.py"}"#,
         r#"{"status":"rejected","reason":"main.py still has default init content, not a haiku"}"#,
         // Round 2
-        r#"{"status":"accepted","content":"I wrote the haiku"}"#,
+        r#"{"tool":"write_file","path":"main.py","content":"print(\"Hello from forge-lang-init!\")"}"#,
+        r#"{"summary":"I wrote the haiku"}"#,
         r#"{"tool":"read_file","path":"main.py"}"#,
         r#"{"status":"accepted","content":"file is present"}"#,
         r#"{"tool":"read_file","path":"main.py"}"#,
@@ -76,7 +79,7 @@ fn referee_reads_file_and_rejects_default_content_causes_node_failure() {
         model_tier: ModelTier::Cheap,
         attempt: 0,
         artifact_view: Some(view),
-        work_attempt: None,
+        work_attempt: Some(work_attempt),
     };
     let result = runner.run_node(request, &NoopTelemetry);
 
@@ -101,7 +104,7 @@ fn producer_read_file_does_not_satisfy_critic_read_requirement() {
     // The deliberation must fail — not succeed because Producer already read.
     let provider = ScriptedProvider::from_strs(&[
         r#"{"tool":"read_file","path":"hello.txt"}"#,
-        r#"{"status":"accepted","content":"I read the file and it looks correct"}"#,
+        r#"{"summary":"I read the file and it looks correct"}"#,
         // Critic attempt 1: enforcement fires, must-read retry issued
         r#"{"status":"accepted","content":"looks good to me here ok"}"#,
         // Critic attempt 2: enforcement fires again

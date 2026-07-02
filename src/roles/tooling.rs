@@ -183,7 +183,7 @@ pub(super) fn dispatch_tool_step(
             format_completion_pressure_section(&observation)
         }
     } else {
-        format_observation_section(&observation, mutation_recorded)
+        format_observation_section(&observation, mutation_recorded, proto.is_work_producer())
     };
 
     *observation_suffix = format!("{observation_suffix}\n\n{obs_section}");

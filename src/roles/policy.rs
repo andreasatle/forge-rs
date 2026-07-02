@@ -43,16 +43,18 @@ Execution failures are handled by the framework, not the model.";
 
 /// JSON protocol instructions for the Work-node Producer role.
 ///
-/// The Work-node Producer's job is to implement — it never rejects. Only the
-/// Critic and Referee roles evaluate and may reject, so this schema omits the
-/// rejected branch entirely; it must never appear anywhere in a prompt the
-/// Work-node Producer can receive.
+/// The Work-node Producer's job is to implement — it never rejects, so its
+/// response is a single `{"summary": "..."}` object with no `status` tag to
+/// discriminate. This is a different schema from [`DEFAULT_SYSTEM`], not a
+/// restricted view of it; the `status`/`content`/`reason` fields must never
+/// appear anywhere in a prompt the Work-node Producer can receive.
 ///
 /// Framework protocol, shared across adapters — see [`DEFAULT_SYSTEM`].
 /// Callers compose this after [`GENERIC_CONSTRAINTS`], see [`DEFAULT_SYSTEM`].
 pub(crate) const WORK_PRODUCER_SYSTEM: &str = "Allowed final response:\n\
-Accepted: `status` must be \"accepted\"; `content` must be a non-empty task-specific string.\n\
-Implement the requested change and return accepted content describing what you did. \
+`summary` must be a non-empty task-specific string describing what you did.\n\
+Implement the requested change and return a summary describing what you did. \
+There is no rejected response — a valid summary means the work is done. \
 Execution failures are handled by the framework, not the model.";
 
 /// JSON protocol instructions for the Planner (Plan-node Producer) role.
@@ -162,9 +164,8 @@ mod tests {
     #[test]
     fn default_role_policy_contains_json_protocol_instructions() {
         let policy = RolePolicy::default();
-        // All non-producer planner/work review roles use the status/content wrapper schema.
+        // Critic and Referee roles use the status/content wrapper schema.
         for system in [
-            &policy.worker_producer_system,
             &policy.planner_critic_system,
             &policy.worker_critic_system,
             &policy.planner_referee_system,
@@ -183,6 +184,30 @@ mod tests {
                 "default system must not contain placeholder JSON values; got:\n{system}"
             );
         }
+        // Work-node Producer uses the summary-only schema — no status field.
+        assert!(
+            !policy.worker_producer_system.contains("`status`"),
+            "worker_producer_system must not contain the status field; got:\n{}",
+            policy.worker_producer_system
+        );
+        assert!(
+            policy.worker_producer_system.contains("`summary`"),
+            "worker_producer_system must describe the summary field; got:\n{}",
+            policy.worker_producer_system
+        );
+        assert!(
+            policy
+                .worker_producer_system
+                .contains("non-empty task-specific string"),
+            "worker_producer_system must describe task-specific string fields; got:\n{}",
+            policy.worker_producer_system
+        );
+        assert!(
+            !policy.worker_producer_system.contains('$')
+                && !policy.worker_producer_system.contains("\"...\""),
+            "worker_producer_system must not contain placeholder JSON values; got:\n{}",
+            policy.worker_producer_system
+        );
         // Planner uses a direct PlannerOutput schema — no status/content wrapper.
         assert!(
             policy.planner_producer_system.contains("`tasks`"),
@@ -254,32 +279,33 @@ mod tests {
     }
 
     #[test]
-    fn worker_producer_uses_accepted_only_schema() {
-        // The Work-node Producer implements; it never rejects. Only Critic
-        // and Referee evaluate and may reject.
+    fn worker_producer_uses_summary_only_schema() {
+        // The Work-node Producer implements; it never rejects, so its schema
+        // has no status/content/reason wrapper at all — just `summary`.
         let policy = RolePolicy::default();
         assert!(
-            policy.worker_producer_system.contains("`status`"),
-            "worker_producer_system must still contain the status/content wrapper; got:\n{}",
+            policy.worker_producer_system.contains("`summary`"),
+            "worker_producer_system must describe the summary field; got:\n{}",
             policy.worker_producer_system
         );
         assert!(
-            policy
-                .worker_producer_system
-                .contains("Accepted: `status` must be \"accepted\""),
-            "worker_producer_system must describe accepted schema; got:\n{}",
+            !policy.worker_producer_system.contains("`status`"),
+            "worker_producer_system must not contain the status field; got:\n{}",
             policy.worker_producer_system
         );
         assert!(
-            !policy
-                .worker_producer_system
-                .contains("Rejected: `status` must be \"rejected\""),
-            "worker_producer_system must never show the rejected schema; got:\n{}",
+            !policy.worker_producer_system.contains("`content`"),
+            "worker_producer_system must not contain the content field; got:\n{}",
             policy.worker_producer_system
         );
         assert!(
             !policy.worker_producer_system.contains("\"rejected\""),
             "worker_producer_system must never mention the rejected status; got:\n{}",
+            policy.worker_producer_system
+        );
+        assert!(
+            !policy.worker_producer_system.contains("\"accepted\""),
+            "worker_producer_system must never mention the accepted status; got:\n{}",
             policy.worker_producer_system
         );
     }

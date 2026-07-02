@@ -105,14 +105,14 @@ fn semantic_failure_produces_elevate_action() {
     let provider = ScriptedProvider::from_strs(&[
         // Round 1: Producer → Critic → Referee rejects → revision loop.
         r#"{"tool":"write_file","path":"output.txt","content":"draft v1\n"}"#,
-        r#"{"status":"accepted","content":"draft v1"}"#,
+        r#"{"summary":"draft v1"}"#,
         r#"{"tool":"read_file","path":"output.txt"}"#,
         r#"{"status":"accepted","content":"review ok"}"#,
         r#"{"tool":"read_file","path":"output.txt"}"#,
         r#"{"status":"rejected","reason":"needs improvement"}"#,
         // Round 2: Producer → Critic → Referee rejects → budget exhausted.
         r#"{"tool":"write_file","path":"output.txt","content":"draft v2\n"}"#,
-        r#"{"status":"accepted","content":"draft v2"}"#,
+        r#"{"summary":"draft v2"}"#,
         r#"{"tool":"read_file","path":"output.txt"}"#,
         r#"{"status":"accepted","content":"review ok"}"#,
         r#"{"tool":"read_file","path":"output.txt"}"#,
@@ -197,14 +197,14 @@ fn deliberation_failure_produces_elevate_action_independent_of_message_text() {
     let provider = ScriptedProvider::from_strs(&[
         // Round 1: Producer → Critic → Referee rejects "task too large" → revision loop.
         r#"{"tool":"write_file","path":"output.txt","content":"draft v1\n"}"#,
-        r#"{"status":"accepted","content":"draft v1"}"#,
+        r#"{"summary":"draft v1"}"#,
         r#"{"tool":"read_file","path":"output.txt"}"#,
         r#"{"status":"accepted","content":"review ok"}"#,
         r#"{"tool":"read_file","path":"output.txt"}"#,
         r#"{"status":"rejected","reason":"task too large"}"#,
         // Round 2: Producer → Critic → Referee rejects "task too large" → budget exhausted.
         r#"{"tool":"write_file","path":"output.txt","content":"draft v2\n"}"#,
-        r#"{"status":"accepted","content":"draft v2"}"#,
+        r#"{"summary":"draft v2"}"#,
         r#"{"tool":"read_file","path":"output.txt"}"#,
         r#"{"status":"accepted","content":"review ok"}"#,
         r#"{"tool":"read_file","path":"output.txt"}"#,

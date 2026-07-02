@@ -9,7 +9,7 @@ fn deliberating_artifact_work_writes_work_attempt_workspace() {
     // Critic and Referee must call read_file before accepting (enforcement).
     let provider = ScriptedProvider::from_strs(&[
         r#"{"tool":"write_file","path":"result.txt","content":"done"}"#,
-        r#"{"status":"accepted","content":"I wrote result.txt"}"#,
+        r#"{"summary":"I wrote result.txt"}"#,
         r#"{"tool":"read_file","path":"hello.txt"}"#,
         r#"{"status":"accepted","content":"looks good"}"#,
         r#"{"tool":"read_file","path":"hello.txt"}"#,
@@ -48,7 +48,7 @@ fn reviewer_can_read_work_attempt_target_file_with_relative_path() {
 
     let provider = ScriptedProvider::from_strs(&[
         r#"{"tool":"write_file","path":"main.py","content":"print('new')\n"}"#,
-        r#"{"status":"accepted","content":"updated main.py"}"#,
+        r#"{"summary":"updated main.py"}"#,
         r#"{"tool":"read_file","path":"main.py"}"#,
         r#"{"status":"accepted","content":"main.py contains the WorkAttempt update"}"#,
         r#"{"tool":"read_file","path":"main.py"}"#,

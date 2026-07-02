@@ -7,7 +7,7 @@ fn placeholder_tool_echo_produces_informative_error_in_retry_prompt() {
     // understands WHY its response was rejected, not just that it was invalid.
     let provider = ScriptedProvider::from_strs(&[
         r#"{"tool":"write_file","path":"$TARGET_FILE","content":"$FILE_CONTENT"}"#,
-        r#"{"status":"accepted","content":"wrote the actual file"}"#,
+        r#"{"summary":"wrote the actual file"}"#,
     ]);
     let runner = ProviderRoleRunner::new(&provider);
 
@@ -74,13 +74,13 @@ fn echoed_tool_placeholder_triggers_parse_failure_not_tool_execution() {
         (
             "replace_text",
             r#"{"tool":"replace_text","path":"output.txt","old":"...","new":"..."}"#,
-            r#"{"status":"accepted","content":"haiku written"}"#,
+            r#"{"summary":"haiku written"}"#,
             "haiku written",
         ),
         (
             "write_file",
             r#"{"tool":"write_file","path":"output.txt","content":"..."}"#,
-            r#"{"status":"accepted","content":"completed"}"#,
+            r#"{"summary":"completed"}"#,
             "completed",
         ),
     ] {
@@ -147,7 +147,7 @@ fn tool_observation_warns_not_to_copy_observation_json() {
     let (_temp, view) = make_view("obs-warn");
     let provider = ScriptedProvider::from_strs(&[
         r#"{"tool":"read_file","path":"hello.txt"}"#,
-        r#"{"status":"accepted","content":"completed"}"#,
+        r#"{"summary":"completed"}"#,
     ]);
     let runner = ProviderRoleRunner::new(&provider);
 
@@ -178,7 +178,7 @@ fn observation_json_echo_triggers_protocol_retry_not_tool_execution() {
     let provider = ScriptedProvider::from_strs(&[
         r#"{"tool":"write_file","path":"out.txt","content":"data"}"#,
         r#"{"ok":true,"description":"write out.txt"}"#,
-        r#"{"status":"accepted","content":"completed"}"#,
+        r#"{"summary":"completed"}"#,
     ]);
     let runner = ProviderRoleRunner::new(&provider);
     let telemetry = VecTelemetry::new();

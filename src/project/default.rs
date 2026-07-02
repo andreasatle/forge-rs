@@ -23,9 +23,8 @@ mod tests {
     fn default_project_adapter_returns_default_role_policy() {
         let adapter = DefaultProjectAdapter;
         let policy = adapter.role_policy();
-        // All non-planner-producer roles use the status/content wrapper schema.
+        // Critic and Referee roles use the status/content wrapper schema.
         for system in [
-            &policy.worker_producer_system,
             &policy.planner_critic_system,
             &policy.worker_critic_system,
             &policy.planner_referee_system,
@@ -44,6 +43,23 @@ mod tests {
                 "default policy must not contain placeholder JSON values; got:\n{system}"
             );
         }
+        // Work-node Producer uses the summary-only schema — no status field.
+        assert!(
+            !policy.worker_producer_system.contains("`status`"),
+            "worker_producer_system must not contain the status field; got:\n{}",
+            policy.worker_producer_system
+        );
+        assert!(
+            policy.worker_producer_system.contains("`summary`"),
+            "worker_producer_system must describe the summary field; got:\n{}",
+            policy.worker_producer_system
+        );
+        assert!(
+            !policy.worker_producer_system.contains('$')
+                && !policy.worker_producer_system.contains("\"...\""),
+            "worker_producer_system must not contain placeholder JSON values; got:\n{}",
+            policy.worker_producer_system
+        );
         // Planner uses direct PlannerOutput schema.
         assert!(
             policy.planner_producer_system.contains("`tasks`"),
@@ -108,11 +124,11 @@ mod tests {
             assert!(system.contains("Rejected: `status` must be \"rejected\""));
             assert!(system.contains("Execution failures are handled by the framework"));
         }
-        // The Work-node Producer never rejects, so it keeps only the accepted branch.
+        // The Work-node Producer never rejects, so it uses the summary-only schema.
         let worker = policy.worker_producer_system.as_str();
         assert!(worker.contains("Return exactly one JSON object"));
-        assert!(worker.contains("Accepted: `status` must be \"accepted\""));
-        assert!(!worker.contains("Rejected: `status` must be \"rejected\""));
+        assert!(worker.contains("`summary` must be a non-empty task-specific string"));
+        assert!(!worker.contains("`status`"));
         assert!(worker.contains("Execution failures are handled by the framework"));
     }
 }

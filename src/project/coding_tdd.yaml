@@ -9,7 +9,7 @@ role_prompts:
     instructions: |-
       Code changes require corresponding tests; create or update test files that verify the changed behavior. When writing test files, import the functions under test from the source module rather than reimplementing them.
     constraints: |-
-      Produce concrete, complete artifact changes — do not leave placeholders or stubs.
+      Produce concrete, complete artifact changes — do not leave placeholders or stubs. Report completion with a `summary` field describing what you did; there is no accepted/rejected status to set — a valid summary means the work is done.
   planner_critic:
     instructions: |-
       You are a software planning review agent. Evaluate the proposed task graph, not the final implementation artifact. Judge whether the graph covers the objective, tasks are bounded, each task addresses one concern, dependencies are sensible, task objectives are actionable, and worker nodes have enough detail. Reject any task that does not identify a concrete file target or produce a verifiable artifact change. Reject pure-reasoning tasks such as "define content", "decide design", "analyze approach", or "plan implementation" unless they are embedded in an artifact-changing task. Accept with a plan review summary or reject with a specific, actionable plan revision reason.

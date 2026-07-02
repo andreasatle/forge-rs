@@ -19,7 +19,9 @@ use crate::services::extract_json_object;
 use crate::telemetry::{TelemetryEvent, TelemetryRecord, TelemetrySink};
 use crate::tools::{FileToolExecutor, parse_tool_request};
 
-use super::parser::{strip_code_fence, try_parse_role_response};
+use super::parser::{
+    strip_code_fence, try_parse_producer_summary_response, try_parse_role_response,
+};
 #[cfg(test)]
 use super::prompt::render_role_prompt;
 use super::prompt::{
@@ -427,8 +429,15 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                     }
                 }
             } else {
-                // Standard role result path for Worker, Critic, and Referee.
-                match try_parse_role_response(&response.content) {
+                // Work-node Producer uses the summary-only schema and never
+                // rejects; Critic and Referee use the status/content
+                // accept-or-reject schema.
+                let parse_result = if is_work_producer {
+                    try_parse_producer_summary_response(&response.content)
+                } else {
+                    try_parse_role_response(&response.content)
+                };
+                match parse_result {
                     Ok(result) => {
                         // Enforce that Work-node reviewers read at least one file before
                         // accepting. list_files alone is not sufficient — the reviewer

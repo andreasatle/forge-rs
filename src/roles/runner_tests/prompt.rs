@@ -24,7 +24,7 @@ fn role_prompt_includes_feedback() {
         "expected prompt to include objective, got: {prompt}"
     );
     assert!(
-        prompt.contains("`status`"),
+        prompt.contains("`summary`"),
         "expected prompt to include JSON schema instructions, got: {prompt}"
     );
 }
@@ -67,7 +67,7 @@ fn coding_producer_rendered_prompt_labels_role_context_instructions_and_constrai
 
 #[test]
 fn role_prompt_includes_tool_request_as_valid_response_when_tools_available() {
-    let provider = ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"completed"}"#]);
+    let provider = ScriptedProvider::from_strs(&[r#"{"summary":"completed"}"#]);
     let runner = ProviderRoleRunner::new(&provider);
 
     runner.run_role(
@@ -89,7 +89,7 @@ fn role_prompt_includes_tool_request_as_valid_response_when_tools_available() {
 
 #[test]
 fn role_prompt_has_single_protocol_wrapper() {
-    let provider = ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"completed"}"#]);
+    let provider = ScriptedProvider::from_strs(&[r#"{"summary":"completed"}"#]);
     let runner = ProviderRoleRunner::new(&provider);
 
     runner.run_role(producer_request("test"), &crate::telemetry::NoopTelemetry);
@@ -103,7 +103,7 @@ fn role_prompt_has_single_protocol_wrapper() {
         "prompt must not contain InstructedProvider outer wrapper text"
     );
     assert!(
-        prompt.contains("`status`"),
+        prompt.contains("`summary`"),
         "prompt must still contain the role protocol instructions"
     );
 }
@@ -177,7 +177,7 @@ fn tool_prompt_for_target_main_py_shows_allowed_target_path() {
 
 #[test]
 fn work_role_prompt_uses_structured_tool_targets() {
-    let provider = ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"completed"}"#]);
+    let provider = ScriptedProvider::from_strs(&[r#"{"summary":"completed"}"#]);
     let runner = ProviderRoleRunner::new(&provider);
 
     runner.run_role(
@@ -203,7 +203,7 @@ fn work_role_prompt_uses_structured_tool_targets() {
 fn producer_system_prompt_is_unconditional_regardless_of_test_plan_coverage() {
     use crate::project::{CodingProjectAdapter, ProjectAdapter as _};
 
-    let provider = ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"completed"}"#]);
+    let provider = ScriptedProvider::from_strs(&[r#"{"summary":"completed"}"#]);
     let runner = ProviderRoleRunner::new_with_policy(&provider, CodingProjectAdapter.role_policy());
     let mut request = producer_request("Implement fibonacci(n: int) in main.py.");
     request.context.target_files = vec!["main.py".to_string()];
@@ -535,7 +535,7 @@ fn planner_prompt_omits_tool_section() {
 #[test]
 fn worker_prompt_still_has_write_tools() {
     // Work nodes with tool_context keep write tools (existing behaviour preserved).
-    let provider = ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"completed"}"#]);
+    let provider = ScriptedProvider::from_strs(&[r#"{"summary":"completed"}"#]);
     let runner = ProviderRoleRunner::new(&provider);
 
     runner.run_role(
@@ -559,7 +559,7 @@ fn worker_prompt_still_has_write_tools() {
 
 #[test]
 fn producer_prompt_lists_write_tools() {
-    let provider = ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"completed"}"#]);
+    let provider = ScriptedProvider::from_strs(&[r#"{"summary":"completed"}"#]);
     let runner = ProviderRoleRunner::new(&provider);
 
     runner.run_role(

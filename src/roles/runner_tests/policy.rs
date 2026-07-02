@@ -13,12 +13,12 @@ fn default_role_policy_matches_current_prompt_behavior() {
         &[],
     );
     assert!(
-        prompt.contains("`status`"),
-        "default policy must include JSON status field; got:\n{prompt}"
+        prompt.contains("`summary`"),
+        "default policy must include JSON summary field; got:\n{prompt}"
     );
     assert!(
-        prompt.contains("Accepted: `status` must be \"accepted\""),
-        "default policy must describe accepted response; got:\n{prompt}"
+        !prompt.contains("`status`"),
+        "Work-node Producer prompt must never contain the status field; got:\n{prompt}"
     );
     assert!(
         !prompt.contains("\"...\""),
@@ -163,12 +163,12 @@ fn default_policy_keeps_json_protocol_instructions() {
         "worker default policy must include JSON-only instruction; got:\n{worker_prompt}"
     );
     assert!(
-        worker_prompt.contains("Accepted: `status` must be \"accepted\""),
-        "worker default policy must describe accepted schema; got:\n{worker_prompt}"
+        worker_prompt.contains("`summary` must be a non-empty task-specific string"),
+        "worker default policy must describe summary schema; got:\n{worker_prompt}"
     );
     assert!(
-        !worker_prompt.contains("Rejected: `status` must be \"rejected\""),
-        "worker default policy must never include the rejected schema; got:\n{worker_prompt}"
+        !worker_prompt.contains("`status`"),
+        "worker default policy must never include the status/content schema; got:\n{worker_prompt}"
     );
     // Planner uses direct PlannerOutput schema — no status/content wrapper.
     let planner_prompt = render_role_prompt(
@@ -203,7 +203,7 @@ fn role_policy_does_not_change_tool_visibility() {
         worker_critic_system: "CUSTOM_CRITIC".to_string(),
         ..RolePolicy::default()
     };
-    let provider = ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"completed"}"#]);
+    let provider = ScriptedProvider::from_strs(&[r#"{"summary":"completed"}"#]);
     let runner = ProviderRoleRunner::new_with_policy(&provider, policy);
 
     runner.run_role(
@@ -258,7 +258,7 @@ fn work_node_uses_worker_policy() {
         worker_producer_system: "WORKER_MARKER".to_string(),
         ..RolePolicy::default()
     };
-    let provider = ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"work done"}"#]);
+    let provider = ScriptedProvider::from_strs(&[r#"{"summary":"work done"}"#]);
     let runner = ProviderRoleRunner::new_with_policy(&provider, policy);
 
     runner.run_role(
@@ -395,10 +395,7 @@ fn work_referee_uses_worker_referee_policy() {
 fn default_policy_preserves_existing_behavior() {
     let policy = RolePolicy::default();
     let tasks_json = r#"{"tasks":[{"id":"t1","objective":"do the work","operation":"modify","targets":["work.txt"],"depends_on":[]}]}"#;
-    let provider = ScriptedProvider::from_strs(&[
-        tasks_json,
-        r#"{"status":"accepted","content":"work done"}"#,
-    ]);
+    let provider = ScriptedProvider::from_strs(&[tasks_json, r#"{"summary":"work done"}"#]);
     let runner = ProviderRoleRunner::new_with_policy(&provider, policy);
 
     runner.run_role(
@@ -432,7 +429,7 @@ fn language_guidance_renders_between_system_prompt_and_tool_section() {
         language_guidance: Some("LANGUAGE_MARKER".to_string()),
         ..RolePolicy::default()
     };
-    let provider = ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"completed"}"#]);
+    let provider = ScriptedProvider::from_strs(&[r#"{"summary":"completed"}"#]);
     let runner = ProviderRoleRunner::new_with_policy(&provider, policy);
 
     runner.run_role(
@@ -466,7 +463,7 @@ fn no_language_guidance_section_when_unset() {
     // Invariant: RolePolicy::default() carries no language guidance, so the
     // prompt must not gain a stray "Language guidance:" section.
     let policy = RolePolicy::default();
-    let provider = ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"completed"}"#]);
+    let provider = ScriptedProvider::from_strs(&[r#"{"summary":"completed"}"#]);
     let runner = ProviderRoleRunner::new_with_policy(&provider, policy);
 
     runner.run_role(
@@ -494,7 +491,7 @@ fn language_constraints_renders_after_language_guidance_section() {
         language_constraints: Some("CONSTRAINTS_MARKER".to_string()),
         ..RolePolicy::default()
     };
-    let provider = ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"completed"}"#]);
+    let provider = ScriptedProvider::from_strs(&[r#"{"summary":"completed"}"#]);
     let runner = ProviderRoleRunner::new_with_policy(&provider, policy);
 
     runner.run_role(
@@ -528,7 +525,7 @@ fn no_language_constraints_section_when_unset() {
     // Invariant: RolePolicy::default() carries no language constraints, so
     // the prompt must not gain a stray "Language constraints:" section.
     let policy = RolePolicy::default();
-    let provider = ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"completed"}"#]);
+    let provider = ScriptedProvider::from_strs(&[r#"{"summary":"completed"}"#]);
     let runner = ProviderRoleRunner::new_with_policy(&provider, policy);
 
     runner.run_role(

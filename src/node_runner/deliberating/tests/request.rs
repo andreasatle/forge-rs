@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn deliberating_runner_threads_max_tokens_to_provider() {
     let provider = CapturingProvider::from_strs(&[
-        r#"{"status":"accepted","content":"task completed"}"#,
+        r#"{"summary":"task completed"}"#,
         r#"{"status":"accepted","content":"review done"}"#,
         r#"{"status":"accepted","content":"approved"}"#,
     ]);
@@ -33,7 +33,7 @@ fn runtime_uses_project_adapter_role_policy() {
     };
 
     let provider = RecordingProvider::from_strs(&[
-        r#"{"status":"accepted","content":"completed"}"#,
+        r#"{"summary":"completed"}"#,
         r#"{"status":"accepted","content":"review ok"}"#,
         r#"{"status":"accepted","content":"approved"}"#,
     ]);
@@ -57,7 +57,7 @@ fn cheap_tier_uses_cheap_provider() {
     let temp = TempDir::new("cheap-tier");
     let cheap = ScriptedProvider::from_strs(&[
         r#"{"tool":"write_file","path":"output.txt","content":"task completed\n"}"#,
-        r#"{"status":"accepted","content":"task completed"}"#,
+        r#"{"summary":"task completed"}"#,
         r#"{"tool":"read_file","path":"output.txt"}"#,
         r#"{"status":"accepted","content":"review ok"}"#,
         r#"{"tool":"read_file","path":"output.txt"}"#,
@@ -82,7 +82,7 @@ fn strong_tier_uses_strong_provider() {
     let cheap = ScriptedProvider::from_strs(&[]);
     let strong = ScriptedProvider::from_strs(&[
         r#"{"tool":"write_file","path":"output.txt","content":"task completed\n"}"#,
-        r#"{"status":"accepted","content":"task completed"}"#,
+        r#"{"summary":"task completed"}"#,
         r#"{"tool":"read_file","path":"output.txt"}"#,
         r#"{"status":"accepted","content":"review ok"}"#,
         r#"{"tool":"read_file","path":"output.txt"}"#,
@@ -104,7 +104,7 @@ fn strong_tier_uses_strong_token_budget() {
     // Cheap has no responses — if it were called the test would panic.
     let cheap = CapturingProvider::from_strs(&[]);
     let strong = CapturingProvider::from_strs(&[
-        r#"{"status":"accepted","content":"task completed"}"#,
+        r#"{"summary":"task completed"}"#,
         r#"{"status":"accepted","content":"review ok"}"#,
         r#"{"status":"accepted","content":"approved"}"#,
     ]);

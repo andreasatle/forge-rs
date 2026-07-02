@@ -4,7 +4,7 @@ use super::*;
 fn producer_completion_pressure_fires_after_write_file() {
     let provider = ScriptedProvider::from_strs(&[
         r#"{"tool":"write_file","path":"output.txt","content":"hello"}"#,
-        r#"{"status":"accepted","content":"wrote the file successfully"}"#,
+        r#"{"summary":"wrote the file successfully"}"#,
     ]);
     let runner = ProviderRoleRunner::new(&provider);
 
@@ -37,7 +37,7 @@ fn successful_replace_text_observation_instructs_final_response() {
     let (_temp, view) = make_view("replace-text-final");
     let provider = ScriptedProvider::from_strs(&[
         r#"{"tool":"replace_text","path":"hello.txt","old":"hello world","new":"goodbye"}"#,
-        r#"{"status":"accepted","content":"replaced hello with goodbye"}"#,
+        r#"{"summary":"replaced hello with goodbye"}"#,
     ]);
     let runner = ProviderRoleRunner::new(&provider);
 
@@ -72,13 +72,13 @@ fn successful_mutation_tool_observation_instructs_final_response() {
         (
             "write_file",
             r#"{"tool":"write_file","path":"result.txt","content":"some output"}"#,
-            r#"{"status":"accepted","content":"wrote result.txt"}"#,
+            r#"{"summary":"wrote result.txt"}"#,
             "write result.txt",
         ),
         (
             "delete_file",
             r#"{"tool":"delete_file","path":"old.txt"}"#,
-            r#"{"status":"accepted","content":"deleted old.txt"}"#,
+            r#"{"summary":"deleted old.txt"}"#,
             "delete old.txt",
         ),
     ] {
@@ -123,7 +123,7 @@ fn read_file_after_mutation_is_completion_pressure_violation() {
     let provider = ScriptedProvider::from_strs(&[
         r#"{"tool":"write_file","path":"data.txt","content":"hello"}"#,
         r#"{"tool":"read_file","path":"data.txt"}"#,
-        r#"{"status":"accepted","content":"wrote data.txt"}"#,
+        r#"{"summary":"wrote data.txt"}"#,
     ]);
     let runner = ProviderRoleRunner::new(&provider);
 
@@ -152,7 +152,7 @@ fn completion_pressure_hides_tool_section() {
     // After a successful mutation the prompt must not contain the tool section.
     let provider = ScriptedProvider::from_strs(&[
         r#"{"tool":"write_file","path":"out.txt","content":"data"}"#,
-        r#"{"status":"accepted","content":"completed"}"#,
+        r#"{"summary":"completed"}"#,
     ]);
     let runner = ProviderRoleRunner::new(&provider);
 
@@ -182,7 +182,7 @@ fn tool_request_after_completion_pressure_is_rejected() {
     let provider = ScriptedProvider::from_strs(&[
         r#"{"tool":"write_file","path":"out.txt","content":"data"}"#,
         r#"{"tool":"list_files"}"#,
-        r#"{"status":"accepted","content":"completed"}"#,
+        r#"{"summary":"completed"}"#,
     ]);
     let runner = ProviderRoleRunner::new(&provider);
     let telemetry = VecTelemetry::new();
@@ -229,7 +229,7 @@ fn tool_request_after_completion_pressure_is_rejected() {
 fn worker_can_return_accepted_after_completion_pressure() {
     let provider = ScriptedProvider::from_strs(&[
         r#"{"tool":"write_file","path":"result.txt","content":"output data"}"#,
-        r#"{"status":"accepted","content":"wrote result.txt with output data"}"#,
+        r#"{"summary":"wrote result.txt with output data"}"#,
     ]);
     let runner = ProviderRoleRunner::new(&provider);
 

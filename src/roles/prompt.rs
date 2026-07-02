@@ -49,12 +49,17 @@ pub(super) fn cap_observation(s: String, max_bytes: usize) -> String {
 }
 
 /// Wraps a tool observation with protocol guidance for the model.
-pub(super) fn format_observation_section(observation: &str, mutation_recorded: bool) -> String {
+pub(super) fn format_observation_section(
+    observation: &str,
+    mutation_recorded: bool,
+    is_work_producer: bool,
+) -> String {
+    let schema = status_schema_lines(is_work_producer);
     let base = format!(
         "Framework tool observation:\n{observation}\n\
          This is framework output, not a valid response format.\n\
-         If the requested change is complete, return exactly one JSON object using an Accepted final response.\n\
-         Accepted: `status` must be \"accepted\"; `content` must be a non-empty task-specific string.\n\
+         If the requested change is complete, return exactly one JSON object using the final response.\n\
+         {schema}\n\
          Only call another tool if more information is strictly required."
     );
     if mutation_recorded {
@@ -125,12 +130,12 @@ pub(super) fn render_retry_prompt(
     )
 }
 
-/// The Work-node Producer's job is to implement — it never rejects. Only
-/// Critic and Referee may reject, so the Producer sees only the accepted
-/// schema; every other role sees both.
+/// The Work-node Producer's job is to implement — it never rejects, so its
+/// response is a single `summary` field with no `status` tag. Critic and
+/// Referee use the status/content accept-or-reject wrapper.
 fn status_schema_lines(is_work_producer: bool) -> &'static str {
     if is_work_producer {
-        "Accepted: `status` must be \"accepted\"; `content` must be a non-empty task-specific string."
+        "`summary` must be a non-empty task-specific string describing what you did."
     } else {
         "Accepted: `status` must be \"accepted\"; `content` must be a non-empty task-specific string.\n\
          Rejected: `status` must be \"rejected\"; `reason` must be a non-empty task-specific string."
@@ -178,8 +183,8 @@ pub(super) fn format_completion_pressure_section(observation: &str) -> String {
          This is framework output, not a valid response format.\n\
          The requested change has already been recorded.\n\
          Do not call any more tools.\n\
-         Return exactly one JSON object using an Accepted final response.\n\
-         Accepted: `status` must be \"accepted\"; `content` must be a non-empty task-specific string."
+         Return exactly one JSON object using the final response.\n\
+         `summary` must be a non-empty task-specific string describing what you did."
     )
 }
 
@@ -200,7 +205,7 @@ pub(super) fn render_completion_pressure_violation_note() -> String {
     "Tools are no longer available.\n\
      The requested change has already been recorded.\n\
      Return exactly one JSON object using this final role response:\n\
-     Accepted: `status` must be \"accepted\"; `content` must be a non-empty task-specific string."
+     `summary` must be a non-empty task-specific string describing what you did."
         .to_string()
 }
 
@@ -221,7 +226,7 @@ pub(super) fn format_repeated_observation_coercion_section(
     is_work_producer: bool,
 ) -> String {
     let decision_verb = if is_work_producer {
-        "Return accepted JSON now."
+        "Return the summary JSON now."
     } else {
         "Return accepted or rejected JSON now."
     };

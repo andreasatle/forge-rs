@@ -4,10 +4,7 @@ use super::*;
 fn protocol_retry_records_role_layer_telemetry() {
     use crate::telemetry::{TelemetryEvent, VecTelemetry};
 
-    let provider = ScriptedProvider::from_strs(&[
-        "invalid text",
-        r#"{"status":"accepted","content":"recovered"}"#,
-    ]);
+    let provider = ScriptedProvider::from_strs(&["invalid text", r#"{"summary":"recovered"}"#]);
     let runner = ProviderRoleRunner::new(&provider);
     let telemetry = VecTelemetry::new();
 
@@ -54,10 +51,7 @@ fn file_telemetry_records_role_machine_source_and_event_identity() {
 
     let temp = TempDir::new("role-machine-source-events");
     let telemetry = FileTelemetry::new(temp.0.clone());
-    let provider = ScriptedProvider::from_strs(&[
-        "invalid text",
-        r#"{"status":"accepted","content":"recovered"}"#,
-    ]);
+    let provider = ScriptedProvider::from_strs(&["invalid text", r#"{"summary":"recovered"}"#]);
     let runner = ProviderRoleRunner::new(&provider);
 
     runner.run_role(producer_request("recover output"), &telemetry);

@@ -7,8 +7,7 @@ fn producer_prompt_for_targets(
 ) -> String {
     const BUDGET: usize = 16 * 1024;
     let target_views = crate::project::build_file_text_target_views(&view, &target_files, BUDGET);
-    let provider =
-        ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"completed safely"}"#]);
+    let provider = ScriptedProvider::from_strs(&[r#"{"summary":"completed safely"}"#]);
     let runner = ProviderRoleRunner::new(&provider);
     runner.run_role(
         RoleRequest {
@@ -185,7 +184,7 @@ fn prompt_wording_does_not_control_allowed_paths() {
     let provider = ScriptedProvider::from_strs(&[
         r#"{"tool":"write_file","path":"prompt.txt","content":"wrong\n"}"#,
         r#"{"tool":"write_file","path":"main.py","content":"right\n"}"#,
-        r#"{"status":"accepted","content":"completed"}"#,
+        r#"{"summary":"completed"}"#,
     ]);
     let runner = ProviderRoleRunner::new(&provider);
 
@@ -221,7 +220,7 @@ fn structured_target_files_control_tool_permissions_not_objective_text() {
     let (_temp, view) = make_view("structured-target-permissions");
     let provider = ScriptedProvider::from_strs(&[
         r#"{"tool":"write_file","path":"prompt.txt","content":"wrong\n"}"#,
-        r#"{"status":"accepted","content":"completed without writing prompt target"}"#,
+        r#"{"summary":"completed without writing prompt target"}"#,
     ]);
     let runner = ProviderRoleRunner::new(&provider);
 

@@ -208,8 +208,8 @@ fn prompt_schema_uses_descriptions_instead_of_placeholder_examples() {
         &[],
     );
     assert!(
-        base.contains("Accepted: `status` must be \"accepted\""),
-        "role prompt must describe accepted response; got:\n{base}"
+        base.contains("`summary` must be a non-empty task-specific string"),
+        "role prompt must describe the summary response; got:\n{base}"
     );
     assert!(
         !base.contains('$'),
@@ -231,8 +231,8 @@ fn prompt_schema_uses_descriptions_instead_of_placeholder_examples() {
 
     let retry = render_retry_prompt(&base, "parse error", true);
     assert!(
-        retry.contains("Accepted: `status` must be \"accepted\""),
-        "retry prompt must describe accepted response; got:\n{retry}"
+        retry.contains("`summary` must be a non-empty task-specific string"),
+        "retry prompt must describe the summary response; got:\n{retry}"
     );
     assert!(
         !retry.contains('$'),
@@ -301,10 +301,10 @@ fn planner_prompt_does_not_show_status_content_schema() {
 }
 
 #[test]
-fn worker_producer_uses_accepted_only_schema() {
-    // The Work-node Producer implements; it never rejects. Only Critic and
-    // Referee may reject, so the rejected schema must never reach the Producer.
-    let provider = ScriptedProvider::from_strs(&[r#"{"status":"accepted","content":"completed"}"#]);
+fn worker_producer_uses_summary_only_schema() {
+    // The Work-node Producer implements; it never rejects, so its schema has
+    // no status/content/reason wrapper — just a `summary` field.
+    let provider = ScriptedProvider::from_strs(&[r#"{"summary":"completed"}"#]);
     let runner = ProviderRoleRunner::new(&provider);
 
     runner.run_role(
@@ -315,16 +315,12 @@ fn worker_producer_uses_accepted_only_schema() {
     let requests = provider.requests.borrow();
     let prompt = &requests[0].prompt;
     assert!(
-        prompt.contains("`status`"),
-        "worker prompt must still contain status/content schema; got:\n{prompt}"
+        prompt.contains("`summary`"),
+        "worker prompt must describe the summary schema; got:\n{prompt}"
     );
     assert!(
-        prompt.contains("Accepted: `status` must be \"accepted\""),
-        "worker prompt must describe accepted schema; got:\n{prompt}"
-    );
-    assert!(
-        !prompt.contains("Rejected: `status` must be \"rejected\""),
-        "Work-node Producer prompt must never offer the rejected schema; got:\n{prompt}"
+        !prompt.contains("`status`"),
+        "Work-node Producer prompt must never contain the status/content schema; got:\n{prompt}"
     );
     assert!(
         !prompt.contains("\"rejected\""),

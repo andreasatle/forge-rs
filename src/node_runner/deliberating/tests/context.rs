@@ -56,11 +56,11 @@ fn artifact_view_context_is_visible_to_deliberation_prompt() {
     // Critic and Referee are Work reviewers and must call read_file before
     // accepting.  Add read_file("hello.txt") calls for each reviewer.
     let provider = RecordingProvider::from_strs(&[
-        r#"{"status":"accepted","content":"draft output"}"#,
+        r#"{"summary":"draft output"}"#,
         r#"{"tool":"read_file","path":"hello.txt"}"#,
-        r#"{"status":"accepted","content":"review ok"}"#,
+        r#"{"summary":"review ok"}"#,
         r#"{"tool":"read_file","path":"hello.txt"}"#,
-        r#"{"status":"accepted","content":"approved"}"#,
+        r#"{"summary":"approved"}"#,
     ]);
     let runner = DeliberatingNodeRunner::new(&provider, &provider);
     let request = NodeRunRequest {
@@ -95,11 +95,11 @@ fn context_file_content_is_included_in_prompt_when_present() {
     let view = make_artifact_view(&temp, "README.md", "This is the README.\n");
 
     let provider = RecordingProvider::from_strs(&[
-        r#"{"status":"accepted","content":"draft output"}"#,
+        r#"{"summary":"draft output"}"#,
         r#"{"tool":"read_file","path":"README.md"}"#,
-        r#"{"status":"accepted","content":"review ok"}"#,
+        r#"{"summary":"review ok"}"#,
         r#"{"tool":"read_file","path":"README.md"}"#,
-        r#"{"status":"accepted","content":"approved"}"#,
+        r#"{"summary":"approved"}"#,
     ]);
     let runner = DeliberatingNodeRunner::new(&provider, &provider)
         .with_context_file_names(vec!["README.md".to_string()]);
@@ -135,11 +135,11 @@ fn absent_context_file_is_silently_omitted_from_prompt() {
     let view = make_artifact_view(&temp, "hello.txt", "world\n");
 
     let provider = RecordingProvider::from_strs(&[
-        r#"{"status":"accepted","content":"draft output"}"#,
+        r#"{"summary":"draft output"}"#,
         r#"{"tool":"read_file","path":"hello.txt"}"#,
-        r#"{"status":"accepted","content":"review ok"}"#,
+        r#"{"summary":"review ok"}"#,
         r#"{"tool":"read_file","path":"hello.txt"}"#,
-        r#"{"status":"accepted","content":"approved"}"#,
+        r#"{"summary":"approved"}"#,
     ]);
     // Ask for README.md which does not exist in this artifact.
     let runner = DeliberatingNodeRunner::new(&provider, &provider)
@@ -172,11 +172,11 @@ fn no_context_file_names_produces_no_extra_content() {
     let view = make_artifact_view(&temp, "hello.txt", "world\n");
 
     let provider = RecordingProvider::from_strs(&[
-        r#"{"status":"accepted","content":"draft output"}"#,
+        r#"{"summary":"draft output"}"#,
         r#"{"tool":"read_file","path":"hello.txt"}"#,
-        r#"{"status":"accepted","content":"review ok"}"#,
+        r#"{"summary":"review ok"}"#,
         r#"{"tool":"read_file","path":"hello.txt"}"#,
-        r#"{"status":"accepted","content":"approved"}"#,
+        r#"{"summary":"approved"}"#,
     ]);
     let runner = DeliberatingNodeRunner::new(&provider, &provider);
     let request = NodeRunRequest {

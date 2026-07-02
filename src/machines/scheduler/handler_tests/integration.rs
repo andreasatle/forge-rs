@@ -315,14 +315,14 @@ fn revision_exhaustion_records_final_work_attempt_evidence_before_cleanup() {
     let provider = SchedulerScriptedProvider::from_strs(&[
         // Round 1: write v1, review it, and request a revision.
         r#"{"tool":"write_file","path":"output.txt","content":"draft v1\n"}"#,
-        r#"{"status":"accepted","content":"draft v1"}"#,
+        r#"{"summary":"draft v1"}"#,
         r#"{"tool":"read_file","path":"output.txt"}"#,
         r#"{"status":"accepted","content":"reviewed draft v1"}"#,
         r#"{"tool":"read_file","path":"output.txt"}"#,
         r#"{"status":"rejected","reason":"needs a stronger ending"}"#,
         // Round 2: revise the same WorkAttempt workspace, then reject terminally.
         r#"{"tool":"write_file","path":"output.txt","content":"draft v2\n"}"#,
-        r#"{"status":"accepted","content":"draft v2"}"#,
+        r#"{"summary":"draft v2"}"#,
         r#"{"tool":"read_file","path":"output.txt"}"#,
         r#"{"status":"accepted","content":"reviewed draft v2"}"#,
         r#"{"tool":"read_file","path":"output.txt"}"#,
@@ -404,14 +404,14 @@ fn deliberation_revision_stays_inside_single_scheduler_attempt_until_acceptance(
     let provider = SchedulerScriptedProvider::from_strs(&[
         // Round 1: write v1, then Referee requests an internal deliberation revision.
         r#"{"tool":"write_file","path":"output.txt","content":"draft v1\n"}"#,
-        r#"{"status":"accepted","content":"draft v1"}"#,
+        r#"{"summary":"draft v1"}"#,
         r#"{"tool":"read_file","path":"output.txt"}"#,
         r#"{"status":"accepted","content":"reviewed draft v1"}"#,
         r#"{"tool":"read_file","path":"output.txt"}"#,
         r#"{"status":"rejected","reason":"needs revision"}"#,
         // Round 2: revise and accept without creating a scheduler retry node.
         r#"{"tool":"write_file","path":"output.txt","content":"draft v2\n"}"#,
-        r#"{"status":"accepted","content":"draft v2"}"#,
+        r#"{"summary":"draft v2"}"#,
         r#"{"tool":"read_file","path":"output.txt"}"#,
         r#"{"status":"accepted","content":"reviewed draft v2"}"#,
         r#"{"tool":"read_file","path":"output.txt"}"#,
