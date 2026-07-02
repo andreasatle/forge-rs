@@ -61,21 +61,16 @@ mod tests {
     }
 
     #[test]
-    fn extract_ignores_trailing_newline() {
-        assert_eq!(extract_json_object("{\"a\":1}\n"), Some("{\"a\":1}"));
-    }
+    fn extract_ignores_trailing_content() {
+        let cases = [
+            ("newline", "{\"a\":1}\n"),
+            ("spaces and tabs", "{\"a\":1}  \t  "),
+            ("provider artifact", "{\"a\":1}\nsome trailing text"),
+        ];
 
-    #[test]
-    fn extract_ignores_trailing_spaces_and_tabs() {
-        assert_eq!(extract_json_object("{\"a\":1}  \t  "), Some("{\"a\":1}"));
-    }
-
-    #[test]
-    fn extract_ignores_trailing_provider_artifact() {
-        assert_eq!(
-            extract_json_object("{\"a\":1}\nsome trailing text"),
-            Some("{\"a\":1}")
-        );
+        for (name, input) in cases {
+            assert_eq!(extract_json_object(input), Some("{\"a\":1}"), "{name}");
+        }
     }
 
     #[test]
