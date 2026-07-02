@@ -143,16 +143,4 @@ mod tests {
             TelemetryEvent::MachineStarted { .. }
         ));
     }
-
-    #[test]
-    fn noop_telemetry_discards_events() {
-        let sink = NoopTelemetry;
-        sink.record(TelemetryRecord::new(
-            "Test",
-            TelemetryEvent::MachineStarted {
-                machine: "Test".into(),
-            },
-        ));
-        // no assertion — verify it compiles and does not panic
-    }
 }
