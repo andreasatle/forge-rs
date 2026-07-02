@@ -811,34 +811,68 @@ mod tests {
     // ── matches_name_glob unit tests ──────────────────────────────────────────
 
     #[test]
-    fn matches_name_glob_exact_when_no_wildcard() {
-        // Invariant: without *, the pattern is an exact name match.
-        assert!(matches_name_glob("foo.py", "foo.py"));
-        assert!(!matches_name_glob("foo.py", "bar.py"));
-    }
+    fn matches_name_glob_handles_supported_patterns() {
+        let cases = [
+            ("exact match", "foo.py", "foo.py", true),
+            ("exact mismatch", "foo.py", "bar.py", false),
+            (
+                "prefix wildcard first match",
+                "test_*.py",
+                "test_foo.py",
+                true,
+            ),
+            (
+                "prefix wildcard second match",
+                "test_*.py",
+                "test_main.py",
+                true,
+            ),
+            (
+                "prefix wildcard missing prefix",
+                "test_*.py",
+                "main.py",
+                false,
+            ),
+            (
+                "prefix wildcard wrong suffix position",
+                "test_*.py",
+                "foo_test.py",
+                false,
+            ),
+            (
+                "suffix wildcard first match",
+                "*_test.py",
+                "main_test.py",
+                true,
+            ),
+            (
+                "suffix wildcard second match",
+                "*_test.py",
+                "foo_test.py",
+                true,
+            ),
+            (
+                "suffix wildcard wrong prefix position",
+                "*_test.py",
+                "test_main.py",
+                false,
+            ),
+            (
+                "suffix wildcard missing suffix",
+                "*_test.py",
+                "main.py",
+                false,
+            ),
+            ("full wildcard python file", "*", "anything.py", true),
+            ("full wildcard markdown file", "*", "README.md", true),
+        ];
 
-    #[test]
-    fn matches_name_glob_prefix_pattern() {
-        // Invariant: test_*.py matches any file starting with test_ and ending .py.
-        assert!(matches_name_glob("test_*.py", "test_foo.py"));
-        assert!(matches_name_glob("test_*.py", "test_main.py"));
-        assert!(!matches_name_glob("test_*.py", "main.py"));
-        assert!(!matches_name_glob("test_*.py", "foo_test.py"));
-    }
-
-    #[test]
-    fn matches_name_glob_suffix_pattern() {
-        // Invariant: *_test.py matches any file ending with _test.py.
-        assert!(matches_name_glob("*_test.py", "main_test.py"));
-        assert!(matches_name_glob("*_test.py", "foo_test.py"));
-        assert!(!matches_name_glob("*_test.py", "test_main.py"));
-        assert!(!matches_name_glob("*_test.py", "main.py"));
-    }
-
-    #[test]
-    fn matches_name_glob_full_wildcard_matches_any_name() {
-        // Invariant: * alone matches any filename.
-        assert!(matches_name_glob("*", "anything.py"));
-        assert!(matches_name_glob("*", "README.md"));
+        for (name, pattern, file_name, expected) in cases {
+            assert_eq!(
+                matches_name_glob(pattern, file_name),
+                expected,
+                "{name}: pattern={pattern:?}, file_name={file_name:?}"
+            );
+        }
     }
 }
