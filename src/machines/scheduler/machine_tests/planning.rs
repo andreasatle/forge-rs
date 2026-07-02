@@ -39,7 +39,7 @@ fn plan_node_creates_work_child() {
                     kind: NodeKind::Work,
                     objective: "child work".to_string(),
                     target_files: vec![],
-                    required_test_targets: vec![],
+                    required_validation_targets: vec![],
                     dependencies: vec![NodeId("P".to_string())],
                     validation_plan: None,
                 }],
@@ -77,7 +77,7 @@ fn plan_with_unknown_dependency_fails_scheduler() {
                     kind: NodeKind::Work,
                     objective: "child work".to_string(),
                     target_files: vec![],
-                    required_test_targets: vec![],
+                    required_validation_targets: vec![],
                     dependencies: vec![NodeId("missing".to_string())],
                     validation_plan: None,
                 }],
@@ -124,7 +124,7 @@ fn plan_with_valid_dependencies_still_succeeds() {
                     kind: NodeKind::Work,
                     objective: "child work".to_string(),
                     target_files: vec![],
-                    required_test_targets: vec![],
+                    required_validation_targets: vec![],
                     dependencies: vec![NodeId("P".to_string())],
                     validation_plan: None,
                 }],
@@ -163,7 +163,7 @@ fn sibling_dependencies_are_resolved_to_graph_ids() {
                         kind: NodeKind::Work,
                         objective: "step A".to_string(),
                         target_files: vec![],
-                        required_test_targets: vec![],
+                        required_validation_targets: vec![],
                         dependencies: vec![],
                         validation_plan: None,
                     },
@@ -172,7 +172,7 @@ fn sibling_dependencies_are_resolved_to_graph_ids() {
                         kind: NodeKind::Work,
                         objective: "step B".to_string(),
                         target_files: vec![],
-                        required_test_targets: vec![],
+                        required_validation_targets: vec![],
                         dependencies: vec![NodeId("A".to_string())],
                         validation_plan: None,
                     },
@@ -250,7 +250,7 @@ fn planner_can_create_two_work_nodes_with_dependency() {
                         kind: NodeKind::Work,
                         objective: "write tests".to_string(),
                         target_files: vec![],
-                        required_test_targets: vec![],
+                        required_validation_targets: vec![],
                         dependencies: vec![],
                         validation_plan: None,
                     },
@@ -259,7 +259,7 @@ fn planner_can_create_two_work_nodes_with_dependency() {
                         kind: NodeKind::Work,
                         objective: "implement feature".to_string(),
                         target_files: vec![],
-                        required_test_targets: vec![],
+                        required_validation_targets: vec![],
                         dependencies: vec![NodeId("write-tests".to_string())],
                         validation_plan: None,
                     },
@@ -415,7 +415,7 @@ fn source_work_dispatch_includes_planned_dependent_test_targets() {
         nodes: vec![
             Node {
                 target_files: vec!["main.py".to_string()],
-                required_test_targets: vec!["test_main.py".to_string()],
+                required_validation_targets: vec!["test_main.py".to_string()],
                 ..work_node("source", "implement fibonacci", &[])
             },
             Node {
@@ -447,7 +447,7 @@ fn source_work_dispatch_includes_planned_dependent_test_targets() {
         panic!("expected RunNode effect, got {:?}", t.effects);
     };
     assert_eq!(
-        test_plan_context.required_test_targets,
+        test_plan_context.required_validation_targets,
         vec!["test_main.py".to_string()]
     );
     assert_eq!(
@@ -461,7 +461,7 @@ fn source_work_dispatch_without_planned_test_target_reports_gap() {
     let graph = RunGraph {
         nodes: vec![Node {
             target_files: vec!["main.py".to_string()],
-            required_test_targets: vec!["test_main.py".to_string()],
+            required_validation_targets: vec!["test_main.py".to_string()],
             ..work_node("source", "implement fibonacci", &[])
         }],
         next_id: 0,
@@ -484,7 +484,7 @@ fn source_work_dispatch_without_planned_test_target_reports_gap() {
         panic!("expected RunNode effect, got {:?}", t.effects);
     };
     assert_eq!(
-        test_plan_context.required_test_targets,
+        test_plan_context.required_validation_targets,
         vec!["test_main.py".to_string()]
     );
     assert!(
@@ -514,7 +514,7 @@ fn ordinary_missing_dependency_still_reports_unknown_node() {
                     kind: NodeKind::Work,
                     objective: "step".to_string(),
                     target_files: vec![],
-                    required_test_targets: vec![],
+                    required_validation_targets: vec![],
                     dependencies: vec![NodeId("ghost".to_string())],
                     validation_plan: None,
                 }],

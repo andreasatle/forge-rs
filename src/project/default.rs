@@ -1,9 +1,7 @@
 //! Default project adapter — reproduces the hardcoded behaviour exactly.
 
-use super::{ProjectAdapter, build_file_text_target_views};
-use crate::artifacts::ArtifactRead;
-use crate::machines::deliberation::DeliberationRole;
-use crate::roles::{RolePolicy, TargetView};
+use super::ProjectAdapter;
+use crate::roles::RolePolicy;
 
 /// A [`ProjectAdapter`] that returns [`RolePolicy::default()`].
 ///
@@ -14,16 +12,6 @@ pub struct DefaultProjectAdapter;
 impl ProjectAdapter for DefaultProjectAdapter {
     fn role_policy(&self) -> RolePolicy {
         RolePolicy::default()
-    }
-
-    fn build_target_views(
-        &self,
-        artifact_view: &dyn ArtifactRead,
-        targets: &[String],
-        _role: &DeliberationRole,
-        budget: usize,
-    ) -> Vec<TargetView> {
-        build_file_text_target_views(artifact_view, targets, budget)
     }
 }
 

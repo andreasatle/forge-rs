@@ -40,7 +40,7 @@ pub(super) fn apply_retry(
         kind,
         objective,
         target_files,
-        required_test_targets,
+        required_validation_targets,
         deps,
         attempt,
         plan_depth,
@@ -52,7 +52,7 @@ pub(super) fn apply_retry(
             n.kind.clone(),
             n.objective.clone(),
             n.target_files.clone(),
-            n.required_test_targets.clone(),
+            n.required_validation_targets.clone(),
             n.dependencies.clone(),
             n.attempt,
             n.plan_depth,
@@ -71,7 +71,7 @@ pub(super) fn apply_retry(
         kind,
         objective,
         target_files,
-        required_test_targets,
+        required_validation_targets,
         dependencies: deps,
         status: NodeStatus::Pending,
         attempt: attempt + 1,
@@ -148,11 +148,11 @@ fn concise_retry_diagnostics(message: &str) -> String {
 }
 
 pub(super) fn apply_split(graph: RunGraph, node_id: &NodeId, message: String) -> RunGraph {
-    let (target_files, required_test_targets, deps, attempt, plan_depth) = {
+    let (target_files, required_validation_targets, deps, attempt, plan_depth) = {
         let n = get_node(&graph, node_id);
         (
             n.target_files.clone(),
-            n.required_test_targets.clone(),
+            n.required_validation_targets.clone(),
             n.dependencies.clone(),
             n.attempt,
             n.plan_depth + 1,
@@ -165,7 +165,7 @@ pub(super) fn apply_split(graph: RunGraph, node_id: &NodeId, message: String) ->
         kind: NodeKind::Plan,
         objective: message,
         target_files,
-        required_test_targets,
+        required_validation_targets,
         dependencies: deps,
         status: NodeStatus::Pending,
         attempt: attempt + 1,
@@ -188,7 +188,7 @@ pub(super) fn apply_elevate(graph: RunGraph, node_id: &NodeId) -> RunGraph {
         kind,
         objective,
         target_files,
-        required_test_targets,
+        required_validation_targets,
         deps,
         attempt,
         plan_depth,
@@ -199,7 +199,7 @@ pub(super) fn apply_elevate(graph: RunGraph, node_id: &NodeId) -> RunGraph {
             n.kind.clone(),
             n.objective.clone(),
             n.target_files.clone(),
-            n.required_test_targets.clone(),
+            n.required_validation_targets.clone(),
             n.dependencies.clone(),
             n.attempt,
             n.plan_depth,
@@ -212,7 +212,7 @@ pub(super) fn apply_elevate(graph: RunGraph, node_id: &NodeId) -> RunGraph {
         kind,
         objective,
         target_files,
-        required_test_targets,
+        required_validation_targets,
         dependencies: deps,
         status: NodeStatus::Pending,
         attempt: attempt + 1,

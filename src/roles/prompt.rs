@@ -281,7 +281,7 @@ pub(super) fn render_completion_pressure_retry_prompt(
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct NodeReviewContract {
     pub(super) target_files: Vec<String>,
-    pub(super) required_test_targets: Vec<String>,
+    pub(super) required_validation_targets: Vec<String>,
     pub(super) planned_follow_up_targets: Vec<String>,
     pub(super) covered_test_targets: Vec<String>,
     pub(super) missing_test_targets: Vec<String>,
@@ -306,13 +306,13 @@ impl NodeReviewContract {
             .map(String::as_str)
             .collect::<std::collections::HashSet<_>>();
         let covered_test_targets = test_plan_context
-            .required_test_targets
+            .required_validation_targets
             .iter()
             .filter(|target| planned_set.contains(target.as_str()))
             .cloned()
             .collect::<Vec<_>>();
         let missing_test_targets = test_plan_context
-            .required_test_targets
+            .required_validation_targets
             .iter()
             .filter(|target| !planned_set.contains(target.as_str()))
             .cloned()
@@ -320,7 +320,7 @@ impl NodeReviewContract {
 
         Some(Self {
             target_files: target_files.to_vec(),
-            required_test_targets: test_plan_context.required_test_targets.clone(),
+            required_validation_targets: test_plan_context.required_validation_targets.clone(),
             planned_follow_up_targets: test_plan_context.planned_test_targets.clone(),
             covered_test_targets,
             missing_test_targets,
@@ -381,7 +381,11 @@ pub(super) fn render_role_prompt_with_test_plan_context(input: RolePromptRender<
     }
     if let Some(contract) = input.review_contract {
         parts.push(render_node_review_contract(contract));
-    } else if !input.test_plan_context.required_test_targets.is_empty() {
+    } else if !input
+        .test_plan_context
+        .required_validation_targets
+        .is_empty()
+    {
         parts.push(render_test_plan_context(input.test_plan_context));
     }
     if let Some(pc) = input.producer_content {
@@ -447,7 +451,7 @@ pub(super) fn render_node_review_contract(contract: &NodeReviewContract) -> Stri
         ),
         format!(
             "Adapter-required test targets for current target files: {}",
-            render_list_or_none(&contract.required_test_targets)
+            render_list_or_none(&contract.required_validation_targets)
         ),
         format!(
             "Declared follow-up/dependent target files: {}",
@@ -505,20 +509,20 @@ fn render_list_or_none(items: &[String]) -> String {
 }
 
 pub(super) fn render_test_plan_context(context: &TestPlanContext) -> String {
-    let required = context.required_test_targets.join(", ");
+    let required = context.required_validation_targets.join(", ");
     let planned_set = context
         .planned_test_targets
         .iter()
         .map(String::as_str)
         .collect::<std::collections::HashSet<_>>();
     let covered = context
-        .required_test_targets
+        .required_validation_targets
         .iter()
         .filter(|target| planned_set.contains(target.as_str()))
         .cloned()
         .collect::<Vec<_>>();
     let missing = context
-        .required_test_targets
+        .required_validation_targets
         .iter()
         .filter(|target| !planned_set.contains(target.as_str()))
         .cloned()

@@ -58,7 +58,7 @@ pub struct NodeRequest {
     ///
     /// Planners normally leave this empty; runner-side plan stamping fills it
     /// from project adapter metadata before the scheduler inserts the node.
-    pub required_test_targets: Vec<String>,
+    pub required_validation_targets: Vec<String>,
     /// Nodes that must complete before this node is eligible to run.
     pub dependencies: Vec<NodeId>,
     /// The validation contract to attach to the new node.

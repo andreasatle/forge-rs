@@ -34,13 +34,19 @@ pub trait ProjectAdapter {
     /// `budget` is the maximum number of bytes the framework is willing to
     /// include per file in the text representation. Adapters may respect it or
     /// apply their own limit.
+    ///
+    /// The default projects each target as full text (subject to `budget`)
+    /// via [`build_file_text_target_views`]. Adapters override this to supply
+    /// a project-specific representation.
     fn build_target_views(
         &self,
         artifact_view: &dyn ArtifactRead,
         targets: &[String],
-        role: &DeliberationRole,
+        _role: &DeliberationRole,
         budget: usize,
-    ) -> Vec<TargetView>;
+    ) -> Vec<TargetView> {
+        build_file_text_target_views(artifact_view, targets, budget)
+    }
 
     /// Returns artifact file names whose contents should be included as
     /// ambient context in the deliberation objective.
@@ -65,7 +71,7 @@ pub trait ProjectAdapter {
     /// The default returns an empty list, meaning no tests are required.
     /// Adapters for coding projects override this to encode their test-file
     /// naming conventions.
-    fn required_test_targets(&self, _targets: &[String]) -> Vec<String> {
+    fn required_validation_targets(&self, _targets: &[String]) -> Vec<String> {
         vec![]
     }
 }
@@ -199,12 +205,12 @@ mod tests {
         );
     }
 
-    // ── ProjectAdapter::required_test_targets ────────────────────────────────
+    // ── ProjectAdapter::required_validation_targets ────────────────────────────────
 
     #[test]
-    fn default_adapter_requires_no_test_targets() {
+    fn default_adapter_requires_no_validation_targets() {
         let targets = vec!["main.py".to_string(), "utils.rs".to_string()];
-        let result = DefaultProjectAdapter.required_test_targets(&targets);
+        let result = DefaultProjectAdapter.required_validation_targets(&targets);
         assert!(
             result.is_empty(),
             "DefaultProjectAdapter must require no test targets; got: {result:?}"

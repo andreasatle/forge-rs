@@ -44,7 +44,7 @@ impl NodeRunner for StaticNodeRunner {
                     kind: NodeKind::Work,
                     objective: format!("work for: {}", request.objective),
                     target_files: vec![],
-                    required_test_targets: vec![],
+                    required_validation_targets: vec![],
                     dependencies: vec![],
                     validation_plan: None,
                 }],

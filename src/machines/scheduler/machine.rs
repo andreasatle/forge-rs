@@ -115,7 +115,7 @@ impl SchedulerMachine {
             kind: NodeKind::Plan,
             objective: request.objective,
             target_files: vec![],
-            required_test_targets: vec![],
+            required_validation_targets: vec![],
             dependencies: vec![],
             status: NodeStatus::Pending,
             attempt: 0,

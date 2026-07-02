@@ -61,8 +61,9 @@ fn fast_plan_bypasses_provider_and_emits_telemetry() {
 #[test]
 fn fast_plan_with_tests_required_adds_test_task_and_emits_telemetry() {
     let provider = ScriptedProvider::from_strs(&[]);
-    let runner = DeliberatingNodeRunner::new(&provider, &provider)
-        .with_required_test_targets_fn(Arc::new(|t| CodingProjectAdapter.required_test_targets(t)));
+    let runner = DeliberatingNodeRunner::new(&provider, &provider).with_required_test_targets_fn(
+        Arc::new(|t| CodingProjectAdapter.required_validation_targets(t)),
+    );
     let telemetry = crate::telemetry::VecTelemetry::new();
     let result = runner.run_node(
         NodeRunRequest {

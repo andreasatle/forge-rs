@@ -176,7 +176,8 @@ impl<C, S> DeliberatingNodeRunner<C, S> {
     ) -> crate::machines::scheduler::PlanOutput {
         for child in &mut plan.children {
             if child.kind == NodeKind::Work {
-                child.required_test_targets = (self.required_test_targets_fn)(&child.target_files);
+                child.required_validation_targets =
+                    (self.required_test_targets_fn)(&child.target_files);
             }
             if self.validation_plan.is_some() && child.kind == NodeKind::Work {
                 child.validation_plan = self.validation_plan.clone();

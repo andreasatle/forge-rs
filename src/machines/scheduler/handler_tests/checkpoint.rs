@@ -175,7 +175,7 @@ fn checkpoint_load_round_trip() {
                     kind: NodeKind::Work,
                     objective: "do A".to_string(),
                     target_files: vec![],
-                    required_test_targets: vec![],
+                    required_validation_targets: vec![],
                     dependencies: vec![],
                     status: NodeStatus::Completed,
                     attempt: 0,

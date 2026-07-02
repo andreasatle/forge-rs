@@ -71,7 +71,7 @@ fn scheduler_terminal_output_includes_integration_failure_reason() {
             kind: NodeKind::Work,
             objective: "integrate this step".to_string(),
             target_files: vec![],
-            required_test_targets: vec![],
+            required_validation_targets: vec![],
             dependencies: vec![],
             status: NodeStatus::Integrating,
             attempt: 0,

@@ -998,7 +998,7 @@ fn run_role_effect_carries_node_kind_and_test_plan_context() {
     // execute it. A reader with just the effect must be able to predict the
     // RoleRequest that will be built from it.
     let test_plan_context = TestPlanContext {
-        required_test_targets: vec!["tests/foo_test.rs".to_string()],
+        required_validation_targets: vec!["tests/foo_test.rs".to_string()],
         planned_test_targets: vec!["tests/bar_test.rs".to_string()],
     };
     let effect = DeliberationEffect::RunRole {

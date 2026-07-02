@@ -44,7 +44,7 @@ fn plan_expansion_stamps_validation_plan_onto_work_children() {
                     kind: NodeKind::Work,
                     objective: "do the work".to_string(),
                     target_files: vec![],
-                    required_test_targets: vec![],
+                    required_validation_targets: vec![],
                     dependencies: vec![],
                     validation_plan: Some(plan.clone()),
                 }],

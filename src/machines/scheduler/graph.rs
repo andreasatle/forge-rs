@@ -52,13 +52,13 @@ pub enum NodeKind {
 
 /// Structured test-target context for a work node.
 ///
-/// `required_test_targets` is the adapter-derived contract attached to source
+/// `required_validation_targets` is the adapter-derived contract attached to source
 /// nodes. `planned_test_targets` is computed from graph dependency metadata at
 /// dispatch time and tells reviewers whether tests are scheduled separately.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TestPlanContext {
     /// Test targets required for the node's own structured target files.
-    pub required_test_targets: Vec<String>,
+    pub required_validation_targets: Vec<String>,
     /// Targets scheduled in nodes that depend on this node, directly or transitively.
     pub planned_test_targets: Vec<String>,
 }
@@ -174,7 +174,7 @@ pub struct Node {
     /// This is structured planner/adapter metadata. It is not inferred from
     /// objective text and is preserved across retries and model escalation.
     #[serde(default)]
-    pub required_test_targets: Vec<String>,
+    pub required_validation_targets: Vec<String>,
     /// Nodes that must be `Completed` before this node is eligible to run.
     /// The scheduler will not dispatch a node until all listed dependencies are
     /// in the `Completed` state.
@@ -308,7 +308,7 @@ pub(super) fn graph_has_capacity(graph: &RunGraph, additional_nodes: usize) -> b
 pub(super) fn test_plan_context_for_node(graph: &RunGraph, node_id: &NodeId) -> TestPlanContext {
     let node = get_node(graph, node_id);
     TestPlanContext {
-        required_test_targets: node.required_test_targets.clone(),
+        required_validation_targets: node.required_validation_targets.clone(),
         planned_test_targets: downstream_target_files(graph, node_id),
     }
 }
@@ -359,7 +359,7 @@ pub(super) fn validate_required_tests_completed(graph: &RunGraph) -> Result<(), 
         .iter()
         .filter(|node| node.kind == NodeKind::Work && node.status == NodeStatus::Completed)
     {
-        for required in &node.required_test_targets {
+        for required in &node.required_validation_targets {
             if !completed_targets.contains(required.as_str()) {
                 return Err(format!(
                     "required test target '{required}' for node {} was not completed",
@@ -516,7 +516,7 @@ pub(super) fn insert_children(
             kind: req.kind,
             objective: req.objective,
             target_files: req.target_files,
-            required_test_targets: req.required_test_targets,
+            required_validation_targets: req.required_validation_targets,
             dependencies,
             status: NodeStatus::Pending,
             attempt: 0,

@@ -170,7 +170,7 @@ fn reviewer_prompt_explains_tests_planned_separately() {
     let mut request = critic_request("implement fibonacci", "source updated");
     request.context.target_files = vec!["main.py".to_string()];
     request.test_plan_context = TestPlanContext {
-        required_test_targets: vec!["test_main.py".to_string()],
+        required_validation_targets: vec!["test_main.py".to_string()],
         planned_test_targets: vec!["test_main.py".to_string()],
     };
 
@@ -204,7 +204,7 @@ fn referee_prompt_explains_missing_planned_test_target_from_metadata() {
     );
     request.context.target_files = vec!["main.py".to_string()];
     request.test_plan_context = TestPlanContext {
-        required_test_targets: vec!["test_main.py".to_string()],
+        required_validation_targets: vec!["test_main.py".to_string()],
         planned_test_targets: vec![],
     };
 
@@ -234,7 +234,7 @@ fn source_only_node_with_planned_test_node_has_consistent_reviewer_contract() {
     );
     request.context.target_files = vec!["main.py".to_string()];
     request.test_plan_context = TestPlanContext {
-        required_test_targets: vec!["test_main.py".to_string()],
+        required_validation_targets: vec!["test_main.py".to_string()],
         planned_test_targets: vec!["test_main.py".to_string()],
     };
 
@@ -272,7 +272,7 @@ fn implementation_and_tests_node_can_still_reject_missing_tests() {
     );
     request.context.target_files = vec!["main.py".to_string(), "test_main.py".to_string()];
     request.test_plan_context = TestPlanContext {
-        required_test_targets: vec!["test_main.py".to_string()],
+        required_validation_targets: vec!["test_main.py".to_string()],
         planned_test_targets: vec![],
     };
 
@@ -312,7 +312,7 @@ fn reviewer_prompt_has_no_test_guidance_contradiction_when_tests_are_planned() {
     );
     request.context.target_files = vec!["main.py".to_string()];
     request.test_plan_context = TestPlanContext {
-        required_test_targets: vec!["test_main.py".to_string()],
+        required_validation_targets: vec!["test_main.py".to_string()],
         planned_test_targets: vec!["test_main.py".to_string()],
     };
 

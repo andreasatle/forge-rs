@@ -437,7 +437,7 @@ pub fn try_fast_plan(
         kind: NodeKind::Work,
         objective: objective.to_string(),
         target_files: vec![source.clone()],
-        required_test_targets: required_test_targets_fn(std::slice::from_ref(&source)),
+        required_validation_targets: required_test_targets_fn(std::slice::from_ref(&source)),
         dependencies: vec![],
         validation_plan: None,
     };
@@ -460,7 +460,7 @@ pub fn try_fast_plan(
                  {objective}"
             ),
             target_files: vec![test_target],
-            required_test_targets: vec![],
+            required_validation_targets: vec![],
             dependencies: vec![NodeId("work".to_string())],
             validation_plan: None,
         });
@@ -487,7 +487,7 @@ pub fn planner_output_to_plan_output(output: PlannerOutput) -> PlanOutput {
                 kind: NodeKind::Work,
                 objective: task.objective,
                 target_files: task.targets,
-                required_test_targets: vec![],
+                required_validation_targets: vec![],
                 dependencies: task.depends_on.into_iter().map(NodeId).collect(),
                 validation_plan: None,
             })
@@ -772,7 +772,7 @@ mod tests {
 
     fn python_tests(targets: &[String]) -> Vec<String> {
         use crate::project::{CodingProjectAdapter, ProjectAdapter};
-        CodingProjectAdapter.required_test_targets(targets)
+        CodingProjectAdapter.required_validation_targets(targets)
     }
 
     fn no_tests(_: &[String]) -> Vec<String> {

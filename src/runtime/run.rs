@@ -424,7 +424,7 @@ fn make_required_test_targets_fn(
     }
     match project.kind {
         ProjectKind::Coding => {
-            Arc::new(|targets| CodingProjectAdapter.required_test_targets(targets))
+            Arc::new(|targets| CodingProjectAdapter.required_validation_targets(targets))
         }
         ProjectKind::Default => Arc::new(|_| vec![]),
     }
@@ -1231,7 +1231,7 @@ mod tests {
                             kind: NodeKind::Work,
                             objective: "generate result.txt".to_string(),
                             target_files: vec![],
-                            required_test_targets: vec![],
+                            required_validation_targets: vec![],
                             dependencies: vec![],
                             validation_plan: None,
                         }],
@@ -1418,7 +1418,7 @@ mod tests {
                             kind: NodeKind::Work,
                             objective: "write result.txt".to_string(),
                             target_files: vec![],
-                            required_test_targets: vec![],
+                            required_validation_targets: vec![],
                             dependencies: vec![],
                             validation_plan: None,
                         }],
@@ -1500,7 +1500,7 @@ mod tests {
                             kind: NodeKind::Work,
                             objective: "write result.txt".to_string(),
                             target_files: vec![],
-                            required_test_targets: vec![],
+                            required_validation_targets: vec![],
                             dependencies: vec![],
                             validation_plan: None,
                         }],

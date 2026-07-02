@@ -184,8 +184,9 @@ fn planner_missing_test_target_sends_revision_feedback_and_retries() {
         r#"{"status":"accepted","content":"plan looks good"}"#, // Plan+Critic
         r#"{"status":"accepted","content":"plan approved"}"#, // Plan+Referee
     ]);
-    let runner = DeliberatingNodeRunner::new(&provider, &provider)
-        .with_required_test_targets_fn(Arc::new(|t| CodingProjectAdapter.required_test_targets(t)));
+    let runner = DeliberatingNodeRunner::new(&provider, &provider).with_required_test_targets_fn(
+        Arc::new(|t| CodingProjectAdapter.required_validation_targets(t)),
+    );
     let request = NodeRunRequest {
         kind: NodeKind::Plan,
         node_id: NodeId("test-node".to_string()),
@@ -224,8 +225,9 @@ fn planner_explicit_target_violation_sends_revision_feedback_and_retries() {
         r#"{"status":"accepted","content":"plan looks good"}"#, // Plan+Critic
         r#"{"status":"accepted","content":"plan approved"}"#, // Plan+Referee
     ]);
-    let runner = DeliberatingNodeRunner::new(&provider, &provider)
-        .with_required_test_targets_fn(Arc::new(|t| CodingProjectAdapter.required_test_targets(t)));
+    let runner = DeliberatingNodeRunner::new(&provider, &provider).with_required_test_targets_fn(
+        Arc::new(|t| CodingProjectAdapter.required_validation_targets(t)),
+    );
     let request = NodeRunRequest {
         kind: NodeKind::Plan,
         node_id: NodeId("test-node".to_string()),
