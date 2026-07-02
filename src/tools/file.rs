@@ -1070,207 +1070,145 @@ mod tests {
     // ── JSON parsing tests ───────────────────────────────────────────────────
 
     #[test]
-    fn parse_list_files_tool_request() {
-        let request = parse_tool_request(r#"{"tool":"list_files"}"#).unwrap();
-        assert_eq!(request, FileToolRequest::ListFiles);
+    fn parse_valid_tool_requests() {
+        let cases = [
+            (r#"{"tool":"list_files"}"#, FileToolRequest::ListFiles),
+            (
+                r#"{"tool":"read_file","path":"README.md"}"#,
+                FileToolRequest::ReadFile {
+                    path: "README.md".to_owned(),
+                },
+            ),
+            (
+                r#"{"tool":"write_file","path":"output.txt","content":"hello"}"#,
+                FileToolRequest::WriteFile {
+                    path: "output.txt".to_owned(),
+                    content: "hello".to_owned(),
+                },
+            ),
+            (
+                r#"{"tool":"replace_text","path":"output.txt","old":"hello","new":"goodbye"}"#,
+                FileToolRequest::ReplaceText {
+                    path: "output.txt".to_owned(),
+                    old: "hello".to_owned(),
+                    new: "goodbye".to_owned(),
+                },
+            ),
+            (
+                r#"{"tool":"delete_file","path":"old.txt"}"#,
+                FileToolRequest::DeleteFile {
+                    path: "old.txt".to_owned(),
+                },
+            ),
+            (
+                r#"{"tool":"write_file","path":"output.txt","content":"hello world"}"#,
+                FileToolRequest::WriteFile {
+                    path: "output.txt".to_owned(),
+                    content: "hello world".to_owned(),
+                },
+            ),
+            (
+                r#"{"tool":"replace_text","path":"f.txt","old":"hello","new":"goodbye"}"#,
+                FileToolRequest::ReplaceText {
+                    path: "f.txt".to_owned(),
+                    old: "hello".to_owned(),
+                    new: "goodbye".to_owned(),
+                },
+            ),
+        ];
+
+        for (json, expected) in cases {
+            assert_eq!(
+                parse_tool_request(json),
+                Ok(expected),
+                "failed to parse valid tool request: {json}"
+            );
+        }
     }
 
     #[test]
-    fn parse_read_file_tool_request() {
-        let request = parse_tool_request(r#"{"tool":"read_file","path":"README.md"}"#).unwrap();
-        assert_eq!(
-            request,
-            FileToolRequest::ReadFile {
-                path: "README.md".to_owned(),
+    fn parse_invalid_tool_requests() {
+        let cases = [
+            (
+                "unknown tool",
+                r#"{"tool":"run_shell","cmd":"rm -rf /"}"#,
+                None,
+            ),
+            ("malformed JSON", "not json", None),
+            (
+                "replace_text placeholder old",
+                r#"{"tool":"replace_text","path":"f.txt","old":"...","new":"x"}"#,
+                Some("placeholder"),
+            ),
+            (
+                "replace_text placeholder new",
+                r#"{"tool":"replace_text","path":"f.txt","old":"x","new":"..."}"#,
+                Some("placeholder"),
+            ),
+            (
+                "write_file placeholder content",
+                r#"{"tool":"write_file","path":"output.txt","content":"..."}"#,
+                Some("placeholder"),
+            ),
+            (
+                "write_file dollar placeholder path",
+                r#"{"tool":"write_file","path":"$TARGET_FILE","content":"real content"}"#,
+                Some("placeholder"),
+            ),
+            (
+                "write_file dollar placeholder content",
+                r#"{"tool":"write_file","path":"real.txt","content":"$FILE_CONTENT"}"#,
+                Some("placeholder"),
+            ),
+        ];
+
+        for (name, json, expected_error_fragment) in cases {
+            let error = parse_tool_request(json).expect_err(&format!("{name} must fail to parse"));
+            if let Some(fragment) = expected_error_fragment {
+                assert!(
+                    error.contains(fragment),
+                    "{name} error must contain {fragment:?}; got {error:?}"
+                );
             }
-        );
-    }
-
-    #[test]
-    fn parse_write_file_tool_request() {
-        let request =
-            parse_tool_request(r#"{"tool":"write_file","path":"output.txt","content":"hello"}"#)
-                .unwrap();
-        assert_eq!(
-            request,
-            FileToolRequest::WriteFile {
-                path: "output.txt".to_owned(),
-                content: "hello".to_owned(),
-            }
-        );
-    }
-
-    #[test]
-    fn parse_replace_text_tool_request() {
-        let request = parse_tool_request(
-            r#"{"tool":"replace_text","path":"output.txt","old":"hello","new":"goodbye"}"#,
-        )
-        .unwrap();
-        assert_eq!(
-            request,
-            FileToolRequest::ReplaceText {
-                path: "output.txt".to_owned(),
-                old: "hello".to_owned(),
-                new: "goodbye".to_owned(),
-            }
-        );
-    }
-
-    #[test]
-    fn parse_delete_file_tool_request() {
-        let request = parse_tool_request(r#"{"tool":"delete_file","path":"old.txt"}"#).unwrap();
-        assert_eq!(
-            request,
-            FileToolRequest::DeleteFile {
-                path: "old.txt".to_owned(),
-            }
-        );
-    }
-
-    #[test]
-    fn parse_unknown_tool_returns_error() {
-        let result = parse_tool_request(r#"{"tool":"run_shell","cmd":"rm -rf /"}"#);
-        assert!(result.is_err(), "unknown tool must fail to parse");
-    }
-
-    #[test]
-    fn parse_malformed_json_returns_error() {
-        let result = parse_tool_request("not json");
-        assert!(result.is_err(), "malformed JSON must fail to parse");
-    }
-
-    #[test]
-    fn parse_replace_text_with_placeholder_old_is_rejected() {
-        let result =
-            parse_tool_request(r#"{"tool":"replace_text","path":"f.txt","old":"...","new":"x"}"#);
-        assert!(
-            result.is_err(),
-            "replace_text with placeholder old must be rejected; got {result:?}"
-        );
-        assert!(
-            result.unwrap_err().contains("placeholder"),
-            "error must mention placeholder"
-        );
-    }
-
-    #[test]
-    fn parse_replace_text_with_placeholder_new_is_rejected() {
-        let result =
-            parse_tool_request(r#"{"tool":"replace_text","path":"f.txt","old":"x","new":"..."}"#);
-        assert!(
-            result.is_err(),
-            "replace_text with placeholder new must be rejected; got {result:?}"
-        );
-    }
-
-    #[test]
-    fn parse_write_file_with_placeholder_content_is_rejected() {
-        let result =
-            parse_tool_request(r#"{"tool":"write_file","path":"output.txt","content":"..."}"#);
-        assert!(
-            result.is_err(),
-            "write_file with placeholder content must be rejected; got {result:?}"
-        );
-    }
-
-    #[test]
-    fn parse_write_file_with_dollar_placeholder_path_is_rejected() {
-        let result = parse_tool_request(
-            r#"{"tool":"write_file","path":"$TARGET_FILE","content":"real content"}"#,
-        );
-        assert!(
-            result.is_err(),
-            "write_file with $TARGET_FILE path must be rejected; got {result:?}"
-        );
-        assert!(
-            result.unwrap_err().contains("placeholder"),
-            "error must mention placeholder"
-        );
-    }
-
-    #[test]
-    fn parse_write_file_with_dollar_placeholder_content_is_rejected() {
-        let result = parse_tool_request(
-            r#"{"tool":"write_file","path":"real.txt","content":"$FILE_CONTENT"}"#,
-        );
-        assert!(
-            result.is_err(),
-            "write_file with $FILE_CONTENT content must be rejected; got {result:?}"
-        );
-        assert!(
-            result.unwrap_err().contains("placeholder"),
-            "error must mention placeholder"
-        );
-    }
-
-    #[test]
-    fn parse_write_file_with_real_content_is_accepted() {
-        let result = parse_tool_request(
-            r#"{"tool":"write_file","path":"output.txt","content":"hello world"}"#,
-        );
-        assert!(
-            result.is_ok(),
-            "write_file with real content must parse successfully; got {result:?}"
-        );
-    }
-
-    #[test]
-    fn parse_replace_text_with_real_values_is_accepted() {
-        let result = parse_tool_request(
-            r#"{"tool":"replace_text","path":"f.txt","old":"hello","new":"goodbye"}"#,
-        );
-        assert!(
-            result.is_ok(),
-            "replace_text with real values must parse successfully; got {result:?}"
-        );
+        }
     }
 
     // ── trailing-whitespace robustness ───────────────────────────────────────
 
     #[test]
-    fn parse_tool_request_with_trailing_newline() {
-        let result = parse_tool_request("{\"tool\":\"list_files\"}\n");
-        assert!(
-            result.is_ok(),
-            "trailing newline must not cause parse failure; got {result:?}"
-        );
-        assert_eq!(result.unwrap(), FileToolRequest::ListFiles);
-    }
+    fn parse_tool_request_tolerates_surrounding_whitespace() {
+        let cases = [
+            (
+                "trailing newline",
+                "{\"tool\":\"list_files\"}\n",
+                FileToolRequest::ListFiles,
+            ),
+            (
+                "trailing spaces and tabs",
+                "{\"tool\":\"list_files\"}  \t  ",
+                FileToolRequest::ListFiles,
+            ),
+            (
+                "write_file trailing newlines",
+                "{\"tool\":\"write_file\",\"path\":\".gitignore\",\"content\":\"*.log\\n\"}\n\n",
+                FileToolRequest::WriteFile {
+                    path: ".gitignore".to_owned(),
+                    content: "*.log\n".to_owned(),
+                },
+            ),
+            (
+                "leading whitespace",
+                "  \n{\"tool\":\"list_files\"}",
+                FileToolRequest::ListFiles,
+            ),
+        ];
 
-    #[test]
-    fn parse_tool_request_with_trailing_spaces_and_tabs() {
-        let result = parse_tool_request("{\"tool\":\"list_files\"}  \t  ");
-        assert!(
-            result.is_ok(),
-            "trailing spaces/tabs must not cause parse failure; got {result:?}"
-        );
-        assert_eq!(result.unwrap(), FileToolRequest::ListFiles);
-    }
-
-    #[test]
-    fn parse_tool_request_with_trailing_newlines_write_file() {
-        let result = parse_tool_request(
-            "{\"tool\":\"write_file\",\"path\":\".gitignore\",\"content\":\"*.log\\n\"}\n\n",
-        );
-        assert!(
-            result.is_ok(),
-            "write_file with trailing newlines must parse; got {result:?}"
-        );
-        assert_eq!(
-            result.unwrap(),
-            FileToolRequest::WriteFile {
-                path: ".gitignore".to_owned(),
-                content: "*.log\n".to_owned(),
-            }
-        );
-    }
-
-    #[test]
-    fn parse_tool_request_with_leading_whitespace() {
-        let result = parse_tool_request("  \n{\"tool\":\"list_files\"}");
-        assert!(
-            result.is_ok(),
-            "leading whitespace must not cause parse failure; got {result:?}"
-        );
+        for (name, json, expected) in cases {
+            assert_eq!(
+                parse_tool_request(json),
+                Ok(expected),
+                "{name} must not cause parse failure"
+            );
+        }
     }
 }
