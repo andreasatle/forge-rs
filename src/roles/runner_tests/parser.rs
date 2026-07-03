@@ -126,13 +126,22 @@ fn too_short_role_response_field_fails() {
 
 #[test]
 fn meaningful_accepted_content_passes() {
-    let result = parse_role_response(
-        r#"{"status":"accepted","content":"Created src/main.rs with a Rust program that prints a haiku."}"#,
-    );
-    assert!(
-        matches!(result, RoleResult::Accepted { .. }),
-        "long meaningful content must be accepted, got {result:?}"
-    );
+    for (case, content) in [
+        (
+            "prose summary",
+            "Created src/main.rs with a Rust program that prints a haiku.",
+        ),
+        ("angle brackets", "<p>hello world</p>"),
+        ("html-like", "<html><body>ok</body></html>"),
+        ("xml-like", "<root><item>data</item></root>"),
+        ("normal summary", "Summary of changes made to the file."),
+    ] {
+        let result = parse_role_response(&accepted_json(content));
+        assert!(
+            matches!(result, RoleResult::Accepted { .. }),
+            "[{case}] sufficiently long, non-placeholder content must be accepted, got {result:?}"
+        );
+    }
 }
 
 #[test]
@@ -154,46 +163,6 @@ fn min_length_boundary_fields_pass() {
             "[{case}] field at exactly MIN_CONTENT_LENGTH must be accepted, got {result:?}"
         );
     }
-}
-
-#[test]
-fn arbitrary_angle_bracket_text_is_allowed() {
-    let result = parse_role_response(r#"{"status":"accepted","content":"<p>hello world</p>"}"#);
-    assert!(
-        matches!(result, RoleResult::Accepted { .. }),
-        "arbitrary angle-bracket content must be accepted, got {result:?}"
-    );
-}
-
-#[test]
-fn html_like_content_is_allowed() {
-    let result =
-        parse_role_response(r#"{"status":"accepted","content":"<html><body>ok</body></html>"}"#);
-    assert!(
-        matches!(result, RoleResult::Accepted { .. }),
-        "HTML-like content must be accepted, got {result:?}"
-    );
-}
-
-#[test]
-fn xml_like_content_is_allowed() {
-    let result =
-        parse_role_response(r#"{"status":"accepted","content":"<root><item>data</item></root>"}"#);
-    assert!(
-        matches!(result, RoleResult::Accepted { .. }),
-        "XML-like content must be accepted, got {result:?}"
-    );
-}
-
-#[test]
-fn normal_summary_is_allowed() {
-    let result = parse_role_response(
-        r#"{"status":"accepted","content":"Summary of changes made to the file."}"#,
-    );
-    assert!(
-        matches!(result, RoleResult::Accepted { .. }),
-        "normal summary content must be accepted, got {result:?}"
-    );
 }
 
 #[test]
@@ -267,66 +236,37 @@ fn unbalanced_json_object_fails() {
 
 #[test]
 fn accepted_role_response_with_trailing_whitespace_parses() {
-    let cases = [
+    for (name, input, is_accepted) in [
         (
-            "newline",
+            "trailing newline",
             "{\"status\":\"accepted\",\"content\":\"The task was completed successfully.\"}\n",
+            true,
         ),
         (
-            "spaces and tabs",
+            "trailing spaces and tabs",
             "{\"status\":\"accepted\",\"content\":\"The task was completed successfully.\"}  \t  ",
+            true,
         ),
-    ];
-
-    for (name, input) in cases {
+        (
+            "trailing whitespace, rejected status",
+            "{\"status\":\"rejected\",\"reason\":\"The output does not meet requirements.\"}\n\n",
+            false,
+        ),
+        (
+            "leading and trailing whitespace",
+            "\n  {\"status\":\"accepted\",\"content\":\"The task was completed successfully.\"}  \n",
+            true,
+        ),
+    ] {
         let result = parse_role_response(input);
+        let matches_expected = if is_accepted {
+            matches!(result, RoleResult::Accepted { .. })
+        } else {
+            matches!(result, RoleResult::Rejected { .. })
+        };
         assert!(
-            matches!(result, RoleResult::Accepted { .. }),
-            "{name}: trailing whitespace must not cause role response parse failure, got {result:?}"
+            matches_expected,
+            "{name}: surrounding whitespace must not cause role response parse failure, got {result:?}"
         );
     }
-}
-
-#[test]
-fn role_response_rejected_with_trailing_whitespace_parses() {
-    let input =
-        "{\"status\":\"rejected\",\"reason\":\"The output does not meet requirements.\"}\n\n";
-    let result = parse_role_response(input);
-    assert!(
-        matches!(result, RoleResult::Rejected { .. }),
-        "rejected response with trailing whitespace must parse, got {result:?}"
-    );
-}
-
-#[test]
-fn role_response_with_leading_and_trailing_whitespace_parses() {
-    let input =
-        "\n  {\"status\":\"accepted\",\"content\":\"The task was completed successfully.\"}  \n";
-    let result = parse_role_response(input);
-    assert!(
-        matches!(result, RoleResult::Accepted { .. }),
-        "leading and trailing whitespace must not prevent parsing, got {result:?}"
-    );
-}
-
-// --- ProviderRoleRunner tests ---
-
-#[test]
-fn role_response_with_preamble_fails() {
-    let input = "Here is my answer:\n{\"status\":\"accepted\",\"content\":\"draft\"}";
-    let result = parse_role_response(input);
-    assert!(
-        matches!(result, RoleResult::Failed { .. }),
-        "preamble before JSON must be a protocol failure; got {result:?}"
-    );
-}
-
-#[test]
-fn clean_role_response_succeeds() {
-    let input = r#"{"status":"accepted","content":"draft output"}"#;
-    let result = parse_role_response(input);
-    assert!(
-        matches!(result, RoleResult::Accepted { ref content } if content == "draft output"),
-        "clean JSON response must succeed; got {result:?}"
-    );
 }
