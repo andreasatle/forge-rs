@@ -86,7 +86,6 @@ fn scheduler_handler_maps_integration_error_to_failed_outcome() {
 #[test]
 fn scheduler_handler_maps_integration_conflict_to_failed_outcome() {
     let (_temp, artifact) = fixture("handler-cas-conflict");
-    let original_sha = artifact.commit_sha.clone();
     let repo_path = artifact.repo_path.clone();
 
     let runner = FileWritingRunner {
@@ -125,11 +124,9 @@ fn scheduler_handler_maps_integration_conflict_to_failed_outcome() {
         panic!("expected IntegrationFailed, got: {event:#?}");
     };
 
-    assert!(
-        failure.message.contains(&original_sha) || failure.message.contains(&advanced_sha),
-        "failure reason must mention expected or actual commit SHA; got: {}",
-        failure.message
-    );
+    // Recovery policy must switch on the typed failure kind, never on
+    // parsed message text.
+    assert_eq!(failure.kind, FailureKind::IntegrationFailure);
 
     // Branch must remain at the externally advanced commit.
     let tip = git_output(&repo_path, &["rev-parse", "HEAD"]);
