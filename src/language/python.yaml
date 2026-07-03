@@ -3,14 +3,16 @@ prompt_guidance: |
   by tests. Add type hints on function signatures and prefer explicit types
   over Any. Use standard import order: standard library, then third-party,
   then local imports, each group separated by a blank line; avoid wildcard
-  imports. Name test files test_<module>.py or <module>_test.py, and name
-  test functions test_<behavior_under_test> so failures read as a
-  description of what broke.
+  imports. Place test files under the tests/ subdirectory, named
+  tests/test_<module>.py, and name test functions
+  test_<behavior_under_test> so failures read as a description of what
+  broke.
 constraints: |
   Do not use wildcard imports (from module import *). Import the functions
   or classes under test directly from the source module — do not reimplement
-  or copy their logic into the test file. Name test files test_<module>.py
-  or <module>_test.py, and name test functions
+  or copy their logic into the test file. Test files must be placed in the
+  tests/ subdirectory, not alongside the source file, and named
+  tests/test_<module>.py, following pytest convention. Name test functions
   test_<behavior_under_test>; do not use unittest.TestCase method names like
   test1 or testFoo.
 init:
@@ -40,4 +42,4 @@ validation:
         - "*_test.py"
   validation_targets:
     - pattern: "{stem}.py"
-      target: "test_{stem}.py"
+      target: "tests/test_{stem}.py"

@@ -185,7 +185,7 @@ fn planner_no_recreate_violation_sends_revision_feedback_and_retries() {
 #[test]
 fn planner_missing_test_target_sends_revision_feedback_and_retries() {
     let bad_plan = r#"{"tasks":[{"id":"task-1","objective":"Modify main.py to return the haiku.","operation":"modify","targets":["main.py"],"depends_on":[]}]}"#;
-    let good_plan = r#"{"tasks":[{"id":"task-1","objective":"Modify main.py to return the haiku.","operation":"modify","targets":["main.py"],"depends_on":[]},{"id":"task-2","objective":"Add tests for the main.py haiku behavior.","operation":"modify","targets":["test_main.py"],"depends_on":["task-1"]}]}"#;
+    let good_plan = r#"{"tasks":[{"id":"task-1","objective":"Modify main.py to return the haiku.","operation":"modify","targets":["main.py"],"depends_on":[]},{"id":"task-2","objective":"Add tests for the main.py haiku behavior.","operation":"modify","targets":["tests/test_main.py"],"depends_on":["task-1"]}]}"#;
 
     let provider = ScriptedProvider::from_strs(&[
         bad_plan,  // Plan+Producer attempt 1 — fails test-target validation
@@ -217,15 +217,15 @@ fn planner_missing_test_target_sends_revision_feedback_and_retries() {
     assert!(
         plan.children
             .iter()
-            .any(|child| child.target_files == vec!["test_main.py".to_string()]),
-        "revised plan must include a test_main.py target"
+            .any(|child| child.target_files == vec!["tests/test_main.py".to_string()]),
+        "revised plan must include a tests/test_main.py target"
     );
 }
 
 #[test]
 fn planner_explicit_target_violation_sends_revision_feedback_and_retries() {
-    let bad_plan = r#"{"tasks":[{"id":"task-1","objective":"Modify main.py to return the haiku.","operation":"modify","targets":["main.py"],"depends_on":[]},{"id":"task-2","objective":"Modify project configuration.","operation":"modify","targets":["pyproject.toml"],"depends_on":[]},{"id":"task-3","objective":"Add tests for the main.py haiku behavior.","operation":"create","targets":["test_main.py"],"depends_on":["task-1"]}]}"#;
-    let good_plan = r#"{"tasks":[{"id":"task-1","objective":"Modify main.py to return the haiku.","operation":"modify","targets":["main.py"],"depends_on":[]},{"id":"task-2","objective":"Add tests for the main.py haiku behavior.","operation":"create","targets":["test_main.py"],"depends_on":["task-1"]}]}"#;
+    let bad_plan = r#"{"tasks":[{"id":"task-1","objective":"Modify main.py to return the haiku.","operation":"modify","targets":["main.py"],"depends_on":[]},{"id":"task-2","objective":"Modify project configuration.","operation":"modify","targets":["pyproject.toml"],"depends_on":[]},{"id":"task-3","objective":"Add tests for the main.py haiku behavior.","operation":"create","targets":["tests/test_main.py"],"depends_on":["task-1"]}]}"#;
+    let good_plan = r#"{"tasks":[{"id":"task-1","objective":"Modify main.py to return the haiku.","operation":"modify","targets":["main.py"],"depends_on":[]},{"id":"task-2","objective":"Add tests for the main.py haiku behavior.","operation":"create","targets":["tests/test_main.py"],"depends_on":["task-1"]}]}"#;
 
     let provider = RecordingProvider::from_strs(&[
         bad_plan,  // Plan+Producer attempt 1 — fails explicit-target validation
@@ -263,8 +263,8 @@ fn planner_explicit_target_violation_sends_revision_feedback_and_retries() {
     assert!(
         plan.children
             .iter()
-            .any(|child| child.target_files == vec!["test_main.py".to_string()]),
-        "revised plan must include test_main.py"
+            .any(|child| child.target_files == vec!["tests/test_main.py".to_string()]),
+        "revised plan must include tests/test_main.py"
     );
     assert!(
         plan.children

@@ -322,14 +322,14 @@ fn code_target_with_test_target_passes_when_tests_required() {
                 id: "tests".to_string(),
                 objective: "Add tests for main.py.".to_string(),
                 operation: Some(PlannerOperation::Modify),
-                targets: vec!["test_main.py".to_string()],
+                targets: vec!["tests/test_main.py".to_string()],
                 depends_on: vec!["main".to_string()],
             },
         ],
     };
     assert!(
         validate_planner_tests_required(&output, &python_tests).is_ok(),
-        "main.py plus test_main.py must satisfy test-required planning"
+        "main.py plus tests/test_main.py must satisfy test-required planning"
     );
 }
 
@@ -374,7 +374,7 @@ fn explicit_objective_target_rejects_unlisted_non_exempt_target() {
                 id: "tests".to_string(),
                 objective: "Add tests for main.py.".to_string(),
                 operation: Some(PlannerOperation::Create),
-                targets: vec!["test_main.py".to_string()],
+                targets: vec!["tests/test_main.py".to_string()],
                 depends_on: vec!["main".to_string()],
             },
         ],
@@ -408,7 +408,7 @@ fn explicit_objective_target_allows_adapter_exempt_test_target() {
                 id: "tests".to_string(),
                 objective: "Add tests for main.py.".to_string(),
                 operation: Some(PlannerOperation::Create),
-                targets: vec!["test_main.py".to_string()],
+                targets: vec!["tests/test_main.py".to_string()],
                 depends_on: vec!["main".to_string()],
             },
         ],
@@ -417,7 +417,7 @@ fn explicit_objective_target_allows_adapter_exempt_test_target() {
     assert!(
         validate_planner_explicit_targets(&output, "Modify main.py to print a haiku.", &exempt)
             .is_ok(),
-        "test_main.py must be allowed as adapter-exempt test target"
+        "tests/test_main.py must be allowed as adapter-exempt test target"
     );
 }
 
@@ -437,7 +437,7 @@ fn explicit_objective_target_no_exemptions_rejects_test_target() {
                 id: "tests".to_string(),
                 objective: "Add tests for main.py.".to_string(),
                 operation: Some(PlannerOperation::Create),
-                targets: vec!["test_main.py".to_string()],
+                targets: vec!["tests/test_main.py".to_string()],
                 depends_on: vec!["main".to_string()],
             },
         ],
@@ -446,7 +446,7 @@ fn explicit_objective_target_no_exemptions_rejects_test_target() {
         validate_planner_explicit_targets(&output, "Modify main.py to print a haiku.", &[]);
     assert!(
         result.is_err(),
-        "test_main.py must be rejected when adapter provides no exemptions"
+        "tests/test_main.py must be rejected when adapter provides no exemptions"
     );
 }
 
