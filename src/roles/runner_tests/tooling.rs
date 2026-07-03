@@ -61,28 +61,41 @@ fn role_runner_records_workspace_write() {
 
 #[test]
 fn role_runner_rejects_tool_when_no_artifact_view() {
-    let provider = ScriptedProvider::from_strs(&[
-        r#"{"tool":"list_files"}"#,
-        r#"{"summary":"used no tools"}"#,
-    ]);
-    let runner = ProviderRoleRunner::new(&provider);
+    // Any role with no tool_context (Producer with no view, or a Plan-node
+    // request where tool_context is always None) must turn a tool request
+    // into a "no file tools available" error observation and still reach a
+    // final result.
+    for (case, request, tool_call, final_response) in [
+        (
+            "producer",
+            producer_request("do the thing"),
+            r#"{"tool":"list_files"}"#,
+            r#"{"summary":"used no tools"}"#,
+        ),
+        (
+            "planner",
+            plan_request("plan the work"),
+            r#"{"tool":"read_file","path":"hello.txt"}"#,
+            r#"{"tasks":[{"id":"t1","objective":"do the thing","operation":"modify","targets":["thing.txt"],"depends_on":[]}]}"#,
+        ),
+    ] {
+        let provider = ScriptedProvider::from_strs(&[tool_call, final_response]);
+        let runner = ProviderRoleRunner::new(&provider);
 
-    let output = runner.run_role(
-        producer_request("do the thing"),
-        &crate::telemetry::NoopTelemetry,
-    );
+        let output = runner.run_role(request, &crate::telemetry::NoopTelemetry);
 
-    assert!(
-        matches!(output.result, RoleResult::Accepted { ref content } if content == "used no tools"),
-        "tool request without view must produce error observation and allow final result; got {:?}",
-        output.result
-    );
-    assert_eq!(provider.requests.borrow().len(), 2);
-    let second_prompt = &provider.requests.borrow()[1].prompt;
-    assert!(
-        second_prompt.contains("no file tools available"),
-        "second prompt must include error observation"
-    );
+        assert!(
+            matches!(output.result, RoleResult::Accepted { .. }),
+            "[{case}] tool request without view must produce error observation and allow final result; got {:?}",
+            output.result
+        );
+        assert_eq!(provider.requests.borrow().len(), 2, "[{case}]");
+        let second_prompt = &provider.requests.borrow()[1].prompt;
+        assert!(
+            second_prompt.contains("no file tools available"),
+            "[{case}] second prompt must include error observation"
+        );
+    }
 }
 
 #[test]

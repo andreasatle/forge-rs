@@ -278,30 +278,6 @@ fn reviewer_tool_loop_uses_union_grammar_then_narrows_to_final_response_grammar(
 // ── prompt/policy consistency ────────────────────────────────────────────
 
 #[test]
-fn tool_request_detection_still_works_with_no_preamble() {
-    // Tool requests starting with { are still detected and produce an error observation
-    // (since tool_context is None), then the model returns a clean result.
-    let provider =
-        ScriptedProvider::from_strs(&[r#"{"tool":"list_files"}"#, r#"{"summary":"listed files"}"#]);
-    let runner = ProviderRoleRunner::new(&provider);
-
-    let output = runner.run_role(producer_request("test"), &crate::telemetry::NoopTelemetry);
-
-    assert!(
-        matches!(output.result, RoleResult::Accepted { .. }),
-        "tool request without context must continue to final result; got {:?}",
-        output.result
-    );
-    assert_eq!(provider.requests.borrow().len(), 2);
-    assert!(
-        provider.requests.borrow()[1]
-            .prompt
-            .contains("no file tools available"),
-        "second prompt must include error observation from tool attempt"
-    );
-}
-
-#[test]
 fn preamble_triggers_retry_in_runner_loop() {
     // Preamble causes parse failure; on retry the model returns clean JSON.
     let provider = ScriptedProvider::from_strs(&[
@@ -378,6 +354,8 @@ fn planner_retries_invalid_planner_output() {
 
 #[test]
 fn planner_rejects_prose_content_in_coding_mode() {
+    // Regression: prose planner content used to silently fall back to a
+    // single work node; it must now retry and fail instead.
     let provider = ScriptedProvider::from_strs(&[
         r#"{"status":"accepted","content":"Plan: first do this, then that."}"#,
         r#"{"status":"accepted","content":"Revised plan: still prose."}"#,
@@ -399,31 +377,6 @@ fn planner_rejects_prose_content_in_coding_mode() {
         provider.requests.borrow().len(),
         3,
         "must attempt initial + MAX_PROTOCOL_RETRIES = 3 total calls"
-    );
-}
-
-// ── Step 3: preamble detection ────────────────────────────────────────────
-
-#[test]
-fn planner_output_fallback_no_longer_hides_invalid_plan() {
-    // Prose content that used to silently fall back to a single work node
-    // now triggers retry and eventual failure.
-    let provider = ScriptedProvider::from_strs(&[
-        r#"{"status":"accepted","content":"Do the task however you like."}"#,
-        r#"{"status":"accepted","content":"Still prose."}"#,
-        r#"{"status":"accepted","content":"More prose."}"#,
-    ]);
-    let runner = ProviderRoleRunner::new(&provider);
-
-    let output = runner.run_role(
-        plan_request("plan the work"),
-        &crate::telemetry::NoopTelemetry,
-    );
-
-    assert!(
-        matches!(output.result, RoleResult::Failed { .. }),
-        "invalid planner content must no longer fall back silently; got {:?}",
-        output.result
     );
 }
 

@@ -153,32 +153,6 @@ fn echoed_tool_placeholder_triggers_parse_failure_not_tool_execution() {
 // ── prompt hardening: no "..." placeholders in any rendered prompt ───────
 
 #[test]
-fn planner_tool_request_produces_error_observation() {
-    // Even if a plan-node model emits a tool request, it gets "no file tools available"
-    // rather than actual execution, because tool_context is None for plan nodes.
-    let tasks_json = r#"{"tasks":[{"id":"t1","objective":"do the thing","operation":"modify","targets":["thing.txt"],"depends_on":[]}]}"#;
-    let provider =
-        ScriptedProvider::from_strs(&[r#"{"tool":"read_file","path":"hello.txt"}"#, tasks_json]);
-    let runner = ProviderRoleRunner::new(&provider);
-
-    let output = runner.run_role(
-        plan_request("plan the work"),
-        &crate::telemetry::NoopTelemetry,
-    );
-
-    assert!(
-        matches!(output.result, RoleResult::Accepted { .. }),
-        "plan node must accept valid PlannerOutput after tool error; got {:?}",
-        output.result
-    );
-    let second_prompt = &provider.requests.borrow()[1].prompt;
-    assert!(
-        second_prompt.contains("no file tools available"),
-        "plan tool request must produce error observation; got:\n{second_prompt}"
-    );
-}
-
-#[test]
 fn tool_observation_warns_not_to_copy_observation_json() {
     let (_temp, view) = make_view("obs-warn");
     let provider = ScriptedProvider::from_strs(&[
