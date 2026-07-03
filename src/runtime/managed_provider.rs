@@ -157,56 +157,49 @@ mod tests {
     }
 
     #[test]
-    fn resolves_port_to_local_base_url() {
-        let resolved = resolve_llama_cpp_config(&managed_config());
-        assert_eq!(resolved.command, "llama-server");
-        assert_eq!(
-            resolved.model,
-            ManagedLlamaCppModelConfig::Path("model.gguf".to_string())
-        );
-        assert_eq!(resolved.base_url, "http://127.0.0.1:18080");
-        assert_eq!(resolved.host, "127.0.0.1");
-        assert_eq!(resolved.port, 18080);
-        assert_eq!(resolved.context_size, Some(4096));
-    }
-
-    #[test]
     fn resolves_host_to_base_url() {
-        let mut config = managed_config();
-        config.host = "localhost".to_string();
-        let resolved = resolve_llama_cpp_config(&config);
-        assert_eq!(resolved.base_url, "http://localhost:18080");
-        assert_eq!(resolved.host, "localhost");
-        assert_eq!(resolved.port, 18080);
+        let cases = [
+            ("127.0.0.1", "http://127.0.0.1:18080"),
+            ("localhost", "http://localhost:18080"),
+        ];
+        for (host, expected_base_url) in cases {
+            let mut config = managed_config();
+            config.host = host.to_string();
+            let resolved = resolve_llama_cpp_config(&config);
+            assert_eq!(resolved.command, "llama-server");
+            assert_eq!(
+                resolved.model,
+                ManagedLlamaCppModelConfig::Path("model.gguf".to_string())
+            );
+            assert_eq!(resolved.base_url, expected_base_url, "host: {host}");
+            assert_eq!(resolved.host, host);
+            assert_eq!(resolved.port, 18080);
+            assert_eq!(resolved.context_size, Some(4096));
+        }
     }
 
     #[test]
-    fn local_model_uses_model_argument() {
-        let mut command = Command::new("llama-server");
-        append_model_args(
-            &mut command,
-            &ManagedLlamaCppModelConfig::Path("models/local.gguf".to_string()),
-        );
-        let args: Vec<_> = command
-            .get_args()
-            .map(|arg| arg.to_string_lossy().into_owned())
-            .collect();
-        assert_eq!(args, vec!["--model", "models/local.gguf"]);
-    }
-
-    #[test]
-    fn hf_model_uses_hf_argument() {
-        let mut command = Command::new("llama-server");
-        append_model_args(
-            &mut command,
-            &ManagedLlamaCppModelConfig::HuggingFace(
-                "lm-kit/qwen-3-8b-instruct-gguf:Q4_K_M".to_string(),
+    fn model_variant_selects_launch_argument() {
+        let cases = [
+            (
+                ManagedLlamaCppModelConfig::Path("models/local.gguf".to_string()),
+                vec!["--model", "models/local.gguf"],
             ),
-        );
-        let args: Vec<_> = command
-            .get_args()
-            .map(|arg| arg.to_string_lossy().into_owned())
-            .collect();
-        assert_eq!(args, vec!["-hf", "lm-kit/qwen-3-8b-instruct-gguf:Q4_K_M"]);
+            (
+                ManagedLlamaCppModelConfig::HuggingFace(
+                    "lm-kit/qwen-3-8b-instruct-gguf:Q4_K_M".to_string(),
+                ),
+                vec!["-hf", "lm-kit/qwen-3-8b-instruct-gguf:Q4_K_M"],
+            ),
+        ];
+        for (model, expected_args) in cases {
+            let mut command = Command::new("llama-server");
+            append_model_args(&mut command, &model);
+            let args: Vec<_> = command
+                .get_args()
+                .map(|arg| arg.to_string_lossy().into_owned())
+                .collect();
+            assert_eq!(args, expected_args, "model: {model:?}");
+        }
     }
 }

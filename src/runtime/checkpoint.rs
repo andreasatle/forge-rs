@@ -104,16 +104,57 @@ mod tests {
     }
 
     #[test]
-    fn run_graph_round_trip() {
-        let dir = temp_dir("graph-round-trip");
-        let state = SchedulerState::Active {
-            graph: sample_graph(),
-            run_config: RunConfig::default(),
+    fn scheduler_state_round_trip() {
+        let waiting_graph = {
+            let mut graph = sample_graph();
+            graph.nodes[1].status = NodeStatus::Integrating;
+            graph
         };
-        save_checkpoint(&dir, &state).unwrap();
-        let loaded = load_checkpoint(&dir).unwrap();
-        assert_eq!(state, loaded);
-        let _ = std::fs::remove_dir_all(&dir);
+        let recovery_graph = {
+            let mut original = work_node("W");
+            original.status = NodeStatus::Failed;
+            let mut retry = work_node("W-retry-1");
+            retry.origin = NodeOrigin::Retry {
+                source: NodeId("W".to_string()),
+            };
+            retry.attempt = 1;
+            RunGraph {
+                nodes: vec![original, retry],
+                next_id: 2,
+            }
+        };
+
+        let cases = [
+            (
+                "active",
+                SchedulerState::Active {
+                    graph: sample_graph(),
+                    run_config: RunConfig::default(),
+                },
+            ),
+            (
+                "waiting",
+                SchedulerState::Waiting {
+                    graph: waiting_graph,
+                    run_config: RunConfig::default(),
+                },
+            ),
+            (
+                "active-with-recovery-origin",
+                SchedulerState::Active {
+                    graph: recovery_graph,
+                    run_config: RunConfig::default(),
+                },
+            ),
+        ];
+
+        for (label, state) in cases {
+            let dir = temp_dir(&format!("state-round-trip-{label}"));
+            save_checkpoint(&dir, &state).unwrap();
+            let loaded = load_checkpoint(&dir).unwrap();
+            assert_eq!(state, loaded, "case: {label}");
+            let _ = std::fs::remove_dir_all(&dir);
+        }
     }
 
     #[test]
@@ -129,45 +170,6 @@ mod tests {
             raw.contains("\"Running\""),
             "checkpoint tag must remain stable; got: {raw}"
         );
-        let loaded = load_checkpoint(&dir).unwrap();
-        assert_eq!(state, loaded);
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn scheduler_state_round_trip_waiting() {
-        let dir = temp_dir("state-waiting-round-trip");
-        let mut graph = sample_graph();
-        graph.nodes[1].status = NodeStatus::Integrating;
-        let state = SchedulerState::Waiting {
-            graph,
-            run_config: RunConfig::default(),
-        };
-        save_checkpoint(&dir, &state).unwrap();
-        let loaded = load_checkpoint(&dir).unwrap();
-        assert_eq!(state, loaded);
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn scheduler_state_round_trip_with_recovery_origin() {
-        let dir = temp_dir("state-recovery-origin");
-        let mut original = work_node("W");
-        original.status = NodeStatus::Failed;
-        let mut retry = work_node("W-retry-1");
-        retry.origin = NodeOrigin::Retry {
-            source: NodeId("W".to_string()),
-        };
-        retry.attempt = 1;
-        let graph = RunGraph {
-            nodes: vec![original, retry],
-            next_id: 2,
-        };
-        let state = SchedulerState::Active {
-            graph,
-            run_config: RunConfig::default(),
-        };
-        save_checkpoint(&dir, &state).unwrap();
         let loaded = load_checkpoint(&dir).unwrap();
         assert_eq!(state, loaded);
         let _ = std::fs::remove_dir_all(&dir);
