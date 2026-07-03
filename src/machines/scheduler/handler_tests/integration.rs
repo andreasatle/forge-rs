@@ -539,107 +539,11 @@ fn integrate_work_commits_pending_workspace_mutation() {
         output_content, "hello from work node",
         "output.txt must exist in the integrated commit"
     );
-}
-
-#[test]
-fn second_work_node_sees_first_only_after_integration() {
-    let (_temp, artifact) = fixture("second-sees-after-integration");
-    let original_sha = artifact.commit_sha.clone();
-    let repo_path = artifact.repo_path.clone();
-
-    let writer = FileWritingRunner {
-        path: "step1.txt".to_string(),
-        content: "written by node one\n".to_string(),
-    };
-    let h = SchedulerHandler::with_artifact(writer, artifact);
-
-    // RunNode for A: stores the update but does NOT commit.
-    h.handle_effect(SchedulerEffect::RunNode {
-        node_id: NodeId("A".to_string()),
-        kind: NodeKind::Work,
-        objective: "write the file".to_string(),
-        target_files: vec![],
-        test_plan_context: TestPlanContext::default(),
-        model_tier: ModelTier::Cheap,
-        attempt: 0,
-        retry_feedback: None,
-    });
-    let sha_before_integrate = git_output(&repo_path, &["rev-parse", "HEAD"]);
-    assert_eq!(
-        sha_before_integrate, original_sha,
-        "commit must not advance before IntegrateWork"
-    );
-
-    // IntegrateWork for A: applies the update and commits.
-    h.handle_effect(SchedulerEffect::IntegrateWork {
-        node_id: NodeId("A".to_string()),
-        work: WorkOutput {
-            summary: "wrote step1.txt".to_string(),
-        },
-        attempt: 0,
-        target_files: vec![],
-        validation_plan: None,
-    });
-    let sha_after_integrate = git_output(&repo_path, &["rev-parse", "HEAD"]);
-    assert_ne!(
-        sha_after_integrate, original_sha,
-        "commit must advance after IntegrateWork"
-    );
 
     // The handler's artifact now reflects the new commit.
     let current_sha = h.artifact().expect("artifact must be present").commit_sha;
     assert_eq!(
-        current_sha, sha_after_integrate,
+        current_sha, new_sha,
         "handler artifact must point at the integrated commit"
-    );
-}
-
-#[test]
-fn work_node_without_update_fails_without_commit() {
-    let (_temp, artifact) = fixture("no-update-no-commit");
-    let original_sha = artifact.commit_sha.clone();
-    let repo_path = artifact.repo_path.clone();
-
-    let h = SchedulerHandler::with_artifact(StaticNodeRunner, artifact);
-
-    h.handle_effect(SchedulerEffect::RunNode {
-        node_id: NodeId("W".to_string()),
-        kind: NodeKind::Work,
-        objective: "do some work".to_string(),
-        target_files: vec![],
-        test_plan_context: TestPlanContext::default(),
-        model_tier: ModelTier::Cheap,
-        attempt: 0,
-        retry_feedback: None,
-    });
-
-    let event = h.handle_effect(SchedulerEffect::IntegrateWork {
-        node_id: NodeId("W".to_string()),
-        work: WorkOutput {
-            summary: "completed".to_string(),
-        },
-        attempt: 0,
-        target_files: vec![],
-        validation_plan: None,
-    });
-
-    assert!(
-        matches!(
-            event,
-            SchedulerEvent::IntegrationFailed {
-                failure: IntegrationFailure {
-                    kind: FailureKind::WorkSemanticValidationFailure,
-                    ..
-                },
-                ..
-            }
-        ),
-        "IntegrateWork with no workspace diff must fail semantically"
-    );
-
-    let sha_after = git_output(&repo_path, &["rev-parse", "HEAD"]);
-    assert_eq!(
-        sha_after, original_sha,
-        "commit must not change when no artifact update was pending"
     );
 }

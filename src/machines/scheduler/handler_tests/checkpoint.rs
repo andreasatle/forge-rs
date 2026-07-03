@@ -20,93 +20,54 @@ impl Validator for PathCapturingValidator {
 }
 
 #[test]
-fn temporary_workspace_removed_after_successful_integration() {
-    let (_temp, artifact) = fixture("temp-removed-success");
-    let runner = FileWritingRunner {
-        path: "output.txt".to_string(),
-        content: "hello\n".to_string(),
-    };
-    let captured = Rc::new(RefCell::new(None));
-    let validator = PathCapturingValidator {
-        captured: captured.clone(),
-        pass: true,
-    };
-    let h = SchedulerHandler::with_artifact(runner, artifact).with_validator(Rc::new(validator));
+fn temporary_workspace_removed_after_integration() {
+    // Invariant: the WorkAttempt's temporary workspace is always removed
+    // after IntegrateWork, regardless of whether the validator passes or
+    // fails the attempt.
+    for pass in [true, false] {
+        let (_temp, artifact) = fixture(&format!("temp-removed-pass-{pass}"));
+        let runner = FileWritingRunner {
+            path: "output.txt".to_string(),
+            content: "hello\n".to_string(),
+        };
+        let captured = Rc::new(RefCell::new(None));
+        let validator = PathCapturingValidator {
+            captured: captured.clone(),
+            pass,
+        };
+        let h =
+            SchedulerHandler::with_artifact(runner, artifact).with_validator(Rc::new(validator));
 
-    h.handle_effect(SchedulerEffect::RunNode {
-        node_id: NodeId("W".to_string()),
-        kind: NodeKind::Work,
-        objective: "write a file".to_string(),
-        target_files: vec![],
-        test_plan_context: TestPlanContext::default(),
-        model_tier: ModelTier::Cheap,
-        attempt: 0,
-        retry_feedback: None,
-    });
+        h.handle_effect(SchedulerEffect::RunNode {
+            node_id: NodeId("W".to_string()),
+            kind: NodeKind::Work,
+            objective: "write a file".to_string(),
+            target_files: vec![],
+            test_plan_context: TestPlanContext::default(),
+            model_tier: ModelTier::Cheap,
+            attempt: 0,
+            retry_feedback: None,
+        });
 
-    h.handle_effect(SchedulerEffect::IntegrateWork {
-        node_id: NodeId("W".to_string()),
-        work: WorkOutput {
-            summary: "wrote output.txt".to_string(),
-        },
-        attempt: 0,
-        target_files: vec![],
-        validation_plan: None,
-    });
+        h.handle_effect(SchedulerEffect::IntegrateWork {
+            node_id: NodeId("W".to_string()),
+            work: WorkOutput {
+                summary: "wrote output.txt".to_string(),
+            },
+            attempt: 0,
+            target_files: vec![],
+            validation_plan: None,
+        });
 
-    let path = captured
-        .borrow()
-        .clone()
-        .expect("validator must have been called");
-    assert!(
-        !path.exists(),
-        "temporary workspace must be removed after successful integration"
-    );
-}
-
-#[test]
-fn temporary_workspace_removed_after_validation_failure() {
-    let (_temp, artifact) = fixture("temp-removed-validation-fail");
-    let runner = FileWritingRunner {
-        path: "output.txt".to_string(),
-        content: "hello\n".to_string(),
-    };
-    let captured = Rc::new(RefCell::new(None));
-    let validator = PathCapturingValidator {
-        captured: captured.clone(),
-        pass: false,
-    };
-    let h = SchedulerHandler::with_artifact(runner, artifact).with_validator(Rc::new(validator));
-
-    h.handle_effect(SchedulerEffect::RunNode {
-        node_id: NodeId("W".to_string()),
-        kind: NodeKind::Work,
-        objective: "write a file".to_string(),
-        target_files: vec![],
-        test_plan_context: TestPlanContext::default(),
-        model_tier: ModelTier::Cheap,
-        attempt: 0,
-        retry_feedback: None,
-    });
-
-    h.handle_effect(SchedulerEffect::IntegrateWork {
-        node_id: NodeId("W".to_string()),
-        work: WorkOutput {
-            summary: "wrote output.txt".to_string(),
-        },
-        attempt: 0,
-        target_files: vec![],
-        validation_plan: None,
-    });
-
-    let path = captured
-        .borrow()
-        .clone()
-        .expect("validator must have been called");
-    assert!(
-        !path.exists(),
-        "temporary workspace must be removed after validation failure"
-    );
+        let path = captured
+            .borrow()
+            .clone()
+            .expect("validator must have been called");
+        assert!(
+            !path.exists(),
+            "[pass={pass}] temporary workspace must be removed after integration"
+        );
+    }
 }
 
 // ── checkpoint tests ──────────────────────────────────────────────────────

@@ -37,33 +37,29 @@ fn plan_node_flows_through_runner() {
 }
 
 #[test]
-fn work_node_flows_through_runner() {
-    let state = SchedulerState::Active {
-        graph: RunGraph {
-            nodes: vec![work_node("W", "build artifacts")],
-            next_id: 0,
-        },
-        run_config: RunConfig::default(),
-    };
-    let output = run_scheduler(handler(), state);
-    assert!(
-        matches!(output, SchedulerTerminalOutput::Complete { .. }),
-        "expected Complete, got {output:#?}"
-    );
-}
-
-#[test]
-fn failed_node_flows_through_runner() {
-    let state = SchedulerState::Active {
-        graph: RunGraph {
-            nodes: vec![work_node("F", "fail this step")],
-            next_id: 0,
-        },
-        run_config: RunConfig::default(),
-    };
-    let output = run_scheduler(handler(), state);
-    assert!(
-        matches!(output, SchedulerTerminalOutput::Failed { .. }),
-        "expected Failed, got {output:#?}"
-    );
+fn single_work_node_flows_through_runner_to_terminal_output() {
+    // Invariant: StaticNodeRunner's success/failure rule (triggered by "fail"
+    // in the objective) drives the scheduler to the matching terminal output
+    // through the full RunNode → IntegrateWork loop.
+    for (objective, expect_complete) in [("build artifacts", true), ("fail this step", false)] {
+        let state = SchedulerState::Active {
+            graph: RunGraph {
+                nodes: vec![work_node("W", objective)],
+                next_id: 0,
+            },
+            run_config: RunConfig::default(),
+        };
+        let output = run_scheduler(handler(), state);
+        if expect_complete {
+            assert!(
+                matches!(output, SchedulerTerminalOutput::Complete { .. }),
+                "[{objective}] expected Complete, got {output:#?}"
+            );
+        } else {
+            assert!(
+                matches!(output, SchedulerTerminalOutput::Failed { .. }),
+                "[{objective}] expected Failed, got {output:#?}"
+            );
+        }
+    }
 }

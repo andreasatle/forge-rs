@@ -91,6 +91,12 @@ fn validation_failure_blocks_commit() {
         sha_after, original_sha,
         "commit must not advance when validation fails"
     );
+
+    let log_count = git_output(&repo_path, &["rev-list", "--count", "HEAD"]);
+    assert_eq!(
+        log_count, "1",
+        "commit history must contain only the initial commit after validation failure"
+    );
 }
 
 #[test]
@@ -325,6 +331,8 @@ fn validator_runs_after_workspace_mutation() {
 #[test]
 fn no_diff_fails_before_running_validator() {
     let (_temp, artifact) = fixture("no-update-no-validator");
+    let original_sha = artifact.commit_sha.clone();
+    let repo_path = artifact.repo_path.clone();
 
     let h = SchedulerHandler::with_artifact(StaticNodeRunner, artifact)
         .with_validator(Rc::new(PanicOnCallValidator));
@@ -364,6 +372,12 @@ fn no_diff_fails_before_running_validator() {
             }
         ),
         "no-diff integration must fail without calling validator; got: {event:#?}"
+    );
+
+    let sha_after = git_output(&repo_path, &["rev-parse", "HEAD"]);
+    assert_eq!(
+        sha_after, original_sha,
+        "commit must not change when no artifact update was pending"
     );
 }
 
@@ -526,53 +540,6 @@ fn validation_passed_true_even_when_integration_conflicts() {
         h.validation_passed(),
         Some(true),
         "validation_passed must be Some(true) even when CAS integration fails after validation"
-    );
-}
-
-#[test]
-fn validation_failure_does_not_leave_artifact_changed() {
-    let (_temp, artifact) = fixture("validation-no-history-change");
-    let original_sha = artifact.commit_sha.clone();
-    let repo_path = artifact.repo_path.clone();
-
-    let runner = FileWritingRunner {
-        path: "output.txt".to_string(),
-        content: "hello\n".to_string(),
-    };
-    let h = SchedulerHandler::with_artifact(runner, artifact)
-        .with_validator(Rc::new(AlwaysFailValidator));
-
-    h.handle_effect(SchedulerEffect::RunNode {
-        node_id: NodeId("W".to_string()),
-        kind: NodeKind::Work,
-        objective: "write a file".to_string(),
-        target_files: vec![],
-        test_plan_context: TestPlanContext::default(),
-        model_tier: ModelTier::Cheap,
-        attempt: 0,
-        retry_feedback: None,
-    });
-
-    h.handle_effect(SchedulerEffect::IntegrateWork {
-        node_id: NodeId("W".to_string()),
-        work: WorkOutput {
-            summary: "wrote output.txt".to_string(),
-        },
-        attempt: 0,
-        target_files: vec![],
-        validation_plan: None,
-    });
-
-    let sha_after = git_output(&repo_path, &["rev-parse", "HEAD"]);
-    assert_eq!(
-        sha_after, original_sha,
-        "artifact commit history must remain unchanged after validation failure"
-    );
-
-    let log_count = git_output(&repo_path, &["rev-list", "--count", "HEAD"]);
-    assert_eq!(
-        log_count, "1",
-        "commit history must contain only the initial commit after validation failure"
     );
 }
 
