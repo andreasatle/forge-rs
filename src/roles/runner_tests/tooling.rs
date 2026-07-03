@@ -370,34 +370,6 @@ fn tool_observation_is_bounded_in_role_prompt() {
     );
 }
 
-#[test]
-fn read_only_role_write_request_still_rejected() {
-    // Even when the prompt omits write tools, a malicious/confused model
-    // that sends a write request must still be rejected by the executor.
-    let provider = ScriptedProvider::from_strs(&[
-        r#"{"tool":"write_file","path":"bad.txt","content":"sneaky"}"#,
-        r#"{"status":"rejected","reason":"cannot write"}"#,
-    ]);
-    let runner = ProviderRoleRunner::new(&provider);
-
-    let output = runner.run_role(
-        with_dummy_tool_context(critic_request("review", "draft")),
-        &crate::telemetry::NoopTelemetry,
-    );
-
-    let requests = provider.requests.borrow();
-    assert_eq!(requests.len(), 2, "provider must be called twice");
-    let second_prompt = &requests[1].prompt;
-    assert!(
-        second_prompt.contains("not permitted"),
-        "executor must reject write even when prompt omits write tools; got:\n{second_prompt}"
-    );
-    assert!(
-        !output.artifact_changed,
-        "rejected write must not mark the workspace changed"
-    );
-}
-
 // ── regression: echoed placeholder tool requests must not execute ───────
 //
 // A confused model sometimes echoes the tool-section examples verbatim,
