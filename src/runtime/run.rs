@@ -9,20 +9,20 @@ use std::path::Path;
 #[cfg(test)]
 use std::process::Command;
 
-use crate::artifacts::{Artifact, ArtifactView};
 use crate::config::ForgeConfig;
 
 use super::repo::load_or_create_artifact;
 use crate::machines::scheduler::{
     RunConfig, RunRequest, SchedulerHandler, SchedulerMachine, SchedulerState,
-    SchedulerTerminalOutput, run_scheduler_with_telemetry,
+    run_scheduler_with_telemetry,
 };
 use crate::node_runner::DeliberatingNodeRunner;
 use crate::runtime::checkpoint::node_counts;
+use crate::runtime::create_run;
+use crate::runtime::outcome::RunOutcome;
 use crate::runtime::project_setup::ProjectRuntimeSetup;
 use crate::runtime::provider_stack::ResolvedProviderStack;
 use crate::runtime::resume::find_resumable_run;
-use crate::runtime::{create_run, finalize_manifest};
 use crate::telemetry::{FileTelemetry, TelemetryEvent, TelemetryRecord, TelemetrySink};
 
 /// Entry point for a single forge run driven by a [`ForgeConfig`].
@@ -76,36 +76,19 @@ impl ForgeRuntime {
         );
 
         let (output, handler) = run_scheduler_with_telemetry(handler, initial_state, sink.as_ref());
-        print_run_progress_result(&output);
+        let outcome = RunOutcome::from_scheduler_terminal_output(&output);
+        outcome.print_progress();
 
         let final_artifact = handler.artifact();
         let validation_passed = handler.validation_passed();
-        print_summary(&output, &config, final_artifact.as_ref(), &run_info);
+        outcome.print_summary(&config, final_artifact.as_ref(), &run_info);
 
-        let failure_reason_str: Option<String> =
-            if let SchedulerTerminalOutput::Failed { reason, .. } = &output {
-                Some(reason.to_string())
-            } else {
-                None
-            };
-        let (status, final_commit) = match &output {
-            SchedulerTerminalOutput::Complete { .. } => (
-                "succeeded",
-                final_artifact.as_ref().map(|a| a.commit_sha.as_str()),
-            ),
-            SchedulerTerminalOutput::Failed { .. } => ("failed", None),
-        };
-        if let Err(e) = finalize_manifest(
-            &run_info,
-            status,
-            final_commit,
-            validation_passed,
-            failure_reason_str.as_deref(),
-        ) {
+        let final_commit = outcome.final_commit(final_artifact.as_ref());
+        if let Err(e) = outcome.finalize_manifest(&run_info, final_commit, validation_passed) {
             eprintln!("warning: failed to finalize manifest: {e}");
         }
 
-        runtime_result_from_scheduler_terminal_output(output)
+        outcome.into_result()
     }
 
     /// Resume a previously interrupted forge run.
@@ -185,92 +168,19 @@ impl ForgeRuntime {
         };
 
         let (output, handler) = run_scheduler_with_telemetry(handler, initial_state, sink.as_ref());
-        print_run_progress_result(&output);
+        let outcome = RunOutcome::from_scheduler_terminal_output(&output);
+        outcome.print_progress();
 
         let final_artifact = handler.artifact();
         let validation_passed = handler.validation_passed();
-        print_summary(&output, &config, final_artifact.as_ref(), &run_info);
+        outcome.print_summary(&config, final_artifact.as_ref(), &run_info);
 
-        let failure_reason_str: Option<String> =
-            if let SchedulerTerminalOutput::Failed { reason, .. } = &output {
-                Some(reason.to_string())
-            } else {
-                None
-            };
-        let (status, final_commit) = match &output {
-            SchedulerTerminalOutput::Complete { .. } => (
-                "succeeded",
-                final_artifact.as_ref().map(|a| a.commit_sha.as_str()),
-            ),
-            SchedulerTerminalOutput::Failed { .. } => ("failed", None),
-        };
-        if let Err(e) = finalize_manifest(
-            &run_info,
-            status,
-            final_commit,
-            validation_passed,
-            failure_reason_str.as_deref(),
-        ) {
+        let final_commit = outcome.final_commit(final_artifact.as_ref());
+        if let Err(e) = outcome.finalize_manifest(&run_info, final_commit, validation_passed) {
             eprintln!("warning: failed to finalize manifest: {e}");
         }
 
-        runtime_result_from_scheduler_terminal_output(output)
-    }
-}
-
-fn runtime_result_from_scheduler_terminal_output(
-    output: SchedulerTerminalOutput,
-) -> Result<(), Box<dyn Error>> {
-    match output {
-        SchedulerTerminalOutput::Failed { reason, .. } => {
-            Err(format!("run failed: {reason}").into())
-        }
-        SchedulerTerminalOutput::Complete { .. } => Ok(()),
-    }
-}
-
-fn print_run_progress_result(output: &SchedulerTerminalOutput) {
-    match output {
-        SchedulerTerminalOutput::Complete { .. } => eprintln!("[run] complete"),
-        SchedulerTerminalOutput::Failed { .. } => eprintln!("[run] failed"),
-    }
-}
-
-fn print_summary(
-    output: &SchedulerTerminalOutput,
-    config: &ForgeConfig,
-    artifact: Option<&Artifact>,
-    run_info: &crate::runtime::RunInfo,
-) {
-    let result_str = match output {
-        SchedulerTerminalOutput::Complete { .. } => "COMPLETE",
-        SchedulerTerminalOutput::Failed { .. } => "FAILED",
-    };
-
-    println!("Result      : {result_str}");
-    println!("Run ID      : {}", run_info.run_id);
-    println!("Artifact repo: {}", config.artifact.repo_path);
-
-    if let Some(a) = artifact {
-        let short_sha = &a.commit_sha[..a.commit_sha.len().min(7)];
-        println!("Commit      : {short_sha}");
-        println!("Telemetry   : {}", run_info.telemetry_dir.display());
-
-        let view = ArtifactView {
-            repo_path: a.repo_path.clone(),
-            commit_sha: a.commit_sha.clone(),
-        };
-        if let Ok(files) = view.list_files()
-            && !files.is_empty()
-        {
-            println!("\nGenerated files:");
-            for f in &files {
-                println!("  {}", f.display());
-            }
-        }
-    } else {
-        println!("Commit      : unknown");
-        println!("Telemetry   : {}", run_info.telemetry_dir.display());
+        outcome.into_result()
     }
 }
 

@@ -1,8 +1,7 @@
 use super::*;
+use crate::artifacts::Artifact;
 use crate::config::{ArtifactConfig, ProviderConfig, ProviderTierConfig, UnmanagedProviderConfig};
-use crate::machines::scheduler::{
-    FailureReason, RecoverySummary, RunGraph, SchedulerTerminalOutput,
-};
+use crate::machines::scheduler::SchedulerTerminalOutput;
 use crate::runtime::ProviderRunMetadata;
 use crate::runtime::provider_stack::ResolvedProviderStack;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -41,44 +40,6 @@ fn unmanaged_provider(base_url: &str, model: &str, n_predict: usize) -> Provider
         timeout_seconds: 120,
         strong_timeout_seconds: None,
     }
-}
-
-fn empty_graph() -> RunGraph {
-    RunGraph {
-        nodes: vec![],
-        next_id: 0,
-    }
-}
-
-#[test]
-fn runtime_error_includes_provider_failure_reason() {
-    let output = SchedulerTerminalOutput::Failed {
-        graph: empty_graph(),
-        reason: FailureReason::TerminalRecovery {
-            terminal_message: "deliberation failed".to_string(),
-            failure_message: "provider error (Retryable): connection refused".to_string(),
-        },
-    };
-    let result = runtime_result_from_scheduler_terminal_output(output);
-    let err = result.expect_err("failed output must become an error");
-    let message = err.to_string();
-    assert!(message.contains("run failed"));
-    assert!(message.contains("provider error (Retryable): connection refused"));
-}
-
-#[test]
-fn successful_runtime_run_still_returns_ok() {
-    let output = SchedulerTerminalOutput::Complete {
-        graph: empty_graph(),
-        recovery_summary: RecoverySummary {
-            recovered: false,
-            retry_count: 0,
-            elevate_count: 0,
-            split_count: 0,
-        },
-    };
-    let result = runtime_result_from_scheduler_terminal_output(output);
-    assert!(result.is_ok(), "Complete output must return Ok");
 }
 
 #[test]
