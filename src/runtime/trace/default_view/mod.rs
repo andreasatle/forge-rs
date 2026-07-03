@@ -91,14 +91,16 @@ pub(super) fn run_default_view(run_dir: &Path, paths: &[PathBuf]) -> Result<(), 
         .to_string();
     let event_count = paths.len();
 
-    let records = parsing::read_records(paths)?;
+    let mut parser = parsing::DefaultTraceParser::new(paths);
+    let records = parser.read_records()?;
     let objective = read_objective(run_dir, &records);
-    let contextualized = parsing::assign_node_context(records);
-    let nodes = grouping::group_into_nodes(contextualized);
+    let contextualized = parser.assign_node_context(records);
+    let nodes = grouping::DefaultTraceGrouper::new().group(contextualized);
 
     println!(
         "{}",
-        render::render(&run_id, objective.as_deref(), event_count, &nodes)
+        render::DefaultTraceRenderer::new(&run_id, objective.as_deref(), event_count, &nodes)
+            .render()
     );
     Ok(())
 }

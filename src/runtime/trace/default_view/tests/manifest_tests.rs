@@ -4,7 +4,7 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use super::super::parsing::parse_record;
+use super::super::parsing::DefaultTraceParser;
 use super::super::read_objective;
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(0);
@@ -20,7 +20,7 @@ fn temp_run_dir(label: &str) -> PathBuf {
 }
 
 fn run_node_record(objective: &str) -> super::super::parsing::RawRecord {
-    parse_record(&format!(
+    DefaultTraceParser::parse_record(&format!(
         "source: SchedulerMachine\nnode_id: root\nattempt: 0\nkind: EffectEmitted\nmachine: SchedulerMachine\neffect:\nRunNode {{\n    kind: Work,\n    objective: \"{objective}\",\n}}\n"
     ))
     .unwrap()

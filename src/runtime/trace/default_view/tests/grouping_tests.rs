@@ -4,8 +4,8 @@
 //! (mirroring real `{:#?}` Debug dumps) and checks one invariant of
 //! `group_into_nodes`.
 
-use super::super::grouping::group_into_nodes;
-use super::super::parsing::{assign_node_context, parse_record};
+use super::super::grouping::DefaultTraceGrouper;
+use super::super::parsing::DefaultTraceParser;
 use super::super::{AttemptEvent, NodeStatus, NodeSummary};
 
 fn run_node(node_id: &str, attempt: u32, kind: &str, objective: &str) -> String {
@@ -119,8 +119,12 @@ fn validation_failed(command: &str, exit_code: i32, stdout: &[&str], stderr: &[&
 }
 
 fn build(contents: Vec<String>) -> Vec<NodeSummary> {
-    let records: Vec<_> = contents.iter().map(|c| parse_record(c).unwrap()).collect();
-    group_into_nodes(assign_node_context(records))
+    let records: Vec<_> = contents
+        .iter()
+        .map(|c| DefaultTraceParser::parse_record(c).unwrap())
+        .collect();
+    let contextualized = DefaultTraceParser::new(&[]).assign_node_context(records);
+    DefaultTraceGrouper::new().group(contextualized)
 }
 
 #[test]

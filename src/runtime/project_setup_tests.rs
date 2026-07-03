@@ -1,15 +1,27 @@
 use super::*;
 use crate::config::{ProjectConfig, ProjectKind, ProjectVariant, ValidationConfig};
 
+fn project(language: Option<&str>, variant: ProjectVariant) -> ProjectConfig {
+    ProjectConfig {
+        kind: ProjectKind::Coding,
+        language: language.map(str::to_string),
+        variant,
+    }
+}
+
+fn builder<'a>(
+    project: &'a ProjectConfig,
+    validation: Option<&'a ValidationConfig>,
+) -> ProjectRuntimeSetupBuilder<'a> {
+    ProjectRuntimeSetupBuilder::new(project, validation)
+}
+
 // ── adapter selection ────────────────────────────────────────────────────
 
 #[test]
 fn runtime_selects_coding_adapter() {
-    let policy = make_role_policy(&ProjectConfig {
-        kind: ProjectKind::Coding,
-        language: None,
-        variant: ProjectVariant::Coding,
-    });
+    let project = project(None, ProjectVariant::Coding);
+    let policy = builder(&project, None).role_policy();
     assert!(
         policy.planner_producer_system.contains("software planning"),
         "coding adapter must produce software-planning planner prompt; got:\n{}",
@@ -26,11 +38,8 @@ fn runtime_selects_coding_adapter() {
 
 #[test]
 fn runtime_selects_coding_tdd_adapter() {
-    let policy = make_role_policy(&ProjectConfig {
-        kind: ProjectKind::Coding,
-        language: None,
-        variant: ProjectVariant::CodingTdd,
-    });
+    let project = project(None, ProjectVariant::CodingTdd);
+    let policy = builder(&project, None).role_policy();
     assert!(
         policy
             .planner_producer_system
@@ -49,11 +58,8 @@ fn runtime_selects_coding_tdd_adapter() {
 
 #[test]
 fn runtime_role_policy_includes_language_guidance_when_language_set() {
-    let policy = make_role_policy(&ProjectConfig {
-        kind: ProjectKind::Coding,
-        language: Some("rust".to_string()),
-        variant: ProjectVariant::Coding,
-    });
+    let project = project(Some("rust"), ProjectVariant::Coding);
+    let policy = builder(&project, None).role_policy();
     let expected = language_spec("rust")
         .expect("rust spec must load")
         .prompt_guidance;
@@ -66,11 +72,8 @@ fn runtime_role_policy_includes_language_guidance_when_language_set() {
 
 #[test]
 fn runtime_role_policy_has_no_language_guidance_when_language_unset() {
-    let policy = make_role_policy(&ProjectConfig {
-        kind: ProjectKind::Coding,
-        language: None,
-        variant: ProjectVariant::Coding,
-    });
+    let project = project(None, ProjectVariant::Coding);
+    let policy = builder(&project, None).role_policy();
     assert_eq!(
         policy.language_guidance, None,
         "role policy must have no language guidance when no language is configured"
@@ -79,11 +82,8 @@ fn runtime_role_policy_has_no_language_guidance_when_language_unset() {
 
 #[test]
 fn runtime_role_policy_includes_language_constraints_when_language_set() {
-    let policy = make_role_policy(&ProjectConfig {
-        kind: ProjectKind::Coding,
-        language: Some("rust".to_string()),
-        variant: ProjectVariant::Coding,
-    });
+    let project = project(Some("rust"), ProjectVariant::Coding);
+    let policy = builder(&project, None).role_policy();
     let expected = language_spec("rust")
         .expect("rust spec must load")
         .constraints;
@@ -96,11 +96,8 @@ fn runtime_role_policy_includes_language_constraints_when_language_set() {
 
 #[test]
 fn runtime_role_policy_has_no_language_constraints_when_language_unset() {
-    let policy = make_role_policy(&ProjectConfig {
-        kind: ProjectKind::Coding,
-        language: None,
-        variant: ProjectVariant::Coding,
-    });
+    let project = project(None, ProjectVariant::Coding);
+    let policy = builder(&project, None).role_policy();
     assert_eq!(
         policy.language_constraints, None,
         "role policy must have no language constraints when no language is configured"
@@ -114,7 +111,8 @@ fn runtime_uses_always_pass_when_validation_absent() {
     use crate::artifacts::Workspace;
 
     let ws = Workspace::at_path(std::env::temp_dir(), "abc".to_string());
-    let validator = make_validator(None, None).unwrap();
+    let project = project(None, ProjectVariant::Coding);
+    let validator = builder(&project, None).validator().unwrap();
     let result = validator.validate(&ws);
     assert!(
         result.passed,
@@ -132,7 +130,8 @@ fn runtime_uses_command_validator_when_configured() {
         commands: vec!["false".to_string()],
         timeout_seconds: None,
     };
-    let validator = make_validator(None, Some(&config)).unwrap();
+    let project = project(None, ProjectVariant::Coding);
+    let validator = builder(&project, Some(&config)).validator().unwrap();
     let result = validator.validate(&ws);
     assert!(
         !result.passed,
@@ -151,7 +150,8 @@ fn runtime_language_validator_uses_language_spec_commands() {
     //
     // We use "rust" which provides cargo commands; in a bare temp dir they will
     // fail, confirming a real CommandValidator was wired up.
-    let validator = make_validator(Some("rust"), None).unwrap();
+    let project = project(Some("rust"), ProjectVariant::Coding);
+    let validator = builder(&project, None).validator().unwrap();
     let result = validator.validate(&ws);
     // cargo fmt --check, cargo check, cargo test will all fail in a temp dir
     assert!(
@@ -172,7 +172,8 @@ fn runtime_backward_compat_validation_yaml_translates_to_sh_wrapper() {
         commands: vec!["true".to_string()],
         timeout_seconds: None,
     };
-    let validator = make_validator(None, Some(&config)).unwrap();
+    let project = project(None, ProjectVariant::Coding);
+    let validator = builder(&project, Some(&config)).validator().unwrap();
     let result = validator.validate(&ws);
     assert!(
         result.passed,
@@ -194,7 +195,7 @@ fn validation_command_is_test_like_classifies_commands() {
     ];
     for (command, expected) in cases {
         assert_eq!(
-            validation_command_is_test_like(command),
+            ProjectRuntimeSetupBuilder::validation_command_is_test_like(command),
             expected,
             "command: {command:?}"
         );
@@ -211,8 +212,9 @@ fn project_requires_tests_reflects_validation_commands() {
             commands: vec![command.to_string()],
             timeout_seconds: None,
         };
+        let project = project(None, ProjectVariant::Coding);
         assert_eq!(
-            project_requires_tests(None, Some(&config)),
+            builder(&project, Some(&config)).project_requires_tests(),
             expected,
             "command: {command:?}"
         );
@@ -221,8 +223,9 @@ fn project_requires_tests_reflects_validation_commands() {
 
 #[test]
 fn project_requires_tests_false_when_no_validation() {
+    let project = project(None, ProjectVariant::Coding);
     assert!(
-        !project_requires_tests(None, None),
+        !builder(&project, None).project_requires_tests(),
         "absent validation must set requires_tests = false"
     );
 }

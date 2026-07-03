@@ -1,7 +1,7 @@
 //! Exact-format assertions for the default view's text rendering, given
 //! hand-built fixtures (no telemetry parsing involved).
 
-use super::super::render::render;
+use super::super::render::DefaultTraceRenderer;
 use super::super::{AttemptEvent, AttemptSummary, NodeStatus, NodeSummary};
 
 fn accepted_node(node_id: &str, kind: &str, objective: &str) -> NodeSummary {
@@ -33,6 +33,15 @@ fn accepted_node(node_id: &str, kind: &str, objective: &str) -> NodeSummary {
         status: NodeStatus::Accepted,
         last_failure: None,
     }
+}
+
+fn render(
+    run_id: &str,
+    objective: Option<&str>,
+    event_count: usize,
+    nodes: &[NodeSummary],
+) -> String {
+    DefaultTraceRenderer::new(run_id, objective, event_count, nodes).render()
 }
 
 #[test]

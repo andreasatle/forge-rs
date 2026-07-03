@@ -13,6 +13,7 @@
 //! reconstructs grouping correctly.
 
 use super::super::reader::split_header;
+use std::path::PathBuf;
 
 /// One telemetry record with its header fields and full body text, before
 /// node/attempt context has been resolved.
@@ -32,54 +33,67 @@ pub(super) struct ContextRecord {
     pub(super) record: RawRecord,
 }
 
-/// Read and parse every telemetry file in `paths`, in order.
-pub(super) fn read_records(paths: &[std::path::PathBuf]) -> std::io::Result<Vec<RawRecord>> {
-    let mut records = Vec::with_capacity(paths.len());
-    for path in paths {
-        let content = std::fs::read_to_string(path)?;
-        if let Some(record) = parse_record(&content) {
-            records.push(record);
-        }
-    }
-    Ok(records)
+pub(super) struct DefaultTraceParser<'a> {
+    paths: &'a [PathBuf],
+    current_context: Option<(String, u32)>,
 }
 
-pub(super) fn parse_record(content: &str) -> Option<RawRecord> {
-    let header = split_header(content)?;
-    Some(RawRecord {
-        source: header.source,
-        subsource: header.subsource,
-        kind: header.kind,
-        body: header.body,
-        node_id: header.node_id,
-        attempt: header.attempt.and_then(|a| a.parse().ok()),
-    })
-}
-
-/// Assign every record to the node/attempt it belongs to, inheriting the
-/// last explicit context for records that carry none of their own.
-///
-/// Records observed before any node context has been established (e.g. the
-/// scheduler's own startup records) are dropped — they don't belong to any
-/// node and the default view has nothing to attach them to.
-pub(super) fn assign_node_context(records: Vec<RawRecord>) -> Vec<ContextRecord> {
-    let mut current: Option<(String, u32)> = None;
-    let mut out = Vec::with_capacity(records.len());
-
-    for record in records {
-        if let Some(node_id) = &record.node_id {
-            current = Some((node_id.clone(), record.attempt.unwrap_or(0)));
-        }
-        if let Some((node_id, attempt)) = &current {
-            out.push(ContextRecord {
-                node_id: node_id.clone(),
-                attempt: *attempt,
-                record,
-            });
+impl<'a> DefaultTraceParser<'a> {
+    pub(super) fn new(paths: &'a [PathBuf]) -> Self {
+        Self {
+            paths,
+            current_context: None,
         }
     }
 
-    out
+    /// Read and parse every telemetry file in `paths`, in order.
+    pub(super) fn read_records(&self) -> std::io::Result<Vec<RawRecord>> {
+        let mut records = Vec::with_capacity(self.paths.len());
+        for path in self.paths {
+            let content = std::fs::read_to_string(path)?;
+            if let Some(record) = Self::parse_record(&content) {
+                records.push(record);
+            }
+        }
+        Ok(records)
+    }
+
+    pub(super) fn parse_record(content: &str) -> Option<RawRecord> {
+        let header = split_header(content)?;
+        Some(RawRecord {
+            source: header.source,
+            subsource: header.subsource,
+            kind: header.kind,
+            body: header.body,
+            node_id: header.node_id,
+            attempt: header.attempt.and_then(|a| a.parse().ok()),
+        })
+    }
+
+    /// Assign every record to the node/attempt it belongs to, inheriting the
+    /// last explicit context for records that carry none of their own.
+    ///
+    /// Records observed before any node context has been established (e.g. the
+    /// scheduler's own startup records) are dropped — they don't belong to any
+    /// node and the default view has nothing to attach them to.
+    pub(super) fn assign_node_context(&mut self, records: Vec<RawRecord>) -> Vec<ContextRecord> {
+        let mut out = Vec::with_capacity(records.len());
+
+        for record in records {
+            if let Some(node_id) = &record.node_id {
+                self.current_context = Some((node_id.clone(), record.attempt.unwrap_or(0)));
+            }
+            if let Some((node_id, attempt)) = &self.current_context {
+                out.push(ContextRecord {
+                    node_id: node_id.clone(),
+                    attempt: *attempt,
+                    record,
+                });
+            }
+        }
+
+        out
+    }
 }
 
 /// Extract a `field: value` line from a pretty-printed (`{:#?}`) Debug dump.

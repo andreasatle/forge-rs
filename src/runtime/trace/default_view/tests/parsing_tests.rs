@@ -1,7 +1,7 @@
 //! `debug_field`/`event_variant_name` extraction from pretty-printed Debug
 //! dumps, and the node/attempt context-inheritance pass.
 
-use super::super::parsing::{assign_node_context, debug_field, event_variant_name, parse_record};
+use super::super::parsing::{DefaultTraceParser, debug_field, event_variant_name};
 
 #[test]
 fn debug_field_extracts_quoted_string_and_unescapes_it() {
@@ -68,7 +68,7 @@ fn event_variant_name_handles_unit_variant_with_no_body() {
 fn parse_record_splits_header_and_keeps_full_body() {
     let content =
         "source: RoleMachine\nsubsource: Producer\nkind: ParseSucceeded\nattempt_count: 1\n";
-    let record = parse_record(content).expect("well-formed content must parse");
+    let record = DefaultTraceParser::parse_record(content).expect("well-formed content must parse");
     assert_eq!(record.source, "RoleMachine");
     assert_eq!(record.subsource.as_deref(), Some("Producer"));
     assert_eq!(record.kind, "ParseSucceeded");
@@ -86,14 +86,14 @@ fn record_without_context(source: &str, subsource: &str, kind: &str) -> String {
 #[test]
 fn context_less_record_inherits_the_last_explicit_node_and_attempt() {
     let records = vec![
-        parse_record(&record_with_context(
+        DefaultTraceParser::parse_record(&record_with_context(
             "SchedulerMachine",
             "EffectEmitted",
             "root",
             0,
         ))
         .unwrap(),
-        parse_record(&record_without_context(
+        DefaultTraceParser::parse_record(&record_without_context(
             "RoleMachine",
             "Producer",
             "ParseSucceeded",
@@ -101,7 +101,7 @@ fn context_less_record_inherits_the_last_explicit_node_and_attempt() {
         .unwrap(),
     ];
 
-    let contextualized = assign_node_context(records);
+    let contextualized = DefaultTraceParser::new(&[]).assign_node_context(records);
 
     assert_eq!(contextualized.len(), 2);
     assert_eq!(contextualized[1].node_id, "root");
@@ -115,27 +115,27 @@ fn context_less_record_inherits_the_last_explicit_node_and_attempt() {
 #[test]
 fn explicit_context_overrides_the_inherited_one() {
     let records = vec![
-        parse_record(&record_with_context(
+        DefaultTraceParser::parse_record(&record_with_context(
             "SchedulerMachine",
             "EffectEmitted",
             "root",
             0,
         ))
         .unwrap(),
-        parse_record(&record_without_context(
+        DefaultTraceParser::parse_record(&record_without_context(
             "RoleMachine",
             "Producer",
             "ParseSucceeded",
         ))
         .unwrap(),
-        parse_record(&record_with_context(
+        DefaultTraceParser::parse_record(&record_with_context(
             "SchedulerMachine",
             "EffectEmitted",
             "root-child-0",
             0,
         ))
         .unwrap(),
-        parse_record(&record_without_context(
+        DefaultTraceParser::parse_record(&record_without_context(
             "RoleMachine",
             "Producer",
             "ParseSucceeded",
@@ -143,7 +143,7 @@ fn explicit_context_overrides_the_inherited_one() {
         .unwrap(),
     ];
 
-    let contextualized = assign_node_context(records);
+    let contextualized = DefaultTraceParser::new(&[]).assign_node_context(records);
 
     assert_eq!(contextualized[1].node_id, "root");
     assert_eq!(
@@ -155,9 +155,12 @@ fn explicit_context_overrides_the_inherited_one() {
 
 #[test]
 fn records_before_any_node_context_are_dropped() {
-    let records = vec![parse_record("source: SchedulerMachine\nkind: MachineStarted\n").unwrap()];
+    let records = vec![
+        DefaultTraceParser::parse_record("source: SchedulerMachine\nkind: MachineStarted\n")
+            .unwrap(),
+    ];
 
-    let contextualized = assign_node_context(records);
+    let contextualized = DefaultTraceParser::new(&[]).assign_node_context(records);
 
     assert!(
         contextualized.is_empty(),

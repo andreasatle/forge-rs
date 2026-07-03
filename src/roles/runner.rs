@@ -22,9 +22,7 @@ use crate::services::extract_json_object;
 use crate::telemetry::{TelemetryEvent, TelemetryRecord, TelemetrySink};
 use crate::tools::{FileToolExecutor, looks_like_tool_request, parse_tool_request};
 
-use super::parser::{
-    strip_code_fence, try_parse_producer_summary_response, try_parse_role_response,
-};
+use super::parser::RoleResponseParser;
 use super::prompt::{
     NodeReviewContract, RolePromptRender, render_role_prompt_with_test_plan_context,
     render_tool_section, role_subsource,
@@ -377,7 +375,8 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
             // "tool" field) but fails to parse, capture the reason so a
             // subsequent role-response parse failure can report the real
             // cause instead of a misleading "could not be parsed" message.
-            let trimmed = strip_code_fence(response.content.trim());
+            let role_response = RoleResponseParser::new(&response.content);
+            let trimmed = role_response.text();
             let mut tool_call_error: Option<String> = None;
             if let Some(json_str) = extract_json_object(trimmed) {
                 match parse_tool_request(json_str) {
@@ -503,9 +502,9 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                 // rejects; Critic and Referee use the status/content
                 // accept-or-reject schema.
                 let parse_result = if is_work_producer {
-                    try_parse_producer_summary_response(&response.content)
+                    role_response.parse_producer_summary_response()
                 } else {
-                    try_parse_role_response(&response.content)
+                    role_response.parse_role_response()
                 };
                 match parse_result {
                     Ok(result) => {

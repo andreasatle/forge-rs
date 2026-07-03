@@ -1,12 +1,12 @@
 use super::*;
 
 fn parse_role_response(raw_response: &str) -> RoleResult {
-    crate::roles::parser::try_parse_role_response(raw_response).unwrap_or_else(|reason| {
-        RoleResult::Failed {
+    crate::roles::parser::RoleResponseParser::new(raw_response)
+        .parse_role_response()
+        .unwrap_or_else(|reason| RoleResult::Failed {
             kind: FailureKind::ProtocolFailure,
             reason,
-        }
-    })
+        })
 }
 
 fn role_json(status: &str, field: &str, value: &str) -> String {
