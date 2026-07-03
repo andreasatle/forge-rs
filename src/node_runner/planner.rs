@@ -185,20 +185,6 @@ impl ObjectiveTargetSet {
         sorted
     }
 
-    fn source_code_targets(&self) -> Vec<String> {
-        let mut targets: Vec<String> = self
-            .targets
-            .iter()
-            .filter(|target| {
-                PlannerOutputProcessor::target_is_code_like(target)
-                    && !PlannerOutputProcessor::target_is_test_related(target)
-            })
-            .cloned()
-            .collect();
-        targets.sort();
-        targets
-    }
-
     fn into_vec(self) -> Vec<String> {
         self.targets.into_iter().collect()
     }
@@ -396,51 +382,6 @@ impl<'a> PlannerOutputProcessor<'a> {
         }
     }
 
-    pub(crate) fn try_fast_plan(&self) -> Option<PlanOutput> {
-        let source_targets = self.explicit_objective_targets.source_code_targets();
-
-        if source_targets.len() != 1 {
-            return None;
-        }
-
-        let source = source_targets.into_iter().next().unwrap();
-        let required_validation_targets =
-            (self.required_test_targets_fn)(std::slice::from_ref(&source));
-        let work = NodeRequest {
-            id: NodeId("work".to_string()),
-            kind: NodeKind::Work,
-            objective: self.top_objective.clone(),
-            target_files: vec![source.clone()],
-            required_validation_targets: required_validation_targets.clone(),
-            dependencies: vec![],
-            validation_plan: None,
-        };
-        let mut children = vec![work];
-
-        for (i, test_target) in required_validation_targets.into_iter().enumerate() {
-            let id = if i == 0 {
-                "tests".to_string()
-            } else {
-                format!("tests-{i}")
-            };
-            children.push(NodeRequest {
-                id: NodeId(id),
-                kind: NodeKind::Work,
-                objective: format!(
-                    "Write tests that verify the work described by the following objective:\n\n\
-                     {}",
-                    self.top_objective
-                ),
-                target_files: vec![test_target],
-                required_validation_targets: vec![],
-                dependencies: vec![NodeId("work".to_string())],
-                validation_plan: None,
-            });
-        }
-
-        Some(PlanOutput { children })
-    }
-
     pub(crate) fn into_plan(self, output: PlannerOutput) -> PlanOutput {
         PlanOutput {
             children: output
@@ -457,25 +398,6 @@ impl<'a> PlannerOutputProcessor<'a> {
                 })
                 .collect(),
         }
-    }
-
-    fn target_is_test_related(target: &str) -> bool {
-        let path = target.replace('\\', "/").to_ascii_lowercase();
-        let filename = path.rsplit('/').next().unwrap_or(path.as_str());
-        path.contains("/test/")
-            || path.contains("/tests/")
-            || path.starts_with("test/")
-            || path.starts_with("tests/")
-            || filename.starts_with("test_")
-            || filename.starts_with("test-")
-            || filename.ends_with("_test.rs")
-            || filename.ends_with("_tests.rs")
-            || filename.contains("_test.")
-            || filename.contains("-test.")
-            || filename.contains(".test.")
-            || filename.contains("_tests.")
-            || filename.contains("-tests.")
-            || filename.contains(".spec.")
     }
 
     fn target_is_code_like(target: &str) -> bool {

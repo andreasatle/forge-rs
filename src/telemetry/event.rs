@@ -232,14 +232,6 @@ pub enum TelemetryEvent {
         /// Number of nodes already `Completed` in the restored graph.
         completed_count: usize,
     },
-    /// A plan node was resolved deterministically without calling the LLM planner.
-    ///
-    /// Emitted when the objective names exactly one source file and the fast
-    /// path produces a minimal PlanOutput directly.
-    FastPlanUsed {
-        /// Number of work tasks in the generated plan.
-        task_count: usize,
-    },
     /// A work attempt workspace is about to be discarded.
     ///
     /// The payload captures the state needed to audit failed or rejected work
@@ -298,7 +290,6 @@ impl TelemetryEvent {
             TelemetryEvent::FailureClassified { .. } => "failure-classified",
             TelemetryEvent::CheckpointSaved { .. } => "checkpoint-saved",
             TelemetryEvent::CheckpointLoaded { .. } => "checkpoint-loaded",
-            TelemetryEvent::FastPlanUsed { .. } => "fast-plan-used",
             TelemetryEvent::WorkAttemptDiscarded { .. } => "work-attempt-discarded",
         }
     }
@@ -418,9 +409,6 @@ impl TelemetryEvent {
             } => format!(
                 "kind: CheckpointLoaded\nnode_count: {node_count}\ncompleted_count: {completed_count}\n"
             ),
-            TelemetryEvent::FastPlanUsed { task_count } => {
-                format!("kind: FastPlanUsed\ntask_count: {task_count}\n")
-            }
             TelemetryEvent::WorkAttemptDiscarded {
                 attempt_id,
                 node_id,

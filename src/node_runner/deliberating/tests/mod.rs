@@ -281,7 +281,6 @@ fn work_attempt_for_view(view: &ArtifactView) -> WorkAttempt {
 mod artifact;
 mod context;
 mod failure;
-mod fast_plan;
 mod output;
 mod request;
 mod telemetry;

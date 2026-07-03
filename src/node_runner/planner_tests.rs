@@ -44,13 +44,6 @@ fn validate_planner_tests_required(
     processor("", &[], required_test_targets_fn).validate_tests_required(output)
 }
 
-fn try_fast_plan(
-    objective: &str,
-    required_test_targets_fn: &dyn Fn(&[String]) -> Vec<String>,
-) -> Option<PlanOutput> {
-    processor(objective, &[], required_test_targets_fn).try_fast_plan()
-}
-
 fn planner_output_to_plan_output(output: PlannerOutput) -> PlanOutput {
     processor("", &[], &no_required_test_targets).into_plan(output)
 }
@@ -550,104 +543,5 @@ fn planner_dependencies_preserved() {
     assert_eq!(
         plan.children[1].dependencies,
         vec![NodeId("tests".to_string())]
-    );
-}
-
-// ── try_fast_plan ────────────────────────────────────────────────────────────
-
-#[test]
-fn explicit_single_file_objective_produces_direct_plan() {
-    // Invariant: single source file with no required tests yields one work task.
-    let objective = "Create a simple Python program in main.py that prints a haiku.";
-    let plan =
-        try_fast_plan(objective, &no_tests).expect("must return Some for explicit single file");
-    assert_eq!(plan.children.len(), 1, "no tests required → one work task");
-    let child = &plan.children[0];
-    assert_eq!(child.id, NodeId("work".to_string()));
-    assert_eq!(child.kind, NodeKind::Work);
-    assert!(child.objective.contains("main.py"));
-    assert_eq!(child.target_files, vec!["main.py".to_string()]);
-    assert!(
-        child.dependencies.is_empty(),
-        "work task must have no dependencies"
-    );
-}
-
-#[test]
-fn explicit_single_file_with_adapter_tests_required_adds_test_target() {
-    // Invariant: adapter-provided test target is appended as a dependent task.
-    let objective = "Create a simple Python program in main.py that prints a haiku.";
-    let plan = try_fast_plan(objective, &python_tests).expect("must return Some");
-    assert_eq!(plan.children.len(), 2, "tests required → two work tasks");
-
-    let work = &plan.children[0];
-    assert_eq!(work.id, NodeId("work".to_string()));
-    assert_eq!(work.target_files, vec!["main.py".to_string()]);
-
-    let tests = &plan.children[1];
-    assert_eq!(tests.id, NodeId("tests".to_string()));
-    assert_eq!(tests.target_files, vec!["test_main.py".to_string()]);
-    assert_eq!(
-        tests.dependencies,
-        vec![NodeId("work".to_string())],
-        "test task must depend on work task"
-    );
-}
-
-#[test]
-fn objective_without_explicit_file_falls_back_to_planner() {
-    // Invariant: objective without a named file returns None.
-    let plan = try_fast_plan("Refactor the error handling in the codebase.", &no_tests);
-    assert!(
-        plan.is_none(),
-        "objective without a named file must return None"
-    );
-}
-
-#[test]
-fn objective_with_multiple_explicit_files_falls_back_to_planner() {
-    // Invariant: objective naming two source files returns None (LLM planner needed).
-    let plan = try_fast_plan("Modify main.py and utils.py to add logging.", &no_tests);
-    assert!(
-        plan.is_none(),
-        "objective naming two source files must return None, not a fast plan"
-    );
-}
-
-#[test]
-fn explicit_test_file_in_objective_does_not_trigger_fast_plan() {
-    // Invariant: a test-file-only objective must not trigger the fast path.
-    let plan = try_fast_plan("Add assertions to test_main.py.", &no_tests);
-    assert!(
-        plan.is_none(),
-        "a test-file-only objective must not trigger the fast path"
-    );
-}
-
-#[test]
-fn fast_plan_uses_adapter_fn_for_test_targets() {
-    // Invariant: fast plan delegates test file naming to the adapter fn, not hardcoding.
-    let custom_fn = |sources: &[String]| -> Vec<String> {
-        sources
-            .iter()
-            .filter(|s| s.ends_with(".py"))
-            .map(|s| {
-                let stem = s.trim_end_matches(".py");
-                format!("custom_test_{stem}.py")
-            })
-            .collect()
-    };
-    let objective = "Create main.py with a greeting function.";
-    let plan = try_fast_plan(objective, &custom_fn).expect("must return Some");
-    assert_eq!(plan.children.len(), 2);
-    assert!(
-        plan.children
-            .iter()
-            .any(|c| c.target_files == vec!["custom_test_main.py".to_string()]),
-        "fast plan must use adapter fn for test target naming; got: {:?}",
-        plan.children
-            .iter()
-            .map(|c| &c.target_files)
-            .collect::<Vec<_>>()
     );
 }
