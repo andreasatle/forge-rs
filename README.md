@@ -24,13 +24,19 @@ CLI
  ↓
 ForgeRuntime
  ↓
+RunSession
+ ↓
+SchedulerDriver + SchedulerHandler
+ ↓
 SchedulerMachine
- ↓                           ↓
-[RunNode effect]        [IntegrateWork effect]
- ↓                           ↓
-DeliberationMachine      Validator
- ↓                           ↓
-RoleRunner               Integration (bare git, force-with-lease)
+ ↓                                      ↓
+[RunNode effect]                   [IntegrateWork effect]
+ ↓                                      ↓
+DeliberatingNodeRunner             IntegrationService
+ ↓                                      ↓
+DeliberationMachine                Validator + ArtifactIntegrator
+ ↓
+ProviderRoleRunner
  ↓
 Provider (cheap tier or strong tier)
 ```
@@ -44,8 +50,49 @@ Artifact = bare Git repository (branch-specific)
 Telemetry is orthogonal:
 
 ```text
-Telemetry = timestamped run directory + machine event traces
+Telemetry = timestamped run directory + manifest + machine event traces + checkpoint
 ```
+
+The codebase is organized around responsibility-bearing types rather than
+large procedural modules. Pure state transitions live in machine types such as
+`SchedulerMachine` and `DeliberationMachine`. Side effects are delegated to
+handlers and services such as `SchedulerHandler`, `IntegrationService`,
+`DeliberationHandler`, `WorkspaceFactory`, `ArtifactIntegrator`,
+`ProjectRuntimeSetup`, `ResolvedProviderStack`, and the default trace parser /
+grouper / renderer pipeline.
+
+Modules expose small entrypoints and keep most implementation helpers private
+or crate-private. Public callers generally interact with the runtime, machine,
+artifact, provider, node-runner, validation, and telemetry traits/types exported
+from each module's `mod.rs`.
+
+## Runtime setup
+
+`ForgeRuntime` is the CLI-facing entrypoint. `run` starts a fresh run; `resume`
+finds one running manifest/checkpoint pair and re-enters the scheduler.
+
+`RunSession` owns the already-resolved runtime inputs for a scheduler drive:
+config, run identity, telemetry sink, and provider stack. It:
+
+1. Loads or creates the artifact repository.
+2. Builds `ProjectRuntimeSetup`.
+3. Creates the `DeliberatingNodeRunner`.
+4. Creates the `SchedulerHandler`.
+5. Drives the scheduler with telemetry.
+6. Prints and persists the final outcome.
+
+`ProjectRuntimeSetup` centralizes project-derived wiring: role policy,
+context-file names, required test-target derivation, validation plan, and the
+validator. It selects a project adapter from `project.kind` / `project.variant`
+and augments it with language-specific prompt guidance and validation rules
+when `project.language` is configured.
+
+`ResolvedProviderStack` resolves `ProviderConfig` into:
+
+- run-manifest metadata,
+- cheap and strong `RetryingProvider<LlamaCppProvider>` handles,
+- per-tier token budgets,
+- managed llama.cpp server processes kept alive for the run.
 
 ## Configuration
 
@@ -71,6 +118,9 @@ provider:
   strong_timeout_seconds: 180   # optional; fallback to timeout_seconds
 telemetry:
   directory: "runs"
+project:                         # optional; defaults to kind: default
+  kind: coding
+  variant: coding                # optional; coding or coding_tdd
 validation:                     # optional
   commands:
     - cargo fmt --check
@@ -79,6 +129,10 @@ validation:                     # optional
 ```
 
 Relative paths in `artifact.repo_path` and `telemetry.directory` are resolved against the directory containing `forge.yaml`, not the working directory.
+
+`project.language` can be used instead of an explicit `validation` block to
+load bundled language initialization, prompt guidance, and validation commands.
+The two validation sources are mutually exclusive.
 
 By default Forge connects to already-running provider servers. For llama.cpp,
 Forge can instead own a local `llama-server` process:
@@ -104,10 +158,16 @@ Forge starts `llama-server`, Forge refuses to attach to it.
 ## CLI
 
 ```text
-cargo run -- run     forge.yaml   — continue from current artifact history
-cargo run -- show    forge.yaml   — display current files from the artifact
-cargo run -- history forge.yaml   — display commit history
-cargo run -- reset   forge.yaml   — delete artifact history and create a fresh Initial commit
+cargo run -- run     forge.yaml            — start a run from current artifact history
+cargo run -- run     forge.yaml --resume   — resume an interrupted running checkpoint
+cargo run -- show    forge.yaml            — display current files from the artifact
+cargo run -- history forge.yaml            — display commit history
+cargo run -- reset   forge.yaml            — delete artifact history and create a fresh Initial commit
+cargo run -- trace   forge.yaml            — show the latest run grouped by node/attempt
+cargo run -- trace   forge.yaml --run ID   — trace a specific run
+cargo run -- trace   forge.yaml --summary  — show the flat chronological trace
+cargo run -- trace   forge.yaml --prompts  — show full role prompts
+cargo run -- trace   forge.yaml --failures — show failure-related events
 ```
 
 ### Example session
@@ -134,7 +194,10 @@ Code flows, precise.
 
 ### SchedulerMachine
 
-The scheduler owns the run graph and decides which node may advance.
+The scheduler owns the run graph and decides which node may advance. The pure
+transition logic stays in `SchedulerMachine`; `SchedulerHandler` executes
+effects, persists checkpoints after progress events, and delegates cohesive
+side effects to smaller services.
 
 Responsibilities:
 
@@ -142,17 +205,19 @@ Responsibilities:
 - Sequential node dispatch
 - Recovery classification and bounded recovery growth
 - Graph and protocol validation
+- Checkpointable progress through explicit states and events
 
 States:
 
-- `Running` — validate the graph and dispatch the first ready node.
+- `Active` — validate the graph and dispatch the first ready node.
 - `Waiting` — one node is executing or its work is integrating.
 - `Complete` — all graph activity reached a terminal status.
 - `Failed` — the run cannot continue; graph and failure reason are retained.
 
-Events: `Start`, `NodeReturned`, `IntegrationReturned`.
+Events: `Start`, `PlanAccepted`, `WorkAccepted`, `NodeFailed`,
+`IntegrationSucceeded`, `IntegrationFailed`.
 
-Effects: `RunNode`, `IntegrateWork`, `ReturnComplete`, `ReturnFailed`.
+Effects: `RunNode`, `IntegrateWork`.
 
 Node execution is sequential. The scheduler selects one pending node whose dependencies are all completed, marks it running, emits `RunNode`, and enters `Waiting`. It does not dispatch another node until the active one finishes.
 
@@ -176,6 +241,11 @@ Recovery actions:
 
 Recovery growth is bounded by `MAX_ATTEMPTS`, `MAX_GRAPH_NODES`, and `MAX_PLAN_DEPTH`.
 
+`RecoveryApplicator` owns graph mutation for recoverable failures. It routes
+`Retry`, `ElevateModel`, `Split`, and `Terminal`, marks the failed node,
+creates replacement nodes when allowed, remaps pending dependencies, and turns
+exhaustion/capacity/depth failures into terminal scheduler states.
+
 ### DeliberationMachine
 
 The deliberation machine drives a three-role pipeline: Producer → Critic → Referee.
@@ -196,6 +266,26 @@ The final output is always the Producer content. Critic and Referee do not repla
 - `Failed` — role could not execute. Always terminal; never enters the revision loop.
 
 The role layer handles protocol retries when a provider response cannot be parsed as valid JSON.
+
+`DeliberationHandler` is the effect handler for the machine. It builds role
+requests, constructs tool context and target views, validates structured plan
+producer output, validates that artifact-producing Work actually changed the
+workspace, and maps role results back into deliberation events.
+
+`DeliberatingMachine` adapts `DeliberationMachine` plus `DeliberationHandler`
+to the generic machine runner.
+
+### Planner
+
+Plan nodes produce structured planner JSON. `PlannerOutputProcessor` owns the
+planner schema boundary: parsing provider content, validating task structure,
+enforcing explicit target constraints, preventing accidental recreation of
+existing files, deriving required test targets, and converting valid planner
+output into scheduler `NodeRequest`s.
+
+For simple plan objectives that explicitly name exactly one source file,
+`DeliberatingNodeRunner` can use the processor's fast path to create a work
+node, plus required test nodes when configured, without calling the provider.
 
 ## Artifact data plane
 
@@ -226,6 +316,11 @@ Path containment is enforced: absolute paths and parent traversals are rejected.
 
 A temporary mutable checkout cloned from an `Artifact`. Created for each work node integration. The directory is deleted automatically when the workspace is dropped.
 
+`WorkspaceFactory` owns workspace creation. It creates detached worktrees for
+temporary work attempts, clone/checkouts for caller-owned workspaces, and
+centralizes sanitized Git command setup used by workspace lifecycle and
+integration code.
+
 ### WorkspaceFileOps
 
 Safe mutation primitives operating inside a `Workspace`.
@@ -244,13 +339,22 @@ Path containment is enforced on all operations. Symlink safety is enforced on to
 
 ### Integration
 
-Commits workspace changes into the artifact's bare repository using a CAS-safe push.
+`IntegrationService` is the scheduler-side artifact gate for Work nodes. It
+creates and tracks pending `WorkAttempt` workspaces, records failed attempt
+evidence, runs semantic and configured validation, and advances the current
+artifact only after validation passes.
+
+`ArtifactIntegrator` is the lower-level Git responsibility. It commits
+workspace changes into the artifact's bare repository using a CAS-safe push.
 
 Protocol:
 
 1. **CAS pre-check** — read the branch tip before staging. If it differs from the workspace base commit, return `Conflict` immediately without touching the repository.
 2. **Stage and commit** — `git add --all` and `git commit` inside the workspace.
 3. **Force-with-lease push** — push using `--force-with-lease=refs/heads/<branch>:<base>`. On failure the branch tip is re-read; if it has advanced, the error is reclassified as `Conflict` to distinguish a CAS race from an unrelated push error.
+
+Validation failures and integration failures do not advance the artifact. They
+return scheduler integration-failure events with recovery actions.
 
 ## Node execution
 
@@ -267,27 +371,37 @@ WorkAttempt workspace
 The `SchedulerHandler` connects the scheduler to the runner. For each `RunNode` effect it:
 
 1. Builds an `ArtifactView` from the current `Artifact` snapshot.
-2. Creates a `WorkAttempt` workspace for artifact-producing Work.
+2. Asks `IntegrationService` to create a `WorkAttempt` workspace for artifact-producing Work.
 3. Passes the view and workspace to the runner via `NodeRunRequest`.
-4. If the runner returns `WorkAccepted`, runs the configured validator against that workspace.
-5. If validation passes, calls `integrate`, advancing the artifact.
-6. If validation fails, the node is marked failed and the artifact is not advanced.
+4. If the runner returns `WorkAccepted`, emits `IntegrateWork`.
+5. During integration, `IntegrationService` runs validation and calls `ArtifactIntegrator`.
+6. If validation or integration fails, the node is marked failed and the artifact is not advanced.
 
 ### DeliberatingNodeRunner
 
 Runs a node by driving a `DeliberationMachine` backed by a real `ProviderClient`.
 
-When the request carries an `ArtifactView`, a brief context block — file listing and `README.md` if present — is prepended to the deliberation objective so the Producer has file context without any workspace mutation.
+When the request carries an `ArtifactView`, configured context files and a file
+listing are supplied as deliberation context so the Producer has artifact
+context without any workspace mutation.
 
 Mapping from deliberation output to `NodeRunResult`:
 
-- Plan node: `PlanAccepted` with one child work node whose objective is the Producer content.
+- Plan node: `PlanAccepted` with child work nodes from structured planner output.
 - Work node: `WorkAccepted` with the Producer content as summary; artifact changes are already in the `WorkAttempt` workspace.
 - Deliberation failure: `Failed` with `RecoveryAction::Terminal`.
 
 ## Tool system
 
 Each role invocation drives a bounded tool loop backed by a `FileToolExecutor`.
+`RoleToolDispatcher` owns the mutable protocol state for that loop: current
+prompt, accumulated observations, tool-call pressure, repeated-observation
+coercion, telemetry, and final artifact-change detection.
+
+`RoleResponseParser` owns role JSON parsing. It strips optional markdown code
+fences, extracts the leading JSON object, rejects preamble text, rejects
+framework placeholders, validates minimum meaningful content length, and maps
+role-specific schemas to `RoleResult`.
 
 ### Tool loop
 
@@ -356,7 +470,12 @@ Implemented providers:
 - `OllamaProvider` — calls a local Ollama `/api/generate` endpoint (available but not wired into `ForgeRuntime` by default).
 - `RetryingProvider` — wraps any provider and retries on `Retryable` errors.
 
-Role responses use structured JSON output hints (`output_schema: Some(Json)`). The LlamaCppProvider passes the prompt unchanged; it does not activate the llama.cpp grammar or JSON-schema constraint mode.
+`HttpProviderErrorClassifier` centralizes HTTP status and transport error
+classification shared by the HTTP-backed providers.
+
+Role responses use structured JSON output hints (`output_schema: Some(Json)`).
+`LlamaCppProvider` maps that hint to a JSON-object GBNF grammar. It also accepts
+provider requests carrying an explicit grammar.
 
 ### Model tier routing
 
@@ -397,6 +516,15 @@ machine: SchedulerMachine
 ```
 
 Manifest finalization failures are logged to stderr and do not abort the run.
+
+The default `trace` view is a pipeline:
+
+- `DefaultTraceParser` reads telemetry files and assigns node/attempt context.
+- `DefaultTraceGrouper` groups contextualized records into node and attempt summaries.
+- `DefaultTraceRenderer` renders the node list and timeline.
+
+`trace --summary` keeps the older flat chronological view. `trace --prompts`
+and `trace --failures` print filtered full event bodies.
 
 ## Run manifest
 
@@ -462,17 +590,21 @@ Final fields (merged at completion):
 
 - **Single-artifact runtime.** Each run operates on one artifact repository. There is no multi-artifact graph.
 - **No provider-native tools.** The LLM protocol uses plain JSON in the prompt; it does not use the provider's native function-calling or tool-use API.
-- **No llama.cpp grammar support.** The `output_schema: Json` hint is carried in `ProviderRequest` but the LlamaCppProvider does not activate the grammar or JSON-schema constraint endpoint parameter.
-- **No durable resume.** A run interrupted mid-way cannot be resumed; the artifact is consistent (commits are atomic), but the run itself must be restarted from the beginning.
+- **Resume is checkpoint-based.** Resume replays any node that was active at interruption time. Completed work is preserved in Git, but in-flight provider/tool work is not resumed mid-call.
 - **No prompt-window management.** The prompt grows as tool calls accumulate within a role invocation. There is no token counting, context pruning, or truncation strategy.
 - **No automatic conflict retry.** When `IntegrationError::Conflict` is returned by `integrate`, the node is marked failed. The scheduler may apply a recovery action (Retry, ElevateModel, Split), but there is no dedicated conflict-retry path that replays the tool loop against the updated artifact.
 
 ## Testing
 
 ```
+cargo build
 cargo fmt --check
 cargo test
 cargo run -- run forge.yaml
+cargo run -- run forge.yaml --resume
+cargo run -- trace forge.yaml
+cargo run --example scheduler_deliberation_demo
+cargo run --example deliberation_demo
 ```
 
 Tests cover machine transitions, emitted effects, integration gating, recovery behavior, graph validation, protocol violations, bounded growth, terminal states, invariant preservation, artifact data-plane operations, validation commands, manifest lifecycle, model tier routing, and CAS/force-with-lease semantics. Tests do not require real providers, network access, or persistent filesystem state beyond temporary directories.
