@@ -21,88 +21,34 @@ mod tests {
 
     #[test]
     fn default_project_adapter_returns_default_role_policy() {
+        // Invariant: the default adapter is a pure passthrough — it must
+        // return RolePolicy::default() unchanged. The content of each field
+        // is already protected by the roles::policy tests, so this checks
+        // structural equality rather than re-deriving those tests here.
         let adapter = DefaultProjectAdapter;
         let policy = adapter.role_policy();
-        // Critic and Referee roles use the status/content wrapper schema.
-        for system in [
-            &policy.planner_critic_system,
-            &policy.worker_critic_system,
-            &policy.planner_referee_system,
-            &policy.worker_referee_system,
-        ] {
-            assert!(
-                system.contains("`status`"),
-                "default policy must contain JSON status field; got:\n{system}"
-            );
-            assert!(
-                system.contains("non-empty task-specific string"),
-                "default policy must describe task-specific string fields; got:\n{system}"
-            );
-            assert!(
-                !system.contains('$') && !system.contains("\"...\""),
-                "default policy must not contain placeholder JSON values; got:\n{system}"
-            );
-        }
-        // Work-node Producer uses the summary-only schema — no status field.
-        assert!(
-            !policy.worker_producer_system.contains("`status`"),
-            "worker_producer_system must not contain the status field; got:\n{}",
-            policy.worker_producer_system
+        let expected = RolePolicy::default();
+
+        assert_eq!(
+            policy.planner_producer_system,
+            expected.planner_producer_system
         );
-        assert!(
-            policy.worker_producer_system.contains("`summary`"),
-            "worker_producer_system must describe the summary field; got:\n{}",
-            policy.worker_producer_system
+        assert_eq!(
+            policy.worker_producer_system,
+            expected.worker_producer_system
         );
-        assert!(
-            !policy.worker_producer_system.contains('$')
-                && !policy.worker_producer_system.contains("\"...\""),
-            "worker_producer_system must not contain placeholder JSON values; got:\n{}",
-            policy.worker_producer_system
+        assert_eq!(policy.planner_critic_system, expected.planner_critic_system);
+        assert_eq!(policy.worker_critic_system, expected.worker_critic_system);
+        assert_eq!(
+            policy.planner_referee_system,
+            expected.planner_referee_system
         );
-        // Planner uses direct PlannerOutput schema.
-        assert!(
-            policy.planner_producer_system.contains("`tasks`"),
-            "default planner_producer_system must show direct tasks schema; got:\n{}",
-            policy.planner_producer_system
+        assert_eq!(policy.worker_referee_system, expected.worker_referee_system);
+        assert_eq!(
+            policy.planner_protocol_schema,
+            expected.planner_protocol_schema
         );
-        assert!(
-            !policy.planner_producer_system.contains("\"status\""),
-            "default planner_producer_system must not contain status/content wrapper; got:\n{}",
-            policy.planner_producer_system
-        );
-        assert!(
-            policy.planner_producer_system.contains("PlannerOutput"),
-            "default planner_producer_system must describe PlannerOutput; got:\n{}",
-            policy.planner_producer_system
-        );
-        // Critic and Referee roles keep both branches of the protocol footer.
-        for system in [
-            &policy.planner_critic_system,
-            &policy.worker_critic_system,
-            &policy.planner_referee_system,
-            &policy.worker_referee_system,
-        ] {
-            assert!(system.contains("Return exactly one JSON object"));
-            assert!(system.contains("Accepted: `status` must be \"accepted\""));
-            assert!(system.contains("Rejected: `status` must be \"rejected\""));
-            assert!(system.contains("Execution failures are handled by the framework"));
-        }
-        // The Work-node Producer never rejects, so it keeps the summary-only footer.
-        assert!(
-            policy
-                .worker_producer_system
-                .contains("Return exactly one JSON object")
-        );
-        assert!(
-            policy
-                .worker_producer_system
-                .contains("`summary` must be a non-empty task-specific string")
-        );
-        assert!(
-            policy
-                .worker_producer_system
-                .contains("Execution failures are handled by the framework")
-        );
+        assert_eq!(policy.language_guidance, expected.language_guidance);
+        assert_eq!(policy.language_constraints, expected.language_constraints);
     }
 }

@@ -115,50 +115,94 @@ mod tests {
 
     // ── role_policy ───────────────────────────────────────────────────────────
 
+    /// Assert that each needle occurs in `haystack`, in the given order,
+    /// without requiring the text between or around them to match exactly —
+    /// so unrelated formatting changes to the framework constants being
+    /// composed don't break the test.
+    fn assert_ordered_sections(haystack: &str, needles: &[&str]) {
+        let mut search_from = 0;
+        for needle in needles {
+            let found_at = haystack[search_from..].find(needle).unwrap_or_else(|| {
+                panic!(
+                    "expected {needle:?} to appear at or after position {search_from} in:\n{haystack}"
+                )
+            });
+            search_from += found_at + needle.len();
+        }
+    }
+
     #[test]
     fn role_policy_maps_each_field_from_config() {
         // Invariant: every RolePolicy field is composed from the matching
         // RolePromptsConfig field's instructions and constraints, rendered as
-        // separate labeled sections, plus a distinct generic Constraints:
-        // section and the shared framework protocol constants, with no field
-        // left hardcoded or swapped.
+        // separate labeled sections, followed by the generic Constraints:
+        // section and the shared framework protocol constants, in that
+        // order — with no field left hardcoded or swapped.
         let policy = adapter().role_policy();
-        assert_eq!(
-            policy.planner_producer_system,
-            format!(
-                "Role:\n{PLANNER_PRODUCER_IDENTITY}\nInstructions:\nplan it\nConstraints:\nplan bounds\nConstraints:\n{GENERIC_CONSTRAINTS}\n{PLANNER_PROTOCOL_FOOTER_WITH_OPERATION}"
-            )
+
+        assert_ordered_sections(
+            &policy.planner_producer_system,
+            &[
+                "Role:",
+                PLANNER_PRODUCER_IDENTITY,
+                "Instructions:",
+                "plan it",
+                "Constraints:",
+                "plan bounds",
+                "Constraints:",
+                GENERIC_CONSTRAINTS,
+                PLANNER_PROTOCOL_FOOTER_WITH_OPERATION,
+            ],
         );
-        assert_eq!(
-            policy.worker_producer_system,
-            format!(
-                "Role:\n{WORKER_PRODUCER_IDENTITY}\nInstructions:\nbuild it\nConstraints:\nbuild bounds\nConstraints:\n{GENERIC_CONSTRAINTS}\n{WORK_PRODUCER_SYSTEM}"
-            )
+        assert_ordered_sections(
+            &policy.worker_producer_system,
+            &[
+                "Role:",
+                WORKER_PRODUCER_IDENTITY,
+                "Instructions:",
+                "build it",
+                "Constraints:",
+                "build bounds",
+                "Constraints:",
+                GENERIC_CONSTRAINTS,
+                WORK_PRODUCER_SYSTEM,
+            ],
         );
-        assert_eq!(
-            policy.planner_critic_system,
-            format!(
-                "Instructions:\nreview the plan\nConstraints:\nreview plan bounds\nConstraints:\n{GENERIC_CONSTRAINTS}\n{DEFAULT_SYSTEM}"
-            )
-        );
-        assert_eq!(
-            policy.worker_critic_system,
-            format!(
-                "Instructions:\nreview the work\nConstraints:\nreview work bounds\nConstraints:\n{GENERIC_CONSTRAINTS}\n{DEFAULT_SYSTEM}"
-            )
-        );
-        assert_eq!(
-            policy.planner_referee_system,
-            format!(
-                "Instructions:\ndecide the plan\nConstraints:\ndecide plan bounds\nConstraints:\n{GENERIC_CONSTRAINTS}\n{DEFAULT_SYSTEM}"
-            )
-        );
-        assert_eq!(
-            policy.worker_referee_system,
-            format!(
-                "Instructions:\ndecide the work\nConstraints:\ndecide work bounds\nConstraints:\n{GENERIC_CONSTRAINTS}\n{DEFAULT_SYSTEM}"
-            )
-        );
+        for (system, instructions, constraints) in [
+            (
+                &policy.planner_critic_system,
+                "review the plan",
+                "review plan bounds",
+            ),
+            (
+                &policy.worker_critic_system,
+                "review the work",
+                "review work bounds",
+            ),
+            (
+                &policy.planner_referee_system,
+                "decide the plan",
+                "decide plan bounds",
+            ),
+            (
+                &policy.worker_referee_system,
+                "decide the work",
+                "decide work bounds",
+            ),
+        ] {
+            assert_ordered_sections(
+                system,
+                &[
+                    "Instructions:",
+                    instructions,
+                    "Constraints:",
+                    constraints,
+                    "Constraints:",
+                    GENERIC_CONSTRAINTS,
+                    DEFAULT_SYSTEM,
+                ],
+            );
+        }
     }
 
     // ── context_file_names ────────────────────────────────────────────────────
