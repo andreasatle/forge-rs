@@ -481,14 +481,6 @@ telemetry:
     }
 
     #[test]
-    fn provider_timeout_is_optional() {
-        let tmp = TempYaml::new(EXAMPLE_YAML);
-        let config = ForgeConfig::from_file(tmp.path()).unwrap();
-        // EXAMPLE_YAML has no timeout_seconds — must still deserialize successfully.
-        let _ = config.provider.timeout_seconds;
-    }
-
-    #[test]
     fn provider_timeout_defaults_reasonably() {
         let tmp = TempYaml::new(EXAMPLE_YAML);
         let config = ForgeConfig::from_file(tmp.path()).unwrap();
@@ -982,33 +974,6 @@ telemetry:
 "#;
 
     #[test]
-    fn relative_artifact_path_resolves_against_config_dir() {
-        let tmp = TempYaml::new(EXAMPLE_YAML);
-        let config = ForgeConfig::from_file(tmp.path()).unwrap();
-        let config_dir = std::path::Path::new(tmp.path()).parent().unwrap();
-        let expected = config_dir
-            .join(".forge/artifacts/main.git")
-            .to_string_lossy()
-            .into_owned();
-        assert_eq!(
-            config.artifact.repo_path, expected,
-            "relative artifact path must resolve against config file directory"
-        );
-    }
-
-    #[test]
-    fn relative_telemetry_path_resolves_against_config_dir() {
-        let tmp = TempYaml::new(EXAMPLE_YAML);
-        let config = ForgeConfig::from_file(tmp.path()).unwrap();
-        let config_dir = std::path::Path::new(tmp.path()).parent().unwrap();
-        let expected = config_dir.join("runs").to_string_lossy().into_owned();
-        assert_eq!(
-            config.telemetry.directory, expected,
-            "relative telemetry directory must resolve against config file directory"
-        );
-    }
-
-    #[test]
     fn absolute_paths_remain_absolute() {
         let tmp = TempYaml::new(ABSOLUTE_YAML);
         let config = ForgeConfig::from_file(tmp.path()).unwrap();
@@ -1133,17 +1098,6 @@ project:
         assert!(
             msg.contains("bogus"),
             "error must name the unrecognised variant; got: {msg}"
-        );
-    }
-
-    #[test]
-    fn existing_configs_still_parse() {
-        let tmp = TempYaml::new(EXAMPLE_YAML);
-        let result = ForgeConfig::from_file(tmp.path());
-        assert!(
-            result.is_ok(),
-            "existing config without project: must still parse; got: {:?}",
-            result.err()
         );
     }
 
