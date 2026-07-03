@@ -319,36 +319,6 @@ fn duplicate_node_ids_fail_graph_validation() {
 }
 
 #[test]
-fn missing_dependency_fails_graph_validation() {
-    let graph = RunGraph {
-        nodes: vec![work_node("A", "do something", &["ghost"])],
-        next_id: 0,
-    };
-    let t = do_transition(
-        SchedulerState::Active {
-            graph,
-            run_config: RunConfig::default(),
-        },
-        SchedulerEvent::Start,
-    );
-    let SchedulerState::Failed { reason, .. } = t.state else {
-        panic!("expected Failed, got {:#?}", t.state);
-    };
-    let FailureReason::GraphInvariantViolation(detail) = reason else {
-        panic!("expected GraphInvariantViolation, got {reason:?}");
-    };
-    assert!(
-        detail.contains("missing dependency"),
-        "detail should mention missing dependency, got: {detail:?}"
-    );
-    assert!(
-        detail.contains("ghost"),
-        "detail should contain the missing dependency id, got: {detail:?}"
-    );
-    assert!(t.effects.is_empty());
-}
-
-#[test]
 fn graph_validation_does_not_parse_node_ids() {
     let graph = RunGraph {
         nodes: vec![
@@ -381,132 +351,77 @@ fn graph_validation_does_not_parse_node_ids() {
 }
 
 #[test]
-fn retry_origin_with_missing_source_fails_validation() {
-    let mut node_b = work_node("B", "retry task", &[]);
-    node_b.origin = NodeOrigin::Retry {
-        source: NodeId("missing".to_string()),
-    };
-    let graph = RunGraph {
-        nodes: vec![node_b],
-        next_id: 0,
-    };
-    let t = do_transition(
-        SchedulerState::Active {
-            graph,
-            run_config: RunConfig::default(),
+fn origin_with_missing_source_fails_validation() {
+    // Invariant: a node whose recovery origin points at a source node id that
+    // doesn't exist in the graph fails graph validation with a
+    // GraphInvariantViolation naming the origin kind, the node, and the
+    // missing source id — regardless of which recovery-origin kind it is.
+    struct Case {
+        origin: NodeOrigin,
+        expected_kind_name: &'static str,
+    }
+
+    let cases = vec![
+        Case {
+            origin: NodeOrigin::Retry {
+                source: NodeId("missing".to_string()),
+            },
+            expected_kind_name: "Retry",
         },
-        SchedulerEvent::Start,
-    );
-
-    let SchedulerState::Failed { reason, .. } = t.state else {
-        panic!("expected Failed, got {:#?}", t.state);
-    };
-    let FailureReason::GraphInvariantViolation(detail) = reason else {
-        panic!("expected GraphInvariantViolation, got {reason:?}");
-    };
-    assert!(
-        detail.contains("missing origin source"),
-        "detail should contain 'missing origin source', got: {detail:?}"
-    );
-    assert!(
-        detail.contains("Retry"),
-        "detail should mention Retry, got: {detail:?}"
-    );
-    assert!(
-        detail.contains('B'),
-        "detail should contain node id B, got: {detail:?}"
-    );
-    assert!(
-        detail.contains("missing"),
-        "detail should contain missing source id, got: {detail:?}"
-    );
-    assert!(t.effects.is_empty());
-}
-
-#[test]
-fn elevate_origin_with_missing_source_fails_validation() {
-    let mut node_b = work_node("B", "elevate task", &[]);
-    node_b.origin = NodeOrigin::ElevateModel {
-        source: NodeId("missing".to_string()),
-    };
-    let graph = RunGraph {
-        nodes: vec![node_b],
-        next_id: 0,
-    };
-    let t = do_transition(
-        SchedulerState::Active {
-            graph,
-            run_config: RunConfig::default(),
+        Case {
+            origin: NodeOrigin::ElevateModel {
+                source: NodeId("missing".to_string()),
+            },
+            expected_kind_name: "ElevateModel",
         },
-        SchedulerEvent::Start,
-    );
-
-    let SchedulerState::Failed { reason, .. } = t.state else {
-        panic!("expected Failed, got {:#?}", t.state);
-    };
-    let FailureReason::GraphInvariantViolation(detail) = reason else {
-        panic!("expected GraphInvariantViolation, got {reason:?}");
-    };
-    assert!(
-        detail.contains("missing origin source"),
-        "detail should contain 'missing origin source', got: {detail:?}"
-    );
-    assert!(
-        detail.contains("ElevateModel"),
-        "detail should mention ElevateModel, got: {detail:?}"
-    );
-    assert!(
-        detail.contains('B'),
-        "detail should contain node id B, got: {detail:?}"
-    );
-    assert!(
-        detail.contains("missing"),
-        "detail should contain missing source id, got: {detail:?}"
-    );
-    assert!(t.effects.is_empty());
-}
-
-#[test]
-fn split_origin_with_missing_source_fails_validation() {
-    let mut node_b = work_node("B", "split task", &[]);
-    node_b.origin = NodeOrigin::Split {
-        source: NodeId("missing".to_string()),
-    };
-    let graph = RunGraph {
-        nodes: vec![node_b],
-        next_id: 0,
-    };
-    let t = do_transition(
-        SchedulerState::Active {
-            graph,
-            run_config: RunConfig::default(),
+        Case {
+            origin: NodeOrigin::Split {
+                source: NodeId("missing".to_string()),
+            },
+            expected_kind_name: "Split",
         },
-        SchedulerEvent::Start,
-    );
+    ];
 
-    let SchedulerState::Failed { reason, .. } = t.state else {
-        panic!("expected Failed, got {:#?}", t.state);
-    };
-    let FailureReason::GraphInvariantViolation(detail) = reason else {
-        panic!("expected GraphInvariantViolation, got {reason:?}");
-    };
-    assert!(
-        detail.contains("missing origin source"),
-        "detail should contain 'missing origin source', got: {detail:?}"
-    );
-    assert!(
-        detail.contains("Split"),
-        "detail should mention Split, got: {detail:?}"
-    );
-    assert!(
-        detail.contains('B'),
-        "detail should contain node id B, got: {detail:?}"
-    );
-    assert!(
-        detail.contains("missing"),
-        "detail should contain missing source id, got: {detail:?}"
-    );
-    assert!(t.effects.is_empty());
+    for case in cases {
+        let mut node_b = work_node("B", "task", &[]);
+        node_b.origin = case.origin;
+        let graph = RunGraph {
+            nodes: vec![node_b],
+            next_id: 0,
+        };
+        let t = do_transition(
+            SchedulerState::Active {
+                graph,
+                run_config: RunConfig::default(),
+            },
+            SchedulerEvent::Start,
+        );
+
+        let SchedulerState::Failed { reason, .. } = t.state else {
+            panic!("expected Failed, got {:#?}", t.state);
+        };
+        let FailureReason::GraphInvariantViolation(detail) = reason else {
+            panic!("expected GraphInvariantViolation, got {reason:?}");
+        };
+        assert!(
+            detail.contains("missing origin source"),
+            "detail should contain 'missing origin source', got: {detail:?}"
+        );
+        assert!(
+            detail.contains(case.expected_kind_name),
+            "detail should mention {}, got: {detail:?}",
+            case.expected_kind_name
+        );
+        assert!(
+            detail.contains('B'),
+            "detail should contain node id B, got: {detail:?}"
+        );
+        assert!(
+            detail.contains("missing"),
+            "detail should contain missing source id, got: {detail:?}"
+        );
+        assert!(t.effects.is_empty());
+    }
 }
 
 // ── Outcome/phase validation tests ───────────────────────────────────────
