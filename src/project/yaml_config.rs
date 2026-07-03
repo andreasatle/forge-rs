@@ -131,24 +131,28 @@ role_prompts:
     }
 
     #[test]
-    fn context_files_defaults_to_empty() {
-        // Invariant: a config with only role_prompts still parses, with
-        // context_files defaulting to an empty list.
-        let config: ProjectAdapterConfig = serde_yaml::from_str(MINIMAL_YAML).unwrap();
-        assert!(config.context_files.is_empty());
+    fn context_files_field() {
+        let cases = [
+            (MINIMAL_YAML.to_string(), Vec::<String>::new()),
+            (
+                format!("{MINIMAL_YAML}\ncontext_files:\n  - README.md\n"),
+                vec!["README.md".to_string()],
+            ),
+        ];
+        for (yaml, expected) in cases {
+            // Invariant: context_files defaults to empty when absent from
+            // YAML, and round-trips unchanged when present.
+            let config: ProjectAdapterConfig = serde_yaml::from_str(&yaml).unwrap();
+            assert_eq!(config.context_files, expected);
+        }
     }
 
     #[test]
-    fn parses_context_files() {
-        let yaml = format!("{MINIMAL_YAML}\ncontext_files:\n  - README.md\n");
-        let config: ProjectAdapterConfig = serde_yaml::from_str(&yaml).unwrap();
-        assert_eq!(config.context_files, vec!["README.md".to_string()]);
-    }
-
-    #[test]
-    fn missing_role_prompts_field_is_an_error() {
-        // Invariant: role_prompts is required — a missing role fails to parse.
-        let yaml = r#"
+    fn missing_required_field_is_an_error() {
+        // Invariant: role_prompts, and each role prompt's instructions and
+        // constraints sub-fields, are all required — a config missing any of
+        // them fails to parse.
+        let missing_worker_referee = r#"
 role_prompts:
   planner_producer:
     instructions: "plan it"
@@ -166,15 +170,7 @@ role_prompts:
     instructions: "decide the plan"
     constraints: "decide plan bounds"
 "#;
-        let result: Result<ProjectAdapterConfig, _> = serde_yaml::from_str(yaml);
-        assert!(result.is_err(), "missing worker_referee must fail to parse");
-    }
-
-    #[test]
-    fn missing_constraints_sub_field_is_an_error() {
-        // Invariant: instructions/constraints are each required — a role
-        // prompt missing one sub-field fails to parse.
-        let yaml = r#"
+        let missing_constraints_sub_field = r#"
 role_prompts:
   planner_producer:
     instructions: "plan it"
@@ -194,11 +190,20 @@ role_prompts:
     instructions: "decide the work"
     constraints: "decide work bounds"
 "#;
-        let result: Result<ProjectAdapterConfig, _> = serde_yaml::from_str(yaml);
-        assert!(
-            result.is_err(),
-            "missing planner_producer.constraints must fail to parse"
-        );
+        let missing_role_prompts_block = "context_files:\n  - README.md\n";
+
+        let cases = [
+            (missing_worker_referee, "missing worker_referee"),
+            (
+                missing_constraints_sub_field,
+                "missing planner_producer.constraints",
+            ),
+            (missing_role_prompts_block, "missing role_prompts block"),
+        ];
+        for (yaml, description) in cases {
+            let result: Result<ProjectAdapterConfig, _> = serde_yaml::from_str(yaml);
+            assert!(result.is_err(), "{description} must fail to parse");
+        }
     }
 
     #[test]
@@ -207,12 +212,5 @@ role_prompts:
         let yaml = format!("{MINIMAL_YAML}\nbogus_field: true\n");
         let result: Result<ProjectAdapterConfig, _> = serde_yaml::from_str(&yaml);
         assert!(result.is_err(), "unknown top-level field must be rejected");
-    }
-
-    #[test]
-    fn missing_role_prompts_block_is_an_error() {
-        let yaml = "context_files:\n  - README.md\n";
-        let result: Result<ProjectAdapterConfig, _> = serde_yaml::from_str(yaml);
-        assert!(result.is_err(), "role_prompts must be required");
     }
 }

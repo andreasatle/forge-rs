@@ -162,16 +162,16 @@ mod tests {
     }
 
     #[test]
-    fn io_error_is_passed_through_unchanged() {
-        let original = "disk full";
-        let msg = safe_target_error(ArtifactError::IoError(original.to_string()));
-        assert_eq!(msg, original);
-    }
-
-    #[test]
-    fn file_not_found_is_passed_through() {
-        let msg = safe_target_error(ArtifactError::FileNotFound);
-        assert_eq!(msg, ArtifactError::FileNotFound.to_string());
+    fn other_errors_are_passed_through_unchanged() {
+        let cases = [
+            ArtifactError::IoError("disk full".to_string()),
+            ArtifactError::FileNotFound,
+        ];
+        for error in cases {
+            let expected = error.to_string();
+            let msg = safe_target_error(error);
+            assert_eq!(msg, expected);
+        }
     }
 
     // ── ProjectAdapter::context_file_names ───────────────────────────────────

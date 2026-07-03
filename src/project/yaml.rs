@@ -165,19 +165,17 @@ mod tests {
 
     #[test]
     fn context_file_names_returns_configured_files() {
-        assert_eq!(
-            adapter().context_file_names(),
-            vec!["README.md".to_string()]
-        );
-    }
-
-    #[test]
-    fn context_file_names_empty_when_unconfigured() {
-        let adapter = YamlProjectAdapter::new(ProjectAdapterConfig {
-            role_prompts: role_prompts(),
-            context_files: vec![],
-        });
-        assert!(adapter.context_file_names().is_empty());
+        let cases = [
+            (vec!["README.md".to_string()], vec!["README.md".to_string()]),
+            (vec![], vec![]),
+        ];
+        for (context_files, expected) in cases {
+            let adapter = YamlProjectAdapter::new(ProjectAdapterConfig {
+                role_prompts: role_prompts(),
+                context_files,
+            });
+            assert_eq!(adapter.context_file_names(), expected);
+        }
     }
 
     // ── from_yaml_str ─────────────────────────────────────────────────────────

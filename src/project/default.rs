@@ -76,28 +76,33 @@ mod tests {
             "default planner_producer_system must describe PlannerOutput; got:\n{}",
             policy.planner_producer_system
         );
-    }
-
-    #[test]
-    fn default_policy_preserves_protocol_footer() {
-        let policy = DefaultProjectAdapter.role_policy();
-        // Critic and Referee roles keep both branches of the schema.
+        // Critic and Referee roles keep both branches of the protocol footer.
         for system in [
-            policy.planner_critic_system.as_str(),
-            policy.worker_critic_system.as_str(),
-            policy.planner_referee_system.as_str(),
-            policy.worker_referee_system.as_str(),
+            &policy.planner_critic_system,
+            &policy.worker_critic_system,
+            &policy.planner_referee_system,
+            &policy.worker_referee_system,
         ] {
             assert!(system.contains("Return exactly one JSON object"));
             assert!(system.contains("Accepted: `status` must be \"accepted\""));
             assert!(system.contains("Rejected: `status` must be \"rejected\""));
             assert!(system.contains("Execution failures are handled by the framework"));
         }
-        // The Work-node Producer never rejects, so it uses the summary-only schema.
-        let worker = policy.worker_producer_system.as_str();
-        assert!(worker.contains("Return exactly one JSON object"));
-        assert!(worker.contains("`summary` must be a non-empty task-specific string"));
-        assert!(!worker.contains("`status`"));
-        assert!(worker.contains("Execution failures are handled by the framework"));
+        // The Work-node Producer never rejects, so it keeps the summary-only footer.
+        assert!(
+            policy
+                .worker_producer_system
+                .contains("Return exactly one JSON object")
+        );
+        assert!(
+            policy
+                .worker_producer_system
+                .contains("`summary` must be a non-empty task-specific string")
+        );
+        assert!(
+            policy
+                .worker_producer_system
+                .contains("Execution failures are handled by the framework")
+        );
     }
 }

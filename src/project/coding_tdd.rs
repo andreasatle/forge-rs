@@ -41,27 +41,17 @@ mod tests {
     #[test]
     fn planner_producer_prompt_requires_test_nodes_before_implementation() {
         // Invariant: the TDD planner prompt must instruct the planner to
-        // schedule test nodes ahead of the implementation nodes they cover.
+        // schedule test nodes ahead of the implementation nodes they cover,
+        // and to name the source module those tests import from.
         let policy = CodingTddProjectAdapter.role_policy();
-        assert!(
-            policy
-                .planner_producer_system
-                .contains("before the implementation nodes"),
-            "TDD planner prompt must require test nodes before implementation nodes; got:\n{}",
-            policy.planner_producer_system
-        );
-    }
-
-    #[test]
-    fn planner_producer_prompt_requires_naming_source_module() {
-        let policy = CodingTddProjectAdapter.role_policy();
-        assert!(
-            policy
-                .planner_producer_system
-                .contains("name the source module"),
-            "TDD planner prompt must require naming the source module tests import from; got:\n{}",
-            policy.planner_producer_system
-        );
+        let required_substrings = ["before the implementation nodes", "name the source module"];
+        for substring in required_substrings {
+            assert!(
+                policy.planner_producer_system.contains(substring),
+                "TDD planner prompt must contain {substring:?}; got:\n{}",
+                policy.planner_producer_system
+            );
+        }
     }
 
     #[test]
