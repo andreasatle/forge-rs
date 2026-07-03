@@ -1,6 +1,6 @@
-//! Wires a [`ProjectConfig`] + [`ValidationConfig`] into the pieces the
-//! scheduler runner needs: role policy, context files, required test
-//! targets, validation plan, and validator.
+//! Wires an adapter name, an optional plugin name, and a [`ValidationConfig`]
+//! into the pieces the scheduler runner needs: role policy, context files,
+//! required test targets, validation plan, and validator.
 //!
 //! [`ProjectRuntimeSetup::build`] is the single entry point so `run` and
 //! `resume` derive identical wiring from identical config.
@@ -10,13 +10,11 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::config::{ProjectConfig, ProjectKind, ProjectVariant, ValidationConfig};
-use crate::language::registry::language_spec;
+use crate::config::ValidationConfig;
+use crate::language::registry::language_spec_for_plugin;
 use crate::language::spec::LanguageSpec;
 use crate::node_runner::TestTargetsFn;
-use crate::project::{
-    CodingProjectAdapter, CodingTddProjectAdapter, DefaultProjectAdapter, ProjectAdapter,
-};
+use crate::project::{CodingProjectAdapter, CodingTddProjectAdapter, ProjectAdapter};
 use crate::roles::RolePolicy;
 use crate::validation::{
     AlwaysPassValidator, CommandSpec, CommandValidator, ValidationPlan, ValidationScope,
@@ -34,54 +32,66 @@ pub struct ProjectRuntimeSetup {
 }
 
 impl ProjectRuntimeSetup {
+    /// `adapter` names a bundled project adapter YAML file (e.g.
+    /// `"coding.yaml"`); `plugin` optionally names a bundled language plugin
+    /// YAML file (e.g. `"python.yaml"`). Both are validated by
+    /// [`crate::config::ForgeConfig::from_file`] in the common case, but an
+    /// unrecognised name is still a hard error here.
     pub fn build(
-        project: &ProjectConfig,
+        adapter: &str,
+        plugin: Option<&str>,
         validation: Option<&ValidationConfig>,
     ) -> Result<Self, Box<dyn Error>> {
-        ProjectRuntimeSetupBuilder::new(project, validation).build()
+        Ok(ProjectRuntimeSetupBuilder::new(adapter, plugin, validation)?.build())
     }
 }
 
 struct ProjectRuntimeSetupBuilder<'a> {
-    project: &'a ProjectConfig,
     validation: Option<&'a ValidationConfig>,
     language_spec: Option<LanguageSpec>,
     adapter: Box<dyn ProjectAdapter>,
 }
 
 impl<'a> ProjectRuntimeSetupBuilder<'a> {
-    fn new(project: &'a ProjectConfig, validation: Option<&'a ValidationConfig>) -> Self {
-        Self {
-            project,
+    fn new(
+        adapter: &str,
+        plugin: Option<&str>,
+        validation: Option<&'a ValidationConfig>,
+    ) -> Result<Self, Box<dyn Error>> {
+        Ok(Self {
             validation,
-            language_spec: project.language.as_deref().and_then(language_spec),
-            adapter: Self::select_adapter(project),
-        }
-    }
-
-    fn build(&self) -> Result<ProjectRuntimeSetup, Box<dyn Error>> {
-        Ok(ProjectRuntimeSetup {
-            role_policy: self.role_policy(),
-            context_file_names: self.context_file_names(),
-            required_test_targets_fn: self.required_test_targets_fn(),
-            validation_plan: self.validation_plan()?,
-            validator: self.validator()?,
+            language_spec: Self::select_plugin(plugin)?,
+            adapter: Self::select_adapter(adapter)?,
         })
     }
 
-    /// Selects the bundled adapter for the configured project kind/variant.
-    ///
-    /// [`ProjectKind::Coding`] can be backed by more than one prompt policy;
-    /// `variant` picks which one without the framework needing to know anything
-    /// about their contents.
-    fn select_adapter(project: &ProjectConfig) -> Box<dyn ProjectAdapter> {
-        match project.kind {
-            ProjectKind::Default => Box::new(DefaultProjectAdapter),
-            ProjectKind::Coding => match project.variant {
-                ProjectVariant::Coding => Box::new(CodingProjectAdapter),
-                ProjectVariant::CodingTdd => Box::new(CodingTddProjectAdapter),
-            },
+    fn build(&self) -> ProjectRuntimeSetup {
+        ProjectRuntimeSetup {
+            role_policy: self.role_policy(),
+            context_file_names: self.context_file_names(),
+            required_test_targets_fn: self.required_test_targets_fn(),
+            validation_plan: self.validation_plan(),
+            validator: self.validator(),
         }
+    }
+
+    /// Selects the bundled adapter named by `adapter` (e.g. `"coding.yaml"`).
+    fn select_adapter(adapter: &str) -> Result<Box<dyn ProjectAdapter>, Box<dyn Error>> {
+        match adapter {
+            "coding.yaml" => Ok(Box::new(CodingProjectAdapter)),
+            "coding_tdd.yaml" => Ok(Box::new(CodingTddProjectAdapter)),
+            other => Err(format!("unknown adapter: '{other}'").into()),
+        }
+    }
+
+    /// Resolves the bundled language spec named by `plugin` (e.g. `"python.yaml"`).
+    fn select_plugin(plugin: Option<&str>) -> Result<Option<LanguageSpec>, Box<dyn Error>> {
+        let Some(name) = plugin else {
+            return Ok(None);
+        };
+        language_spec_for_plugin(name)
+            .map(Some)
+            .ok_or_else(|| format!("unknown plugin: '{name}'").into())
     }
 
     fn role_policy(&self) -> RolePolicy {
@@ -141,8 +151,8 @@ impl<'a> ProjectRuntimeSetupBuilder<'a> {
     /// The plan is stamped onto every Work node at plan-expansion time.  This
     /// captures the validation contract at node-creation time so it survives
     /// checkpoint/resume unchanged, regardless of any later config edits.
-    fn validation_plan(&self) -> Result<Option<ValidationPlan>, Box<dyn Error>> {
-        if let Some(spec) = self.language_spec()? {
+    fn validation_plan(&self) -> Option<ValidationPlan> {
+        if let Some(spec) = &self.language_spec {
             let steps = spec
                 .validation
                 .commands
@@ -156,12 +166,12 @@ impl<'a> ProjectRuntimeSetupBuilder<'a> {
                     must_pass: true,
                 })
                 .collect();
-            Ok(Some(ValidationPlan {
+            Some(ValidationPlan {
                 steps,
                 timeout_seconds: 120,
-            }))
+            })
         } else {
-            Ok(self.validation_config_plan())
+            self.validation_config_plan()
         }
     }
 
@@ -189,13 +199,13 @@ impl<'a> ProjectRuntimeSetupBuilder<'a> {
         }
     }
 
-    fn validator(&self) -> Result<Rc<dyn Validator>, Box<dyn Error>> {
-        if let Some(spec) = self.language_spec()? {
+    fn validator(&self) -> Rc<dyn Validator> {
+        if let Some(spec) = &self.language_spec {
             let timeout = Duration::from_secs(120);
-            return Ok(Rc::new(CommandValidator::new(
+            return Rc::new(CommandValidator::new(
                 spec.validation.commands.clone(),
                 timeout,
-            )));
+            ));
         }
 
         match self.validation {
@@ -211,19 +221,10 @@ impl<'a> ProjectRuntimeSetupBuilder<'a> {
                         scope: ValidationScope::Workspace,
                     })
                     .collect();
-                Ok(Rc::new(CommandValidator::new(specs, timeout)))
+                Rc::new(CommandValidator::new(specs, timeout))
             }
-            _ => Ok(Rc::new(AlwaysPassValidator)),
+            _ => Rc::new(AlwaysPassValidator),
         }
-    }
-
-    fn language_spec(&self) -> Result<Option<&LanguageSpec>, Box<dyn Error>> {
-        if let Some(lang) = &self.project.language
-            && self.language_spec.is_none()
-        {
-            return Err(format!("unknown language: '{lang}'").into());
-        }
-        Ok(self.language_spec.as_ref())
     }
 }
 

@@ -4,48 +4,6 @@ use std::path::Path;
 
 use serde::{Deserialize, Deserializer};
 
-/// Selects which project adapter governs role prompt policy for a run.
-#[derive(Debug, Deserialize, Default, PartialEq)]
-#[serde(rename_all = "lowercase")]
-pub enum ProjectKind {
-    /// Default adapter — uses the hardcoded JSON protocol prompts unchanged.
-    #[default]
-    Default,
-    /// Coding adapter — uses software-oriented role prompts.
-    Coding,
-}
-
-/// Selects which bundled coding adapter configuration governs role prompts
-/// when [`ProjectKind::Coding`] is selected.
-#[derive(Debug, Deserialize, Default, PartialEq, Clone, Copy)]
-#[serde(rename_all = "snake_case")]
-pub enum ProjectVariant {
-    /// The standard coding adapter, loaded from `coding.yaml`.
-    #[default]
-    Coding,
-    /// The test-driven-development coding adapter, loaded from `coding_tdd.yaml`.
-    CodingTdd,
-}
-
-/// Project-level configuration.
-#[derive(Debug, Deserialize, Default)]
-pub struct ProjectConfig {
-    /// Selects which project adapter to use. Defaults to [`ProjectKind::Default`].
-    #[serde(default)]
-    pub kind: ProjectKind,
-    /// Language identifier used to load init and validation specs.
-    ///
-    /// When set, the named language spec provides init and validation commands.
-    /// Mutually exclusive with an explicit `validation` block.
-    #[serde(default)]
-    pub language: Option<String>,
-    /// Selects which bundled coding adapter configuration to use when
-    /// `kind` is [`ProjectKind::Coding`]. Defaults to [`ProjectVariant::Coding`].
-    /// An unrecognised value is a hard error at config load time.
-    #[serde(default)]
-    pub variant: ProjectVariant,
-}
-
 /// Top-level configuration for a forge run.
 #[derive(Debug, Deserialize)]
 pub struct ForgeConfig {
@@ -60,9 +18,15 @@ pub struct ForgeConfig {
     /// Optional validation commands run after workspace update, before integration.
     #[serde(default)]
     pub validation: Option<ValidationConfig>,
-    /// Project adapter selection. Absent config defaults to [`ProjectKind::Default`].
+    /// Names the project adapter YAML file governing role prompt policy
+    /// (e.g. `"coding.yaml"`, `"coding_tdd.yaml"`). Required; there is no default.
     #[serde(default)]
-    pub project: ProjectConfig,
+    pub adapter: String,
+    /// Names the language plugin YAML file providing init and validation
+    /// specs (e.g. `"python.yaml"`, `"rust.yaml"`). Omitting means no
+    /// language plugin. Mutually exclusive with an explicit `validation` block.
+    #[serde(default)]
+    pub plugin: Option<String>,
 }
 
 /// Artifact repository configuration.
@@ -259,8 +223,9 @@ impl ForgeConfig {
     /// process working directory.
     ///
     /// Returns an error if:
-    /// - Both `project.language` and `validation` are specified (mutually exclusive).
-    /// - `project.language` names an unknown language.
+    /// - `adapter` is absent.
+    /// - Both `plugin` and `validation` are specified (mutually exclusive).
+    /// - `plugin` names an unknown language plugin.
     pub fn from_file(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
         let config_path = Path::new(path);
         let content = std::fs::read_to_string(config_path)?;
@@ -274,18 +239,20 @@ impl ForgeConfig {
             config.telemetry.directory = resolve_relative(&config.telemetry.directory, dir);
         }
 
-        if config.project.language.is_some() && config.validation.is_some() {
-            return Err(
-                "project.language and validation.commands are mutually exclusive; \
-                 remove one or the other"
-                    .into(),
-            );
+        if config.adapter.trim().is_empty() {
+            return Err("adapter is required".into());
         }
 
-        if let Some(lang) = &config.project.language
-            && crate::language::registry::language_spec(lang).is_none()
+        if config.plugin.is_some() && config.validation.is_some() {
+            return Err("plugin and validation.commands are mutually exclusive; \
+                 remove one or the other"
+                .into());
+        }
+
+        if let Some(plugin) = &config.plugin
+            && crate::language::registry::language_spec_for_plugin(plugin).is_none()
         {
-            return Err(format!("unknown language: '{lang}'").into());
+            return Err(format!("unknown plugin: '{plugin}'").into());
         }
 
         validate_provider_model_identity(&config.provider)?;

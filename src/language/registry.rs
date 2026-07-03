@@ -19,19 +19,27 @@ pub(crate) fn register_test_language_spec(id: impl Into<String>, spec: LanguageS
         .insert(id.into(), spec);
 }
 
-/// Return the [`LanguageSpec`] for `id`, or `None` if the language is unknown.
-///
-/// Bundled specs are parsed from YAML at call time. Panics if a bundled spec
-/// fails to parse — that is a compile-time authoring error, not a runtime one.
-pub fn language_spec(id: &str) -> Option<LanguageSpec> {
-    #[cfg(test)]
-    if let Some(spec) = TEST_LANGUAGE_SPECS
+#[cfg(test)]
+fn test_override(id: &str) -> Option<LanguageSpec> {
+    TEST_LANGUAGE_SPECS
         .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
         .lock()
         .expect("test language registry mutex poisoned")
         .get(id)
         .cloned()
-    {
+}
+
+#[cfg(not(test))]
+fn test_override(_id: &str) -> Option<LanguageSpec> {
+    None
+}
+
+/// Return the [`LanguageSpec`] for `id`, or `None` if the language is unknown.
+///
+/// Bundled specs are parsed from YAML at call time. Panics if a bundled spec
+/// fails to parse — that is a compile-time authoring error, not a runtime one.
+pub fn language_spec(id: &str) -> Option<LanguageSpec> {
+    if let Some(spec) = test_override(id) {
         return Some(spec);
     }
 
@@ -42,6 +50,23 @@ pub fn language_spec(id: &str) -> Option<LanguageSpec> {
         "python" => {
             Some(serde_yaml::from_str(PYTHON_SPEC).expect("bundled python.yaml must be valid YAML"))
         }
+        _ => None,
+    }
+}
+
+/// Return the [`LanguageSpec`] named by a `ForgeConfig::plugin` filename
+/// (e.g. `"python.yaml"`), or `None` if the plugin name is unrecognized.
+///
+/// Unlike [`language_spec`], which is keyed by bare language id, this is
+/// keyed by the exact plugin filename a `forge.yaml` names.
+pub fn language_spec_for_plugin(plugin: &str) -> Option<LanguageSpec> {
+    if let Some(spec) = test_override(plugin) {
+        return Some(spec);
+    }
+
+    match plugin {
+        "python.yaml" => language_spec("python"),
+        "rust.yaml" => language_spec("rust"),
         _ => None,
     }
 }
@@ -127,6 +152,33 @@ mod tests {
             has_test,
             "validation must include cargo test; got: {cmds:?}"
         );
+    }
+
+    #[test]
+    fn language_spec_for_plugin_matches_bundled_filenames() {
+        for (plugin, id) in [("python.yaml", "python"), ("rust.yaml", "rust")] {
+            let expected = language_spec(id).unwrap_or_else(|| panic!("{id} spec must load"));
+            let got = language_spec_for_plugin(plugin)
+                .unwrap_or_else(|| panic!("{plugin} plugin must load"));
+            assert_eq!(
+                got.prompt_guidance, expected.prompt_guidance,
+                "{plugin} must resolve to the {id} spec"
+            );
+        }
+    }
+
+    #[test]
+    fn language_spec_for_plugin_rejects_bare_id() {
+        assert!(
+            language_spec_for_plugin("python").is_none(),
+            "bare language id must not be accepted as a plugin filename"
+        );
+    }
+
+    #[test]
+    fn language_spec_for_plugin_rejects_unknown_name() {
+        assert!(language_spec_for_plugin("cobol.yaml").is_none());
+        assert!(language_spec_for_plugin("").is_none());
     }
 
     #[test]

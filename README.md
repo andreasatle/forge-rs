@@ -83,9 +83,9 @@ config, run identity, telemetry sink, and provider stack. It:
 
 `ProjectRuntimeSetup` centralizes project-derived wiring: role policy,
 context-file names, required test-target derivation, validation plan, and the
-validator. It selects a project adapter from `project.kind` / `project.variant`
-and augments it with language-specific prompt guidance and validation rules
-when `project.language` is configured.
+validator. It selects a project adapter from the `adapter` YAML file name and
+augments it with language-specific prompt guidance and validation rules when
+a `plugin` YAML file is configured.
 
 `ResolvedProviderStack` resolves `ProviderConfig` into:
 
@@ -118,9 +118,8 @@ provider:
   strong_timeout_seconds: 180   # optional; fallback to timeout_seconds
 telemetry:
   directory: "runs"
-project:                         # optional; defaults to kind: default
-  kind: coding
-  variant: coding                # optional; coding or coding_tdd
+adapter: coding.yaml            # required; names a bundled project adapter YAML file
+plugin: python.yaml             # optional; names a bundled language plugin YAML file
 validation:                     # optional
   commands:
     - cargo fmt --check
@@ -130,9 +129,13 @@ validation:                     # optional
 
 Relative paths in `artifact.repo_path` and `telemetry.directory` are resolved against the directory containing `forge.yaml`, not the working directory.
 
-`project.language` can be used instead of an explicit `validation` block to
-load bundled language initialization, prompt guidance, and validation commands.
-The two validation sources are mutually exclusive.
+`adapter` names the bundled project adapter YAML file governing role prompt
+policy (`coding.yaml` or `coding_tdd.yaml`). It is required; there is no default.
+
+`plugin` can be used instead of an explicit `validation` block to load bundled
+language initialization, prompt guidance, and validation commands
+(`python.yaml` or `rust.yaml`). The two validation sources are mutually
+exclusive.
 
 By default Forge connects to already-running provider servers. For llama.cpp,
 Forge can instead own a local `llama-server` process:

@@ -55,8 +55,7 @@ pub fn run_reset(config: ForgeConfig) -> Result<(), Box<dyn Error>> {
         std::fs::remove_dir_all(&repo_path)?;
     }
 
-    let artifact =
-        super::load_or_create_artifact(&config.artifact, config.project.language.as_deref())?;
+    let artifact = super::load_or_create_artifact(&config.artifact, config.plugin.as_deref())?;
 
     let short_sha = &artifact.commit_sha[..artifact.commit_sha.len().min(7)];
     println!("Reset complete. Initial commit: {short_sha}");

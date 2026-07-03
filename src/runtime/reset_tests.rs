@@ -32,7 +32,7 @@ fn commit_count(repo_path: &PathBuf, branch: &str) -> usize {
 
 fn make_forge_config(repo_path: &Path, telemetry_path: &Path) -> ForgeConfig {
     use crate::config::{
-        ArtifactConfig, ProjectConfig, ProviderConfig, ProviderTierConfig, TelemetryConfig,
+        ArtifactConfig, ProviderConfig, ProviderTierConfig, TelemetryConfig,
         UnmanagedProviderConfig,
     };
     ForgeConfig {
@@ -55,7 +55,8 @@ fn make_forge_config(repo_path: &Path, telemetry_path: &Path) -> ForgeConfig {
             directory: telemetry_path.to_str().unwrap().to_string(),
         },
         validation: None,
-        project: ProjectConfig::default(),
+        adapter: "coding.yaml".to_string(),
+        plugin: None,
     }
 }
 
@@ -65,7 +66,7 @@ fn make_forge_config_with_language(
     language: &str,
 ) -> ForgeConfig {
     use crate::config::{
-        ArtifactConfig, ProjectConfig, ProviderConfig, ProviderTierConfig, TelemetryConfig,
+        ArtifactConfig, ProviderConfig, ProviderTierConfig, TelemetryConfig,
         UnmanagedProviderConfig,
     };
     ForgeConfig {
@@ -88,11 +89,8 @@ fn make_forge_config_with_language(
             directory: telemetry_path.to_str().unwrap().to_string(),
         },
         validation: None,
-        project: ProjectConfig {
-            kind: crate::config::ProjectKind::Coding,
-            language: Some(language.to_string()),
-            variant: crate::config::ProjectVariant::Coding,
-        },
+        adapter: "coding.yaml".to_string(),
+        plugin: Some(language.to_string()),
     }
 }
 
@@ -304,7 +302,7 @@ fn reset_creates_configured_branch() {
     // Use a non-default branch name to prove reset uses the config, not "main".
     let config = {
         use crate::config::{
-            ArtifactConfig, ProjectConfig, ProviderConfig, ProviderTierConfig, TelemetryConfig,
+            ArtifactConfig, ProviderConfig, ProviderTierConfig, TelemetryConfig,
             UnmanagedProviderConfig,
         };
         ForgeConfig {
@@ -327,7 +325,8 @@ fn reset_creates_configured_branch() {
                 directory: telemetry.to_str().unwrap().to_string(),
             },
             validation: None,
-            project: ProjectConfig::default(),
+            adapter: "coding.yaml".to_string(),
+            plugin: None,
         }
     };
 

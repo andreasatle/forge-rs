@@ -48,6 +48,7 @@ provider:
       n_predict: 512
 telemetry:
   directory: "runs"
+adapter: coding.yaml
 "#;
 
 #[test]
@@ -109,6 +110,7 @@ provider:
   timeout_seconds: 30
 telemetry:
   directory: "runs"
+adapter: coding.yaml
 "#;
 
 #[test]
@@ -146,6 +148,7 @@ provider:
       n_predict: 512
 telemetry:
   directory: "runs"
+adapter: coding.yaml
 validation:
   commands:
     - cargo fmt --check
@@ -198,6 +201,7 @@ provider:
   strong_timeout_seconds: 180
 telemetry:
   directory: "runs"
+adapter: coding.yaml
 "#;
 
 #[test]
@@ -238,6 +242,7 @@ provider:
       n_predict: 512
 telemetry:
   directory: "runs"
+adapter: coding.yaml
 "#;
 
 #[test]
@@ -263,6 +268,7 @@ provider:
       n_predict: 512
 telemetry:
   directory: "runs"
+adapter: coding.yaml
 "#;
 
 #[test]
@@ -294,6 +300,7 @@ provider:
         n_predict: 512
 telemetry:
   directory: "runs"
+adapter: coding.yaml
 "#;
 
 #[test]
@@ -332,6 +339,7 @@ provider:
         n_predict: 512
 telemetry:
   directory: "runs"
+adapter: coding.yaml
 "#;
 
 #[test]
@@ -370,6 +378,7 @@ provider:
         n_predict: 512
 telemetry:
   directory: "runs"
+adapter: coding.yaml
 "#;
 
 #[test]
@@ -395,6 +404,7 @@ provider:
         n_predict: 512
 telemetry:
   directory: "runs"
+adapter: coding.yaml
 "#;
 
 #[test]
@@ -424,6 +434,7 @@ provider:
         n_predict: 512
 telemetry:
   directory: "runs"
+adapter: coding.yaml
 "#;
 
 #[test]
@@ -453,6 +464,7 @@ provider:
         n_predict: 512
 telemetry:
   directory: "runs"
+adapter: coding.yaml
 "#;
 
 #[test]
@@ -478,6 +490,7 @@ provider:
       n_predict: 512
 telemetry:
   directory: "runs"
+adapter: coding.yaml
 "#;
 
 #[test]
@@ -503,6 +516,7 @@ provider:
       n_predict: 512
 telemetry:
   directory: "runs"
+adapter: coding.yaml
 "#;
 
 #[test]
@@ -528,6 +542,7 @@ provider:
       n_predict: 512
 telemetry:
   directory: "runs"
+adapter: coding.yaml
 "#;
 
 #[test]
@@ -553,6 +568,7 @@ provider:
       n_predict: 512
 telemetry:
   directory: "/absolute/telemetry"
+adapter: coding.yaml
 "#;
 
 #[test]
@@ -569,20 +585,9 @@ fn absolute_paths_remain_absolute() {
     );
 }
 
-// ── project config tests ─────────────────────────────────────────────────
+// ── adapter config tests ─────────────────────────────────────────────────
 
-#[test]
-fn config_defaults_to_default_project() {
-    let tmp = TempYaml::new(EXAMPLE_YAML);
-    let config = ForgeConfig::from_file(tmp.path()).unwrap();
-    assert_eq!(
-        config.project.kind,
-        ProjectKind::Default,
-        "absent project block must default to ProjectKind::Default"
-    );
-}
-
-const CODING_PROJECT_YAML: &str = r#"
+const NO_ADAPTER_YAML: &str = r#"
 objective: "test"
 artifact:
   repo_path: ".forge/artifacts/main.git"
@@ -595,33 +600,16 @@ provider:
       n_predict: 512
 telemetry:
   directory: "runs"
-project:
-  kind: coding
 "#;
 
 #[test]
-fn config_parses_coding_project() {
-    let tmp = TempYaml::new(CODING_PROJECT_YAML);
-    let config = ForgeConfig::from_file(tmp.path()).unwrap();
-    assert_eq!(
-        config.project.kind,
-        ProjectKind::Coding,
-        "project.kind: coding must parse as ProjectKind::Coding"
-    );
+fn adapter_is_required_when_absent() {
+    let tmp = TempYaml::new(NO_ADAPTER_YAML);
+    let result = ForgeConfig::from_file(tmp.path());
+    assert!(result.is_err(), "absent adapter must be a hard error");
 }
 
-#[test]
-fn config_defaults_to_coding_variant() {
-    let tmp = TempYaml::new(EXAMPLE_YAML);
-    let config = ForgeConfig::from_file(tmp.path()).unwrap();
-    assert_eq!(
-        config.project.variant,
-        ProjectVariant::Coding,
-        "absent project.variant must default to ProjectVariant::Coding"
-    );
-}
-
-const CODING_TDD_VARIANT_YAML: &str = r#"
+const BLANK_ADAPTER_YAML: &str = r#"
 objective: "test"
 artifact:
   repo_path: ".forge/artifacts/main.git"
@@ -634,53 +622,48 @@ provider:
       n_predict: 512
 telemetry:
   directory: "runs"
-project:
-  kind: coding
-  variant: coding_tdd
+adapter: "   "
 "#;
 
 #[test]
-fn config_parses_coding_tdd_variant() {
-    let tmp = TempYaml::new(CODING_TDD_VARIANT_YAML);
-    let config = ForgeConfig::from_file(tmp.path()).unwrap();
-    assert_eq!(
-        config.project.variant,
-        ProjectVariant::CodingTdd,
-        "project.variant: coding_tdd must parse as ProjectVariant::CodingTdd"
-    );
-}
-
-const UNKNOWN_VARIANT_YAML: &str = r#"
-objective: "test"
-artifact:
-  repo_path: ".forge/artifacts/main.git"
-  branch: "main"
-provider:
-  cheap:
-    unmanaged:
-      base_url: "http://localhost:8080"
-      model: "llama-test"
-      n_predict: 512
-telemetry:
-  directory: "runs"
-project:
-  kind: coding
-  variant: bogus
-"#;
-
-#[test]
-fn unknown_variant_fails_loudly() {
-    let tmp = TempYaml::new(UNKNOWN_VARIANT_YAML);
+fn adapter_is_required_when_blank() {
+    let tmp = TempYaml::new(BLANK_ADAPTER_YAML);
     let result = ForgeConfig::from_file(tmp.path());
     assert!(
         result.is_err(),
-        "unrecognised project.variant must be a hard error"
+        "blank (whitespace-only) adapter must be a hard error"
     );
 }
 
-// ── language config tests ────────────────────────────────────────────────
+const CODING_TDD_ADAPTER_YAML: &str = r#"
+objective: "test"
+artifact:
+  repo_path: ".forge/artifacts/main.git"
+  branch: "main"
+provider:
+  cheap:
+    unmanaged:
+      base_url: "http://localhost:8080"
+      model: "llama-test"
+      n_predict: 512
+telemetry:
+  directory: "runs"
+adapter: coding_tdd.yaml
+"#;
 
-const RUST_LANGUAGE_YAML: &str = r#"
+#[test]
+fn config_parses_adapter() {
+    let tmp = TempYaml::new(CODING_TDD_ADAPTER_YAML);
+    let config = ForgeConfig::from_file(tmp.path()).unwrap();
+    assert_eq!(
+        config.adapter, "coding_tdd.yaml",
+        "adapter: coding_tdd.yaml must parse as \"coding_tdd.yaml\""
+    );
+}
+
+// ── plugin config tests ──────────────────────────────────────────────────
+
+const RUST_PLUGIN_YAML: &str = r#"
 objective: "implement a CLI tool"
 artifact:
   repo_path: ".forge/artifacts/main.git"
@@ -693,32 +676,32 @@ provider:
       n_predict: 512
 telemetry:
   directory: "runs"
-project:
-  language: rust
+adapter: coding.yaml
+plugin: rust.yaml
 "#;
 
 #[test]
-fn config_parses_project_language_rust() {
-    let tmp = TempYaml::new(RUST_LANGUAGE_YAML);
+fn config_parses_plugin_rust() {
+    let tmp = TempYaml::new(RUST_PLUGIN_YAML);
     let config = ForgeConfig::from_file(tmp.path()).unwrap();
     assert_eq!(
-        config.project.language.as_deref(),
-        Some("rust"),
-        "project.language: rust must parse as Some(\"rust\")"
+        config.plugin.as_deref(),
+        Some("rust.yaml"),
+        "plugin: rust.yaml must parse as Some(\"rust.yaml\")"
     );
 }
 
 #[test]
-fn config_language_defaults_to_none() {
-    let tmp = TempYaml::new(EXAMPLE_YAML);
+fn config_plugin_defaults_to_none() {
+    let tmp = TempYaml::new(CODING_TDD_ADAPTER_YAML);
     let config = ForgeConfig::from_file(tmp.path()).unwrap();
     assert!(
-        config.project.language.is_none(),
-        "absent project.language must default to None"
+        config.plugin.is_none(),
+        "absent plugin must default to None"
     );
 }
 
-const PYTHON_LANGUAGE_YAML: &str = r#"
+const PYTHON_PLUGIN_YAML: &str = r#"
 objective: "implement a CLI tool"
 artifact:
   repo_path: ".forge/artifacts/main.git"
@@ -731,22 +714,22 @@ provider:
       n_predict: 512
 telemetry:
   directory: "runs"
-project:
-  language: python
+adapter: coding.yaml
+plugin: python.yaml
 "#;
 
 #[test]
-fn config_parses_project_language_python() {
-    let tmp = TempYaml::new(PYTHON_LANGUAGE_YAML);
+fn config_parses_plugin_python() {
+    let tmp = TempYaml::new(PYTHON_PLUGIN_YAML);
     let config = ForgeConfig::from_file(tmp.path()).unwrap();
     assert_eq!(
-        config.project.language.as_deref(),
-        Some("python"),
-        "project.language: python must parse as Some(\"python\")"
+        config.plugin.as_deref(),
+        Some("python.yaml"),
+        "plugin: python.yaml must parse as Some(\"python.yaml\")"
     );
 }
 
-const UNKNOWN_LANGUAGE_YAML: &str = r#"
+const UNKNOWN_PLUGIN_YAML: &str = r#"
 objective: "test"
 artifact:
   repo_path: ".forge/artifacts/main.git"
@@ -759,18 +742,18 @@ provider:
       n_predict: 512
 telemetry:
   directory: "runs"
-project:
-  language: cobol
+adapter: coding.yaml
+plugin: cobol.yaml
 "#;
 
 #[test]
-fn unknown_language_fails_loudly() {
-    let tmp = TempYaml::new(UNKNOWN_LANGUAGE_YAML);
+fn unknown_plugin_fails_loudly() {
+    let tmp = TempYaml::new(UNKNOWN_PLUGIN_YAML);
     let result = ForgeConfig::from_file(tmp.path());
-    assert!(result.is_err(), "unknown language must be a hard error");
+    assert!(result.is_err(), "unknown plugin must be a hard error");
 }
 
-const LANGUAGE_AND_VALIDATION_YAML: &str = r#"
+const PLUGIN_AND_VALIDATION_YAML: &str = r#"
 objective: "test"
 artifact:
   repo_path: ".forge/artifacts/main.git"
@@ -783,19 +766,19 @@ provider:
       n_predict: 512
 telemetry:
   directory: "runs"
-project:
-  language: rust
+adapter: coding.yaml
+plugin: rust.yaml
 validation:
   commands:
     - cargo test
 "#;
 
 #[test]
-fn language_and_validation_commands_are_mutually_exclusive() {
-    let tmp = TempYaml::new(LANGUAGE_AND_VALIDATION_YAML);
+fn plugin_and_validation_commands_are_mutually_exclusive() {
+    let tmp = TempYaml::new(PLUGIN_AND_VALIDATION_YAML);
     let result = ForgeConfig::from_file(tmp.path());
     assert!(
         result.is_err(),
-        "specifying both project.language and validation must be an error"
+        "specifying both plugin and validation must be an error"
     );
 }

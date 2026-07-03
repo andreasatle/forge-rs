@@ -1,27 +1,20 @@
 use super::*;
-use crate::config::{ProjectConfig, ProjectKind, ProjectVariant, ValidationConfig};
-
-fn project(language: Option<&str>, variant: ProjectVariant) -> ProjectConfig {
-    ProjectConfig {
-        kind: ProjectKind::Coding,
-        language: language.map(str::to_string),
-        variant,
-    }
-}
+use crate::config::ValidationConfig;
+use crate::language::registry::language_spec;
 
 fn builder<'a>(
-    project: &'a ProjectConfig,
+    adapter: &str,
+    plugin: Option<&str>,
     validation: Option<&'a ValidationConfig>,
 ) -> ProjectRuntimeSetupBuilder<'a> {
-    ProjectRuntimeSetupBuilder::new(project, validation)
+    ProjectRuntimeSetupBuilder::new(adapter, plugin, validation).unwrap()
 }
 
 // ── adapter selection ────────────────────────────────────────────────────
 
 #[test]
 fn runtime_selects_coding_adapter() {
-    let project = project(None, ProjectVariant::Coding);
-    let policy = builder(&project, None).role_policy();
+    let policy = builder("coding.yaml", None, None).role_policy();
     assert!(
         policy.planner_producer_system.contains("software planning"),
         "coding adapter must produce software-planning planner prompt; got:\n{}",
@@ -38,28 +31,32 @@ fn runtime_selects_coding_adapter() {
 
 #[test]
 fn runtime_selects_coding_tdd_adapter() {
-    let project = project(None, ProjectVariant::CodingTdd);
-    let policy = builder(&project, None).role_policy();
+    let policy = builder("coding_tdd.yaml", None, None).role_policy();
     assert!(
         policy
             .planner_producer_system
             .contains("before the implementation nodes"),
-        "coding_tdd variant must select the TDD planner prompt; got:\n{}",
+        "coding_tdd adapter must select the TDD planner prompt; got:\n{}",
         policy.planner_producer_system
     );
     assert!(
         policy
             .worker_producer_system
             .contains("import the functions under test"),
-        "coding_tdd variant must select the TDD worker prompt; got:\n{}",
+        "coding_tdd adapter must select the TDD worker prompt; got:\n{}",
         policy.worker_producer_system
     );
 }
 
 #[test]
-fn runtime_role_policy_includes_language_guidance_when_language_set() {
-    let project = project(Some("rust"), ProjectVariant::Coding);
-    let policy = builder(&project, None).role_policy();
+fn unknown_adapter_fails_loudly() {
+    let result = ProjectRuntimeSetupBuilder::new("bogus.yaml", None, None);
+    assert!(result.is_err(), "unrecognised adapter must be a hard error");
+}
+
+#[test]
+fn runtime_role_policy_includes_language_guidance_when_plugin_set() {
+    let policy = builder("coding.yaml", Some("rust.yaml"), None).role_policy();
     let expected = language_spec("rust")
         .expect("rust spec must load")
         .prompt_guidance;
@@ -71,19 +68,17 @@ fn runtime_role_policy_includes_language_guidance_when_language_set() {
 }
 
 #[test]
-fn runtime_role_policy_has_no_language_guidance_when_language_unset() {
-    let project = project(None, ProjectVariant::Coding);
-    let policy = builder(&project, None).role_policy();
+fn runtime_role_policy_has_no_language_guidance_when_plugin_unset() {
+    let policy = builder("coding.yaml", None, None).role_policy();
     assert_eq!(
         policy.language_guidance, None,
-        "role policy must have no language guidance when no language is configured"
+        "role policy must have no language guidance when no plugin is configured"
     );
 }
 
 #[test]
-fn runtime_role_policy_includes_language_constraints_when_language_set() {
-    let project = project(Some("rust"), ProjectVariant::Coding);
-    let policy = builder(&project, None).role_policy();
+fn runtime_role_policy_includes_language_constraints_when_plugin_set() {
+    let policy = builder("coding.yaml", Some("rust.yaml"), None).role_policy();
     let expected = language_spec("rust")
         .expect("rust spec must load")
         .constraints;
@@ -95,13 +90,18 @@ fn runtime_role_policy_includes_language_constraints_when_language_set() {
 }
 
 #[test]
-fn runtime_role_policy_has_no_language_constraints_when_language_unset() {
-    let project = project(None, ProjectVariant::Coding);
-    let policy = builder(&project, None).role_policy();
+fn runtime_role_policy_has_no_language_constraints_when_plugin_unset() {
+    let policy = builder("coding.yaml", None, None).role_policy();
     assert_eq!(
         policy.language_constraints, None,
-        "role policy must have no language constraints when no language is configured"
+        "role policy must have no language constraints when no plugin is configured"
     );
+}
+
+#[test]
+fn unknown_plugin_fails_loudly() {
+    let result = ProjectRuntimeSetupBuilder::new("coding.yaml", Some("bogus.yaml"), None);
+    assert!(result.is_err(), "unrecognised plugin must be a hard error");
 }
 
 // ── make_validator ───────────────────────────────────────────────────────
@@ -111,8 +111,7 @@ fn runtime_uses_always_pass_when_validation_absent() {
     use crate::artifacts::Workspace;
 
     let ws = Workspace::at_path(std::env::temp_dir(), "abc".to_string());
-    let project = project(None, ProjectVariant::Coding);
-    let validator = builder(&project, None).validator().unwrap();
+    let validator = builder("coding.yaml", None, None).validator();
     let result = validator.validate(&ws);
     assert!(
         result.passed,
@@ -130,8 +129,7 @@ fn runtime_uses_command_validator_when_configured() {
         commands: vec!["false".to_string()],
         timeout_seconds: None,
     };
-    let project = project(None, ProjectVariant::Coding);
-    let validator = builder(&project, Some(&config)).validator().unwrap();
+    let validator = builder("coding.yaml", None, Some(&config)).validator();
     let result = validator.validate(&ws);
     assert!(
         !result.passed,
@@ -148,10 +146,9 @@ fn runtime_language_validator_uses_language_spec_commands() {
     // in a non-Rust workspace, but we can verify a CommandValidator is returned
     // by checking it is not the AlwaysPassValidator (which always passes).
     //
-    // We use "rust" which provides cargo commands; in a bare temp dir they will
-    // fail, confirming a real CommandValidator was wired up.
-    let project = project(Some("rust"), ProjectVariant::Coding);
-    let validator = builder(&project, None).validator().unwrap();
+    // We use "rust.yaml" which provides cargo commands; in a bare temp dir they
+    // will fail, confirming a real CommandValidator was wired up.
+    let validator = builder("coding.yaml", Some("rust.yaml"), None).validator();
     let result = validator.validate(&ws);
     // cargo fmt --check, cargo check, cargo test will all fail in a temp dir
     assert!(
@@ -172,8 +169,7 @@ fn runtime_backward_compat_validation_yaml_translates_to_sh_wrapper() {
         commands: vec!["true".to_string()],
         timeout_seconds: None,
     };
-    let project = project(None, ProjectVariant::Coding);
-    let validator = builder(&project, Some(&config)).validator().unwrap();
+    let validator = builder("coding.yaml", None, Some(&config)).validator();
     let result = validator.validate(&ws);
     assert!(
         result.passed,
@@ -212,9 +208,8 @@ fn project_requires_tests_reflects_validation_commands() {
             commands: vec![command.to_string()],
             timeout_seconds: None,
         };
-        let project = project(None, ProjectVariant::Coding);
         assert_eq!(
-            builder(&project, Some(&config)).project_requires_tests(),
+            builder("coding.yaml", None, Some(&config)).project_requires_tests(),
             expected,
             "command: {command:?}"
         );
@@ -223,9 +218,8 @@ fn project_requires_tests_reflects_validation_commands() {
 
 #[test]
 fn project_requires_tests_false_when_no_validation() {
-    let project = project(None, ProjectVariant::Coding);
     assert!(
-        !builder(&project, None).project_requires_tests(),
+        !builder("coding.yaml", None, None).project_requires_tests(),
         "absent validation must set requires_tests = false"
     );
 }
@@ -234,15 +228,10 @@ fn project_requires_tests_false_when_no_validation() {
 
 #[test]
 fn build_derives_validator_and_validation_plan_from_language() {
-    let project = ProjectConfig {
-        kind: ProjectKind::Coding,
-        language: Some("rust".to_string()),
-        variant: ProjectVariant::Coding,
-    };
-    let setup = ProjectRuntimeSetup::build(&project, None).unwrap();
+    let setup = ProjectRuntimeSetup::build("coding.yaml", Some("rust.yaml"), None).unwrap();
     assert!(
         setup.validation_plan.is_some(),
-        "a configured language must produce a validation plan"
+        "a configured language plugin must produce a validation plan"
     );
     assert!(
         setup
