@@ -232,7 +232,7 @@ impl ForgeConfig {
         let mut config: ForgeConfig = serde_yaml::from_str(&content)?;
 
         // Resolve relative paths against the config file's directory so that
-        // `forge run path/to/forge.yaml` works correctly from any cwd.
+        // `forge start path/to/forge.yaml` works correctly from any cwd.
         let config_dir = config_path.parent().filter(|p| !p.as_os_str().is_empty());
         if let Some(dir) = config_dir {
             config.artifact.repo_path = resolve_relative(&config.artifact.repo_path, dir);

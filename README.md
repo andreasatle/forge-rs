@@ -161,8 +161,8 @@ Forge starts `llama-server`, Forge refuses to attach to it.
 ## CLI
 
 ```text
-cargo run -- run     forge.yaml            — start a run from current artifact history
-cargo run -- run     forge.yaml --resume   — resume an interrupted running checkpoint
+cargo run -- start   forge.yaml            — start a run from current artifact history
+cargo run -- start   forge.yaml --resume   — resume an interrupted running checkpoint
 cargo run -- show    forge.yaml            — display current files from the artifact
 cargo run -- history forge.yaml            — display commit history
 cargo run -- reset   forge.yaml            — delete artifact history and create a fresh Initial commit
@@ -177,7 +177,7 @@ cargo run -- trace   forge.yaml --failures — show failure-related events
 
 ```
 cargo run -- reset forge.yaml
-cargo run -- run forge.yaml
+cargo run -- start forge.yaml
 cargo run -- show forge.yaml
 ```
 
@@ -603,8 +603,8 @@ Final fields (merged at completion):
 cargo build
 cargo fmt --check
 cargo test
-cargo run -- run forge.yaml
-cargo run -- run forge.yaml --resume
+cargo run -- start forge.yaml
+cargo run -- start forge.yaml --resume
 cargo run -- trace forge.yaml
 cargo run --example scheduler_deliberation_demo
 cargo run --example deliberation_demo

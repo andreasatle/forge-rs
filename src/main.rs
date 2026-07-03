@@ -1,8 +1,8 @@
 //! Forge CLI entry point.
 //!
 //! Usage:
-//!   forge run     <config.yaml>            — run a forge job from the current artifact state
-//!   forge run     <config.yaml> --resume   — resume an interrupted run
+//!   forge start   <config.yaml>            — run a forge job from the current artifact state
+//!   forge start   <config.yaml> --resume   — resume an interrupted run
 //!   forge show    <config.yaml>            — display the current artifact contents
 //!   forge history <config.yaml>            — print commit history (newest first)
 //!   forge reset   <config.yaml>            — delete and recreate the artifact repository
@@ -31,7 +31,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     /// Run a forge job from the current artifact state.
-    Run {
+    Start {
         /// Path to the forge config YAML file.
         config: String,
         /// Resume a previously interrupted run instead of starting a new one.
@@ -78,7 +78,7 @@ fn main() {
     let cli = Cli::parse();
 
     match cli.command {
-        Command::Run { config, resume } => run_config_command(&config, |config| {
+        Command::Start { config, resume } => run_config_command(&config, |config| {
             if resume {
                 ForgeRuntime::resume(config)
             } else {
