@@ -308,43 +308,6 @@ mod tests {
     // ── normalize_for_resume ─────────────────────────────────────────────────
 
     #[test]
-    fn normalize_running_nodes_become_pending() {
-        let state = SchedulerState::Active {
-            graph: RunGraph {
-                nodes: vec![
-                    work_node("A", NodeStatus::Completed),
-                    work_node("B", NodeStatus::Running),
-                ],
-                next_id: 0,
-            },
-            run_config: RunConfig::default(),
-        };
-        let SchedulerState::Active { graph, .. } = normalize_for_resume(state) else {
-            panic!("expected Active");
-        };
-        assert_eq!(graph.nodes[0].status, NodeStatus::Completed);
-        assert_eq!(graph.nodes[1].status, NodeStatus::Pending);
-    }
-
-    #[test]
-    fn normalize_integrating_nodes_become_pending() {
-        let state = SchedulerState::Active {
-            graph: RunGraph {
-                nodes: vec![
-                    work_node("A", NodeStatus::Completed),
-                    work_node("B", NodeStatus::Integrating),
-                ],
-                next_id: 0,
-            },
-            run_config: RunConfig::default(),
-        };
-        let SchedulerState::Active { graph, .. } = normalize_for_resume(state) else {
-            panic!("expected Active");
-        };
-        assert_eq!(graph.nodes[1].status, NodeStatus::Pending);
-    }
-
-    #[test]
     fn normalize_waiting_becomes_active() {
         let graph = RunGraph {
             nodes: vec![
@@ -369,7 +332,7 @@ mod tests {
     }
 
     #[test]
-    fn normalize_preserves_completed_and_failed_nodes() {
+    fn normalize_maps_node_status_for_resume() {
         let state = SchedulerState::Active {
             graph: RunGraph {
                 nodes: vec![
@@ -377,6 +340,8 @@ mod tests {
                     work_node("B", NodeStatus::Failed),
                     work_node("C", NodeStatus::Cancelled),
                     work_node("D", NodeStatus::Pending),
+                    work_node("E", NodeStatus::Running),
+                    work_node("F", NodeStatus::Integrating),
                 ],
                 next_id: 0,
             },
@@ -389,5 +354,15 @@ mod tests {
         assert_eq!(graph.nodes[1].status, NodeStatus::Failed);
         assert_eq!(graph.nodes[2].status, NodeStatus::Cancelled);
         assert_eq!(graph.nodes[3].status, NodeStatus::Pending);
+        assert_eq!(
+            graph.nodes[4].status,
+            NodeStatus::Pending,
+            "in-flight Running nodes must be reset to Pending on resume"
+        );
+        assert_eq!(
+            graph.nodes[5].status,
+            NodeStatus::Pending,
+            "in-flight Integrating nodes must be reset to Pending on resume"
+        );
     }
 }
