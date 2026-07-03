@@ -55,8 +55,12 @@ pub(crate) fn map_output(
 fn map_plan_output(content: String, telemetry: &dyn TelemetrySink) -> NodeRunResult {
     use crate::node_runner::planner::PlannerOutputProcessor;
 
-    match PlannerOutputProcessor::parse_content(&content) {
-        Some(planner_out) => match PlannerOutputProcessor::validate_structure(&planner_out) {
+    let no_required_test_targets = |_: &[String]| Vec::new();
+    let processor =
+        PlannerOutputProcessor::new("", std::iter::empty::<&str>(), &no_required_test_targets);
+
+    match processor.parse_content(&content) {
+        Some(planner_out) => match processor.validate_structure(&planner_out) {
             Ok(()) => {
                 let task_count = planner_out.tasks.len();
                 let dependency_count: usize =
@@ -68,7 +72,7 @@ fn map_plan_output(content: String, telemetry: &dyn TelemetrySink) -> NodeRunRes
                         dependency_count,
                     },
                 ));
-                NodeRunResult::PlanAccepted(PlannerOutputProcessor::into_plan_output(planner_out))
+                NodeRunResult::PlanAccepted(processor.into_plan(planner_out))
             }
             Err(e) => {
                 let reason = e.to_string();

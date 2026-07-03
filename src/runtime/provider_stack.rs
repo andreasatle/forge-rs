@@ -35,16 +35,16 @@ impl ResolvedProviderStack {
     }
 }
 
-pub struct ProviderStackBuilder<'a> {
+struct ProviderStackBuilder<'a> {
     provider: &'a ProviderConfig,
 }
 
 impl<'a> ProviderStackBuilder<'a> {
-    pub fn new(provider: &'a ProviderConfig) -> Self {
+    fn new(provider: &'a ProviderConfig) -> Self {
         Self { provider }
     }
 
-    pub fn build(&self) -> Result<ResolvedProviderStack, Box<dyn Error>> {
+    fn build(&self) -> Result<ResolvedProviderStack, Box<dyn Error>> {
         let metadata = self.run_metadata();
         let servers = self.start_managed_servers()?;
 
@@ -69,7 +69,7 @@ impl<'a> ProviderStackBuilder<'a> {
         })
     }
 
-    pub fn run_metadata(&self) -> ProviderRunMetadata {
+    fn run_metadata(&self) -> ProviderRunMetadata {
         let cheap = self.resolve_tier(&self.provider.cheap, self.provider.timeout_seconds);
         let strong = match &self.provider.strong {
             Some(strong) => self.resolve_tier(

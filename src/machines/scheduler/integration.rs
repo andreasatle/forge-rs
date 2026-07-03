@@ -4,7 +4,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use crate::artifacts::{Artifact, Workspace, create_temporary_workspace, git_command, integrate};
+use crate::artifacts::{Artifact, Workspace, WorkspaceFactory, integrate};
 use crate::machines::scheduler::event::SchedulerEvent;
 use crate::machines::scheduler::failure::FailureKind;
 use crate::machines::scheduler::graph::NodeId;
@@ -74,7 +74,7 @@ impl IntegrationService {
         attempt: u32,
     ) -> Option<WorkAttempt> {
         let artifact = self.artifact.borrow().clone()?;
-        let workspace = match create_temporary_workspace(&artifact) {
+        let workspace = match WorkspaceFactory::new(&artifact).create_temporary_workspace() {
             Ok(workspace) => workspace,
             Err(err) => {
                 let message = format!("worktree creation failed: {err}");
@@ -279,7 +279,7 @@ impl IntegrationService {
 }
 
 fn changed_paths(workspace: &Workspace) -> Vec<String> {
-    let output = git_command()
+    let output = WorkspaceFactory::git_command()
         .args(["status", "--porcelain", "--untracked-files=all"])
         .current_dir(workspace.path())
         .output();
@@ -312,7 +312,7 @@ fn workspace_diff(workspace: &Workspace, changed_files: &[String]) -> String {
 }
 
 fn git_diff(workspace: &Workspace) -> String {
-    let output = git_command()
+    let output = WorkspaceFactory::git_command()
         .args(["diff", "--binary", "HEAD", "--"])
         .current_dir(workspace.path())
         .output();
@@ -329,7 +329,7 @@ fn git_diff(workspace: &Workspace) -> String {
 }
 
 fn is_untracked(workspace: &Workspace, path: &str) -> bool {
-    let output = git_command()
+    let output = WorkspaceFactory::git_command()
         .args(["ls-files", "--error-unmatch", "--"])
         .arg(path)
         .current_dir(workspace.path())
@@ -339,7 +339,7 @@ fn is_untracked(workspace: &Workspace, path: &str) -> bool {
 
 fn untracked_file_diff(workspace: &Workspace, path: &str) -> String {
     let full_path = workspace.path().join(path);
-    let output = git_command()
+    let output = WorkspaceFactory::git_command()
         .args(["diff", "--no-index", "--binary", "--"])
         .arg("/dev/null")
         .arg(&full_path)

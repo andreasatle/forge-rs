@@ -67,7 +67,7 @@ pub fn run_reset(config: ForgeConfig) -> Result<(), Box<dyn Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::artifacts::{WorkspaceFileOps, create_workspace, integrate};
+    use crate::artifacts::{WorkspaceFactory, WorkspaceFileOps, integrate};
     use crate::config::ArtifactConfig;
     use crate::language::{LanguageInitSpec, LanguageSpec, LanguageValidationSpec};
     use crate::validation::CommandSpec;
@@ -296,7 +296,7 @@ mod tests {
         let artifact = crate::runtime::load_or_create_artifact(&artifact_config, None).unwrap();
 
         let workspace_path = base.join("workspace");
-        let mut workspace = create_workspace(&artifact, workspace_path);
+        let mut workspace = WorkspaceFactory::new(&artifact).create_workspace(workspace_path);
         workspace.write_file("extra.txt", "extra\n").unwrap();
         let artifact = integrate(&artifact, &workspace).unwrap();
 
@@ -347,7 +347,7 @@ mod tests {
 
         let artifact = crate::runtime::load_or_create_artifact(&artifact_config, None).unwrap();
         let workspace_path = base.join("workspace-post-reset");
-        let mut workspace = create_workspace(&artifact, workspace_path);
+        let mut workspace = WorkspaceFactory::new(&artifact).create_workspace(workspace_path);
         workspace
             .write_file("result.txt", "post-reset run\n")
             .unwrap();
@@ -518,7 +518,8 @@ mod tests {
         let artifact = crate::runtime::load_or_create_artifact(&artifact_config, None).unwrap();
 
         let workspace_path = base.join("workspace");
-        let ws = crate::artifacts::create_workspace(&artifact, workspace_path);
+        let ws =
+            crate::artifacts::WorkspaceFactory::new(&artifact).create_workspace(workspace_path);
 
         let output = Command::new("./bin/fake-tool")
             .current_dir(ws.path())

@@ -401,64 +401,68 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
             if request.node_kind == NodeKind::Plan
                 && matches!(request.role, DeliberationRole::Producer)
             {
+                let no_required_test_targets = |_: &[String]| Vec::new();
+                let processor = PlannerOutputProcessor::new(
+                    &request.objective,
+                    std::iter::empty::<&str>(),
+                    &no_required_test_targets,
+                );
                 // Direct PlannerOutput path: no status/content wrapper.
-                match PlannerOutputProcessor::parse_response(&response.content) {
-                    Ok(planner_out) => {
-                        match PlannerOutputProcessor::validate_structure(&planner_out) {
-                            Ok(()) => {
-                                telemetry.record(TelemetryRecord::new_with_subsource(
-                                    "RoleMachine",
-                                    subsource,
-                                    TelemetryEvent::ParseSucceeded {
-                                        attempt_count: tools.current_attempt(),
-                                    },
-                                ));
-                                let canonical = serde_json::to_string(&planner_out)
-                                    .expect("validated PlannerOutput must serialize");
+                match processor.parse_response(&response.content) {
+                    Ok(planner_out) => match processor.validate_structure(&planner_out) {
+                        Ok(()) => {
+                            telemetry.record(TelemetryRecord::new_with_subsource(
+                                "RoleMachine",
+                                subsource,
+                                TelemetryEvent::ParseSucceeded {
+                                    attempt_count: tools.current_attempt(),
+                                },
+                            ));
+                            let canonical = serde_json::to_string(&planner_out)
+                                .expect("validated PlannerOutput must serialize");
+                            let artifact_changed = tools.artifact_changed();
+                            return RoleRunOutput {
+                                result: RoleResult::Accepted { content: canonical },
+                                artifact_changed,
+                            };
+                        }
+                        Err(e) => {
+                            let err = format!("planner output validation failed: {e}");
+                            telemetry.record(TelemetryRecord::new_with_subsource(
+                                "RoleMachine",
+                                subsource,
+                                TelemetryEvent::ParseFailed {
+                                    raw_response: response.content.clone(),
+                                    parse_error: err.clone(),
+                                    attempt_count: tools.current_attempt(),
+                                },
+                            ));
+                            if !tools.allow_model_call() {
                                 let artifact_changed = tools.artifact_changed();
                                 return RoleRunOutput {
-                                    result: RoleResult::Accepted { content: canonical },
+                                    result: RoleResult::Failed {
+                                        kind: FailureKind::PlannerValidationFailure,
+                                        reason: err,
+                                    },
                                     artifact_changed,
                                 };
                             }
-                            Err(e) => {
-                                let err = format!("planner output validation failed: {e}");
-                                telemetry.record(TelemetryRecord::new_with_subsource(
-                                    "RoleMachine",
-                                    subsource,
-                                    TelemetryEvent::ParseFailed {
-                                        raw_response: response.content.clone(),
-                                        parse_error: err.clone(),
-                                        attempt_count: tools.current_attempt(),
-                                    },
-                                ));
-                                if !tools.allow_model_call() {
-                                    let artifact_changed = tools.artifact_changed();
-                                    return RoleRunOutput {
-                                        result: RoleResult::Failed {
-                                            kind: FailureKind::PlannerValidationFailure,
-                                            reason: err,
-                                        },
-                                        artifact_changed,
-                                    };
-                                }
-                                tools.record_protocol_failure();
-                                telemetry.record(TelemetryRecord::new_with_subsource(
-                                    "RoleMachine",
-                                    subsource,
-                                    TelemetryEvent::ProtocolRetry {
-                                        parse_error: err.clone(),
-                                        attempt_count: tools.current_attempt(),
-                                    },
-                                ));
-                                tools.render_planner_retry_prompt(
-                                    &err,
-                                    &response.content,
-                                    &self.policy.planner_protocol_schema,
-                                );
-                            }
+                            tools.record_protocol_failure();
+                            telemetry.record(TelemetryRecord::new_with_subsource(
+                                "RoleMachine",
+                                subsource,
+                                TelemetryEvent::ProtocolRetry {
+                                    parse_error: err.clone(),
+                                    attempt_count: tools.current_attempt(),
+                                },
+                            ));
+                            tools.render_planner_retry_prompt(
+                                &err,
+                                &response.content,
+                                &self.policy.planner_protocol_schema,
+                            );
                         }
-                    }
+                    },
                     Err(parse_error) => {
                         let effective_error = match &tool_call_error {
                             Some(te) => format!("malformed tool call: {te}"),

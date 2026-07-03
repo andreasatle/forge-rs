@@ -1,6 +1,6 @@
 use std::fmt;
 
-use super::{Artifact, Workspace, git_command};
+use super::{Artifact, Workspace, WorkspaceFactory};
 
 /// Errors that can occur while committing and pushing a workspace to the artifact repository.
 #[derive(Debug)]
@@ -149,7 +149,7 @@ impl<'a, PrePushHook: FnOnce()> ArtifactIntegrator<'a, PrePushHook> {
             "--force-with-lease=refs/heads/{}:{}",
             self.artifact.branch, self.workspace.base_commit
         );
-        let push = git_command()
+        let push = WorkspaceFactory::git_command()
             .args(["push", "--quiet", &lease_arg])
             .arg(&self.artifact.repo_path)
             .arg(&branch_ref)
@@ -185,7 +185,7 @@ impl<'a, PrePushHook: FnOnce()> ArtifactIntegrator<'a, PrePushHook> {
     fn read_branch_tip(&self) -> Result<String, IntegrationError> {
         let refname = format!("refs/heads/{}", self.artifact.branch);
         let op = format!("rev-parse {refname}");
-        let output = git_command()
+        let output = WorkspaceFactory::git_command()
             .args(["rev-parse", &refname])
             .current_dir(&self.artifact.repo_path)
             .output()
@@ -209,7 +209,7 @@ impl<'a, PrePushHook: FnOnce()> ArtifactIntegrator<'a, PrePushHook> {
 
     fn check_bare_repository(&self) -> Result<(), IntegrationError> {
         let op = "rev-parse --is-bare-repository".to_owned();
-        let output = git_command()
+        let output = WorkspaceFactory::git_command()
             .args(["rev-parse", "--is-bare-repository"])
             .current_dir(&self.artifact.repo_path)
             .output()
@@ -239,7 +239,7 @@ impl<'a, PrePushHook: FnOnce()> ArtifactIntegrator<'a, PrePushHook> {
 
     fn run_git(&self, args: &[&str]) -> Result<(), IntegrationError> {
         let op = args.join(" ");
-        let output = git_command()
+        let output = WorkspaceFactory::git_command()
             .args(args)
             .current_dir(self.workspace.path())
             .output()
@@ -258,7 +258,7 @@ impl<'a, PrePushHook: FnOnce()> ArtifactIntegrator<'a, PrePushHook> {
 
     fn git_stdout(&self, args: &[&str]) -> Result<String, IntegrationError> {
         let op = args.join(" ");
-        let output = git_command()
+        let output = WorkspaceFactory::git_command()
             .args(args)
             .current_dir(self.workspace.path())
             .output()
@@ -290,7 +290,7 @@ mod tests {
 
     use super::*;
     use crate::artifacts::file_ops::WorkspaceFileOps;
-    use crate::artifacts::{Artifact, create_workspace};
+    use crate::artifacts::{Artifact, WorkspaceFactory};
 
     static NEXT_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -396,7 +396,8 @@ mod tests {
     #[test]
     fn push_lease_rejection_classified_as_conflict() {
         let (temp, artifact) = fixture("lease-conflict");
-        let mut workspace = create_workspace(&artifact, temp.join("workspace"));
+        let mut workspace =
+            WorkspaceFactory::new(&artifact).create_workspace(temp.join("workspace"));
         workspace
             .write_file("file.txt", "v2\n")
             .expect("write_file");
@@ -435,7 +436,8 @@ mod tests {
     #[test]
     fn push_failure_without_branch_advance_remains_git_command_failed() {
         let (temp, artifact) = fixture("push-non-advance");
-        let mut workspace = create_workspace(&artifact, temp.join("workspace"));
+        let mut workspace =
+            WorkspaceFactory::new(&artifact).create_workspace(temp.join("workspace"));
         workspace
             .write_file("file.txt", "v2\n")
             .expect("write_file");

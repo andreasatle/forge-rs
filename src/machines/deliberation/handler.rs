@@ -12,7 +12,7 @@ use crate::artifacts::{ArtifactError, ArtifactRead, ArtifactView};
 use crate::machines::scheduler::{FailureKind, NodeKind};
 use crate::node_runner::TestTargetsFn;
 use crate::node_runner::WorkAttempt;
-use crate::node_runner::planner::{PlannerOutput, PlannerOutputProcessor, PlannerValidationError};
+use crate::node_runner::planner::{PlannerOutputProcessor, PlannerValidationError};
 use crate::roles::TargetView;
 use crate::roles::policy::RolePolicy;
 use crate::roles::runner::{ProviderRoleRunner, RoleRequest, RoleRunner, RoleToolContext};
@@ -58,18 +58,6 @@ impl std::fmt::Display for WorkSemanticValidationError {
             }
         }
     }
-}
-
-fn validate_plan_output_for_context(
-    planner_out: &PlannerOutput,
-    context: &PlanValidationContext,
-) -> Result<(), PlannerValidationError> {
-    PlannerOutputProcessor::new(
-        &context.top_objective,
-        &context.existing_files,
-        context.required_test_targets_fn.as_ref(),
-    )
-    .validate(planner_out)
 }
 
 pub(super) fn planner_validation_feedback(error: &PlannerValidationError) -> String {
@@ -419,8 +407,13 @@ impl<R: RoleRunner> DeliberationHandler<R> {
             .plan_validation_context
             .as_ref()
             .expect("plan_validation_context must be Some when this method is called");
+        let processor = PlannerOutputProcessor::new(
+            &context.top_objective,
+            &context.existing_files,
+            context.required_test_targets_fn.as_ref(),
+        );
 
-        let Some(planner_out) = PlannerOutputProcessor::parse_content(content) else {
+        let Some(planner_out) = processor.parse_content(content) else {
             return Err(ProducerValidationRetry {
                 feedback_reason: planner_parse_failure_feedback(),
                 max_retries: MAX_PLAN_VALIDATION_RETRIES,
@@ -430,7 +423,7 @@ impl<R: RoleRunner> DeliberationHandler<R> {
             });
         };
 
-        match validate_plan_output_for_context(&planner_out, context) {
+        match processor.validate(&planner_out) {
             Ok(()) => Ok(()),
             Err(e) => Err(ProducerValidationRetry {
                 feedback_reason: planner_validation_feedback(&e),

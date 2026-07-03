@@ -6,7 +6,7 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::*;
-use crate::artifacts::{Artifact, ArtifactView, create_temporary_workspace};
+use crate::artifacts::{Artifact, ArtifactView, WorkspaceFactory};
 use crate::machines::scheduler::{NodeKind, TestPlanContext};
 use crate::providers::types::{ProviderError, ProviderErrorKind, ProviderResponse};
 use crate::providers::{ProviderClient, ProviderRequest};
@@ -219,7 +219,9 @@ fn with_tool_context(mut request: RoleRequest, view: ArtifactView) -> RoleReques
             commit_sha: view.commit_sha.clone(),
         };
         Some(Rc::new(RefCell::new(
-            create_temporary_workspace(&artifact).expect("failed to create test workspace"),
+            WorkspaceFactory::new(&artifact)
+                .create_temporary_workspace()
+                .expect("failed to create test workspace"),
         )))
     } else {
         None

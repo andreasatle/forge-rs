@@ -14,8 +14,7 @@ pub use artifact::{Artifact, ArtifactView};
 pub use file_ops::{ArtifactError, WorkspaceFileOps};
 pub use integration::{IntegrationError, integrate};
 pub use read::ArtifactRead;
-pub(crate) use workspace::git_command;
-pub use workspace::{Workspace, create_temporary_workspace, create_workspace};
+pub use workspace::{Workspace, WorkspaceFactory};
 
 #[cfg(test)]
 mod tests {
@@ -110,6 +109,16 @@ mod tests {
             .expect("git output was not UTF-8")
             .trim()
             .to_owned()
+    }
+
+    fn create_workspace(artifact: &Artifact, workspace_path: PathBuf) -> Workspace {
+        WorkspaceFactory::new(artifact).create_workspace(workspace_path)
+    }
+
+    fn create_temporary_workspace(
+        artifact: &Artifact,
+    ) -> Result<Workspace, Box<dyn std::error::Error>> {
+        WorkspaceFactory::new(artifact).create_temporary_workspace()
     }
 
     #[test]

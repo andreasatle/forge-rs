@@ -263,12 +263,12 @@ impl<'a> PlannerOutputProcessor<'a> {
     }
 
     /// Attempt to parse raw provider content as a [`PlannerOutput`].
-    pub(crate) fn parse_content(content: &str) -> Option<PlannerOutput> {
+    pub(crate) fn parse_content(&self, content: &str) -> Option<PlannerOutput> {
         serde_json::from_str::<PlannerOutput>(content).ok()
     }
 
     /// Parse a raw provider response as a [`PlannerOutput`] directly.
-    pub(crate) fn parse_response(raw: &str) -> Result<PlannerOutput, String> {
+    pub(crate) fn parse_response(&self, raw: &str) -> Result<PlannerOutput, String> {
         let text = raw.trim();
         if !text.starts_with('{') {
             return Err(
@@ -280,7 +280,10 @@ impl<'a> PlannerOutputProcessor<'a> {
     }
 
     /// Validate structural constraints that do not require run context.
-    pub(crate) fn validate_structure(output: &PlannerOutput) -> Result<(), PlannerValidationError> {
+    pub(crate) fn validate_structure(
+        &self,
+        output: &PlannerOutput,
+    ) -> Result<(), PlannerValidationError> {
         if output.tasks.is_empty() {
             return Err(PlannerValidationError::EmptyTaskList);
         }
@@ -314,7 +317,7 @@ impl<'a> PlannerOutputProcessor<'a> {
     }
 
     pub(crate) fn validate(&self, output: &PlannerOutput) -> Result<(), PlannerValidationError> {
-        Self::validate_structure(output)?;
+        self.validate_structure(output)?;
         let objective_targets = self.explicit_objective_targets.clone().into_vec();
         let exempt_targets = (self.required_test_targets_fn)(&objective_targets);
         self.validate_explicit_targets(output, &exempt_targets)?;
@@ -438,7 +441,7 @@ impl<'a> PlannerOutputProcessor<'a> {
         Some(PlanOutput { children })
     }
 
-    pub(crate) fn into_plan_output(output: PlannerOutput) -> PlanOutput {
+    pub(crate) fn into_plan(self, output: PlannerOutput) -> PlanOutput {
         PlanOutput {
             children: output
                 .tasks
@@ -504,140 +507,70 @@ impl<'a> PlannerOutputProcessor<'a> {
     }
 }
 
+#[cfg(test)]
 fn no_required_test_targets(_: &[String]) -> Vec<String> {
     Vec::new()
-}
-
-/// Attempt to parse raw provider content as a [`PlannerOutput`].
-///
-/// Returns `Some(PlannerOutput)` on success, `None` if the content cannot be
-/// parsed. A parse failure is not an error in the run — prose output is an
-/// expected fallback case that triggers single-work-node behaviour.
-pub fn parse_planner_content(content: &str) -> Option<PlannerOutput> {
-    PlannerOutputProcessor::parse_content(content)
-}
-
-/// Parse a raw provider response as a [`PlannerOutput`] directly.
-///
-/// Unlike [`parse_planner_content`] this returns a `Result` suitable for the
-/// role runner's retry path. A preamble before the opening `{` is rejected
-/// immediately without attempting JSON parsing.
-pub fn try_parse_planner_response(raw: &str) -> Result<PlannerOutput, String> {
-    PlannerOutputProcessor::parse_response(raw)
-}
-
-/// Validate the structural constraints of a parsed [`PlannerOutput`].
-///
-/// Checked invariants:
-/// - Task ids are unique within the output.
-/// - Every objective is non-empty (after trimming).
-/// - Every work task declares at least one non-empty target file.
-/// - No task lists itself in `depends_on`.
-/// - Every `depends_on` entry names another task in the same output.
-///
-/// Returns `Err` on the first violation. Does not attempt to repair.
-pub fn validate_planner_output(output: &PlannerOutput) -> Result<(), PlannerValidationError> {
-    PlannerOutputProcessor::validate_structure(output)
-}
-
-/// Check that when a coding objective explicitly names target files, all
-/// planner targets are either among those named files or among the
-/// `exempt_targets` provided by the project adapter.
-///
-/// The adapter supplies `exempt_targets` as the required test-file paths for
-/// the explicitly-named source files. Test targets are exempt because project
-/// validation may require newly-created tests even when the user only names
-/// the implementation file. The constraint only applies when the objective
-/// names at least one code-like file.
-pub fn validate_planner_explicit_targets(
-    output: &PlannerOutput,
-    top_objective: &str,
-    exempt_targets: &[String],
-) -> Result<(), PlannerValidationError> {
-    let processor = PlannerOutputProcessor::new(
-        top_objective,
-        std::iter::empty::<&str>(),
-        &no_required_test_targets,
-    );
-    processor.validate_explicit_targets(output, exempt_targets)
-}
-
-/// Check that no task in `output` targets an existing project file that is not
-/// mentioned in `top_objective`.
-///
-/// A task is considered to target an existing file when its structured
-/// `targets` list contains a filename from `existing_files` AND that filename
-/// does not appear in `top_objective`. Objective prose is intentionally ignored
-/// because it is not a reliable file-targeting contract.
-///
-/// Returns `Err` on the first violation found.
-pub fn validate_planner_no_recreate(
-    output: &PlannerOutput,
-    top_objective: &str,
-    existing_files: &[impl AsRef<str>],
-) -> Result<(), PlannerValidationError> {
-    let processor =
-        PlannerOutputProcessor::new(top_objective, existing_files, &no_required_test_targets);
-    processor.validate_no_recreate(output)
-}
-
-/// Check that a code-changing plan includes at least one required test target.
-///
-/// `required_test_targets_fn` is called with all targets in the plan and
-/// returns the set of test-file paths the project adapter requires for those
-/// source files. If the adapter requires no tests (returns empty), the check
-/// passes unconditionally. Otherwise the plan must contain at least one of
-/// the required targets.
-///
-/// This is intentionally based on structured `targets`, not objective prose.
-/// The adapter decides which source files require tests and what their test
-/// file names should be; the framework only checks coverage.
-pub fn validate_planner_tests_required(
-    output: &PlannerOutput,
-    required_test_targets_fn: &dyn Fn(&[String]) -> Vec<String>,
-) -> Result<(), PlannerValidationError> {
-    let processor =
-        PlannerOutputProcessor::new("", std::iter::empty::<&str>(), required_test_targets_fn);
-    processor.validate_tests_required(output)
-}
-
-/// Attempt to build a deterministic [`PlanOutput`] from `objective` without
-/// calling the LLM planner.
-///
-/// Returns `Some(PlanOutput)` when the objective explicitly names exactly one
-/// source code file that is not itself a test file. Returns `None` when the
-/// fast path does not apply — the caller should fall back to the LLM planner.
-///
-/// `required_test_targets_fn` is called with the identified source file; any
-/// returned paths become additional work tasks that depend on the source task.
-/// When the function returns an empty list, only the source work task is created.
-pub fn try_fast_plan(
-    objective: &str,
-    required_test_targets_fn: &dyn Fn(&[String]) -> Vec<String>,
-) -> Option<PlanOutput> {
-    PlannerOutputProcessor::new(
-        objective,
-        std::iter::empty::<&str>(),
-        required_test_targets_fn,
-    )
-    .try_fast_plan()
-}
-
-/// Convert a validated [`PlannerOutput`] into a scheduler [`PlanOutput`].
-///
-/// Each task becomes a [`NodeRequest`] of kind `Work`. The planner-assigned
-/// `id` is used as `NodeRequest.id`; `depends_on` entries are carried through
-/// as `NodeId` values referencing siblings by their planner-local id.
-///
-/// The scheduler's `insert_children` rewrites those planner-local ids to
-/// actual graph `NodeId`s at insertion time.
-pub fn planner_output_to_plan_output(output: PlannerOutput) -> PlanOutput {
-    PlannerOutputProcessor::into_plan_output(output)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn processor<'a>(
+        top_objective: &str,
+        existing_files: &'a [&'a str],
+        required_test_targets_fn: &'a dyn Fn(&[String]) -> Vec<String>,
+    ) -> PlannerOutputProcessor<'a> {
+        PlannerOutputProcessor::new(top_objective, existing_files, required_test_targets_fn)
+    }
+
+    fn parse_planner_content(content: &str) -> Option<PlannerOutput> {
+        processor("", &[], &no_required_test_targets).parse_content(content)
+    }
+
+    fn try_parse_planner_response(raw: &str) -> Result<PlannerOutput, String> {
+        processor("", &[], &no_required_test_targets).parse_response(raw)
+    }
+
+    fn validate_planner_output(output: &PlannerOutput) -> Result<(), PlannerValidationError> {
+        processor("", &[], &no_required_test_targets).validate(output)
+    }
+
+    fn validate_planner_explicit_targets(
+        output: &PlannerOutput,
+        top_objective: &str,
+        exempt_targets: &[String],
+    ) -> Result<(), PlannerValidationError> {
+        processor(top_objective, &[], &no_required_test_targets)
+            .validate_explicit_targets(output, exempt_targets)
+    }
+
+    fn validate_planner_no_recreate(
+        output: &PlannerOutput,
+        top_objective: &str,
+        existing_files: &[&str],
+    ) -> Result<(), PlannerValidationError> {
+        processor(top_objective, existing_files, &no_required_test_targets)
+            .validate_no_recreate(output)
+    }
+
+    fn validate_planner_tests_required(
+        output: &PlannerOutput,
+        required_test_targets_fn: &dyn Fn(&[String]) -> Vec<String>,
+    ) -> Result<(), PlannerValidationError> {
+        processor("", &[], required_test_targets_fn).validate_tests_required(output)
+    }
+
+    fn try_fast_plan(
+        objective: &str,
+        required_test_targets_fn: &dyn Fn(&[String]) -> Vec<String>,
+    ) -> Option<PlanOutput> {
+        processor(objective, &[], required_test_targets_fn).try_fast_plan()
+    }
+
+    fn planner_output_to_plan_output(output: PlannerOutput) -> PlanOutput {
+        processor("", &[], &no_required_test_targets).into_plan(output)
+    }
 
     // ── Direct planner response parsing ─────────────────────────────────────────
 

@@ -89,7 +89,7 @@ fn load_or_create_artifact_loads_existing_repo() {
 
 #[test]
 fn relative_repo_path_canonicalized_and_integrates_from_temp_workspace() {
-    use crate::artifacts::{WorkspaceFileOps, create_workspace, integrate};
+    use crate::artifacts::{WorkspaceFactory, WorkspaceFileOps, integrate};
 
     let seq = NEXT_ID.fetch_add(1, Ordering::Relaxed);
     let rel = format!("target/forge-relative-test-{}-{seq}", std::process::id());
@@ -109,7 +109,7 @@ fn relative_repo_path_canonicalized_and_integrates_from_temp_workspace() {
 
     let workspace_path =
         std::env::temp_dir().join(format!("forge-rel-workspace-{}-{seq}", std::process::id()));
-    let mut workspace = create_workspace(&artifact, workspace_path.clone());
+    let mut workspace = WorkspaceFactory::new(&artifact).create_workspace(workspace_path.clone());
 
     workspace
         .write_file("result.txt", "from relative repo\n")

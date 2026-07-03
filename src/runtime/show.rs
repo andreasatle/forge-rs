@@ -54,7 +54,7 @@ fn artifact_contents(artifact: &Artifact) -> Result<String, Box<dyn Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::artifacts::{WorkspaceFileOps, create_workspace, integrate};
+    use crate::artifacts::{WorkspaceFactory, WorkspaceFileOps, integrate};
     use crate::config::ArtifactConfig;
     use std::path::{Path, PathBuf};
     use std::process::Command;
@@ -180,7 +180,7 @@ mod tests {
         let artifact = crate::runtime::load_or_create_artifact(&config, None).unwrap();
 
         let workspace_path = base.join("workspace");
-        let mut workspace = create_workspace(&artifact, workspace_path);
+        let mut workspace = WorkspaceFactory::new(&artifact).create_workspace(workspace_path);
         workspace
             .write_file("output.txt", "hello from show\n")
             .unwrap();
@@ -211,7 +211,7 @@ mod tests {
         let artifact = crate::runtime::load_or_create_artifact(&config, None).unwrap();
 
         let workspace_path = base.join("workspace");
-        let mut workspace = create_workspace(&artifact, workspace_path);
+        let mut workspace = WorkspaceFactory::new(&artifact).create_workspace(workspace_path);
         workspace.write_file("readme.txt", "hello text\n").unwrap();
         // Non-UTF-8 bytes are written directly since write_file only accepts &str.
         std::fs::write(

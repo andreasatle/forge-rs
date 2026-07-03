@@ -7,7 +7,7 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::*;
-use crate::artifacts::{Artifact, ArtifactView, create_temporary_workspace};
+use crate::artifacts::{Artifact, ArtifactView, WorkspaceFactory};
 use crate::machines::scheduler::{
     FailureKind, ModelTier, NodeId, NodeKind, RecoveryAction, TestPlanContext,
 };
@@ -269,7 +269,8 @@ fn work_attempt_for_view(view: &ArtifactView) -> WorkAttempt {
         branch: "main".to_string(),
         commit_sha: view.commit_sha.clone(),
     };
-    let workspace = create_temporary_workspace(&artifact)
+    let workspace = WorkspaceFactory::new(&artifact)
+        .create_temporary_workspace()
         .expect("test artifact view must create a temporary WorkAttempt workspace");
     WorkAttempt {
         attempt: 0,

@@ -32,7 +32,7 @@ impl Drop for WorkspaceCleanup {
         let WorkspaceCleanup::GitWorktree {
             repo_path, path, ..
         } = self;
-        let _ = git_command()
+        let _ = WorkspaceFactory::git_command()
             .args(["worktree", "remove", "--force"])
             .arg(path)
             .current_dir(repo_path)
@@ -58,11 +58,16 @@ impl Workspace {
     }
 }
 
+/// Creates git workspaces from an artifact version.
+///
+/// The factory owns the artifact-specific checkout policy and sanitized git
+/// command setup used by workspace creation and cleanup.
 pub struct WorkspaceFactory<'a> {
     artifact: &'a Artifact,
 }
 
 impl<'a> WorkspaceFactory<'a> {
+    /// Creates a workspace factory for `artifact`.
     pub fn new(artifact: &'a Artifact) -> Self {
         Self { artifact }
     }
@@ -152,25 +157,4 @@ impl<'a> WorkspaceFactory<'a> {
             .env_remove("GIT_PREFIX");
         command
     }
-}
-
-/// Creates a mutable clone checked out at the artifact's exact commit.
-///
-/// The directory at `workspace_path` is NOT deleted on drop. The caller
-/// is responsible for any cleanup.
-pub fn create_workspace(artifact: &Artifact, workspace_path: PathBuf) -> Workspace {
-    WorkspaceFactory::new(artifact).create_workspace(workspace_path)
-}
-
-/// Creates a detached git worktree in a freshly allocated temporary directory.
-///
-/// The worktree is removed and the temporary parent directory is deleted when
-/// the returned [`Workspace`] is dropped. Even if validation or integration
-/// fails, the directory is removed as long as the `Workspace` value is dropped.
-pub fn create_temporary_workspace(artifact: &Artifact) -> Result<Workspace, Box<dyn Error>> {
-    WorkspaceFactory::new(artifact).create_temporary_workspace()
-}
-
-pub(crate) fn git_command() -> Command {
-    WorkspaceFactory::git_command()
 }

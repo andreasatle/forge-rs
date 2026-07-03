@@ -461,7 +461,7 @@ mod tests {
     use std::rc::Rc;
     use std::sync::atomic::{AtomicU64, Ordering};
 
-    use crate::artifacts::{Artifact, ArtifactView, create_temporary_workspace};
+    use crate::artifacts::{Artifact, ArtifactView, WorkspaceFactory};
 
     use super::*;
 
@@ -588,7 +588,9 @@ mod tests {
             branch: "main".to_string(),
             commit_sha: view.commit_sha.clone(),
         };
-        let workspace = create_temporary_workspace(&artifact).unwrap();
+        let workspace = WorkspaceFactory::new(&artifact)
+            .create_temporary_workspace()
+            .unwrap();
         let workspace = Rc::new(RefCell::new(workspace));
         FileToolExecutor::with_workspace(view.clone(), workspace, policy)
     }
