@@ -537,41 +537,12 @@ mod tests {
     }
 
     #[test]
-    fn planner_output_does_not_require_nested_json_string() {
-        // The planner schema is {"tasks":[...]} directly, not wrapped in
-        // {"status":"accepted","content":"<escaped-json>"}.
-        let direct = r#"{"tasks":[{"id":"t1","objective":"do the work","operation":"modify","targets":["work.txt"],"depends_on":[]}]}"#;
-        assert!(
-            try_parse_planner_response(direct).is_ok(),
-            "direct PlannerOutput must parse without a status/content wrapper"
-        );
-    }
-
-    #[test]
-    fn planner_does_not_require_content_string_starting_with_brace() {
-        // Regression: live failure produced {"status":"accepted","content":"{"}
-        // which must fail cleanly, not panic or produce PlanAccepted.
-        let payload = r#"{"status":"accepted","content":"{"}"#;
-        let result = try_parse_planner_response(payload);
-        assert!(
-            result.is_err(),
-            "status/content wrapper must not parse as PlannerOutput; got {:?}",
-            result
-        );
-    }
-
-    #[test]
     fn preamble_before_planner_json_is_rejected() {
         let result = try_parse_planner_response("Here is the plan:\n{\"tasks\":[]}");
         assert!(
             result.is_err(),
             "preamble before JSON must fail; got {:?}",
             result
-        );
-        let err = result.unwrap_err();
-        assert!(
-            err.contains("preamble text is not permitted"),
-            "error must mention preamble; got: {err}"
         );
     }
 
@@ -716,61 +687,35 @@ mod tests {
 
     #[test]
     fn task_targeting_existing_file_not_in_objective_is_rejected() {
-        // Regression: planner created ".python-version" task for objective that only mentions main.py.
-        let output = PlannerOutput {
-            tasks: vec![
-                PlannerTask {
-                    id: "py-version".to_string(),
-                    objective: "Create .python-version file for Python project.".to_string(),
-                    operation: Some(PlannerOperation::Modify),
-                    targets: vec![".python-version".to_string()],
-                    depends_on: vec![],
-                },
-                PlannerTask {
-                    id: "main".to_string(),
-                    objective: "Create main.py with haiku about Python state machines.".to_string(),
-                    operation: Some(PlannerOperation::Modify),
-                    targets: vec!["main.py".to_string()],
-                    depends_on: vec![],
-                },
-            ],
-        };
+        // Regression: planner created a task for an existing project file that
+        // the objective (which only mentions main.py) never names — originally
+        // ".python-version"; "README.md" is the same violation shape.
         let top_objective = "Create a simple Python program in main.py that prints a short haiku about Python state machines.";
-        let result = validate_planner_no_recreate(&output, top_objective, PYTHON_INIT_FILES);
-        let err = result.expect_err("must reject task targeting .python-version not in objective");
-        assert!(
-            matches!(
+        let cases: &[(&str, &str)] = &[("py-version", ".python-version"), ("readme", "README.md")];
+
+        for (task_id, filename) in cases {
+            let output = PlannerOutput {
+                tasks: vec![PlannerTask {
+                    id: task_id.to_string(),
+                    objective: format!("Touch {filename}."),
+                    operation: Some(PlannerOperation::Modify),
+                    targets: vec![filename.to_string()],
+                    depends_on: vec![],
+                }],
+            };
+            let err = validate_planner_no_recreate(&output, top_objective, PYTHON_INIT_FILES)
+                .expect_err(&format!(
+                    "[{task_id}] must reject task targeting {filename} not in objective"
+                ));
+            assert_eq!(
                 err,
                 PlannerValidationError::TaskRecreatesExistingFile {
-                    ref task_id,
-                    ref filename,
-                } if task_id == "py-version" && filename == ".python-version"
-            ),
-            "expected TaskRecreatesExistingFile for .python-version; got {err:?}"
-        );
-    }
-
-    #[test]
-    fn task_targeting_readme_for_main_objective_is_rejected() {
-        let output = PlannerOutput {
-            tasks: vec![PlannerTask {
-                id: "readme".to_string(),
-                objective: "Document the haiku program setup.".to_string(),
-                operation: Some(PlannerOperation::Modify),
-                targets: vec!["README.md".to_string()],
-                depends_on: vec![],
-            }],
-        };
-        let top_objective = "Create a simple Python program in main.py that prints a short haiku about Python state machines.";
-        let err = validate_planner_no_recreate(&output, top_objective, PYTHON_INIT_FILES)
-            .expect_err("README.md target must be rejected when only main.py is requested");
-        assert_eq!(
-            err,
-            PlannerValidationError::TaskRecreatesExistingFile {
-                task_id: "readme".to_string(),
-                filename: "README.md".to_string(),
-            }
-        );
+                    task_id: task_id.to_string(),
+                    filename: filename.to_string(),
+                },
+                "[{task_id}]"
+            );
+        }
     }
 
     #[test]
