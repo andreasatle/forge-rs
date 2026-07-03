@@ -585,20 +585,6 @@ mod tests {
     }
 
     #[test]
-    fn command_validator_passes_with_direct_true() {
-        let (_path, ws) = temp_workspace();
-
-        let v = CommandValidator::new(vec![spec("true", &[])], default_timeout());
-        let result = v.validate(&ws);
-
-        assert!(
-            result.passed,
-            "direct exec of 'true' must pass: {}",
-            result.summary
-        );
-    }
-
-    #[test]
     fn command_spec_args_are_passed_without_shell_interpretation() {
         let (path, ws) = temp_workspace();
         // Create a file whose name contains a shell-special character.

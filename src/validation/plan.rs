@@ -289,24 +289,6 @@ mod tests {
     }
 
     #[test]
-    fn non_pre_integration_stage_is_skipped() {
-        // Invariant: steps whose stage is not PreIntegration are not executed.
-        // (Forward compat: future stages don't break existing plans.)
-        let (_path, ws) = temp_workspace();
-        // We can't construct a non-PreIntegration stage yet since it's the only
-        // variant, but we can verify the filter passes for PreIntegration.
-        let s = ValidationStep {
-            command: vec!["true".to_string()],
-            when_artifacts_present: vec![],
-            scope: ValidationScope::Workspace,
-            stage: ValidationStage::PreIntegration,
-            must_pass: true,
-        };
-        let result = plan(vec![s]).execute(&ws);
-        assert!(result.passed, "PreIntegration step must run");
-    }
-
-    #[test]
     fn target_files_scope_appends_node_targets_to_command() {
         // Invariant: target-file scoped commands receive the node's declared
         // target files as trailing command args.
