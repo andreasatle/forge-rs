@@ -115,21 +115,15 @@ mod tests {
     }
 
     #[test]
-    fn rust_language_spec_declares_runs_tests() {
-        let spec = language_spec("rust").expect("rust spec must load");
-        assert!(
-            spec.validation_includes_test_command(),
-            "rust validation spec must declare runs_tests: true"
-        );
-    }
-
-    #[test]
-    fn python_language_spec_declares_runs_tests() {
-        let spec = language_spec("python").expect("python spec must load");
-        assert!(
-            spec.validation_includes_test_command(),
-            "python validation spec must declare runs_tests: true"
-        );
+    fn bundled_language_specs_declare_runs_tests() {
+        for language in ["rust", "python"] {
+            let spec =
+                language_spec(language).unwrap_or_else(|| panic!("{language} spec must load"));
+            assert!(
+                spec.validation_includes_test_command(),
+                "{language} validation spec must declare runs_tests: true"
+            );
+        }
     }
 
     #[test]

@@ -51,24 +51,27 @@ mod tests {
     use super::*;
 
     #[test]
-    fn rust_spec_loads_correctly() {
-        let spec = language_spec("rust").expect("rust spec must load");
-        assert!(
-            !spec.prompt_guidance.is_empty(),
-            "rust spec must have prompt guidance"
-        );
-        assert!(
-            !spec.constraints.is_empty(),
-            "rust spec must have constraints"
-        );
-        assert!(
-            !spec.init.commands.is_empty(),
-            "rust spec must have at least one init command"
-        );
-        assert!(
-            !spec.validation.commands.is_empty(),
-            "rust spec must have at least one validation command"
-        );
+    fn bundled_language_specs_load_correctly() {
+        for language in ["rust", "python"] {
+            let spec =
+                language_spec(language).unwrap_or_else(|| panic!("{language} spec must load"));
+            assert!(
+                !spec.prompt_guidance.is_empty(),
+                "{language} spec must have prompt guidance"
+            );
+            assert!(
+                !spec.constraints.is_empty(),
+                "{language} spec must have constraints"
+            );
+            assert!(
+                !spec.init.commands.is_empty(),
+                "{language} spec must have at least one init command"
+            );
+            assert!(
+                !spec.validation.commands.is_empty(),
+                "{language} spec must have at least one validation command"
+            );
+        }
     }
 
     #[test]
@@ -131,27 +134,6 @@ mod tests {
         assert!(language_spec("java").is_none(), "java must be unknown");
         assert!(language_spec("cobol").is_none(), "cobol must be unknown");
         assert!(language_spec("").is_none(), "empty string must be unknown");
-    }
-
-    #[test]
-    fn python_spec_loads_correctly() {
-        let spec = language_spec("python").expect("python spec must load");
-        assert!(
-            !spec.prompt_guidance.is_empty(),
-            "python spec must have prompt guidance"
-        );
-        assert!(
-            !spec.constraints.is_empty(),
-            "python spec must have constraints"
-        );
-        assert!(
-            !spec.init.commands.is_empty(),
-            "python spec must have at least one init command"
-        );
-        assert!(
-            !spec.validation.commands.is_empty(),
-            "python spec must have at least one validation command"
-        );
     }
 
     #[test]
