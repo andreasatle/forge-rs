@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::artifacts::Workspace;
 
-use super::validator::{matches_name_glob, run_command_with_timeout, workspace_has_matching_file};
+use super::validator::{matches_name_glob, workspace_has_matching_file};
 use super::{CommandSpec, ValidationResult, ValidationScope};
 
 fn default_timeout_seconds() -> u64 {
@@ -114,7 +114,7 @@ impl ValidationPlan {
                 when_files_present: vec![],
                 scope: ValidationScope::Workspace,
             };
-            let result = run_command_with_timeout(&spec, workspace.path(), timeout);
+            let result = spec.run_with_timeout(workspace.path(), timeout);
             if !result.passed && step.must_pass {
                 return result;
             }

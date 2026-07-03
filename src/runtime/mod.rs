@@ -21,7 +21,7 @@ pub use reset::run_reset;
 pub use run::ForgeRuntime;
 pub use run_info::{
     ManagedProviderServerMetadata, ProviderRunMetadata, ProviderTierMetadata, RunInfo, create_run,
-    finalize_manifest, latest_run_dir,
+    latest_run_dir,
 };
 pub use show::run_show;
 pub use trace::{TraceFilter, run_trace};

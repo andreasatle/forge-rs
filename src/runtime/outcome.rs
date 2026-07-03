@@ -8,7 +8,7 @@ use std::error::Error;
 use crate::artifacts::{Artifact, ArtifactView};
 use crate::config::ForgeConfig;
 use crate::machines::scheduler::SchedulerTerminalOutput;
-use crate::runtime::{RunInfo, finalize_manifest};
+use crate::runtime::RunInfo;
 
 /// Outcome of a scheduler run, derived once from its terminal output and
 /// reused for progress logging, the stdout summary, and manifest finalization.
@@ -102,8 +102,7 @@ impl RunOutcome {
         final_commit: Option<&str>,
         validation_passed: Option<bool>,
     ) -> Result<(), Box<dyn Error>> {
-        finalize_manifest(
-            run_info,
+        run_info.finalize_manifest(
             self.status(),
             final_commit,
             validation_passed,

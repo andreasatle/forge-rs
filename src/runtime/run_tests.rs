@@ -444,7 +444,7 @@ fn successful_validated_run_sets_validation_passed_true() {
         WorkOutput,
     };
     use crate::node_runner::{NodeRunRequest, NodeRunResult, NodeRunWorkResult, NodeRunner};
-    use crate::runtime::{create_run, finalize_manifest};
+    use crate::runtime::create_run;
     use crate::telemetry::NoopTelemetry;
 
     struct FileWritingRunner;
@@ -502,7 +502,9 @@ fn successful_validated_run_sets_validation_passed_true() {
         SchedulerTerminalOutput::Complete { .. } => "succeeded",
         SchedulerTerminalOutput::Failed { .. } => "failed",
     };
-    finalize_manifest(&run_info, status, None, validation_passed, None).unwrap();
+    run_info
+        .finalize_manifest(status, None, validation_passed, None)
+        .unwrap();
 
     let content = std::fs::read_to_string(run_info.run_dir.join("manifest.json")).unwrap();
     let v: serde_json::Value = serde_json::from_str(&content).unwrap();
@@ -524,7 +526,7 @@ fn validation_failure_sets_validation_passed_false_in_manifest() {
         WorkOutput,
     };
     use crate::node_runner::{NodeRunRequest, NodeRunResult, NodeRunWorkResult, NodeRunner};
-    use crate::runtime::{create_run, finalize_manifest};
+    use crate::runtime::create_run;
     use crate::telemetry::NoopTelemetry;
     use crate::validation::{ValidationResult, Validator};
 
@@ -595,7 +597,9 @@ fn validation_failure_sets_validation_passed_false_in_manifest() {
         SchedulerTerminalOutput::Complete { .. } => "succeeded",
         SchedulerTerminalOutput::Failed { .. } => "failed",
     };
-    finalize_manifest(&run_info, status, None, validation_passed, None).unwrap();
+    run_info
+        .finalize_manifest(status, None, validation_passed, None)
+        .unwrap();
 
     let content = std::fs::read_to_string(run_info.run_dir.join("manifest.json")).unwrap();
     let v: serde_json::Value = serde_json::from_str(&content).unwrap();
@@ -613,7 +617,7 @@ fn validation_failure_sets_validation_passed_false_in_manifest() {
 fn failed_manifest_contains_concrete_failure_reason() {
     use crate::machines::scheduler::{RunRequest, SchedulerHandler, SchedulerMachine};
     use crate::node_runner::{NodeRunRequest, NodeRunResult, NodeRunner};
-    use crate::runtime::{create_run, finalize_manifest};
+    use crate::runtime::create_run;
     use crate::telemetry::NoopTelemetry;
 
     struct AlwaysFailRunner;
@@ -659,14 +663,14 @@ fn failed_manifest_contains_concrete_failure_reason() {
     } else {
         "succeeded"
     };
-    finalize_manifest(
-        &run_info,
-        status,
-        None,
-        validation_passed,
-        failure_reason_str.as_deref(),
-    )
-    .unwrap();
+    run_info
+        .finalize_manifest(
+            status,
+            None,
+            validation_passed,
+            failure_reason_str.as_deref(),
+        )
+        .unwrap();
 
     let content = std::fs::read_to_string(run_info.run_dir.join("manifest.json")).unwrap();
     let v: serde_json::Value = serde_json::from_str(&content).unwrap();

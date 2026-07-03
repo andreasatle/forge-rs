@@ -212,46 +212,48 @@ fn write_manifest(
     Ok(())
 }
 
-/// Finalize the manifest for a completed run.
-///
-/// Reads the existing manifest, merges outcome fields, and writes it back.
-/// If any step fails, returns an error — the caller must treat this as non-fatal.
-pub fn finalize_manifest(
-    run_info: &RunInfo,
-    status: &str,
-    final_commit: Option<&str>,
-    validation_passed: Option<bool>,
-    failure_reason: Option<&str>,
-) -> Result<(), Box<dyn Error>> {
-    let manifest_path = run_info.run_dir.join("manifest.json");
-    let content = std::fs::read_to_string(&manifest_path)?;
-    let mut manifest: serde_json::Value = serde_json::from_str(&content)?;
+impl RunInfo {
+    /// Finalize the manifest for a completed run.
+    ///
+    /// Reads the existing manifest, merges outcome fields, and writes it back.
+    /// If any step fails, returns an error — the caller must treat this as non-fatal.
+    pub fn finalize_manifest(
+        &self,
+        status: &str,
+        final_commit: Option<&str>,
+        validation_passed: Option<bool>,
+        failure_reason: Option<&str>,
+    ) -> Result<(), Box<dyn Error>> {
+        let manifest_path = self.run_dir.join("manifest.json");
+        let content = std::fs::read_to_string(&manifest_path)?;
+        let mut manifest: serde_json::Value = serde_json::from_str(&content)?;
 
-    let now_secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs_f64();
+        let now_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs_f64();
 
-    let completed_at = started_at_from_secs(now_secs as u64);
-    let duration_seconds = (now_secs - run_info.started_secs).max(0.0);
+        let completed_at = started_at_from_secs(now_secs as u64);
+        let duration_seconds = (now_secs - self.started_secs).max(0.0);
 
-    manifest["completed_at"] = serde_json::Value::String(completed_at);
-    manifest["duration_seconds"] = serde_json::json!(duration_seconds);
-    manifest["status"] = serde_json::Value::String(status.to_string());
-    manifest["final_commit"] = match final_commit {
-        Some(c) => serde_json::Value::String(c.to_string()),
-        None => serde_json::Value::Null,
-    };
-    if let Some(vp) = validation_passed {
-        manifest["validation_passed"] = serde_json::Value::Bool(vp);
+        manifest["completed_at"] = serde_json::Value::String(completed_at);
+        manifest["duration_seconds"] = serde_json::json!(duration_seconds);
+        manifest["status"] = serde_json::Value::String(status.to_string());
+        manifest["final_commit"] = match final_commit {
+            Some(c) => serde_json::Value::String(c.to_string()),
+            None => serde_json::Value::Null,
+        };
+        if let Some(vp) = validation_passed {
+            manifest["validation_passed"] = serde_json::Value::Bool(vp);
+        }
+        manifest["failure_reason"] = match failure_reason {
+            Some(r) => serde_json::Value::String(r.to_string()),
+            None => serde_json::Value::Null,
+        };
+
+        std::fs::write(&manifest_path, serde_json::to_string_pretty(&manifest)?)?;
+        Ok(())
     }
-    manifest["failure_reason"] = match failure_reason {
-        Some(r) => serde_json::Value::String(r.to_string()),
-        None => serde_json::Value::Null,
-    };
-
-    std::fs::write(&manifest_path, serde_json::to_string_pretty(&manifest)?)?;
-    Ok(())
 }
 
 fn update_latest(runs_root: &Path, run_id: &str) -> Result<(), Box<dyn Error>> {
@@ -450,7 +452,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
 
         let r = create_run(&root, "obj", "repo", &provider_metadata()).unwrap();
-        finalize_manifest(&r, "succeeded", Some("abc1234"), None, None).unwrap();
+        r.finalize_manifest("succeeded", Some("abc1234"), None, None)
+            .unwrap();
 
         let content = std::fs::read_to_string(r.run_dir.join("manifest.json")).unwrap();
         let v: serde_json::Value = serde_json::from_str(&content).unwrap();
@@ -475,7 +478,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
 
         let r = create_run(&root, "obj", "repo", &provider_metadata()).unwrap();
-        finalize_manifest(&r, "failed", None, None, Some("integration conflict")).unwrap();
+        r.finalize_manifest("failed", None, None, Some("integration conflict"))
+            .unwrap();
 
         let content = std::fs::read_to_string(r.run_dir.join("manifest.json")).unwrap();
         let v: serde_json::Value = serde_json::from_str(&content).unwrap();
@@ -496,7 +500,7 @@ mod tests {
         // Remove run_dir to force finalize_manifest to fail.
         std::fs::remove_dir_all(&r.run_dir).unwrap();
 
-        let finalize_result = finalize_manifest(&r, "succeeded", None, None, None);
+        let finalize_result = r.finalize_manifest("succeeded", None, None, None);
         assert!(
             finalize_result.is_err(),
             "finalize must fail when run_dir is gone"

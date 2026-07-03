@@ -57,6 +57,193 @@ pub struct CommandSpec {
     pub scope: ValidationScope,
 }
 
+impl CommandSpec {
+    /// Human-readable command line for display in summaries and errors.
+    pub fn display(&self) -> String {
+        let mut parts = vec![self.program.clone()];
+        parts.extend(self.args.iter().cloned());
+        parts.join(" ")
+    }
+
+    /// Run this command directly (no shell) in `dir` with a hard deadline.
+    ///
+    /// Stdout and stderr are redirected to anonymous temp files so large output
+    /// cannot fill the pipe buffer and deadlock the child. The parent polls
+    /// `try_wait` every 50 ms and kills the child if it outlives `timeout`.
+    pub(crate) fn run_with_timeout(
+        &self,
+        dir: &std::path::Path,
+        timeout: Duration,
+    ) -> ValidationResult {
+        let display = self.display();
+
+        let mut stdout_file = match tempfile::tempfile() {
+            Ok(f) => f,
+            Err(e) => {
+                return ValidationResult {
+                    passed: false,
+                    summary: format!("command `{display}` failed to start: {e}"),
+                    failure: Some(ValidationCommandFailure {
+                        command: display,
+                        exit_code: None,
+                        stdout: String::new(),
+                        stderr: e.to_string(),
+                    }),
+                };
+            }
+        };
+        let mut stderr_file = match tempfile::tempfile() {
+            Ok(f) => f,
+            Err(e) => {
+                return ValidationResult {
+                    passed: false,
+                    summary: format!("command `{display}` failed to start: {e}"),
+                    failure: Some(ValidationCommandFailure {
+                        command: display,
+                        exit_code: None,
+                        stdout: String::new(),
+                        stderr: e.to_string(),
+                    }),
+                };
+            }
+        };
+
+        let stdout_fd = match stdout_file.try_clone() {
+            Ok(f) => f,
+            Err(e) => {
+                return ValidationResult {
+                    passed: false,
+                    summary: format!("command `{display}` failed to start: {e}"),
+                    failure: Some(ValidationCommandFailure {
+                        command: display,
+                        exit_code: None,
+                        stdout: String::new(),
+                        stderr: e.to_string(),
+                    }),
+                };
+            }
+        };
+        let stderr_fd = match stderr_file.try_clone() {
+            Ok(f) => f,
+            Err(e) => {
+                return ValidationResult {
+                    passed: false,
+                    summary: format!("command `{display}` failed to start: {e}"),
+                    failure: Some(ValidationCommandFailure {
+                        command: display,
+                        exit_code: None,
+                        stdout: String::new(),
+                        stderr: e.to_string(),
+                    }),
+                };
+            }
+        };
+
+        let mut child = match Command::new(&self.program)
+            .args(&self.args)
+            .current_dir(dir)
+            .stdout(Stdio::from(stdout_fd))
+            .stderr(Stdio::from(stderr_fd))
+            .spawn()
+        {
+            Ok(c) => c,
+            Err(e) => {
+                return ValidationResult {
+                    passed: false,
+                    summary: format!("command `{display}` failed to start: {e}"),
+                    failure: Some(ValidationCommandFailure {
+                        command: display,
+                        exit_code: None,
+                        stdout: String::new(),
+                        stderr: e.to_string(),
+                    }),
+                };
+            }
+        };
+
+        let poll = Duration::from_millis(50);
+        let start = Instant::now();
+
+        loop {
+            match child.try_wait() {
+                Err(e) => {
+                    return ValidationResult {
+                        passed: false,
+                        summary: format!("command `{display}` failed to start: {e}"),
+                        failure: Some(ValidationCommandFailure {
+                            command: display,
+                            exit_code: None,
+                            stdout: String::new(),
+                            stderr: e.to_string(),
+                        }),
+                    };
+                }
+                Ok(Some(status)) => {
+                    stdout_file.seek(SeekFrom::Start(0)).ok();
+                    stderr_file.seek(SeekFrom::Start(0)).ok();
+                    let mut stdout = String::new();
+                    let mut stderr = String::new();
+                    stdout_file.read_to_string(&mut stdout).ok();
+                    stderr_file.read_to_string(&mut stderr).ok();
+
+                    if status.success() {
+                        return ValidationResult {
+                            passed: true,
+                            summary: String::new(),
+                            failure: None,
+                        };
+                    }
+                    let exit_code = status.code();
+                    let code = exit_code
+                        .map(|c| c.to_string())
+                        .unwrap_or_else(|| "signal".to_string());
+                    return ValidationResult {
+                        passed: false,
+                        summary: format!(
+                            "command `{display}` failed (exit {code})\nstdout: {stdout}\nstderr: {stderr}"
+                        ),
+                        failure: Some(ValidationCommandFailure {
+                            command: display,
+                            exit_code,
+                            stdout,
+                            stderr,
+                        }),
+                    };
+                }
+                Ok(None) => {
+                    if start.elapsed() >= timeout {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        stdout_file.seek(SeekFrom::Start(0)).ok();
+                        stderr_file.seek(SeekFrom::Start(0)).ok();
+                        let mut stdout = String::new();
+                        let mut stderr = String::new();
+                        stdout_file.read_to_string(&mut stdout).ok();
+                        stderr_file.read_to_string(&mut stderr).ok();
+                        let secs = timeout.as_secs();
+                        if stderr.is_empty() {
+                            stderr = format!("timed out after {secs} seconds");
+                        }
+                        return ValidationResult {
+                            passed: false,
+                            summary: format!(
+                                "validation command timed out after {secs} seconds\ncommand:\n{display}"
+                            ),
+                            failure: Some(ValidationCommandFailure {
+                                command: display,
+                                exit_code: None,
+                                stdout,
+                                stderr,
+                            }),
+                        };
+                    }
+                    std::thread::sleep(poll);
+                }
+            }
+        }
+    }
+}
+
 /// Outcome of a workspace validation pass.
 pub struct ValidationResult {
     /// Whether validation passed.
@@ -129,7 +316,7 @@ impl Validator for CommandValidator {
                 continue;
             }
             ran += 1;
-            let result = run_command_with_timeout(spec, workspace.path(), self.timeout);
+            let result = spec.run_with_timeout(workspace.path(), self.timeout);
             if !result.passed {
                 return result;
             }
@@ -185,190 +372,6 @@ pub(crate) fn matches_name_glob(pattern: &str, name: &str) -> bool {
                 name.starts_with(prefix)
                     && name.ends_with(suffix)
                     && name.len() >= prefix.len() + suffix.len()
-            }
-        }
-    }
-}
-
-fn command_display(spec: &CommandSpec) -> String {
-    let mut parts = vec![spec.program.clone()];
-    parts.extend(spec.args.iter().cloned());
-    parts.join(" ")
-}
-
-/// Run `spec` directly (no shell) in `dir` with a hard deadline.
-///
-/// Stdout and stderr are redirected to anonymous temp files so large output
-/// cannot fill the pipe buffer and deadlock the child. The parent polls
-/// `try_wait` every 50 ms and kills the child if it outlives `timeout`.
-pub(crate) fn run_command_with_timeout(
-    spec: &CommandSpec,
-    dir: &std::path::Path,
-    timeout: Duration,
-) -> ValidationResult {
-    let display = command_display(spec);
-
-    let mut stdout_file = match tempfile::tempfile() {
-        Ok(f) => f,
-        Err(e) => {
-            return ValidationResult {
-                passed: false,
-                summary: format!("command `{display}` failed to start: {e}"),
-                failure: Some(ValidationCommandFailure {
-                    command: display,
-                    exit_code: None,
-                    stdout: String::new(),
-                    stderr: e.to_string(),
-                }),
-            };
-        }
-    };
-    let mut stderr_file = match tempfile::tempfile() {
-        Ok(f) => f,
-        Err(e) => {
-            return ValidationResult {
-                passed: false,
-                summary: format!("command `{display}` failed to start: {e}"),
-                failure: Some(ValidationCommandFailure {
-                    command: display,
-                    exit_code: None,
-                    stdout: String::new(),
-                    stderr: e.to_string(),
-                }),
-            };
-        }
-    };
-
-    let stdout_fd = match stdout_file.try_clone() {
-        Ok(f) => f,
-        Err(e) => {
-            return ValidationResult {
-                passed: false,
-                summary: format!("command `{display}` failed to start: {e}"),
-                failure: Some(ValidationCommandFailure {
-                    command: display,
-                    exit_code: None,
-                    stdout: String::new(),
-                    stderr: e.to_string(),
-                }),
-            };
-        }
-    };
-    let stderr_fd = match stderr_file.try_clone() {
-        Ok(f) => f,
-        Err(e) => {
-            return ValidationResult {
-                passed: false,
-                summary: format!("command `{display}` failed to start: {e}"),
-                failure: Some(ValidationCommandFailure {
-                    command: display,
-                    exit_code: None,
-                    stdout: String::new(),
-                    stderr: e.to_string(),
-                }),
-            };
-        }
-    };
-
-    let mut child = match Command::new(&spec.program)
-        .args(&spec.args)
-        .current_dir(dir)
-        .stdout(Stdio::from(stdout_fd))
-        .stderr(Stdio::from(stderr_fd))
-        .spawn()
-    {
-        Ok(c) => c,
-        Err(e) => {
-            return ValidationResult {
-                passed: false,
-                summary: format!("command `{display}` failed to start: {e}"),
-                failure: Some(ValidationCommandFailure {
-                    command: display,
-                    exit_code: None,
-                    stdout: String::new(),
-                    stderr: e.to_string(),
-                }),
-            };
-        }
-    };
-
-    let poll = Duration::from_millis(50);
-    let start = Instant::now();
-
-    loop {
-        match child.try_wait() {
-            Err(e) => {
-                return ValidationResult {
-                    passed: false,
-                    summary: format!("command `{display}` failed to start: {e}"),
-                    failure: Some(ValidationCommandFailure {
-                        command: display,
-                        exit_code: None,
-                        stdout: String::new(),
-                        stderr: e.to_string(),
-                    }),
-                };
-            }
-            Ok(Some(status)) => {
-                stdout_file.seek(SeekFrom::Start(0)).ok();
-                stderr_file.seek(SeekFrom::Start(0)).ok();
-                let mut stdout = String::new();
-                let mut stderr = String::new();
-                stdout_file.read_to_string(&mut stdout).ok();
-                stderr_file.read_to_string(&mut stderr).ok();
-
-                if status.success() {
-                    return ValidationResult {
-                        passed: true,
-                        summary: String::new(),
-                        failure: None,
-                    };
-                }
-                let exit_code = status.code();
-                let code = exit_code
-                    .map(|c| c.to_string())
-                    .unwrap_or_else(|| "signal".to_string());
-                return ValidationResult {
-                    passed: false,
-                    summary: format!(
-                        "command `{display}` failed (exit {code})\nstdout: {stdout}\nstderr: {stderr}"
-                    ),
-                    failure: Some(ValidationCommandFailure {
-                        command: display,
-                        exit_code,
-                        stdout,
-                        stderr,
-                    }),
-                };
-            }
-            Ok(None) => {
-                if start.elapsed() >= timeout {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    stdout_file.seek(SeekFrom::Start(0)).ok();
-                    stderr_file.seek(SeekFrom::Start(0)).ok();
-                    let mut stdout = String::new();
-                    let mut stderr = String::new();
-                    stdout_file.read_to_string(&mut stdout).ok();
-                    stderr_file.read_to_string(&mut stderr).ok();
-                    let secs = timeout.as_secs();
-                    if stderr.is_empty() {
-                        stderr = format!("timed out after {secs} seconds");
-                    }
-                    return ValidationResult {
-                        passed: false,
-                        summary: format!(
-                            "validation command timed out after {secs} seconds\ncommand:\n{display}"
-                        ),
-                        failure: Some(ValidationCommandFailure {
-                            command: display,
-                            exit_code: None,
-                            stdout,
-                            stderr,
-                        }),
-                    };
-                }
-                std::thread::sleep(poll);
             }
         }
     }
