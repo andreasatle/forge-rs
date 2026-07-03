@@ -102,6 +102,10 @@ fn plan_with_unknown_dependency_fails_scheduler() {
         detail.contains("missing"),
         "detail should mention the missing id, got: {detail:?}"
     );
+    assert!(
+        !detail.contains("same-batch sibling dependency"),
+        "unknown dep should not be reported as sibling, got: {detail:?}"
+    );
     assert!(t.effects.is_empty());
 }
 
@@ -491,51 +495,4 @@ fn source_work_dispatch_without_planned_test_target_reports_gap() {
         test_plan_context.planned_test_targets.is_empty(),
         "no objective text should create planned test metadata"
     );
-}
-
-#[test]
-fn ordinary_missing_dependency_still_reports_unknown_node() {
-    // A dependency that does not appear in the graph OR the current batch
-    // should still produce the existing "unknown node id" diagnostic.
-    let graph = RunGraph {
-        nodes: vec![plan_node("P", "plan something", &[])],
-        next_id: 0,
-    };
-    let t = do_transition(
-        SchedulerState::Waiting {
-            graph: running(graph, "P"),
-            run_config: RunConfig::default(),
-        },
-        SchedulerEvent::PlanAccepted {
-            node_id: NodeId("P".to_string()),
-            plan: PlanOutput {
-                children: vec![NodeRequest {
-                    id: NodeId("child-1".to_string()),
-                    kind: NodeKind::Work,
-                    objective: "step".to_string(),
-                    target_files: vec![],
-                    required_validation_targets: vec![],
-                    dependencies: vec![NodeId("ghost".to_string())],
-                    validation_plan: None,
-                }],
-            },
-        },
-    );
-
-    let SchedulerState::Failed { graph, reason } = t.state else {
-        panic!("expected Failed, got {:#?}", t.state);
-    };
-    assert_eq!(graph.nodes.len(), 1, "no children should be inserted");
-    let FailureReason::GraphInvariantViolation(detail) = reason else {
-        panic!("expected GraphInvariantViolation, got {reason:?}");
-    };
-    assert!(
-        !detail.contains("same-batch sibling dependency"),
-        "unknown dep should not be reported as sibling, got: {detail:?}"
-    );
-    assert!(
-        detail.contains("ghost"),
-        "detail should name the unknown id, got: {detail:?}"
-    );
-    assert!(t.effects.is_empty());
 }
