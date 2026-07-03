@@ -115,37 +115,6 @@ mod tests {
         WorkspaceFactory::new(artifact).create_workspace(workspace_path)
     }
 
-    fn create_temporary_workspace(
-        artifact: &Artifact,
-    ) -> Result<Workspace, Box<dyn std::error::Error>> {
-        WorkspaceFactory::new(artifact).create_temporary_workspace()
-    }
-
-    #[test]
-    fn create_workspace_from_artifact() {
-        let (temp, artifact) = fixture("create-workspace");
-
-        let workspace = create_workspace(&artifact, temp.join("workspace"));
-
-        assert_eq!(workspace.base_commit, artifact.commit_sha);
-        assert_eq!(
-            git_output(&artifact.repo_path, &["rev-parse", "--is-bare-repository"]),
-            "true"
-        );
-        assert_eq!(
-            git_output(workspace.path(), &["rev-parse", "--is-bare-repository"]),
-            "false"
-        );
-        assert_eq!(
-            git_output(workspace.path(), &["rev-parse", "HEAD"]),
-            artifact.commit_sha
-        );
-        assert_eq!(
-            fs::read_to_string(workspace.path().join("artifact.txt")).unwrap(),
-            "version one\n"
-        );
-    }
-
     #[test]
     fn read_file_returns_contents() {
         let (temp, artifact) = fixture("read-file");
@@ -386,47 +355,6 @@ mod tests {
                 "path {path:?} must be rejected as outside the workspace",
             );
         }
-    }
-
-    #[test]
-    fn temporary_workspace_removed_after_drop() {
-        let (_temp, artifact) = fixture("temp-removed-drop");
-        let workspace =
-            create_temporary_workspace(&artifact).expect("failed to create temporary workspace");
-        let path = workspace.path().to_path_buf();
-        assert!(path.exists(), "workspace directory must exist before drop");
-        drop(workspace);
-        assert!(
-            !path.exists(),
-            "temporary workspace must be removed on drop"
-        );
-    }
-
-    #[test]
-    fn create_workspace_failure_returns_error() {
-        let artifact = Artifact {
-            repo_path: std::path::PathBuf::from("/nonexistent/path/that/does/not/exist.git"),
-            branch: "main".to_string(),
-            commit_sha: "0000000000000000000000000000000000000000".to_string(),
-        };
-        let result = create_temporary_workspace(&artifact);
-        assert!(
-            result.is_err(),
-            "workspace creation from nonexistent repo must return an error"
-        );
-    }
-
-    #[test]
-    fn explicit_workspace_path_not_deleted_on_drop() {
-        let (temp, artifact) = fixture("explicit-preserved");
-        let workspace_path = temp.join("my-workspace");
-        let workspace = create_workspace(&artifact, workspace_path.clone());
-        assert!(workspace_path.exists());
-        drop(workspace);
-        assert!(
-            workspace_path.exists(),
-            "explicit-path workspace must not be deleted on drop"
-        );
     }
 
     #[test]

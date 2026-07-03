@@ -158,3 +158,166 @@ impl<'a> WorkspaceFactory<'a> {
         command
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::process::Command;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    use super::*;
+
+    static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
+
+    struct TempDirectory(PathBuf);
+
+    impl TempDirectory {
+        fn new(label: &str) -> Self {
+            let sequence = NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::temp_dir().join(format!(
+                "forge-workspace-{label}-{}-{sequence}",
+                std::process::id()
+            ));
+            fs::create_dir(&path).expect("failed to create temporary test directory");
+            Self(path)
+        }
+
+        fn join(&self, path: &str) -> PathBuf {
+            self.0.join(path)
+        }
+    }
+
+    impl Drop for TempDirectory {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn fixture(label: &str) -> (TempDirectory, Artifact) {
+        let temp = TempDirectory::new(label);
+        let seed_path = temp.join("seed");
+        fs::create_dir(&seed_path).expect("failed to create seed repository directory");
+        git(&seed_path, &["init", "--quiet", "--initial-branch=main"]);
+        git(&seed_path, &["config", "user.name", "Artifact Test"]);
+        git(
+            &seed_path,
+            &["config", "user.email", "artifact-test@example.invalid"],
+        );
+        fs::write(seed_path.join("artifact.txt"), "version one\n")
+            .expect("failed to write fixture file");
+        git(&seed_path, &["add", "artifact.txt"]);
+        git(&seed_path, &["commit", "--quiet", "-m", "Initial artifact"]);
+        let repo_path = temp.join("artifact.git");
+        git_clone_bare(&seed_path, &repo_path);
+        let commit_sha = git_output(&repo_path, &["rev-parse", "HEAD"]);
+
+        (
+            temp,
+            Artifact {
+                repo_path,
+                branch: "main".to_owned(),
+                commit_sha,
+            },
+        )
+    }
+
+    fn git_clone_bare(source: &Path, destination: &Path) {
+        let status = Command::new("git")
+            .args(["clone", "--quiet", "--bare"])
+            .arg(source)
+            .arg(destination)
+            .status()
+            .expect("failed to create bare test repository");
+        assert!(status.success(), "git clone --bare failed");
+    }
+
+    fn git(path: &Path, args: &[&str]) {
+        let status = Command::new("git")
+            .args(args)
+            .current_dir(path)
+            .status()
+            .expect("failed to execute git in test");
+        assert!(status.success(), "git {} failed", args.join(" "));
+    }
+
+    fn git_output(path: &Path, args: &[&str]) -> String {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(path)
+            .output()
+            .expect("failed to execute git in test");
+        assert!(output.status.success(), "git {} failed", args.join(" "));
+        String::from_utf8(output.stdout)
+            .expect("git output was not UTF-8")
+            .trim()
+            .to_owned()
+    }
+
+    #[test]
+    fn create_workspace_from_artifact() {
+        let (temp, artifact) = fixture("create-workspace");
+
+        let workspace = WorkspaceFactory::new(&artifact).create_workspace(temp.join("workspace"));
+
+        assert_eq!(workspace.base_commit, artifact.commit_sha);
+        assert_eq!(
+            git_output(&artifact.repo_path, &["rev-parse", "--is-bare-repository"]),
+            "true"
+        );
+        assert_eq!(
+            git_output(workspace.path(), &["rev-parse", "--is-bare-repository"]),
+            "false"
+        );
+        assert_eq!(
+            git_output(workspace.path(), &["rev-parse", "HEAD"]),
+            artifact.commit_sha
+        );
+        assert_eq!(
+            fs::read_to_string(workspace.path().join("artifact.txt")).unwrap(),
+            "version one\n"
+        );
+    }
+
+    #[test]
+    fn temporary_workspace_removed_after_drop() {
+        let (_temp, artifact) = fixture("temp-removed-drop");
+        let workspace = WorkspaceFactory::new(&artifact)
+            .create_temporary_workspace()
+            .expect("failed to create temporary workspace");
+        let path = workspace.path().to_path_buf();
+        assert!(path.exists(), "workspace directory must exist before drop");
+        drop(workspace);
+        assert!(
+            !path.exists(),
+            "temporary workspace must be removed on drop"
+        );
+    }
+
+    #[test]
+    fn create_workspace_failure_returns_error() {
+        let artifact = Artifact {
+            repo_path: std::path::PathBuf::from("/nonexistent/path/that/does/not/exist.git"),
+            branch: "main".to_string(),
+            commit_sha: "0000000000000000000000000000000000000000".to_string(),
+        };
+        let result = WorkspaceFactory::new(&artifact).create_temporary_workspace();
+        assert!(
+            result.is_err(),
+            "workspace creation from nonexistent repo must return an error"
+        );
+    }
+
+    #[test]
+    fn explicit_workspace_path_not_deleted_on_drop() {
+        let (temp, artifact) = fixture("explicit-preserved");
+        let workspace_path = temp.join("my-workspace");
+        let workspace = WorkspaceFactory::new(&artifact).create_workspace(workspace_path.clone());
+        assert!(workspace_path.exists());
+        drop(workspace);
+        assert!(
+            workspace_path.exists(),
+            "explicit-path workspace must not be deleted on drop"
+        );
+    }
+}

@@ -289,27 +289,6 @@ fn critic_write_request_produces_error_observation() {
 // ── observation bounding ─────────────────────────────────────────────────
 
 #[test]
-fn format_tool_observation_is_bounded() {
-    let large_content = "x".repeat(500);
-    let response = FileToolResponse::FileContents {
-        path: "big.txt".to_owned(),
-        content: large_content,
-    };
-    let max_obs = 100;
-    let observation = format_tool_observation(&response, max_obs);
-    assert!(
-        observation.len() <= max_obs + "\n[observation truncated]".len(),
-        "observation must be bounded; len={}, max={}",
-        observation.len(),
-        max_obs
-    );
-    assert!(
-        observation.contains("[observation truncated]"),
-        "truncation marker must be present; got: {observation:?}"
-    );
-}
-
-#[test]
 fn tool_observation_is_bounded_in_role_prompt() {
     // Create an artifact with a file larger than max_observation_bytes (16 KiB).
     let (_temp, view) = {

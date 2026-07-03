@@ -581,3 +581,29 @@ fn indent_target_state_content(content: &str) -> String {
         .collect::<Vec<_>>()
         .join("\n")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn format_tool_observation_is_bounded() {
+        let large_content = "x".repeat(500);
+        let response = FileToolResponse::FileContents {
+            path: "big.txt".to_owned(),
+            content: large_content,
+        };
+        let max_obs = 100;
+        let observation = format_tool_observation(&response, max_obs);
+        assert!(
+            observation.len() <= max_obs + "\n[observation truncated]".len(),
+            "observation must be bounded; len={}, max={}",
+            observation.len(),
+            max_obs
+        );
+        assert!(
+            observation.contains("[observation truncated]"),
+            "truncation marker must be present; got: {observation:?}"
+        );
+    }
+}

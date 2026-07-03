@@ -31,13 +31,7 @@ use super::protocol_state::ProtocolState;
 use super::tooling::{RoleToolDispatcher, ToolDispatchOutcome, file_tool_policy_for_request};
 
 #[cfg(test)]
-use super::parser::MIN_CONTENT_LENGTH;
-#[cfg(test)]
-use super::prompt::format_tool_observation;
-#[cfg(test)]
 use super::protocol_state::{MAX_PROTOCOL_RETRIES, MAX_READ_ONLY_TOOL_STEPS, MAX_TOOL_STEPS};
-#[cfg(test)]
-use crate::tools::FileToolResponse;
 
 /// A read-only view of the artifact made available to role tool loops.
 pub struct RoleToolContext {

@@ -13,7 +13,6 @@ use crate::providers::{ProviderClient, ProviderRequest};
 
 mod completion_pressure;
 mod decision_pressure;
-mod parser;
 mod prompt;
 mod protocol;
 mod reviewer;
