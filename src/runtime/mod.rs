@@ -3,6 +3,7 @@
 pub mod checkpoint;
 mod history;
 mod managed_provider;
+mod provider_stack;
 mod repo;
 mod reset;
 pub mod resume;
