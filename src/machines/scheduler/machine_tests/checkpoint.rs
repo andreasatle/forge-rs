@@ -1,318 +1,242 @@
 use super::*;
 
-#[test]
-fn plan_node_rejects_work_accepted() {
-    let graph = RunGraph {
-        nodes: vec![plan_node("P", "plan something", &[])],
-        next_id: 0,
-    };
-    let t = do_transition(
-        SchedulerState::Waiting {
-            graph: running(graph, "P"),
-            run_config: RunConfig::default(),
-        },
-        SchedulerEvent::WorkAccepted {
-            node_id: NodeId("P".to_string()),
-            work: WorkOutput {
-                summary: "work done".to_string(),
-            },
-        },
-    );
-
-    let SchedulerState::Failed { reason, .. } = t.state else {
+fn assert_protocol_violation(t: &Transition<SchedulerState, SchedulerEffect>, expected: &str) {
+    let SchedulerState::Failed { reason, .. } = &t.state else {
         panic!("expected Failed, got {:#?}", t.state);
     };
     let FailureReason::ProtocolViolation(detail) = reason else {
         panic!("expected ProtocolViolation, got {reason:?}");
     };
-    assert!(
-        detail.contains("Plan"),
-        "detail should mention Plan, got: {detail:?}"
-    );
-    assert!(
-        detail.contains("WorkAccepted"),
-        "detail should mention WorkAccepted, got: {detail:?}"
-    );
+    assert_eq!(detail, expected);
     assert!(t.effects.is_empty());
 }
 
-#[test]
-fn work_node_rejects_plan_accepted() {
-    let graph = single_work_graph();
-    let t = do_transition(
-        SchedulerState::Waiting {
-            graph: running(graph, "A"),
-            run_config: RunConfig::default(),
-        },
-        SchedulerEvent::PlanAccepted {
-            node_id: NodeId("A".to_string()),
-            plan: PlanOutput { children: vec![] },
-        },
-    );
+// ── Event/node-kind mismatch tests ────────────────────────────────────────
+//
+// Invariant: an event whose payload kind doesn't match the target node's
+// kind or status is always rejected as a ProtocolViolation with no effects,
+// regardless of which specific mismatch triggered it.
 
-    let SchedulerState::Failed { reason, .. } = t.state else {
-        panic!("expected Failed, got {:#?}", t.state);
-    };
-    let FailureReason::ProtocolViolation(detail) = reason else {
-        panic!("expected ProtocolViolation, got {reason:?}");
-    };
-    assert!(
-        detail.contains("Work"),
-        "detail should mention Work, got: {detail:?}"
-    );
-    assert!(
-        detail.contains("PlanAccepted"),
-        "detail should mention PlanAccepted, got: {detail:?}"
-    );
-    assert!(t.effects.is_empty());
+#[test]
+fn event_kind_or_status_mismatch_fails_with_protocol_violation() {
+    struct Case {
+        graph: RunGraph,
+        event: SchedulerEvent,
+        expected_detail: &'static str,
+    }
+
+    let cases = vec![
+        // Plan node receiving a WorkAccepted outcome.
+        Case {
+            graph: running(
+                RunGraph {
+                    nodes: vec![plan_node("P", "plan something", &[])],
+                    next_id: 0,
+                },
+                "P",
+            ),
+            event: SchedulerEvent::WorkAccepted {
+                node_id: NodeId("P".to_string()),
+                work: WorkOutput {
+                    summary: "work done".to_string(),
+                },
+            },
+            expected_detail: "node P is Plan but received WorkAccepted outcome",
+        },
+        // Work node receiving a PlanAccepted outcome.
+        Case {
+            graph: running(single_work_graph(), "A"),
+            event: SchedulerEvent::PlanAccepted {
+                node_id: NodeId("A".to_string()),
+                plan: PlanOutput { children: vec![] },
+            },
+            expected_detail: "node A is Work but received PlanAccepted outcome",
+        },
+        // NodeReturned event while the node is Integrating, not Running.
+        Case {
+            graph: {
+                let mut g = RunGraph {
+                    nodes: vec![work_node("B", "do work", &[])],
+                    next_id: 0,
+                };
+                g.nodes[0].status = NodeStatus::Integrating;
+                g
+            },
+            event: SchedulerEvent::WorkAccepted {
+                node_id: NodeId("B".to_string()),
+                work: WorkOutput {
+                    summary: "spurious result".to_string(),
+                },
+            },
+            expected_detail: "protocol violation: NodeReturned for node B expected Running but found Integrating",
+        },
+        // IntegrationSucceeded while the work node is Running, not Integrating.
+        Case {
+            graph: running(single_work_graph(), "A"),
+            event: SchedulerEvent::IntegrationSucceeded {
+                node_id: NodeId("A".to_string()),
+                output: IntegrationOutput {
+                    summary: "done".to_string(),
+                },
+            },
+            expected_detail: "node A has status Running but IntegrationReturned requires Integrating",
+        },
+        // IntegrationSucceeded for a Plan node instead of a Work node.
+        Case {
+            graph: running(
+                RunGraph {
+                    nodes: vec![plan_node("P", "plan something", &[])],
+                    next_id: 0,
+                },
+                "P",
+            ),
+            event: SchedulerEvent::IntegrationSucceeded {
+                node_id: NodeId("P".to_string()),
+                output: IntegrationOutput {
+                    summary: "done".to_string(),
+                },
+            },
+            expected_detail: "node P is Plan but IntegrationReturned requires a Work node",
+        },
+    ];
+
+    for case in cases {
+        let t = do_transition(
+            SchedulerState::Waiting {
+                graph: case.graph,
+                run_config: RunConfig::default(),
+            },
+            case.event,
+        );
+        assert_protocol_violation(&t, case.expected_detail);
+    }
 }
 
+// ── Wrong-node-id tests ────────────────────────────────────────────────────
+//
+// Invariant: a return event for a node id other than the single active node
+// is a ProtocolViolation naming both the expected and received ids, whether
+// or not the received id even exists in the graph.
+
 #[test]
-fn node_returned_rejects_integrating_node() {
-    // Waiting with B status = Integrating.
-    // NodeReturned must be rejected: it is for the execution phase only.
-    let mut graph = RunGraph {
-        nodes: vec![work_node("B", "do work", &[])],
-        next_id: 0,
-    };
-    graph.nodes[0].status = NodeStatus::Integrating;
+fn wrong_node_id_fails_scheduler_with_protocol_violation() {
+    struct Case {
+        graph: RunGraph,
+        event: SchedulerEvent,
+        expected_detail: &'static str,
+    }
 
-    let t = do_transition(
-        SchedulerState::Waiting {
-            graph,
-            run_config: RunConfig::default(),
-        },
-        SchedulerEvent::WorkAccepted {
-            node_id: NodeId("B".to_string()),
-            work: WorkOutput {
-                summary: "spurious result".to_string(),
+    let cases = vec![
+        // WorkAccepted for an id absent from the graph.
+        Case {
+            graph: running(
+                RunGraph {
+                    nodes: vec![work_node("A", "task A", &[])],
+                    next_id: 0,
+                },
+                "A",
+            ),
+            event: SchedulerEvent::WorkAccepted {
+                node_id: NodeId("B".to_string()),
+                work: WorkOutput {
+                    summary: "spurious result".to_string(),
+                },
             },
+            expected_detail: "expected result for node A but received B",
         },
-    );
+        // IntegrationSucceeded for an id absent from the graph.
+        Case {
+            graph: {
+                let mut g = RunGraph {
+                    nodes: vec![work_node("A", "task A", &[])],
+                    next_id: 0,
+                };
+                g.nodes[0].status = NodeStatus::Integrating;
+                g
+            },
+            event: SchedulerEvent::IntegrationSucceeded {
+                node_id: NodeId("B".to_string()),
+                output: IntegrationOutput {
+                    summary: "spurious result".to_string(),
+                },
+            },
+            expected_detail: "expected integration result for node A but received B",
+        },
+        // WorkAccepted for an id that exists in the graph but isn't active.
+        Case {
+            graph: {
+                let mut g = RunGraph {
+                    nodes: vec![work_node("B", "do B", &[]), work_node("C", "do C", &[])],
+                    next_id: 0,
+                };
+                g.nodes[1].status = NodeStatus::Running;
+                g
+            },
+            event: SchedulerEvent::WorkAccepted {
+                node_id: NodeId("B".to_string()),
+                work: WorkOutput {
+                    summary: "irrelevant".to_string(),
+                },
+            },
+            expected_detail: "expected result for node C but received B",
+        },
+    ];
 
-    let SchedulerState::Failed { reason, .. } = t.state else {
-        panic!("expected Failed, got {:#?}", t.state);
-    };
-    let FailureReason::ProtocolViolation(detail) = reason else {
-        panic!("expected ProtocolViolation, got {reason:?}");
-    };
-    assert!(
-        detail.contains("NodeReturned"),
-        "detail should contain 'NodeReturned', got: {detail:?}"
-    );
-    assert!(
-        detail.contains("Running"),
-        "detail should mention expected status Running, got: {detail:?}"
-    );
-    assert!(
-        detail.contains("Integrating"),
-        "detail should mention actual status Integrating, got: {detail:?}"
-    );
-    assert!(t.effects.is_empty());
+    for case in cases {
+        let t = do_transition(
+            SchedulerState::Waiting {
+                graph: case.graph,
+                run_config: RunConfig::default(),
+            },
+            case.event,
+        );
+        assert_protocol_violation(&t, case.expected_detail);
+    }
 }
 
-#[test]
-fn integration_returned_rejects_non_integrating_work() {
-    // Work node is Running (not Integrating) when IntegrationReturned arrives.
-    let graph = single_work_graph();
-    let t = do_transition(
-        SchedulerState::Waiting {
-            graph: running(graph, "A"),
-            run_config: RunConfig::default(),
-        },
-        SchedulerEvent::IntegrationSucceeded {
-            node_id: NodeId("A".to_string()),
-            output: IntegrationOutput {
-                summary: "done".to_string(),
-            },
-        },
-    );
-
-    let SchedulerState::Failed { reason, .. } = t.state else {
-        panic!("expected Failed, got {:#?}", t.state);
-    };
-    let FailureReason::ProtocolViolation(detail) = reason else {
-        panic!("expected ProtocolViolation, got {reason:?}");
-    };
-    assert!(
-        detail.contains("Integrating"),
-        "detail should mention Integrating, got: {detail:?}"
-    );
-    assert!(t.effects.is_empty());
-}
+// ── Active-state-rejects-return-events tests ───────────────────────────────
+//
+// Invariant: the Active state only ever consumes Start; any return-type
+// event (node or integration) is a ProtocolViolation naming the event kind.
 
 #[test]
-fn integration_returned_rejects_plan_node() {
-    let graph = RunGraph {
-        nodes: vec![plan_node("P", "plan something", &[])],
-        next_id: 0,
-    };
-    let t = do_transition(
-        SchedulerState::Waiting {
-            graph: running(graph, "P"),
-            run_config: RunConfig::default(),
-        },
-        SchedulerEvent::IntegrationSucceeded {
-            node_id: NodeId("P".to_string()),
-            output: IntegrationOutput {
-                summary: "done".to_string(),
+fn active_state_rejects_return_events() {
+    struct Case {
+        event: SchedulerEvent,
+        expected_detail: &'static str,
+    }
+
+    let cases = vec![
+        Case {
+            event: SchedulerEvent::WorkAccepted {
+                node_id: NodeId("A".to_string()),
+                work: WorkOutput {
+                    summary: "spurious".to_string(),
+                },
             },
+            expected_detail: "state Active cannot consume NodeReturned",
         },
-    );
-
-    let SchedulerState::Failed { reason, .. } = t.state else {
-        panic!("expected Failed, got {:#?}", t.state);
-    };
-    let FailureReason::ProtocolViolation(detail) = reason else {
-        panic!("expected ProtocolViolation, got {reason:?}");
-    };
-    assert!(
-        detail.contains("Work") || detail.contains("Plan"),
-        "detail should mention Work or Plan, got: {detail:?}"
-    );
-    assert!(t.effects.is_empty());
-}
-
-// ── Protocol violation tests ──────────────────────────────────────────────
-
-#[test]
-fn node_returned_wrong_node_fails_scheduler() {
-    let graph = RunGraph {
-        nodes: vec![work_node("A", "task A", &[])],
-        next_id: 0,
-    };
-    let t = do_transition(
-        SchedulerState::Waiting {
-            graph: running(graph, "A"),
-            run_config: RunConfig::default(),
-        },
-        SchedulerEvent::WorkAccepted {
-            node_id: NodeId("B".to_string()),
-            work: WorkOutput {
-                summary: "spurious result".to_string(),
+        Case {
+            event: SchedulerEvent::IntegrationSucceeded {
+                node_id: NodeId("A".to_string()),
+                output: IntegrationOutput {
+                    summary: "spurious".to_string(),
+                },
             },
+            expected_detail: "state Active cannot consume IntegrationReturned",
         },
-    );
+    ];
 
-    let SchedulerState::Failed { reason, .. } = t.state else {
-        panic!("expected Failed, got {:#?}", t.state);
-    };
-    let FailureReason::ProtocolViolation(detail) = reason else {
-        panic!("expected ProtocolViolation, got {reason:?}");
-    };
-    assert!(
-        detail.contains('A'),
-        "detail should contain expected node A, got: {detail:?}"
-    );
-    assert!(
-        detail.contains('B'),
-        "detail should contain received node B, got: {detail:?}"
-    );
-    assert!(t.effects.is_empty());
-}
-
-#[test]
-fn integration_returned_wrong_node_fails_scheduler() {
-    let mut graph = RunGraph {
-        nodes: vec![work_node("A", "task A", &[])],
-        next_id: 0,
-    };
-    graph.nodes[0].status = NodeStatus::Integrating;
-
-    let t = do_transition(
-        SchedulerState::Waiting {
-            graph,
-            run_config: RunConfig::default(),
-        },
-        SchedulerEvent::IntegrationSucceeded {
-            node_id: NodeId("B".to_string()),
-            output: IntegrationOutput {
-                summary: "spurious result".to_string(),
+    for case in cases {
+        let t = do_transition(
+            SchedulerState::Active {
+                graph: single_work_graph(),
+                run_config: RunConfig::default(),
             },
-        },
-    );
-
-    let SchedulerState::Failed { reason, .. } = t.state else {
-        panic!("expected Failed, got {:#?}", t.state);
-    };
-    let FailureReason::ProtocolViolation(detail) = reason else {
-        panic!("expected ProtocolViolation, got {reason:?}");
-    };
-    assert!(
-        detail.contains('A'),
-        "detail should contain expected node A, got: {detail:?}"
-    );
-    assert!(
-        detail.contains('B'),
-        "detail should contain received node B, got: {detail:?}"
-    );
-    assert!(t.effects.is_empty());
-}
-
-#[test]
-fn active_rejects_node_returned() {
-    let graph = single_work_graph();
-    let t = do_transition(
-        SchedulerState::Active {
-            graph,
-            run_config: RunConfig::default(),
-        },
-        SchedulerEvent::WorkAccepted {
-            node_id: NodeId("A".to_string()),
-            work: WorkOutput {
-                summary: "spurious".to_string(),
-            },
-        },
-    );
-
-    let SchedulerState::Failed { reason, .. } = t.state else {
-        panic!("expected Failed, got {:#?}", t.state);
-    };
-    let FailureReason::ProtocolViolation(detail) = reason else {
-        panic!("expected ProtocolViolation, got {reason:?}");
-    };
-    assert!(
-        detail.contains("Active"),
-        "detail should mention Active, got: {detail:?}"
-    );
-    assert!(
-        detail.contains("NodeReturned"),
-        "detail should mention NodeReturned, got: {detail:?}"
-    );
-    assert!(t.effects.is_empty());
-}
-
-#[test]
-fn active_rejects_integration_returned() {
-    let graph = single_work_graph();
-    let t = do_transition(
-        SchedulerState::Active {
-            graph,
-            run_config: RunConfig::default(),
-        },
-        SchedulerEvent::IntegrationSucceeded {
-            node_id: NodeId("A".to_string()),
-            output: IntegrationOutput {
-                summary: "spurious".to_string(),
-            },
-        },
-    );
-
-    let SchedulerState::Failed { reason, .. } = t.state else {
-        panic!("expected Failed, got {:#?}", t.state);
-    };
-    let FailureReason::ProtocolViolation(detail) = reason else {
-        panic!("expected ProtocolViolation, got {reason:?}");
-    };
-    assert!(
-        detail.contains("Active"),
-        "detail should mention Active, got: {detail:?}"
-    );
-    assert!(
-        detail.contains("IntegrationReturned"),
-        "detail should mention IntegrationReturned, got: {detail:?}"
-    );
-    assert!(t.effects.is_empty());
+            case.event,
+        );
+        assert_protocol_violation(&t, case.expected_detail);
+    }
 }
 
 #[test]
@@ -344,80 +268,66 @@ fn waiting_rejects_start() {
 }
 
 // ── Waiting-state invariant validation tests ──────────────────────────────
+//
+// Invariant: the Waiting state requires exactly one active node before it
+// will match a return event against it; zero active nodes is always a
+// ProtocolViolation with the same "found none" detail, regardless of why
+// there are no active nodes (never started, or all already completed).
 
 #[test]
-fn waiting_with_no_active_node_fails_before_matching_returned_node() {
-    let graph = single_work_graph();
-    let t = do_transition(
-        SchedulerState::Waiting {
-            graph,
-            run_config: RunConfig::default(),
+fn waiting_with_no_active_node_fails_with_protocol_violation() {
+    struct Case {
+        graph: RunGraph,
+    }
+
+    let cases = vec![
+        // No node has ever been marked Running.
+        Case {
+            graph: single_work_graph(),
         },
-        SchedulerEvent::WorkAccepted {
-            node_id: NodeId("missing".to_string()),
-            work: WorkOutput {
-                summary: "irrelevant".to_string(),
+        // Both nodes have already completed.
+        Case {
+            graph: {
+                let mut g = RunGraph {
+                    nodes: vec![
+                        work_node("A", "done", &[]),
+                        work_node("B", "also done", &["A"]),
+                    ],
+                    next_id: 0,
+                };
+                g.nodes[0].status = NodeStatus::Completed;
+                g.nodes[1].status = NodeStatus::Completed;
+                g
             },
         },
-    );
-
-    let SchedulerState::Failed { reason, .. } = t.state else {
-        panic!("expected Failed, got {:#?}", t.state);
-    };
-    let FailureReason::ProtocolViolation(detail) = reason else {
-        panic!("expected ProtocolViolation, got {reason:?}");
-    };
-    assert!(
-        detail.contains("invalid waiting state"),
-        "detail should contain 'invalid waiting state', got: {detail:?}"
-    );
-    assert!(
-        detail.contains("found none"),
-        "detail should mention that no active node exists, got: {detail:?}"
-    );
-    assert!(t.effects.is_empty());
-}
-
-#[test]
-fn waiting_with_only_completed_nodes_fails() {
-    let mut graph = RunGraph {
-        nodes: vec![
-            work_node("A", "done", &[]),
-            work_node("B", "also done", &["A"]),
-        ],
-        next_id: 0,
-    };
-    graph.nodes[0].status = NodeStatus::Completed;
-    graph.nodes[1].status = NodeStatus::Completed;
-
-    let t = do_transition(
-        SchedulerState::Waiting {
-            graph,
-            run_config: RunConfig::default(),
-        },
-        SchedulerEvent::WorkAccepted {
-            node_id: NodeId("B".to_string()),
-            work: WorkOutput {
-                summary: "irrelevant".to_string(),
+        // The only node in the graph is still Pending.
+        Case {
+            graph: RunGraph {
+                nodes: vec![work_node("B", "do B", &[])],
+                next_id: 0,
             },
         },
-    );
+    ];
 
-    let SchedulerState::Failed { reason, .. } = t.state else {
-        panic!("expected Failed, got {:#?}", t.state);
-    };
-    let FailureReason::ProtocolViolation(detail) = reason else {
-        panic!("expected ProtocolViolation, got {reason:?}");
-    };
-    assert!(
-        detail.contains("invalid waiting state"),
-        "detail should contain 'invalid waiting state', got: {detail:?}"
-    );
-    assert!(
-        detail.contains("found none"),
-        "detail should mention that no active node exists, got: {detail:?}"
-    );
-    assert!(t.effects.is_empty());
+    for case in cases {
+        let t = do_transition(
+            SchedulerState::Waiting {
+                graph: case.graph,
+                run_config: RunConfig::default(),
+            },
+            SchedulerEvent::WorkAccepted {
+                node_id: NodeId("B".to_string()),
+                work: WorkOutput {
+                    summary: "irrelevant".to_string(),
+                },
+            },
+        );
+
+        assert_protocol_violation(
+            &t,
+            "invalid waiting state: expected exactly one active node; found none",
+        );
+    }
 }
 
 #[test]
@@ -448,110 +358,43 @@ fn waiting_with_running_node_still_works() {
 }
 
 // ── Serial active-node invariant tests ───────────────────────────────────
+//
+// Invariant: Start requires that no node is already Running or Integrating;
+// either pre-existing status is rejected as a ProtocolViolation naming the
+// node id and its actual status.
 
 #[test]
 fn active_state_rejects_preexisting_active_node() {
-    let mut graph = single_work_graph();
-    graph.nodes[0].status = NodeStatus::Running;
+    struct Case {
+        status: NodeStatus,
+        expected_detail: &'static str,
+    }
 
-    let t = do_transition(
-        SchedulerState::Active {
-            graph,
-            run_config: RunConfig::default(),
+    let cases = vec![
+        Case {
+            status: NodeStatus::Running,
+            expected_detail: "invalid running state: node A is Running",
         },
-        SchedulerEvent::Start,
-    );
-
-    let SchedulerState::Failed { reason, .. } = t.state else {
-        panic!("expected Failed, got {:#?}", t.state);
-    };
-    let FailureReason::ProtocolViolation(detail) = reason else {
-        panic!("expected ProtocolViolation, got {reason:?}");
-    };
-    assert!(
-        detail.contains("invalid running state"),
-        "detail should contain 'invalid running state', got: {detail:?}"
-    );
-    assert!(
-        detail.contains('A'),
-        "detail should contain the node id, got: {detail:?}"
-    );
-    assert!(
-        detail.contains("Running"),
-        "detail should contain the status, got: {detail:?}"
-    );
-    assert!(t.effects.is_empty());
-}
-
-#[test]
-fn active_state_rejects_preexisting_integrating_node() {
-    let mut graph = single_work_graph();
-    graph.nodes[0].status = NodeStatus::Integrating;
-
-    let t = do_transition(
-        SchedulerState::Active {
-            graph,
-            run_config: RunConfig::default(),
+        Case {
+            status: NodeStatus::Integrating,
+            expected_detail: "invalid running state: node A is Integrating",
         },
-        SchedulerEvent::Start,
-    );
+    ];
 
-    let SchedulerState::Failed { reason, .. } = t.state else {
-        panic!("expected Failed, got {:#?}", t.state);
-    };
-    let FailureReason::ProtocolViolation(detail) = reason else {
-        panic!("expected ProtocolViolation, got {reason:?}");
-    };
-    assert!(
-        detail.contains("invalid running state"),
-        "detail should contain 'invalid running state', got: {detail:?}"
-    );
-    assert!(
-        detail.contains('A'),
-        "detail should contain the node id, got: {detail:?}"
-    );
-    assert!(
-        detail.contains("Integrating"),
-        "detail should contain the status, got: {detail:?}"
-    );
-    assert!(t.effects.is_empty());
-}
+    for case in cases {
+        let mut graph = single_work_graph();
+        graph.nodes[0].status = case.status;
 
-#[test]
-fn waiting_state_rejects_no_active_nodes() {
-    // B exists but is Pending — no active node in the graph.
-    let graph = RunGraph {
-        nodes: vec![work_node("B", "do B", &[])],
-        next_id: 0,
-    };
-    let t = do_transition(
-        SchedulerState::Waiting {
-            graph,
-            run_config: RunConfig::default(),
-        },
-        SchedulerEvent::WorkAccepted {
-            node_id: NodeId("B".to_string()),
-            work: WorkOutput {
-                summary: "irrelevant".to_string(),
+        let t = do_transition(
+            SchedulerState::Active {
+                graph,
+                run_config: RunConfig::default(),
             },
-        },
-    );
+            SchedulerEvent::Start,
+        );
 
-    let SchedulerState::Failed { reason, .. } = t.state else {
-        panic!("expected Failed, got {:#?}", t.state);
-    };
-    let FailureReason::ProtocolViolation(detail) = reason else {
-        panic!("expected ProtocolViolation, got {reason:?}");
-    };
-    assert!(
-        detail.contains("invalid waiting state"),
-        "detail should contain 'invalid waiting state', got: {detail:?}"
-    );
-    assert!(
-        detail.contains("found none") || detail.contains("Pending"),
-        "detail should mention 'found none' or equivalent status, got: {detail:?}"
-    );
-    assert!(t.effects.is_empty());
+        assert_protocol_violation(&t, case.expected_detail);
+    }
 }
 
 #[test]
@@ -594,45 +437,6 @@ fn waiting_state_rejects_multiple_active_nodes() {
     assert!(
         detail.contains('C'),
         "detail should contain node id C, got: {detail:?}"
-    );
-    assert!(t.effects.is_empty());
-}
-
-#[test]
-fn waiting_state_rejects_return_for_non_active_node() {
-    // C is active; a return for B is a protocol violation.
-    let mut graph = RunGraph {
-        nodes: vec![work_node("B", "do B", &[]), work_node("C", "do C", &[])],
-        next_id: 0,
-    };
-    graph.nodes[1].status = NodeStatus::Running;
-
-    let t = do_transition(
-        SchedulerState::Waiting {
-            graph,
-            run_config: RunConfig::default(),
-        },
-        SchedulerEvent::WorkAccepted {
-            node_id: NodeId("B".to_string()),
-            work: WorkOutput {
-                summary: "irrelevant".to_string(),
-            },
-        },
-    );
-
-    let SchedulerState::Failed { reason, .. } = t.state else {
-        panic!("expected Failed, got {:#?}", t.state);
-    };
-    let FailureReason::ProtocolViolation(detail) = reason else {
-        panic!("expected ProtocolViolation, got {reason:?}");
-    };
-    assert!(
-        detail.contains('B'),
-        "detail should contain returned node id B, got: {detail:?}"
-    );
-    assert!(
-        detail.contains('C'),
-        "detail should contain active node id C, got: {detail:?}"
     );
     assert!(t.effects.is_empty());
 }
