@@ -311,32 +311,34 @@ fn dummy_view() -> ArtifactView {
 
 #[test]
 fn planner_handler_passes_no_tool_context_for_plan_nodes() {
-    let runner = ScriptedRoleRunner::new(vec![RoleResult::Accepted {
-        content: r#"{"tasks":[]}"#.to_string(),
-    }]);
-    let handler = DeliberationHandler {
-        runner,
-        artifact_view: Some(dummy_view()),
-        work_attempt: None,
-        work_requires_artifact_mutation: false,
-        plan_validation_context: None,
-    };
+    for has_view in [false, true] {
+        let runner = ScriptedRoleRunner::new(vec![RoleResult::Accepted {
+            content: r#"{"tasks":[]}"#.to_string(),
+        }]);
+        let handler = DeliberationHandler {
+            runner,
+            artifact_view: has_view.then(dummy_view),
+            work_attempt: None,
+            work_requires_artifact_mutation: false,
+            plan_validation_context: None,
+        };
 
-    let effect = run_role_effect(
-        DeliberationRole::Producer,
-        NodeKind::Plan,
-        "plan the work",
-        None,
-        None,
-        vec![],
-    );
-    handler.handle_effect(effect);
+        let effect = run_role_effect(
+            DeliberationRole::Producer,
+            NodeKind::Plan,
+            "plan the work",
+            None,
+            None,
+            vec![],
+        );
+        handler.handle_effect(effect);
 
-    let req = &handler.runner.requests.borrow()[0];
-    assert!(
-        req.tool_context.is_none(),
-        "plan node must have no tool context even when artifact_view is set"
-    );
+        let req = &handler.runner.requests.borrow()[0];
+        assert!(
+            req.tool_context.is_none(),
+            "plan node must have no tool context regardless of whether artifact_view is set (has_view={has_view})"
+        );
+    }
 }
 
 #[test]
@@ -364,36 +366,6 @@ fn worker_handler_passes_tool_context_when_view_available() {
     assert!(
         req.tool_context.is_some(),
         "work node must have tool context when artifact_view is set"
-    );
-}
-
-#[test]
-fn planner_handler_no_tool_context_without_view() {
-    let runner = ScriptedRoleRunner::new(vec![RoleResult::Accepted {
-        content: r#"{"tasks":[]}"#.to_string(),
-    }]);
-    let handler = DeliberationHandler {
-        runner,
-        artifact_view: None,
-        work_attempt: None,
-        work_requires_artifact_mutation: false,
-        plan_validation_context: None,
-    };
-
-    let effect = run_role_effect(
-        DeliberationRole::Producer,
-        NodeKind::Plan,
-        "plan the work",
-        None,
-        None,
-        vec![],
-    );
-    handler.handle_effect(effect);
-
-    let req = &handler.runner.requests.borrow()[0];
-    assert!(
-        req.tool_context.is_none(),
-        "plan node must have no tool context regardless of whether artifact_view is set"
     );
 }
 
@@ -497,183 +469,114 @@ fn valid_single_task_plan_passes_semantic_validation() {
 }
 
 #[test]
-fn empty_plan_triggers_revision_feedback() {
-    let handler = handler_with_validation(vec![
-        RoleResult::Accepted {
-            content: EMPTY_PLAN.to_string(),
-        },
-        RoleResult::Accepted {
-            content: VALID_SINGLE_TASK.to_string(),
-        },
-    ]);
-    let effect = run_role_effect(
-        DeliberationRole::Producer,
-        NodeKind::Plan,
-        "create foo.rs",
-        None,
-        None,
-        vec![],
-    );
-    let event = handler.handle_effect(effect);
-
-    assert_eq!(
-        handler.runner.requests.borrow().len(),
-        1,
-        "RunRole must execute exactly one provider call"
-    );
-    assert!(matches!(event, DeliberationEvent::ProducerAccepted { .. }));
-    let validation =
-        handler.handle_effect(validate_producer_effect(EMPTY_PLAN, false, NodeKind::Plan));
-    let DeliberationEvent::ProducerValidationRejected {
-        retry: ProducerValidationRetry {
-            feedback_reason, ..
-        },
-        ..
-    } = validation
-    else {
-        panic!("empty plan must produce Retry validation; got {validation:?}");
-    };
-    assert!(
-        feedback_reason.contains("no tasks"),
-        "feedback must mention missing tasks; got: {}",
-        feedback_reason
-    );
-}
-
-#[test]
-fn unparseable_plan_triggers_revision_feedback() {
-    let handler = handler_with_validation(vec![
-        RoleResult::Accepted {
-            content: "Just do the work in one step.".to_string(),
-        },
-        RoleResult::Accepted {
-            content: VALID_SINGLE_TASK.to_string(),
-        },
-    ]);
-    let effect = run_role_effect(
-        DeliberationRole::Producer,
-        NodeKind::Plan,
-        "create foo.rs",
-        None,
-        None,
-        vec![],
-    );
-    let event = handler.handle_effect(effect);
-
-    assert_eq!(
-        handler.runner.requests.borrow().len(),
-        1,
-        "RunRole must execute exactly one provider call"
-    );
-    assert!(matches!(event, DeliberationEvent::ProducerAccepted { .. }));
-    let validation = handler.handle_effect(validate_producer_effect(
-        "Just do the work in one step.",
-        false,
-        NodeKind::Plan,
-    ));
-    let DeliberationEvent::ProducerValidationRejected {
-        retry: ProducerValidationRetry {
-            feedback_reason, ..
-        },
-        ..
-    } = validation
-    else {
-        panic!("unparseable plan must produce Retry validation; got {validation:?}");
-    };
-    assert!(
-        feedback_reason.contains("PlannerOutput JSON"),
-        "retry feedback must explain the parse requirement; got: {}",
-        feedback_reason
-    );
-}
-
-#[test]
-fn repeated_unparseable_plans_exhaust_retries_before_review() {
-    let machine = ScriptedMachine {
-        handler: handler_with_validation(vec![
+fn invalid_plan_triggers_revision_feedback() {
+    let cases = [
+        (EMPTY_PLAN, "no tasks"),
+        ("Just do the work in one step.", "PlannerOutput JSON"),
+    ];
+    for (content, expected_substring) in cases {
+        let handler = handler_with_validation(vec![
             RoleResult::Accepted {
-                content: "not json 1".to_string(),
+                content: content.to_string(),
             },
             RoleResult::Accepted {
-                content: "not json 2".to_string(),
+                content: VALID_SINGLE_TASK.to_string(),
             },
-            RoleResult::Accepted {
-                content: "not json 3".to_string(),
-            },
-        ]),
-    };
-    let (output, machine) = run_machine_with_telemetry(
-        machine,
-        ready("create foo.rs", NodeKind::Plan, 1),
-        &NoopTelemetry,
-    );
-
-    assert!(
-        matches!(
-            output,
-            DeliberationTerminalOutput::Failed {
-                kind: FailureKind::PlannerValidationFailure,
-                reason: DeliberationFailureReason::ProducerValidationRetriesExhausted,
-                ..
-            }
-        ),
-        "unparseable planner exhaustion must fail with typed kind; got {output:?}"
-    );
-    let roles: Vec<_> = machine
-        .handler
-        .runner
-        .requests
-        .borrow()
-        .iter()
-        .map(|request| request.role.clone())
-        .collect();
-    assert_eq!(
-        roles,
-        vec![
+        ]);
+        let effect = run_role_effect(
             DeliberationRole::Producer,
-            DeliberationRole::Producer,
-            DeliberationRole::Producer,
-        ],
-        "Critic/Referee must not run until planner content parses"
-    );
-}
+            NodeKind::Plan,
+            "create foo.rs",
+            None,
+            None,
+            vec![],
+        );
+        let event = handler.handle_effect(effect);
 
-#[test]
-fn repeated_empty_plans_exhaust_retries() {
-    let handler = handler_with_validation(vec![RoleResult::Accepted {
-        content: EMPTY_PLAN.to_string(),
-    }]);
-    let effect = run_role_effect(
-        DeliberationRole::Producer,
-        NodeKind::Plan,
-        "create foo.rs",
-        None,
-        None,
-        vec![],
-    );
-    let event = handler.handle_effect(effect);
-
-    assert_eq!(
-        handler.runner.requests.borrow().len(),
-        1,
-        "RunRole must execute exactly one provider call"
-    );
-    assert!(matches!(event, DeliberationEvent::ProducerAccepted { .. }));
-    let validation =
-        handler.handle_effect(validate_producer_effect(EMPTY_PLAN, false, NodeKind::Plan));
-    assert!(
-        matches!(
-            validation,
-            DeliberationEvent::ProducerValidationRejected {
-                retry: ProducerValidationRetry {
-                    failure_kind: FailureKind::PlannerValidationFailure,
+        assert_eq!(
+            handler.runner.requests.borrow().len(),
+            1,
+            "RunRole must execute exactly one provider call"
+        );
+        assert!(matches!(event, DeliberationEvent::ProducerAccepted { .. }));
+        let validation =
+            handler.handle_effect(validate_producer_effect(content, false, NodeKind::Plan));
+        let DeliberationEvent::ProducerValidationRejected {
+            retry:
+                ProducerValidationRetry {
+                    feedback_reason,
+                    failure_kind,
                     ..
                 },
-                ..
-            }
-        ),
-        "invalid plan must produce PlannerValidationFailure retry; got {validation:?}"
-    );
+            ..
+        } = validation
+        else {
+            panic!("invalid plan {content:?} must produce Retry validation; got {validation:?}");
+        };
+        assert!(
+            feedback_reason.contains(expected_substring),
+            "feedback for {content:?} must mention '{expected_substring}'; got: {feedback_reason}"
+        );
+        assert_eq!(
+            failure_kind,
+            FailureKind::PlannerValidationFailure,
+            "invalid plan {content:?} must produce PlannerValidationFailure retry"
+        );
+    }
+}
+
+#[test]
+fn repeated_invalid_plans_exhaust_retries_before_review() {
+    let cases: [(&str, [&str; 3]); 2] = [
+        ("unparseable", ["not json 1", "not json 2", "not json 3"]),
+        ("empty", [EMPTY_PLAN, EMPTY_PLAN, EMPTY_PLAN]),
+    ];
+    for (label, contents) in cases {
+        let machine = ScriptedMachine {
+            handler: handler_with_validation(
+                contents
+                    .iter()
+                    .map(|content| RoleResult::Accepted {
+                        content: content.to_string(),
+                    })
+                    .collect(),
+            ),
+        };
+        let (output, machine) = run_machine_with_telemetry(
+            machine,
+            ready("create foo.rs", NodeKind::Plan, 1),
+            &NoopTelemetry,
+        );
+
+        assert!(
+            matches!(
+                output,
+                DeliberationTerminalOutput::Failed {
+                    kind: FailureKind::PlannerValidationFailure,
+                    reason: DeliberationFailureReason::ProducerValidationRetriesExhausted,
+                    ..
+                }
+            ),
+            "{label} planner exhaustion must fail with typed kind; got {output:?}"
+        );
+        let roles: Vec<_> = machine
+            .handler
+            .runner
+            .requests
+            .borrow()
+            .iter()
+            .map(|request| request.role.clone())
+            .collect();
+        assert_eq!(
+            roles,
+            vec![
+                DeliberationRole::Producer,
+                DeliberationRole::Producer,
+                DeliberationRole::Producer,
+            ],
+            "Critic/Referee must not run until planner content passes validation ({label})"
+        );
+    }
 }
 
 #[test]
@@ -699,37 +602,6 @@ fn empty_plan_revision_then_valid_plan_completes() {
     assert!(
         matches!(output, DeliberationTerminalOutput::Complete(_)),
         "run must complete after one revision; got {output:?}"
-    );
-}
-
-#[test]
-fn semantic_validation_failure_ends_run_before_critic_or_referee() {
-    // Provide exactly MAX+1 Producer responses and no Critic/Referee responses.
-    // If Critic or Referee were called, ScriptedRoleRunner would panic.
-    let machine = ScriptedMachine {
-        handler: handler_with_validation(vec![
-            RoleResult::Accepted {
-                content: EMPTY_PLAN.to_string(),
-            },
-            RoleResult::Accepted {
-                content: EMPTY_PLAN.to_string(),
-            },
-            RoleResult::Accepted {
-                content: EMPTY_PLAN.to_string(),
-            },
-        ]),
-    };
-    let output = run_machine(machine, ready("create foo.rs", NodeKind::Plan, 1));
-    assert!(
-        matches!(
-            output,
-            DeliberationTerminalOutput::Failed {
-                kind: FailureKind::PlannerValidationFailure,
-                reason: DeliberationFailureReason::ProducerValidationRetriesExhausted,
-                ..
-            }
-        ),
-        "run must fail with PlannerValidationFailure; got {output:?}"
     );
 }
 
@@ -795,9 +667,12 @@ fn accepted_work_with_no_artifact_mutation_triggers_revision_feedback() {
         NodeKind::Work,
     ));
     let DeliberationEvent::ProducerValidationRejected {
-        retry: ProducerValidationRetry {
-            feedback_reason, ..
-        },
+        retry:
+            ProducerValidationRetry {
+                feedback_reason,
+                failure_kind,
+                ..
+            },
         ..
     } = validation
     else {
@@ -807,6 +682,11 @@ fn accepted_work_with_no_artifact_mutation_triggers_revision_feedback() {
         feedback_reason.contains("must modify the artifact"),
         "feedback must explain the semantic invariant; got: {}",
         feedback_reason
+    );
+    assert_eq!(
+        failure_kind,
+        FailureKind::WorkSemanticValidationFailure,
+        "missing artifact mutation must produce WorkSemanticValidationFailure retry"
     );
 }
 
@@ -844,44 +724,6 @@ fn explicit_non_artifact_work_does_not_use_artifact_semantic_validation() {
             DeliberationEvent::ProducerAccepted { ref content, .. } if content == "summary only"
         ),
         "non-artifact work must accept summary-only Producer output; got {event:?}"
-    );
-}
-
-#[test]
-fn repeated_empty_work_exhausts_semantic_validation_retries() {
-    let handler = handler_with_work_validation(vec![accepted_output("empty work 1", false)]);
-    let event = handler.handle_effect(run_role_effect(
-        DeliberationRole::Producer,
-        NodeKind::Work,
-        "implement the change",
-        None,
-        None,
-        vec![],
-    ));
-
-    assert_eq!(
-        handler.runner.requests.borrow().len(),
-        1,
-        "RunRole must execute exactly one provider call"
-    );
-    assert!(matches!(event, DeliberationEvent::ProducerAccepted { .. }));
-    let validation = handler.handle_effect(validate_producer_effect(
-        "empty work 1",
-        false,
-        NodeKind::Work,
-    ));
-    assert!(
-        matches!(
-            validation,
-            DeliberationEvent::ProducerValidationRejected {
-                retry: ProducerValidationRetry {
-                    failure_kind: FailureKind::WorkSemanticValidationFailure,
-                    ..
-                },
-                ..
-            }
-        ),
-        "empty work must produce WorkSemanticValidationFailure retry; got {validation:?}"
     );
 }
 
