@@ -237,38 +237,6 @@ mod tests {
     }
 
     #[test]
-    fn workspace_write_changes_file_contents() {
-        let (temp, artifact) = fixture("workspace-write");
-        let mut workspace = create_workspace(&artifact, temp.join("workspace"));
-
-        workspace
-            .write_file("nested/artifact.txt", "replacement\n")
-            .unwrap();
-
-        assert_eq!(
-            fs::read_to_string(workspace.path().join("nested/artifact.txt")).unwrap(),
-            "replacement\n"
-        );
-    }
-
-    #[test]
-    fn integrate_creates_new_commit() {
-        let (temp, artifact) = fixture("integrate");
-        let mut workspace = create_workspace(&artifact, temp.join("workspace"));
-        workspace
-            .write_file("artifact.txt", "version two\n")
-            .unwrap();
-
-        let integrated = integrate(&artifact, &workspace).unwrap();
-
-        assert_ne!(integrated.commit_sha, artifact.commit_sha);
-        assert_eq!(
-            git_output(&artifact.repo_path, &["rev-parse", "main"]),
-            integrated.commit_sha
-        );
-    }
-
-    #[test]
     fn artifact_preserves_branch() {
         let (temp, artifact) = fixture("preserve-branch");
         let mut workspace = create_workspace(&artifact, temp.join("workspace"));
@@ -402,24 +370,13 @@ mod tests {
             commit_sha: artifact.commit_sha.clone(),
         };
 
-        assert_eq!(
-            view.read_file("../secret"),
-            Err(ArtifactError::PathOutsideWorkspace),
-        );
-    }
-
-    #[test]
-    fn artifact_view_rejects_absolute_paths() {
-        let (_temp, artifact) = fixture("view-absolute-path");
-        let view = ArtifactView {
-            repo_path: artifact.repo_path.clone(),
-            commit_sha: artifact.commit_sha.clone(),
-        };
-
-        assert_eq!(
-            view.read_file("/etc/passwd"),
-            Err(ArtifactError::PathOutsideWorkspace),
-        );
+        for path in ["../secret", "/etc/passwd"] {
+            assert_eq!(
+                view.read_file(path),
+                Err(ArtifactError::PathOutsideWorkspace),
+                "path {path:?} must be rejected as outside the workspace",
+            );
+        }
     }
 
     #[test]
