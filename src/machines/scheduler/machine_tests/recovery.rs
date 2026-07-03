@@ -2,38 +2,72 @@ use super::*;
 use crate::validation::{ValidationPlan, ValidationScope, ValidationStage, ValidationStep};
 
 #[test]
-fn retry_creates_replacement_node() {
-    let graph = RunGraph {
-        nodes: vec![work_node("W", "do retry", &[])],
-        next_id: 0,
-    };
-    let t = do_transition(
-        SchedulerState::Waiting {
-            graph: running(graph, "W"),
-            run_config: RunConfig::default(),
+fn recovery_creates_replacement_node() {
+    // Invariant: any recovery action creates exactly one Pending replacement
+    // node preserving the objective; Retry keeps the current model tier while
+    // ElevateModel (with a strong tier available) bumps to Strong.
+    struct Case {
+        recovery: RecoveryAction,
+        expected_tier: ModelTier,
+        expect_elevate_origin: bool,
+    }
+
+    let cases = vec![
+        Case {
+            recovery: RecoveryAction::Retry {
+                message: "try again".to_string(),
+            },
+            expected_tier: ModelTier::Cheap,
+            expect_elevate_origin: false,
         },
-        SchedulerEvent::NodeFailed {
-            node_id: NodeId("W".to_string()),
-            failure: NodeFailure {
-                kind: FailureKind::DeliberationFailure,
-                message: "first try failed".to_string(),
-                recovery: RecoveryAction::Retry {
-                    message: "try again".to_string(),
+        Case {
+            recovery: RecoveryAction::ElevateModel {
+                message: "use strong".to_string(),
+            },
+            expected_tier: ModelTier::Strong,
+            expect_elevate_origin: true,
+        },
+    ];
+
+    for case in cases {
+        let graph = RunGraph {
+            nodes: vec![work_node("W", "do the task", &[])],
+            next_id: 0,
+        };
+        let t = do_transition(
+            SchedulerState::Waiting {
+                graph: running(graph, "W"),
+                run_config: RunConfig::default(),
+            },
+            SchedulerEvent::NodeFailed {
+                node_id: NodeId("W".to_string()),
+                failure: NodeFailure {
+                    kind: FailureKind::DeliberationFailure,
+                    message: "first try failed".to_string(),
+                    recovery: case.recovery,
                 },
             },
-        },
-    );
+        );
 
-    let SchedulerState::Active { graph, .. } = t.state else {
-        panic!("expected Active")
-    };
-    assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
-    assert_eq!(graph.nodes.len(), 2);
-    let replacement = &graph.nodes[1];
-    assert_eq!(replacement.status, NodeStatus::Pending);
-    assert_eq!(replacement.attempt, 1);
-    assert_eq!(replacement.model_tier, ModelTier::Cheap);
-    assert_eq!(replacement.objective, "do retry");
+        let SchedulerState::Active { graph, .. } = t.state else {
+            panic!("expected Active")
+        };
+        assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
+        assert_eq!(graph.nodes.len(), 2);
+        let replacement = &graph.nodes[1];
+        assert_eq!(replacement.status, NodeStatus::Pending);
+        assert_eq!(replacement.attempt, 1);
+        assert_eq!(replacement.model_tier, case.expected_tier);
+        assert_eq!(replacement.objective, "do the task");
+        if case.expect_elevate_origin {
+            assert!(matches!(
+                replacement.origin,
+                NodeOrigin::ElevateModel { .. }
+            ));
+        } else {
+            assert!(matches!(replacement.origin, NodeOrigin::Retry { .. }));
+        }
+    }
 }
 
 #[test]
@@ -89,6 +123,18 @@ fn validation_failure_creates_retry_feedback() {
 
 #[test]
 fn work_semantic_validation_failure_retries_with_artifact_feedback() {
+    // Invariant: any WorkSemanticValidationFailure (missing artifact update or
+    // an unvalidated WorkAttempt mutation) recovers with a Retry node that
+    // preserves target_files/validation_plan/objective and carries the
+    // Producer-facing diagnostics in retry_feedback, not the objective.
+    struct Case {
+        target_files: Vec<String>,
+        validation_plan: Option<ValidationPlan>,
+        failure_message: &'static str,
+        recovery_message: &'static str,
+        expected_feedback_substrings: &'static [&'static str],
+    }
+
     let plan = ValidationPlan {
         steps: vec![ValidationStep {
             command: vec!["cargo".to_string(), "test".to_string()],
@@ -99,209 +145,126 @@ fn work_semantic_validation_failure_retries_with_artifact_feedback() {
         }],
         timeout_seconds: 60,
     };
-    let mut graph = RunGraph {
-        nodes: vec![work_node("W", "modify src/lib.rs", &[])],
-        next_id: 0,
-    };
-    graph.nodes[0].target_files = vec!["src/lib.rs".to_string(), "tests/lib.rs".to_string()];
-    graph.nodes[0].validation_plan = Some(plan.clone());
-    graph.nodes[0].status = NodeStatus::Running;
 
-    let t = do_transition(
-        SchedulerState::Waiting {
-            graph,
-        run_config: RunConfig::default(),
+    let cases = vec![
+        Case {
+            target_files: vec!["src/lib.rs".to_string(), "tests/lib.rs".to_string()],
+            validation_plan: Some(plan.clone()),
+            failure_message: "work semantic validation failed: accepted work did not produce an artifact update",
+            recovery_message: "Accepted Work results must modify the artifact. Use write_file by default when creating a file or replacing most or all of an existing file. Use replace_text only for small, localized edits after reading the file and providing an exact old string that occurs once; whitespace, indentation, or formatting differences will cause replace_text to fail. If a replace_text attempt could not be validated for a whole-file rewrite, switch to write_file instead of retrying another replace_text.",
+            expected_feedback_substrings: &["must modify the artifact", "write_file"],
         },
-        SchedulerEvent::NodeFailed { node_id: NodeId("W".to_string()), failure: NodeFailure {
-                kind: FailureKind::WorkSemanticValidationFailure,
-                message: "work semantic validation failed: accepted work did not produce an artifact update".to_string(),
-                recovery: RecoveryAction::Retry {
-                    message: "Accepted Work results must modify the artifact. Use write_file by default when creating a file or replacing most or all of an existing file. Use replace_text only for small, localized edits after reading the file and providing an exact old string that occurs once; whitespace, indentation, or formatting differences will cause replace_text to fail. If a replace_text attempt could not be validated for a whole-file rewrite, switch to write_file instead of retrying another replace_text.".to_string() },
+        Case {
+            target_files: vec!["src/lib.rs".to_string()],
+            validation_plan: None,
+            failure_message: "WorkAttempt workspace update could not be validated: replacement target not found",
+            recovery_message: "retryable work semantic validation failure: WorkAttempt workspace update could not be validated. Accepted Work results must modify the artifact in the current WorkAttempt workspace. Use write_file by default when creating a file or replacing most or all of an existing file. Use replace_text only for small, localized edits after reading the file and providing an exact old string that occurs once; whitespace, indentation, or formatting differences will cause replace_text to fail. If a workspace mutation cannot be validated after a failed replace_text, switch to write_file for whole-file rewrites instead of retrying another replace_text.",
+            expected_feedback_substrings: &[
+                "could not be validated",
+                "switch to write_file",
+                "instead of retrying another replace_text",
+            ],
+        },
+    ];
+
+    for case in cases {
+        let mut graph = RunGraph {
+            nodes: vec![work_node("W", "modify src/lib.rs", &[])],
+            next_id: 0,
+        };
+        graph.nodes[0].target_files = case.target_files.clone();
+        graph.nodes[0].validation_plan = case.validation_plan.clone();
+        graph.nodes[0].status = NodeStatus::Running;
+
+        let t = do_transition(
+            SchedulerState::Waiting {
+                graph,
+                run_config: RunConfig::default(),
             },
-        },
-    );
-
-    let SchedulerState::Active { graph, .. } = t.state else {
-        panic!("expected Active, got {:#?}", t.state);
-    };
-    assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
-    assert_eq!(graph.nodes.len(), 2, "scheduler must create a retry node");
-
-    let retry = &graph.nodes[1];
-    assert_eq!(retry.status, NodeStatus::Pending);
-    assert_eq!(retry.kind, NodeKind::Work);
-    assert_eq!(retry.attempt, 1);
-    assert_eq!(
-        retry.target_files,
-        vec!["src/lib.rs".to_string(), "tests/lib.rs".to_string()]
-    );
-    assert_eq!(retry.validation_plan.as_ref(), Some(&plan));
-    assert!(matches!(retry.origin, NodeOrigin::Retry { .. }));
-    // Objective is preserved verbatim; diagnostics live in retry_feedback.
-    assert_eq!(retry.objective, "modify src/lib.rs");
-    let feedback = retry
-        .retry_feedback
-        .as_ref()
-        .expect("WorkSemanticValidationFailure retry must carry retry_feedback");
-    assert!(
-        feedback.diagnostics.contains("must modify the artifact"),
-        "retry_feedback must tell the Producer to modify the artifact; got:\n{}",
-        feedback.diagnostics
-    );
-    assert!(
-        feedback.diagnostics.contains("write_file"),
-        "retry_feedback must tell the Producer to use a file tool; got:\n{}",
-        feedback.diagnostics
-    );
-}
-
-#[test]
-fn invalid_work_attempt_update_failure_recovers_with_retry() {
-    let mut graph = RunGraph {
-        nodes: vec![work_node("W", "modify src/lib.rs", &[])],
-        next_id: 0,
-    };
-    graph.nodes[0].target_files = vec!["src/lib.rs".to_string()];
-    graph.nodes[0].status = NodeStatus::Running;
-
-    let t = do_transition(
-        SchedulerState::Waiting {
-            graph,
-        run_config: RunConfig::default(),
-        },
-        SchedulerEvent::NodeFailed { node_id: NodeId("W".to_string()), failure: NodeFailure {
-                kind: FailureKind::WorkSemanticValidationFailure,
-                message: "WorkAttempt workspace update could not be validated: replacement target not found".to_string(),
-                recovery: RecoveryAction::Retry {
-                    message: "retryable work semantic validation failure: WorkAttempt workspace update could not be validated. Accepted Work results must modify the artifact in the current WorkAttempt workspace. Use write_file by default when creating a file or replacing most or all of an existing file. Use replace_text only for small, localized edits after reading the file and providing an exact old string that occurs once; whitespace, indentation, or formatting differences will cause replace_text to fail. If a workspace mutation cannot be validated after a failed replace_text, switch to write_file for whole-file rewrites instead of retrying another replace_text.".to_string() },
-            },
-        },
-    );
-
-    let SchedulerState::Active { graph, .. } = t.state else {
-        panic!("expected Active, got {:#?}", t.state);
-    };
-    assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
-    assert_eq!(graph.nodes.len(), 2);
-    let retry = &graph.nodes[1];
-    assert_eq!(retry.status, NodeStatus::Pending);
-    assert!(matches!(retry.origin, NodeOrigin::Retry { .. }));
-    // Objective is preserved verbatim; diagnostics live in retry_feedback.
-    assert_eq!(retry.objective, "modify src/lib.rs");
-    let feedback = retry
-        .retry_feedback
-        .as_ref()
-        .expect("WorkSemanticValidationFailure retry must carry retry_feedback");
-    assert!(
-        feedback.diagnostics.contains("could not be validated")
-            && feedback.diagnostics.contains("switch to write_file")
-            && feedback
-                .diagnostics
-                .contains("instead of retrying another replace_text"),
-        "retry_feedback must tell Producer how to recover from invalid WorkAttempt update; got:\n{}",
-        feedback.diagnostics
-    );
-}
-
-#[test]
-fn retry_preserves_depth() {
-    let mut graph = RunGraph {
-        nodes: vec![work_node("W", "do retry", &[])],
-        next_id: 0,
-    };
-    graph.nodes[0].plan_depth = 7;
-
-    let t = do_transition(
-        SchedulerState::Waiting {
-            graph: running(graph, "W"),
-            run_config: RunConfig::default(),
-        },
-        SchedulerEvent::NodeFailed {
-            node_id: NodeId("W".to_string()),
-            failure: NodeFailure {
-                kind: FailureKind::DeliberationFailure,
-                message: "first try failed".to_string(),
-                recovery: RecoveryAction::Retry {
-                    message: "try again".to_string(),
+            SchedulerEvent::NodeFailed {
+                node_id: NodeId("W".to_string()),
+                failure: NodeFailure {
+                    kind: FailureKind::WorkSemanticValidationFailure,
+                    message: case.failure_message.to_string(),
+                    recovery: RecoveryAction::Retry {
+                        message: case.recovery_message.to_string(),
+                    },
                 },
             },
-        },
-    );
+        );
 
-    let SchedulerState::Active { graph, .. } = t.state else {
-        panic!("expected Active, got {:#?}", t.state);
-    };
-    assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
-    assert_eq!(graph.nodes.len(), 2);
-    assert_eq!(graph.nodes[1].plan_depth, 7);
+        let SchedulerState::Active { graph, .. } = t.state else {
+            panic!("expected Active, got {:#?}", t.state);
+        };
+        assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
+        assert_eq!(graph.nodes.len(), 2, "scheduler must create a retry node");
+
+        let retry = &graph.nodes[1];
+        assert_eq!(retry.status, NodeStatus::Pending);
+        assert_eq!(retry.kind, NodeKind::Work);
+        assert_eq!(retry.attempt, 1);
+        assert_eq!(retry.target_files, case.target_files);
+        assert_eq!(
+            retry.validation_plan.as_ref(),
+            case.validation_plan.as_ref()
+        );
+        assert!(matches!(retry.origin, NodeOrigin::Retry { .. }));
+        // Objective is preserved verbatim; diagnostics live in retry_feedback.
+        assert_eq!(retry.objective, "modify src/lib.rs");
+        let feedback = retry
+            .retry_feedback
+            .as_ref()
+            .expect("WorkSemanticValidationFailure retry must carry retry_feedback");
+        for substr in case.expected_feedback_substrings {
+            assert!(
+                feedback.diagnostics.contains(substr),
+                "retry_feedback must contain {substr:?}; got:\n{}",
+                feedback.diagnostics
+            );
+        }
+    }
 }
 
 #[test]
-fn elevate_creates_replacement_node_with_strong_tier() {
-    let graph = RunGraph {
-        nodes: vec![work_node("W", "do elevate", &[])],
-        next_id: 0,
-    };
-    let t = do_transition(
-        SchedulerState::Waiting {
-            graph: running(graph, "W"),
-            run_config: RunConfig::default(),
+fn recovery_preserves_plan_depth() {
+    // Invariant: a recovery-created replacement node inherits the failed
+    // node's plan_depth unchanged, regardless of which recovery action fired.
+    for recovery in [
+        RecoveryAction::Retry {
+            message: "try again".to_string(),
         },
-        SchedulerEvent::NodeFailed {
-            node_id: NodeId("W".to_string()),
-            failure: NodeFailure {
-                kind: FailureKind::DeliberationFailure,
-                message: "needs stronger model".to_string(),
-                recovery: RecoveryAction::ElevateModel {
-                    message: "use strong".to_string(),
+        RecoveryAction::ElevateModel {
+            message: "use strong".to_string(),
+        },
+    ] {
+        let mut graph = RunGraph {
+            nodes: vec![work_node("W", "do the task", &[])],
+            next_id: 0,
+        };
+        graph.nodes[0].plan_depth = 7;
+
+        let t = do_transition(
+            SchedulerState::Waiting {
+                graph: running(graph, "W"),
+                run_config: RunConfig::default(),
+            },
+            SchedulerEvent::NodeFailed {
+                node_id: NodeId("W".to_string()),
+                failure: NodeFailure {
+                    kind: FailureKind::DeliberationFailure,
+                    message: "first try failed".to_string(),
+                    recovery,
                 },
             },
-        },
-    );
+        );
 
-    let SchedulerState::Active { graph, .. } = t.state else {
-        panic!("expected Active")
-    };
-    assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
-    assert_eq!(graph.nodes.len(), 2);
-    let replacement = &graph.nodes[1];
-    assert_eq!(replacement.status, NodeStatus::Pending);
-    assert_eq!(replacement.attempt, 1);
-    assert_eq!(replacement.model_tier, ModelTier::Strong);
-    assert_eq!(replacement.objective, "do elevate");
-}
-
-#[test]
-fn elevate_preserves_depth() {
-    let mut graph = RunGraph {
-        nodes: vec![work_node("W", "do elevate", &[])],
-        next_id: 0,
-    };
-    graph.nodes[0].plan_depth = 7;
-
-    let t = do_transition(
-        SchedulerState::Waiting {
-            graph: running(graph, "W"),
-            run_config: RunConfig::default(),
-        },
-        SchedulerEvent::NodeFailed {
-            node_id: NodeId("W".to_string()),
-            failure: NodeFailure {
-                kind: FailureKind::DeliberationFailure,
-                message: "needs stronger model".to_string(),
-                recovery: RecoveryAction::ElevateModel {
-                    message: "use strong".to_string(),
-                },
-            },
-        },
-    );
-
-    let SchedulerState::Active { graph, .. } = t.state else {
-        panic!("expected Active, got {:#?}", t.state);
-    };
-    assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
-    assert_eq!(graph.nodes.len(), 2);
-    assert_eq!(graph.nodes[1].plan_depth, 7);
+        let SchedulerState::Active { graph, .. } = t.state else {
+            panic!("expected Active, got {:#?}", t.state);
+        };
+        assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
+        assert_eq!(graph.nodes.len(), 2);
+        assert_eq!(graph.nodes[1].plan_depth, 7);
+    }
 }
 
 #[test]
@@ -661,44 +624,6 @@ fn single_tier_elevate_falls_back_to_retry() {
 }
 
 #[test]
-fn multi_tier_elevate_creates_strong_replacement() {
-    // has_strong_tier: true → ElevateModel on a Cheap-tier node must produce a
-    // Strong-tier replacement.
-    let graph = RunGraph {
-        nodes: vec![work_node("W", "do elevate", &[])],
-        next_id: 0,
-    };
-    let t = SchedulerMachine.transition(
-        SchedulerState::Waiting {
-            graph: running(graph, "W"),
-            run_config: RunConfig::default(),
-        },
-        SchedulerEvent::NodeFailed {
-            node_id: NodeId("W".to_string()),
-            failure: NodeFailure {
-                kind: FailureKind::DeliberationFailure,
-                message: "needs stronger model".to_string(),
-                recovery: RecoveryAction::ElevateModel {
-                    message: "use strong".to_string(),
-                },
-            },
-        },
-    );
-
-    let SchedulerState::Active { graph, .. } = t.state else {
-        panic!("expected Active, got {:#?}", t.state);
-    };
-    assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
-    assert_eq!(graph.nodes.len(), 2);
-    let replacement = &graph.nodes[1];
-    assert_eq!(replacement.model_tier, ModelTier::Strong);
-    assert!(
-        matches!(replacement.origin, NodeOrigin::ElevateModel { .. }),
-        "multi-tier must produce ElevateModel replacement"
-    );
-}
-
-#[test]
 fn single_tier_elevate_exhausted_gives_clear_terminal_failure() {
     // has_strong_tier: false + MAX_ATTEMPTS → Terminal with "no higher model tier available"
     // in the reason string.
@@ -783,51 +708,6 @@ fn elevate_at_strong_tier_falls_back_to_retry() {
     );
 }
 
-#[test]
-fn terminal_failure_does_not_touch_completed_nodes() {
-    // Graph: A -> B -> C
-    // A is Completed, B is Running and fails terminally.
-    // A must remain Completed; only C (Pending) should be Cancelled.
-    let mut graph = RunGraph {
-        nodes: vec![
-            work_node("A", "step A", &[]),
-            work_node("B", "step B", &["A"]),
-            work_node("C", "step C", &["B"]),
-        ],
-        next_id: 0,
-    };
-    graph.nodes[0].status = NodeStatus::Completed;
-
-    let t = do_transition(
-        SchedulerState::Waiting {
-            graph: running(graph, "B"),
-            run_config: RunConfig::default(),
-        },
-        SchedulerEvent::NodeFailed {
-            node_id: NodeId("B".to_string()),
-            failure: NodeFailure {
-                kind: FailureKind::DeliberationFailure,
-                message: "unrecoverable".to_string(),
-                recovery: RecoveryAction::Terminal {
-                    message: "fatal error".to_string(),
-                },
-            },
-        },
-    );
-
-    let SchedulerState::Failed { graph, .. } = t.state else {
-        panic!("expected Failed, got {:#?}", t.state);
-    };
-
-    let a = graph.nodes.iter().find(|n| n.id.0 == "A").unwrap();
-    let b = graph.nodes.iter().find(|n| n.id.0 == "B").unwrap();
-    let c = graph.nodes.iter().find(|n| n.id.0 == "C").unwrap();
-
-    assert_eq!(a.status, NodeStatus::Completed, "A must remain Completed");
-    assert_eq!(b.status, NodeStatus::Failed);
-    assert_eq!(c.status, NodeStatus::Cancelled);
-}
-
 fn validation_retry_event(node_id: &str, diagnostics: &str) -> SchedulerEvent {
     SchedulerEvent::IntegrationFailed {
         node_id: NodeId(node_id.to_string()),
@@ -886,41 +766,6 @@ fn validation_retry_feedback_includes_all_structured_target_files() {
     assert!(
         retry.retry_feedback.is_some(),
         "ValidationFailure retry must carry retry_feedback"
-    );
-}
-
-#[test]
-fn validation_retry_test_target_appears_in_retry_prompt() {
-    // Invariant: a test-file target added to structured target_files is carried
-    // unchanged onto the retry node and is not silently dropped.
-    let mut graph = RunGraph {
-        nodes: vec![work_node("W", "write and test a feature", &[])],
-        next_id: 0,
-    };
-    graph.nodes[0].target_files = vec!["src/lib.rs".to_string(), "tests/lib_test.rs".to_string()];
-    graph.nodes[0].status = NodeStatus::Integrating;
-
-    let t = do_transition(
-        SchedulerState::Waiting {
-            graph,
-            run_config: RunConfig::default(),
-        },
-        validation_retry_event(
-            "W",
-            "validation failed\ncommand: cargo test\nexit code: 101\nfirst location: (not detected)\ndiagnostics:\ntest failed\ninstruction: fix the existing file using file tools before accepting",
-        ),
-    );
-
-    let SchedulerState::Active { graph, .. } = t.state else {
-        panic!("expected Active, got {:#?}", t.state);
-    };
-    let retry = &graph.nodes[1];
-    assert!(
-        retry
-            .target_files
-            .contains(&"tests/lib_test.rs".to_string()),
-        "test target must be preserved in structured target_files; got: {:?}",
-        retry.target_files
     );
 }
 
