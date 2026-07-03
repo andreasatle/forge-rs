@@ -67,11 +67,11 @@ fn malformed_tool_call_reports_tool_error_not_role_parse_error() {
 }
 
 #[test]
-fn protocol_failure_after_write_reason_is_prefixed() {
+fn protocol_failure_after_write_classifies_as_retryable() {
     // Producer calls write_file successfully (completion pressure active), then
-    // exhausts all protocol retries returning bad JSON. The terminal failure
-    // reason must start with "protocol failure after write:" so the classifier
-    // can treat it as Retry rather than Terminal.
+    // exhausts all protocol retries returning bad JSON. Classification of the
+    // resulting failure must depend only on its FailureKind, never on the
+    // message text (see node_runner::classify::protocol_failure_retries_independent_of_message_text).
     let provider = ScriptedProvider::from_strs(&[
         r#"{"tool":"write_file","path":"result.txt","content":"done"}"#,
         "not json at all",
@@ -85,14 +85,15 @@ fn protocol_failure_after_write_reason_is_prefixed() {
         &crate::telemetry::NoopTelemetry,
     );
 
-    let reason = match &output.result {
-        RoleResult::Failed { reason, .. } => reason.clone(),
+    let (kind, reason) = match &output.result {
+        RoleResult::Failed { kind, reason } => (*kind, reason.clone()),
         other => panic!("expected Failed; got {other:?}"),
     };
-    assert!(
-        reason.starts_with("protocol failure after write:"),
-        "terminal reason must start with 'protocol failure after write:'; got: {reason}"
-    );
+    assert_eq!(kind, FailureKind::ProtocolFailure);
+    assert!(matches!(
+        crate::node_runner::classify::classify_deliberation_failure(kind, &reason),
+        crate::machines::scheduler::RecoveryAction::Retry { .. }
+    ));
     assert_eq!(
         provider.requests.borrow().len(),
         4,
