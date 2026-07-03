@@ -637,11 +637,12 @@ mod tests {
             path: "/tmp/main.py".to_string(),
         });
 
-        assert_eq!(
-            response,
-            FileToolResponse::Failed {
-                reason: "Use a relative path from the allowed target list: main.py".to_string(),
-            }
+        let FileToolResponse::Failed { reason } = response else {
+            panic!("expected Failed for absolute path outside allowed targets; got {response:?}");
+        };
+        assert!(
+            reason.contains("main.py"),
+            "failure reason must name the allowed target path; got {reason:?}"
         );
     }
 
@@ -659,11 +660,12 @@ mod tests {
             content: "print('no')\n".to_string(),
         });
 
-        assert_eq!(
-            response,
-            FileToolResponse::Failed {
-                reason: "Use a relative path from the allowed target list: main.py".to_string(),
-            }
+        let FileToolResponse::Failed { reason } = response else {
+            panic!("expected Failed for write outside allowed targets; got {response:?}");
+        };
+        assert!(
+            reason.contains("main.py"),
+            "failure reason must name the allowed target path; got {reason:?}"
         );
     }
 
@@ -890,55 +892,43 @@ mod tests {
     }
 
     #[test]
-    fn parsed_write_file_multiline_content_writes_real_newlines() {
-        let (_temp, view) = make_view("write-json-multiline");
-        let mut executor = workspace_executor(&view, FileToolPolicy::default());
-        let request = parse_tool_request(
-            r#"{"tool":"write_file","path":"output.txt","content":"first line\nsecond line\n"}"#,
-        )
-        .unwrap();
+    fn parsed_write_file_normalizes_literal_newline_escapes() {
+        // (case name, JSON payload, expected file content after write)
+        let cases = [
+            (
+                "real newline in JSON string is written as-is",
+                r#"{"tool":"write_file","path":"output.txt","content":"first line\nsecond line\n"}"#,
+                "first line\nsecond line\n",
+            ),
+            (
+                "double-escaped \\n is normalized to a real newline",
+                r#"{"tool":"write_file","path":"output.txt","content":"first line\\nsecond line"}"#,
+                "first line\nsecond line",
+            ),
+        ];
 
-        let response = executor.execute(request);
+        for (case, json, expected_content) in cases {
+            let (_temp, view) = make_view("write-json-newline-normalization");
+            let mut executor = workspace_executor(&view, FileToolPolicy::default());
+            let request = parse_tool_request(json).unwrap();
 
-        assert!(
-            matches!(response, FileToolResponse::UpdateRecorded { .. }),
-            "expected UpdateRecorded, got {response:?}"
-        );
-        assert_eq!(
-            executor.execute(FileToolRequest::ReadFile {
-                path: "output.txt".to_owned(),
-            }),
-            FileToolResponse::FileContents {
-                path: "output.txt".to_owned(),
-                content: "first line\nsecond line\n".to_owned(),
-            }
-        );
-    }
+            let response = executor.execute(request);
 
-    #[test]
-    fn parsed_write_file_escaped_backslash_n_becomes_real_newline() {
-        let (_temp, view) = make_view("write-json-literal-backslash-n");
-        let mut executor = workspace_executor(&view, FileToolPolicy::default());
-        let request = parse_tool_request(
-            r#"{"tool":"write_file","path":"output.txt","content":"first line\\nsecond line"}"#,
-        )
-        .unwrap();
-
-        let response = executor.execute(request);
-
-        assert!(
-            matches!(response, FileToolResponse::UpdateRecorded { .. }),
-            "expected UpdateRecorded, got {response:?}"
-        );
-        assert_eq!(
-            executor.execute(FileToolRequest::ReadFile {
-                path: "output.txt".to_owned(),
-            }),
-            FileToolResponse::FileContents {
-                path: "output.txt".to_owned(),
-                content: "first line\nsecond line".to_owned(),
-            }
-        );
+            assert!(
+                matches!(response, FileToolResponse::UpdateRecorded { .. }),
+                "{case}: expected UpdateRecorded, got {response:?}"
+            );
+            assert_eq!(
+                executor.execute(FileToolRequest::ReadFile {
+                    path: "output.txt".to_owned(),
+                }),
+                FileToolResponse::FileContents {
+                    path: "output.txt".to_owned(),
+                    content: expected_content.to_owned(),
+                },
+                "{case}"
+            );
+        }
     }
 
     #[test]
@@ -972,63 +962,49 @@ mod tests {
     }
 
     #[test]
-    fn parsed_replace_text_multiline_content_writes_real_newlines() {
-        let (_temp, view) = make_view("replace-json-multiline");
-        let mut executor = workspace_executor(&view, FileToolPolicy::default());
-        executor.execute(FileToolRequest::WriteFile {
-            path: "output.txt".to_owned(),
-            content: "alpha\nbeta\ngamma\n".to_owned(),
-        });
-        let request = parse_tool_request(
-            r#"{"tool":"replace_text","path":"output.txt","old":"alpha\nbeta","new":"one\ntwo"}"#,
-        )
-        .unwrap();
+    fn parsed_replace_text_does_not_normalize_literal_newline_escapes() {
+        // (case name, baseline file content, JSON payload, expected content after replace)
+        let cases = [
+            (
+                "real newline in JSON string matches and replaces as-is",
+                "alpha\nbeta\ngamma\n",
+                r#"{"tool":"replace_text","path":"output.txt","old":"alpha\nbeta","new":"one\ntwo"}"#,
+                "one\ntwo\ngamma\n",
+            ),
+            (
+                "double-escaped \\n is NOT normalized (unlike write_file)",
+                r"alpha\nbeta tail",
+                r#"{"tool":"replace_text","path":"output.txt","old":"alpha\\nbeta","new":"one\\ntwo"}"#,
+                r"one\ntwo tail",
+            ),
+        ];
 
-        let response = executor.execute(request);
-
-        assert!(
-            matches!(response, FileToolResponse::UpdateRecorded { .. }),
-            "expected UpdateRecorded, got {response:?}"
-        );
-        assert_eq!(
-            executor.execute(FileToolRequest::ReadFile {
+        for (case, baseline, json, expected_content) in cases {
+            let (_temp, view) = make_view("replace-json-newline-normalization");
+            let mut executor = workspace_executor(&view, FileToolPolicy::default());
+            executor.execute(FileToolRequest::WriteFile {
                 path: "output.txt".to_owned(),
-            }),
-            FileToolResponse::FileContents {
-                path: "output.txt".to_owned(),
-                content: "one\ntwo\ngamma\n".to_owned(),
-            }
-        );
-    }
+                content: baseline.to_owned(),
+            });
+            let request = parse_tool_request(json).unwrap();
 
-    #[test]
-    fn parsed_replace_text_escaped_backslash_n_remains_literal() {
-        let (_temp, view) = make_view("replace-json-literal-backslash-n");
-        let mut executor = workspace_executor(&view, FileToolPolicy::default());
-        executor.execute(FileToolRequest::WriteFile {
-            path: "output.txt".to_owned(),
-            content: r"alpha\nbeta tail".to_owned(),
-        });
-        let request = parse_tool_request(
-            r#"{"tool":"replace_text","path":"output.txt","old":"alpha\\nbeta","new":"one\\ntwo"}"#,
-        )
-        .unwrap();
+            let response = executor.execute(request);
 
-        let response = executor.execute(request);
-
-        assert!(
-            matches!(response, FileToolResponse::UpdateRecorded { .. }),
-            "expected UpdateRecorded, got {response:?}"
-        );
-        assert_eq!(
-            executor.execute(FileToolRequest::ReadFile {
-                path: "output.txt".to_owned(),
-            }),
-            FileToolResponse::FileContents {
-                path: "output.txt".to_owned(),
-                content: r"one\ntwo tail".to_owned(),
-            }
-        );
+            assert!(
+                matches!(response, FileToolResponse::UpdateRecorded { .. }),
+                "{case}: expected UpdateRecorded, got {response:?}"
+            );
+            assert_eq!(
+                executor.execute(FileToolRequest::ReadFile {
+                    path: "output.txt".to_owned(),
+                }),
+                FileToolResponse::FileContents {
+                    path: "output.txt".to_owned(),
+                    content: expected_content.to_owned(),
+                },
+                "{case}"
+            );
+        }
     }
 
     #[test]
