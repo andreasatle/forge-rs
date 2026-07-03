@@ -10,9 +10,7 @@ use super::config::RunConfig;
 use super::effect::SchedulerEffect;
 use super::failure::{ExhaustedAction, FailureKind, FailureReason};
 use super::graph::{
-    MAX_ATTEMPTS, MAX_GRAPH_NODES, MAX_PLAN_DEPTH, attempts_exhausted, cancel_pending_dependents,
-    get_node, graph_has_capacity, mark_node, push_node, remap_pending_dependencies,
-    validate_split_depth,
+    MAX_ATTEMPTS, MAX_GRAPH_NODES, MAX_PLAN_DEPTH, attempts_exhausted, validate_split_depth,
 };
 use super::graph::{
     ModelTier, Node, NodeId, NodeKind, NodeOrigin, NodeStatus, RetryFeedback, RunGraph,
@@ -76,7 +74,7 @@ impl RecoveryApplicator {
     fn route(self, recovery: RecoveryAction) -> Transition<SchedulerState, SchedulerEffect> {
         match recovery {
             RecoveryAction::Retry { message } => {
-                let exhausted = attempts_exhausted(get_node(&self.graph, &self.node_id));
+                let exhausted = attempts_exhausted(self.graph.get_node(&self.node_id));
                 if exhausted {
                     let failed_node_id = self.node_id.0.clone();
                     let graph = self.mark_failed();
@@ -91,7 +89,7 @@ impl RecoveryApplicator {
                         },
                         effects: vec![],
                     }
-                } else if !graph_has_capacity(&self.graph, 1) {
+                } else if !self.graph.graph_has_capacity(1) {
                     let graph = self.mark_failed();
                     failed_transition(
                         graph,
@@ -110,7 +108,7 @@ impl RecoveryApplicator {
             }
 
             RecoveryAction::Split { message } => {
-                let node = get_node(&self.graph, &self.node_id);
+                let node = self.graph.get_node(&self.node_id);
                 let exhausted = attempts_exhausted(node);
                 let split_depth_ok = validate_split_depth(node.plan_depth).is_ok();
                 if exhausted {
@@ -127,7 +125,7 @@ impl RecoveryApplicator {
                         },
                         effects: vec![],
                     }
-                } else if !graph_has_capacity(&self.graph, 1) {
+                } else if !self.graph.graph_has_capacity(1) {
                     let graph = self.mark_failed();
                     failed_transition(
                         graph,
@@ -155,7 +153,7 @@ impl RecoveryApplicator {
 
             RecoveryAction::ElevateModel { .. } => {
                 let (can_elevate, exhausted) = {
-                    let node = get_node(&self.graph, &self.node_id);
+                    let node = self.graph.get_node(&self.node_id);
                     let can =
                         self.run_config.has_strong_tier && node.model_tier == ModelTier::Cheap;
                     (can, attempts_exhausted(node))
@@ -175,7 +173,7 @@ impl RecoveryApplicator {
                             },
                             effects: vec![],
                         }
-                    } else if !graph_has_capacity(&self.graph, 1) {
+                    } else if !self.graph.graph_has_capacity(1) {
                         let graph = self.mark_failed();
                         failed_transition(
                             graph,
@@ -205,7 +203,7 @@ impl RecoveryApplicator {
                         },
                         effects: vec![],
                     }
-                } else if !graph_has_capacity(&self.graph, 1) {
+                } else if !self.graph.graph_has_capacity(1) {
                     let graph = self.mark_failed();
                     failed_transition(
                         graph,
@@ -224,8 +222,8 @@ impl RecoveryApplicator {
             }
 
             RecoveryAction::Terminal { message } => {
-                let graph = mark_node(self.graph, &self.node_id, NodeStatus::Failed);
-                let graph = cancel_pending_dependents(graph, &self.node_id);
+                let graph = self.graph.mark_node(&self.node_id, NodeStatus::Failed);
+                let graph = graph.cancel_pending_dependents(&self.node_id);
                 Transition {
                     state: SchedulerState::Failed {
                         graph,
@@ -241,7 +239,7 @@ impl RecoveryApplicator {
     }
 
     fn mark_failed(self) -> RunGraph {
-        mark_node(self.graph, &self.node_id, NodeStatus::Failed)
+        self.graph.mark_node(&self.node_id, NodeStatus::Failed)
     }
 
     fn apply_retry(self, retry_message: &str) -> RunGraph {
@@ -256,7 +254,7 @@ impl RecoveryApplicator {
             model_tier,
             validation_plan,
         ) = {
-            let n = get_node(&self.graph, &self.node_id);
+            let n = self.graph.get_node(&self.node_id);
             (
                 n.kind.clone(),
                 n.objective.clone(),
@@ -298,7 +296,7 @@ impl RecoveryApplicator {
 
     fn apply_split(self, message: String) -> RunGraph {
         let (target_files, required_validation_targets, deps, attempt, plan_depth) = {
-            let n = get_node(&self.graph, &self.node_id);
+            let n = self.graph.get_node(&self.node_id);
             (
                 n.target_files.clone(),
                 n.required_validation_targets.clone(),
@@ -341,7 +339,7 @@ impl RecoveryApplicator {
             plan_depth,
             validation_plan,
         ) = {
-            let n = get_node(&self.graph, &self.node_id);
+            let n = self.graph.get_node(&self.node_id);
             (
                 n.kind.clone(),
                 n.objective.clone(),
@@ -379,9 +377,9 @@ impl RecoveryApplicator {
     }
 
     fn push_replacement(self, replacement: Node, replacement_id: &NodeId) -> RunGraph {
-        let graph = mark_node(self.graph, &self.node_id, NodeStatus::Failed);
-        let graph = push_node(graph, replacement);
-        remap_pending_dependencies(graph, &self.node_id, replacement_id)
+        let graph = self.graph.mark_node(&self.node_id, NodeStatus::Failed);
+        let graph = graph.push_node(replacement);
+        graph.remap_pending_dependencies(&self.node_id, replacement_id)
     }
 
     /// Strips a trailing `-retry-<digits>` suffix from a node id, so repeated

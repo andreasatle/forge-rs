@@ -141,7 +141,7 @@ impl SchedulerMachine {
 #[cfg(test)]
 impl SchedulerMachine {
     pub(super) fn find_ready(g: &RunGraph) -> Vec<NodeId> {
-        graph::find_ready(g)
+        g.find_ready()
     }
 }
 
@@ -169,7 +169,7 @@ impl SchedulerMachine {
             //   2. Some nodes are Pending but none are ready → deadlock; enter Failed.
             //   3. At least one node is ready → mark it Running, emit RunNode, move to Waiting.
             (SchedulerState::Active { graph, run_config }, SchedulerEvent::Start) => {
-                if let Err(detail) = graph::validate_graph_invariants(&graph) {
+                if let Err(detail) = graph.validate_graph_invariants() {
                     return Transition {
                         state: SchedulerState::Failed {
                             graph: graph.clone(),
@@ -178,7 +178,7 @@ impl SchedulerMachine {
                         effects: vec![],
                     };
                 }
-                let active = graph::active_nodes(&graph);
+                let active = graph.active_nodes();
                 if let Some(node) = active.first() {
                     let detail = format!(
                         "invalid running state: node {} is {:?}",
@@ -189,8 +189,8 @@ impl SchedulerMachine {
                         FailureReason::ProtocolViolation(detail),
                     );
                 }
-                if graph::all_complete(&graph) {
-                    if let Err(detail) = graph::validate_required_tests_completed(&graph) {
+                if graph.all_complete() {
+                    if let Err(detail) = graph.validate_required_tests_completed() {
                         Transition {
                             state: SchedulerState::Failed {
                                 graph: graph.clone(),
@@ -207,9 +207,9 @@ impl SchedulerMachine {
                         }
                     }
                 } else {
-                    let ready = graph::find_ready(&graph);
+                    let ready = graph.find_ready();
                     if ready.is_empty() {
-                        let detail = graph::diagnose_no_ready(&graph);
+                        let detail = graph.diagnose_no_ready();
                         Transition {
                             state: SchedulerState::Failed {
                                 graph: graph.clone(),
@@ -228,12 +228,12 @@ impl SchedulerMachine {
                             attempt,
                             retry_feedback,
                         ) = {
-                            let n = graph::get_node(&graph, &node_id);
+                            let n = graph.get_node(&node_id);
                             (
                                 n.kind.clone(),
                                 n.objective.clone(),
                                 n.target_files.clone(),
-                                graph::test_plan_context_for_node(&graph, &node_id),
+                                graph.test_plan_context_for_node(&node_id),
                                 n.model_tier,
                                 n.attempt,
                                 n.retry_feedback.clone(),
@@ -249,7 +249,7 @@ impl SchedulerMachine {
                             attempt,
                             retry_feedback,
                         };
-                        let graph = graph::mark_node(graph, &node_id, NodeStatus::Running);
+                        let graph = graph.mark_node(&node_id, NodeStatus::Running);
                         Transition {
                             state: SchedulerState::Waiting { graph, run_config },
                             effects: vec![effect],
@@ -270,7 +270,7 @@ impl SchedulerMachine {
                 | SchedulerEvent::NodeFailed { .. }),
             ) => {
                 let node_id = node_event_id(&event).clone();
-                let active_node = match graph::active_node(&graph) {
+                let active_node = match graph.active_node() {
                     Ok(node) => node.id.clone(),
                     Err(detail) => {
                         return recovery::failed_transition(
@@ -292,7 +292,7 @@ impl SchedulerMachine {
                 }
 
                 // Validate that the node is in Running status (not Integrating or other).
-                if let Some(detail) = graph::invalid_node_return_reason(&graph, &node_id) {
+                if let Some(detail) = graph.invalid_node_return_reason(&node_id) {
                     return recovery::failed_transition(
                         graph,
                         FailureReason::ProtocolViolation(detail),
@@ -300,7 +300,7 @@ impl SchedulerMachine {
                 }
 
                 // Validate that the outcome is compatible with the node's kind.
-                let node_kind = graph::get_node(&graph, &node_id).kind.clone();
+                let node_kind = graph.get_node(&node_id).kind.clone();
                 if let Some(detail) = graph::invalid_node_event_reason(&node_id, &node_kind, &event)
                 {
                     return Transition {
@@ -321,8 +321,8 @@ impl SchedulerMachine {
                     // does not insert children. A plan-depth violation additionally
                     // marks the original plan Failed as the circuit breaker source.
                     SchedulerEvent::PlanAccepted { plan, .. } => {
-                        let parent_depth = graph::get_node(&graph, &node_id).plan_depth;
-                        match graph::validate_plan_dependencies(&graph, &plan.children) {
+                        let parent_depth = graph.get_node(&node_id).plan_depth;
+                        match graph.validate_plan_dependencies(&plan.children) {
                             Err(detail) => Transition {
                                 state: SchedulerState::Failed {
                                     graph: graph.clone(),
@@ -330,7 +330,7 @@ impl SchedulerMachine {
                                 },
                                 effects: vec![],
                             },
-                            Ok(()) if !graph::graph_has_capacity(&graph, plan.children.len()) => {
+                            Ok(()) if !graph.graph_has_capacity(plan.children.len()) => {
                                 Transition {
                                     state: SchedulerState::Failed {
                                         graph: graph.clone(),
@@ -345,8 +345,7 @@ impl SchedulerMachine {
                                 if graph::validate_plan_child_depths(parent_depth, &plan.children)
                                     .is_err()
                                 {
-                                    let graph =
-                                        graph::mark_node(graph, &node_id, NodeStatus::Failed);
+                                    let graph = graph.mark_node(&node_id, NodeStatus::Failed);
                                     return recovery::failed_transition(
                                         graph,
                                         FailureReason::PlanDepthExceeded {
@@ -354,9 +353,8 @@ impl SchedulerMachine {
                                         },
                                     );
                                 }
-                                let graph =
-                                    graph::mark_node(graph, &node_id, NodeStatus::Completed);
-                                let graph = graph::insert_children(graph, &node_id, plan.children);
+                                let graph = graph.mark_node(&node_id, NodeStatus::Completed);
+                                let graph = graph.insert_children(&node_id, plan.children);
                                 Transition {
                                     state: SchedulerState::Active { graph, run_config },
                                     effects: vec![],
@@ -370,14 +368,14 @@ impl SchedulerMachine {
                     // only happens when IntegrationSucceeded arrives.
                     SchedulerEvent::WorkAccepted { work, .. } => {
                         let (target_files, validation_plan, attempt) = {
-                            let node = graph::get_node(&graph, &node_id);
+                            let node = graph.get_node(&node_id);
                             (
                                 node.target_files.clone(),
                                 node.validation_plan.clone(),
                                 node.attempt,
                             )
                         };
-                        let graph = graph::mark_node(graph, &node_id, NodeStatus::Integrating);
+                        let graph = graph.mark_node(&node_id, NodeStatus::Integrating);
                         Transition {
                             state: SchedulerState::Waiting { graph, run_config },
                             effects: vec![SchedulerEffect::IntegrateWork {
@@ -414,7 +412,7 @@ impl SchedulerMachine {
                 | SchedulerEvent::IntegrationFailed { .. }),
             ) => {
                 let node_id = integration_event_id(&event).clone();
-                let active_node = match graph::active_node(&graph) {
+                let active_node = match graph.active_node() {
                     Ok(node) => node.id.clone(),
                     Err(detail) => {
                         return recovery::failed_transition(
@@ -436,7 +434,7 @@ impl SchedulerMachine {
                 }
 
                 // Validate that integration arrives for a Work node in Integrating status.
-                if let Some(detail) = graph::invalid_integration_reason(&graph, &node_id) {
+                if let Some(detail) = graph.invalid_integration_reason(&node_id) {
                     return Transition {
                         state: SchedulerState::Failed {
                             graph: graph.clone(),
@@ -451,11 +449,8 @@ impl SchedulerMachine {
                         output: integration_output,
                         ..
                     } => {
-                        let graph = graph::mark_node_completed_with_summary(
-                            graph,
-                            &node_id,
-                            integration_output.summary,
-                        );
+                        let graph = graph
+                            .mark_node_completed_with_summary(&node_id, integration_output.summary);
                         Transition {
                             state: SchedulerState::Active { graph, run_config },
                             effects: vec![],

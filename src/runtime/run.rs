@@ -12,7 +12,6 @@ use std::process::Command;
 use crate::config::ForgeConfig;
 
 use crate::machines::scheduler::{RunConfig, RunRequest, SchedulerMachine, SchedulerState};
-use crate::runtime::checkpoint::node_counts;
 use crate::runtime::create_run;
 use crate::runtime::provider_stack::ResolvedProviderStack;
 use crate::runtime::resume::find_resumable_run;
@@ -96,7 +95,7 @@ impl ForgeRuntime {
             SchedulerState::Active { graph, .. } => graph,
             _ => unreachable!("normalize_for_resume always returns Active"),
         };
-        let (node_count, completed_count) = node_counts(graph);
+        let (node_count, completed_count) = graph.node_counts();
         sink.record(TelemetryRecord::new(
             "Checkpoint",
             TelemetryEvent::CheckpointLoaded {

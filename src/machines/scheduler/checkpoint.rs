@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use crate::machines::scheduler::state::SchedulerState;
-use crate::runtime::checkpoint::{node_counts, save_checkpoint};
+use crate::runtime::checkpoint::save_checkpoint;
 use crate::telemetry::{TelemetryEvent, TelemetryRecord, TelemetrySink};
 
 pub(crate) struct CheckpointService {
@@ -46,7 +46,7 @@ impl CheckpointService {
             SchedulerState::Active { graph, .. } | SchedulerState::Waiting { graph, .. } => graph,
             _ => return,
         };
-        let (node_count, completed_count) = node_counts(graph);
+        let (node_count, completed_count) = graph.node_counts();
         match save_checkpoint(dir, state) {
             Ok(()) => {
                 self.telemetry.record(TelemetryRecord::new(

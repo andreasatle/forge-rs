@@ -13,7 +13,7 @@
 use std::error::Error;
 use std::path::Path;
 
-use crate::machines::scheduler::{NodeStatus, RunGraph, SchedulerState};
+use crate::machines::scheduler::SchedulerState;
 
 const CHECKPOINT_FILE: &str = "graph.json";
 
@@ -40,16 +40,6 @@ pub fn load_checkpoint(run_dir: &Path) -> Result<SchedulerState, Box<dyn Error>>
     let state: SchedulerState = serde_json::from_str(&content)
         .map_err(|e| format!("corrupt checkpoint at {}: {e}", path.display()))?;
     Ok(state)
-}
-
-/// Count `(node_count, completed_count)` for a graph — used in telemetry.
-pub fn node_counts(graph: &RunGraph) -> (usize, usize) {
-    let completed = graph
-        .nodes
-        .iter()
-        .filter(|n| n.status == NodeStatus::Completed)
-        .count();
-    (graph.nodes.len(), completed)
 }
 
 #[cfg(test)]
@@ -205,7 +195,7 @@ mod tests {
     #[test]
     fn node_counts_reflects_completed_nodes() {
         let graph = sample_graph();
-        let (total, completed) = node_counts(&graph);
+        let (total, completed) = graph.node_counts();
         assert_eq!(total, 2);
         assert_eq!(completed, 1);
     }
