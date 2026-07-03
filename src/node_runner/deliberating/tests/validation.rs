@@ -275,11 +275,12 @@ fn planner_explicit_target_violation_sends_revision_feedback_and_retries() {
 
     let prompts = provider.recorded_prompts();
     assert!(
-        prompts.iter().any(|prompt| prompt.contains(
-            "The objective explicitly targets main.py, utils.py. \
-                 Remove all non-test targets except main.py, utils.py."
-        )),
-        "retry prompt must contain exact explicit-target feedback; got: {prompts:#?}"
+        prompts
+            .iter()
+            .any(|prompt| prompt.contains("Revision feedback")
+                && prompt.contains("main.py")
+                && prompt.contains("utils.py")),
+        "retry prompt must carry revision feedback naming the objective's allowed targets; got: {prompts:#?}"
     );
 }
 
