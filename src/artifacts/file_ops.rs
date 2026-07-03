@@ -259,19 +259,13 @@ mod tests {
     #[test]
     fn parent_traversal_fails() {
         let workspace = fake_workspace();
-        assert_eq!(
-            workspace.read_file("../outside.txt"),
-            Err(ArtifactError::PathOutsideWorkspace),
-        );
-    }
-
-    #[test]
-    fn nested_parent_traversal_fails() {
-        let workspace = fake_workspace();
-        assert_eq!(
-            workspace.read_file("a/../../bar"),
-            Err(ArtifactError::PathOutsideWorkspace),
-        );
+        for path in ["../outside.txt", "a/../../bar"] {
+            assert_eq!(
+                workspace.read_file(path),
+                Err(ArtifactError::PathOutsideWorkspace),
+                "path {path:?} must be rejected as a parent-dir escape",
+            );
+        }
     }
 
     #[test]
