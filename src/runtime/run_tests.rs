@@ -1,9 +1,10 @@
 use super::*;
 use crate::artifacts::Artifact;
 use crate::config::{ArtifactConfig, ProviderConfig, ProviderTierConfig, UnmanagedProviderConfig};
-use crate::machines::scheduler::SchedulerTerminalOutput;
+use crate::machines::scheduler::{SchedulerTerminalOutput, run_scheduler_with_telemetry};
 use crate::runtime::ProviderRunMetadata;
 use crate::runtime::provider_stack::ResolvedProviderStack;
+use crate::runtime::repo::load_or_create_artifact;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(0);

@@ -11,18 +11,12 @@ use std::process::Command;
 
 use crate::config::ForgeConfig;
 
-use super::repo::load_or_create_artifact;
-use crate::machines::scheduler::{
-    RunConfig, RunRequest, SchedulerHandler, SchedulerMachine, SchedulerState,
-    run_scheduler_with_telemetry,
-};
-use crate::node_runner::DeliberatingNodeRunner;
+use crate::machines::scheduler::{RunConfig, RunRequest, SchedulerMachine, SchedulerState};
 use crate::runtime::checkpoint::node_counts;
 use crate::runtime::create_run;
-use crate::runtime::outcome::RunOutcome;
-use crate::runtime::project_setup::ProjectRuntimeSetup;
 use crate::runtime::provider_stack::ResolvedProviderStack;
 use crate::runtime::resume::find_resumable_run;
+use crate::runtime::session::RunSession;
 use crate::telemetry::{FileTelemetry, TelemetryEvent, TelemetryRecord, TelemetrySink};
 
 /// Entry point for a single forge run driven by a [`ForgeConfig`].
@@ -38,9 +32,6 @@ impl ForgeRuntime {
     /// 4. Drive the scheduler to completion.
     /// 5. Print a summary to stdout.
     pub fn run(config: ForgeConfig) -> Result<(), Box<dyn Error>> {
-        let artifact =
-            load_or_create_artifact(&config.artifact, config.project.language.as_deref())?;
-
         let runs_root = PathBuf::from(&config.telemetry.directory);
         let provider_stack = ResolvedProviderStack::build(&config.provider)?;
         let run_info = create_run(
@@ -53,19 +44,6 @@ impl ForgeRuntime {
         let sink: Rc<dyn TelemetrySink> =
             Rc::new(FileTelemetry::new(run_info.telemetry_dir.clone()));
 
-        let setup = ProjectRuntimeSetup::build(&config.project, config.validation.as_ref())?;
-        let runner = DeliberatingNodeRunner::new(provider_stack.cheap, provider_stack.strong)
-            .with_cheap_max_tokens(provider_stack.cheap_tokens)
-            .with_strong_max_tokens(provider_stack.strong_tokens)
-            .with_role_policy(setup.role_policy)
-            .with_required_test_targets_fn(setup.required_test_targets_fn)
-            .with_context_file_names(setup.context_file_names)
-            .with_validation_plan(setup.validation_plan);
-        let handler = SchedulerHandler::with_artifact(runner, artifact)
-            .with_telemetry(Rc::clone(&sink))
-            .with_validator(setup.validator)
-            .with_checkpoint_dir(run_info.run_dir.clone());
-
         let initial_state = SchedulerMachine::initial_state(
             RunRequest {
                 objective: config.objective.clone(),
@@ -75,20 +53,7 @@ impl ForgeRuntime {
             },
         );
 
-        let (output, handler) = run_scheduler_with_telemetry(handler, initial_state, sink.as_ref());
-        let outcome = RunOutcome::from_scheduler_terminal_output(&output);
-        outcome.print_progress();
-
-        let final_artifact = handler.artifact();
-        let validation_passed = handler.validation_passed();
-        outcome.print_summary(&config, final_artifact.as_ref(), &run_info);
-
-        let final_commit = outcome.final_commit(final_artifact.as_ref());
-        if let Err(e) = outcome.finalize_manifest(&run_info, final_commit, validation_passed) {
-            eprintln!("warning: failed to finalize manifest: {e}");
-        }
-
-        outcome.into_result()
+        RunSession::new(config, run_info, sink, provider_stack).drive(initial_state)
     }
 
     /// Resume a previously interrupted forge run.
@@ -125,8 +90,6 @@ impl ForgeRuntime {
             .into_owned();
         eprintln!("[run] resumed {run_id}");
 
-        let artifact =
-            load_or_create_artifact(&config.artifact, config.project.language.as_deref())?;
         let sink: Rc<dyn TelemetrySink> = Rc::new(FileTelemetry::new(run_dir.join("telemetry")));
 
         let graph = match &initial_state {
@@ -144,19 +107,6 @@ impl ForgeRuntime {
 
         let provider_stack = ResolvedProviderStack::build(&config.provider)?;
 
-        let setup = ProjectRuntimeSetup::build(&config.project, config.validation.as_ref())?;
-        let runner = DeliberatingNodeRunner::new(provider_stack.cheap, provider_stack.strong)
-            .with_cheap_max_tokens(provider_stack.cheap_tokens)
-            .with_strong_max_tokens(provider_stack.strong_tokens)
-            .with_role_policy(setup.role_policy)
-            .with_required_test_targets_fn(setup.required_test_targets_fn)
-            .with_context_file_names(setup.context_file_names)
-            .with_validation_plan(setup.validation_plan);
-        let handler = SchedulerHandler::with_artifact(runner, artifact)
-            .with_telemetry(Rc::clone(&sink))
-            .with_validator(setup.validator)
-            .with_checkpoint_dir(run_dir.clone());
-
         let run_info = crate::runtime::RunInfo {
             run_id,
             run_dir: run_dir.clone(),
@@ -167,20 +117,7 @@ impl ForgeRuntime {
                 .as_secs_f64(),
         };
 
-        let (output, handler) = run_scheduler_with_telemetry(handler, initial_state, sink.as_ref());
-        let outcome = RunOutcome::from_scheduler_terminal_output(&output);
-        outcome.print_progress();
-
-        let final_artifact = handler.artifact();
-        let validation_passed = handler.validation_passed();
-        outcome.print_summary(&config, final_artifact.as_ref(), &run_info);
-
-        let final_commit = outcome.final_commit(final_artifact.as_ref());
-        if let Err(e) = outcome.finalize_manifest(&run_info, final_commit, validation_passed) {
-            eprintln!("warning: failed to finalize manifest: {e}");
-        }
-
-        outcome.into_result()
+        RunSession::new(config, run_info, sink, provider_stack).drive(initial_state)
     }
 }
 

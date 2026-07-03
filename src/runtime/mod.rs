@@ -11,6 +11,7 @@ mod reset;
 pub mod resume;
 mod run;
 mod run_info;
+mod session;
 mod show;
 mod trace;
 
