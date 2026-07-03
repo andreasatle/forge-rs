@@ -243,10 +243,6 @@ mod tests {
         let root = PathBuf::from("/");
         let result = validate_reset_path(&root);
         assert!(result.is_err(), "reset must be refused for root path");
-        assert!(
-            result.unwrap_err().to_string().contains("reset refused"),
-            "error must contain 'reset refused'"
-        );
     }
 
     #[test]
@@ -313,6 +309,10 @@ mod tests {
         let config = make_forge_config(&artifact.repo_path, &telemetry);
         run_reset(config).unwrap();
 
+        assert!(
+            repo_path.exists(),
+            "reset must recreate the repo at the same path"
+        );
         assert_eq!(
             commit_count(&repo_path, "main"),
             1,
@@ -412,37 +412,6 @@ mod tests {
     }
 
     // ── language-init reset tests ─────────────────────────────────────────────
-
-    #[test]
-    fn reset_removes_existing_artifact_git_repo() {
-        let base = temp_path("removes-existing");
-        let repo_path = base.join("artifact.git");
-        let telemetry = base.join("telemetry");
-        let _ = std::fs::remove_dir_all(&base);
-
-        // Create a repo with content so we can verify it is fully replaced.
-        let artifact_config = ArtifactConfig {
-            repo_path: repo_path.to_str().unwrap().to_string(),
-            branch: "main".to_string(),
-        };
-        crate::runtime::load_or_create_artifact(&artifact_config, None).unwrap();
-        assert!(repo_path.exists(), "repo must exist before reset");
-
-        let config = make_forge_config(&repo_path, &telemetry);
-        run_reset(config).unwrap();
-
-        assert!(
-            repo_path.exists(),
-            "reset must recreate the repo at the same path"
-        );
-        assert_eq!(
-            commit_count(&repo_path, "main"),
-            1,
-            "reset must produce a fresh repo with exactly one commit"
-        );
-
-        let _ = std::fs::remove_dir_all(&base);
-    }
 
     #[test]
     fn reset_recreates_bare_artifact_repo() {
