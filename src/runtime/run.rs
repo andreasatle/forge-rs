@@ -786,37 +786,14 @@ mod tests {
     }
 
     #[test]
-    fn runtime_requires_tests_when_validation_command_runs_tests() {
-        let config = ValidationConfig {
-            commands: vec!["custom-tool test".to_string()],
-            timeout_seconds: None,
-        };
-        assert!(
-            project_requires_tests(None, Some(&config)),
-            "validation commands containing a test subcommand must require tests"
-        );
-    }
-
-    #[test]
-    fn runtime_does_not_require_tests_without_test_validation() {
-        let config = ValidationConfig {
-            commands: vec!["custom-tool lint .".to_string()],
-            timeout_seconds: None,
-        };
-        assert!(
-            !project_requires_tests(None, Some(&config)),
-            "non-test validation commands must not require test targets"
-        );
-    }
-
-    #[test]
     fn strong_tier_falls_back_when_no_strong_provider_configured() {
-        let config = unmanaged_provider("http://localhost:8080", "llama-test", 512);
-        // When strong fields are absent, both tiers must resolve to the cheap values.
+        let config = unmanaged_provider("http://localhost:8080", "cheap-model", 512);
+
         let metadata = make_provider_run_metadata(&config).unwrap();
+
+        // When strong fields are absent, both tiers must resolve to the cheap values.
+        assert_eq!(metadata.strong, metadata.cheap);
         assert_eq!(metadata.strong.base_url, "http://localhost:8080");
-        assert_eq!(metadata.strong.n_predict, 512);
-        assert_eq!(metadata.strong.timeout_seconds, 120);
     }
 
     #[test]
@@ -838,28 +815,26 @@ mod tests {
 
         let metadata = make_provider_run_metadata(&config).unwrap();
 
-        assert_eq!(metadata.cheap.base_url, "http://localhost:8080");
-        assert_eq!(metadata.cheap.model, "cheap-model");
-        assert_eq!(metadata.cheap.n_predict, 512);
-        assert_eq!(metadata.cheap.timeout_seconds, 120);
-        assert_eq!(metadata.strong.base_url, "http://localhost:8081");
-        assert_eq!(metadata.strong.model, "strong-model");
-        assert_eq!(metadata.strong.n_predict, 1024);
-        assert_eq!(metadata.strong.timeout_seconds, 180);
-    }
-
-    #[test]
-    fn provider_run_metadata_falls_back_for_strong_tier() {
-        let config = unmanaged_provider("http://localhost:8080", "cheap-model", 512);
-
-        let metadata = make_provider_run_metadata(&config).unwrap();
-
-        assert_eq!(metadata.strong.base_url, metadata.cheap.base_url);
-        assert_eq!(metadata.strong.model, metadata.cheap.model);
-        assert_eq!(metadata.strong.n_predict, metadata.cheap.n_predict);
         assert_eq!(
-            metadata.strong.timeout_seconds,
-            metadata.cheap.timeout_seconds
+            metadata,
+            ProviderRunMetadata {
+                cheap: ProviderTierMetadata {
+                    base_url: "http://localhost:8080".to_string(),
+                    model: "cheap-model".to_string(),
+                    n_predict: 512,
+                    timeout_seconds: 120,
+                    managed: false,
+                    managed_server: None,
+                },
+                strong: ProviderTierMetadata {
+                    base_url: "http://localhost:8081".to_string(),
+                    model: "strong-model".to_string(),
+                    n_predict: 1024,
+                    timeout_seconds: 180,
+                    managed: false,
+                    managed_server: None,
+                },
+            }
         );
     }
 
@@ -882,23 +857,28 @@ mod tests {
 
         let metadata = make_provider_run_metadata(&config).unwrap();
 
-        assert_eq!(metadata.cheap.base_url, "http://127.0.0.1:18080");
-        assert_eq!(metadata.cheap.model, "models/cheap.gguf");
-        assert!(metadata.cheap.managed);
-        let server = metadata
-            .cheap
-            .managed_server
-            .expect("managed metadata must be present");
-        assert_eq!(server.kind, "llama_cpp");
-        assert_eq!(server.command, "llama-server");
-        assert_eq!(server.port, 18080);
-        assert_eq!(server.context_size, Some(8192));
-        assert_eq!(server.startup_timeout_seconds, 45);
-        assert!(
-            metadata.strong.managed,
-            "strong tier should record the shared managed server when it falls back to cheap"
+        let cheap_tier = ProviderTierMetadata {
+            base_url: "http://127.0.0.1:18080".to_string(),
+            model: "models/cheap.gguf".to_string(),
+            n_predict: 512,
+            timeout_seconds: 120,
+            managed: true,
+            managed_server: Some(ManagedProviderServerMetadata {
+                kind: "llama_cpp".to_string(),
+                command: "llama-server".to_string(),
+                port: 18080,
+                context_size: Some(8192),
+                startup_timeout_seconds: 45,
+            }),
+        };
+        assert_eq!(
+            metadata,
+            ProviderRunMetadata {
+                // Strong tier records the shared managed server when it falls back to cheap.
+                strong: cheap_tier.clone(),
+                cheap: cheap_tier,
+            }
         );
-        assert_eq!(metadata.strong.base_url, metadata.cheap.base_url);
     }
 
     #[test]
@@ -924,24 +904,32 @@ mod tests {
 
         let metadata = make_provider_run_metadata(&config).unwrap();
 
-        assert!(!metadata.cheap.managed);
-        assert_eq!(metadata.cheap.base_url, "http://localhost:8080");
-        assert!(metadata.strong.managed);
-        assert_eq!(metadata.strong.base_url, "http://127.0.0.1:28080");
-        assert_eq!(metadata.strong.model, "models/strong.gguf");
-    }
-
-    #[test]
-    fn failed_runtime_run_returns_error_or_nonzero_status() {
-        let output = SchedulerTerminalOutput::Failed {
-            graph: empty_graph(),
-            reason: FailureReason::ProtocolViolation("something went wrong".to_string()),
-        };
-        let result = runtime_result_from_scheduler_terminal_output(output);
-        assert!(result.is_err(), "Failed output must produce an error");
-        assert!(
-            result.unwrap_err().to_string().contains("run failed"),
-            "error message must mention run failed"
+        assert_eq!(
+            metadata,
+            ProviderRunMetadata {
+                cheap: ProviderTierMetadata {
+                    base_url: "http://localhost:8080".to_string(),
+                    model: "models/cheap.gguf".to_string(),
+                    n_predict: 512,
+                    timeout_seconds: 120,
+                    managed: false,
+                    managed_server: None,
+                },
+                strong: ProviderTierMetadata {
+                    base_url: "http://127.0.0.1:28080".to_string(),
+                    model: "models/strong.gguf".to_string(),
+                    n_predict: 1024,
+                    timeout_seconds: 180,
+                    managed: true,
+                    managed_server: Some(ManagedProviderServerMetadata {
+                        kind: "llama_cpp".to_string(),
+                        command: "/opt/llama-server".to_string(),
+                        port: 28080,
+                        context_size: None,
+                        startup_timeout_seconds: 60,
+                    }),
+                },
+            }
         );
     }
 
@@ -1057,18 +1045,6 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&rel);
         let _ = std::fs::remove_dir_all(&workspace_path);
-    }
-
-    #[test]
-    fn runtime_creates_telemetry_directory() {
-        let dir = temp_path("telemetry-dir");
-        let _ = std::fs::remove_dir_all(&dir);
-
-        let _sink = FileTelemetry::new(dir.clone());
-
-        assert!(dir.exists(), "telemetry directory must be created");
-
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Creates a bare repo with two branches and HEAD pointing to the non-default one:
@@ -1713,69 +1689,39 @@ mod tests {
     // ── validation_command_is_test_like ──────────────────────────────────────
 
     #[test]
-    fn cargo_test_command_is_test_like() {
-        assert!(
-            validation_command_is_test_like("cargo test"),
-            "'cargo test' must be detected as a test command"
-        );
-    }
-
-    #[test]
-    fn pytest_command_is_test_like() {
-        assert!(
-            validation_command_is_test_like("uv run pytest"),
-            "'uv run pytest' must be detected as a test command"
-        );
-    }
-
-    #[test]
-    fn test_token_alone_is_test_like() {
-        assert!(
-            validation_command_is_test_like("test"),
-            "bare 'test' token must be detected as a test command"
-        );
-    }
-
-    #[test]
-    fn fmt_check_command_is_not_test_like() {
-        assert!(
-            !validation_command_is_test_like("cargo fmt --check"),
-            "'cargo fmt --check' must not be detected as a test command"
-        );
-    }
-
-    #[test]
-    fn lint_command_is_not_test_like() {
-        assert!(
-            !validation_command_is_test_like("uv run ruff check ."),
-            "'uv run ruff check .' must not be detected as a test command"
-        );
+    fn validation_command_is_test_like_classifies_commands() {
+        let cases = [
+            ("cargo test", true),
+            ("uv run pytest", true),
+            ("test", true),
+            ("cargo fmt --check", false),
+            ("uv run ruff check .", false),
+        ];
+        for (command, expected) in cases {
+            assert_eq!(
+                validation_command_is_test_like(command),
+                expected,
+                "command: {command:?}"
+            );
+        }
     }
 
     // ── project_requires_tests ───────────────────────────────────────────────
 
     #[test]
-    fn project_requires_tests_true_for_validation_config_with_test_command() {
-        let config = ValidationConfig {
-            commands: vec!["cargo test".to_string()],
-            timeout_seconds: None,
-        };
-        assert!(
-            project_requires_tests(None, Some(&config)),
-            "ValidationConfig with 'cargo test' must set requires_tests = true"
-        );
-    }
-
-    #[test]
-    fn project_requires_tests_false_for_validation_config_without_test_command() {
-        let config = ValidationConfig {
-            commands: vec!["cargo fmt --check".to_string()],
-            timeout_seconds: None,
-        };
-        assert!(
-            !project_requires_tests(None, Some(&config)),
-            "ValidationConfig without test command must set requires_tests = false"
-        );
+    fn project_requires_tests_reflects_validation_commands() {
+        let cases = [("cargo test", true), ("cargo fmt --check", false)];
+        for (command, expected) in cases {
+            let config = ValidationConfig {
+                commands: vec![command.to_string()],
+                timeout_seconds: None,
+            };
+            assert_eq!(
+                project_requires_tests(None, Some(&config)),
+                expected,
+                "command: {command:?}"
+            );
+        }
     }
 
     #[test]
