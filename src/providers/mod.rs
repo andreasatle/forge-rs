@@ -4,6 +4,7 @@
 //! `ProviderClient` trait.  Concrete providers live in their own submodules.
 
 pub mod client;
+mod http_error;
 pub mod llama_cpp;
 pub mod ollama;
 pub mod retry;

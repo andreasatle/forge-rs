@@ -5,6 +5,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use crate::providers::client::ProviderClient;
+use crate::providers::http_error::HttpProviderErrorClassifier;
 use crate::providers::types::{
     ProviderError, ProviderErrorKind, ProviderRequest, ProviderResponse, StructuredOutput,
 };
@@ -51,28 +52,6 @@ struct GenerateResponse {
     done_reason: Option<String>,
 }
 
-fn classify_status(status: u16) -> ProviderErrorKind {
-    match status {
-        429 | 500..=599 => ProviderErrorKind::Retryable,
-        _ => ProviderErrorKind::Terminal,
-    }
-}
-
-fn is_timeout_source(source: Option<&(dyn std::error::Error + 'static)>) -> bool {
-    source
-        .and_then(|e| e.downcast_ref::<std::io::Error>())
-        .map(|e| e.kind() == std::io::ErrorKind::TimedOut)
-        .unwrap_or(false)
-}
-
-fn classify_transport(err: &ureq::Transport) -> ProviderErrorKind {
-    if is_timeout_source(std::error::Error::source(err)) {
-        ProviderErrorKind::Timeout
-    } else {
-        ProviderErrorKind::Retryable
-    }
-}
-
 /// Resolve the Ollama `format` value for a structured-output request.
 ///
 /// Ollama has no GBNF support, so a grammar request falls back to generic
@@ -115,11 +94,11 @@ impl ProviderClient for OllamaProvider {
             .send_json(&body)
             .map_err(|err| match err {
                 ureq::Error::Status(status, _) => ProviderError {
-                    kind: classify_status(status),
+                    kind: HttpProviderErrorClassifier::classify_status(status),
                     message: format!("HTTP {status}"),
                 },
                 ureq::Error::Transport(transport_err) => ProviderError {
-                    kind: classify_transport(&transport_err),
+                    kind: HttpProviderErrorClassifier::classify_transport(&transport_err),
                     message: format!("connection error: {transport_err}"),
                 },
             })?;
@@ -173,7 +152,11 @@ mod tests {
             (400, ProviderErrorKind::Terminal),
         ];
         for (status, expected) in cases {
-            assert_eq!(classify_status(status), expected, "status {status}");
+            assert_eq!(
+                HttpProviderErrorClassifier::classify_status(status),
+                expected,
+                "status {status}"
+            );
         }
     }
 
@@ -184,9 +167,13 @@ mod tests {
         let timed_out_boxed: Box<dyn std::error::Error + 'static> = Box::new(timed_out);
         let refused_boxed: Box<dyn std::error::Error + 'static> = Box::new(refused);
 
-        assert!(is_timeout_source(Some(timed_out_boxed.as_ref())));
-        assert!(!is_timeout_source(Some(refused_boxed.as_ref())));
-        assert!(!is_timeout_source(None));
+        assert!(HttpProviderErrorClassifier::is_timeout_source(Some(
+            timed_out_boxed.as_ref()
+        )));
+        assert!(!HttpProviderErrorClassifier::is_timeout_source(Some(
+            refused_boxed.as_ref()
+        )));
+        assert!(!HttpProviderErrorClassifier::is_timeout_source(None));
     }
 
     #[test]

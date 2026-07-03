@@ -58,14 +58,108 @@ impl Workspace {
     }
 }
 
+pub struct WorkspaceFactory<'a> {
+    artifact: &'a Artifact,
+}
+
+impl<'a> WorkspaceFactory<'a> {
+    pub fn new(artifact: &'a Artifact) -> Self {
+        Self { artifact }
+    }
+
+    /// Creates a mutable clone checked out at the artifact's exact commit.
+    ///
+    /// The directory at `workspace_path` is NOT deleted on drop. The caller
+    /// is responsible for any cleanup.
+    pub fn create_workspace(&self, workspace_path: PathBuf) -> Workspace {
+        self.clone_artifact(&workspace_path)
+            .expect("failed to create workspace via git clone/checkout");
+        Workspace::at_path(workspace_path, self.artifact.commit_sha.clone())
+    }
+
+    /// Creates a detached git worktree in a freshly allocated temporary directory.
+    pub fn create_temporary_workspace(&self) -> Result<Workspace, Box<dyn Error>> {
+        let temp = TempDir::new()?;
+        let workspace_path = temp.path().join("worktree");
+        self.add_worktree(&workspace_path)?;
+        Ok(Workspace {
+            path: workspace_path.clone(),
+            _cleanup: Some(WorkspaceCleanup::GitWorktree {
+                _temp: temp,
+                repo_path: self.artifact.repo_path.clone(),
+                path: workspace_path,
+            }),
+            base_commit: self.artifact.commit_sha.clone(),
+        })
+    }
+
+    fn add_worktree(&self, workspace_path: &Path) -> Result<(), Box<dyn Error>> {
+        let add = Self::git_command()
+            .args(["worktree", "add", "--quiet", "--detach"])
+            .arg(workspace_path)
+            .arg(&self.artifact.commit_sha)
+            .current_dir(&self.artifact.repo_path)
+            .output()
+            .map_err(|e| format!("failed to run git worktree add: {e}"))?;
+        if !add.status.success() {
+            return Err(format!(
+                "git worktree add failed while creating workspace: {}",
+                String::from_utf8_lossy(&add.stderr).trim()
+            )
+            .into());
+        }
+        Ok(())
+    }
+
+    fn clone_artifact(&self, workspace_path: &Path) -> Result<(), Box<dyn Error>> {
+        let clone = Self::git_command()
+            .args(["clone", "--quiet", "--no-checkout"])
+            .arg(&self.artifact.repo_path)
+            .arg(workspace_path)
+            .output()
+            .map_err(|e| format!("failed to run git clone: {e}"))?;
+        if !clone.status.success() {
+            return Err(format!(
+                "git clone failed while creating workspace: {}",
+                String::from_utf8_lossy(&clone.stderr).trim()
+            )
+            .into());
+        }
+
+        let checkout = Self::git_command()
+            .args(["checkout", "--quiet", "--detach"])
+            .arg(&self.artifact.commit_sha)
+            .current_dir(workspace_path)
+            .output()
+            .map_err(|e| format!("failed to run git checkout: {e}"))?;
+        if !checkout.status.success() {
+            return Err(format!(
+                "git checkout failed while creating workspace: {}",
+                String::from_utf8_lossy(&checkout.stderr).trim()
+            )
+            .into());
+        }
+
+        Ok(())
+    }
+
+    pub(crate) fn git_command() -> Command {
+        let mut command = Command::new("git");
+        command
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .env_remove("GIT_INDEX_FILE")
+            .env_remove("GIT_PREFIX");
+        command
+    }
+}
+
 /// Creates a mutable clone checked out at the artifact's exact commit.
 ///
 /// The directory at `workspace_path` is NOT deleted on drop. The caller
 /// is responsible for any cleanup.
 pub fn create_workspace(artifact: &Artifact, workspace_path: PathBuf) -> Workspace {
-    git_clone_artifact(artifact, &workspace_path)
-        .expect("failed to create workspace via git clone/checkout");
-    Workspace::at_path(workspace_path, artifact.commit_sha.clone())
+    WorkspaceFactory::new(artifact).create_workspace(workspace_path)
 }
 
 /// Creates a detached git worktree in a freshly allocated temporary directory.
@@ -74,76 +168,9 @@ pub fn create_workspace(artifact: &Artifact, workspace_path: PathBuf) -> Workspa
 /// the returned [`Workspace`] is dropped. Even if validation or integration
 /// fails, the directory is removed as long as the `Workspace` value is dropped.
 pub fn create_temporary_workspace(artifact: &Artifact) -> Result<Workspace, Box<dyn Error>> {
-    let temp = TempDir::new()?;
-    let workspace_path = temp.path().join("worktree");
-    git_worktree_artifact(artifact, &workspace_path)?;
-    Ok(Workspace {
-        path: workspace_path.clone(),
-        _cleanup: Some(WorkspaceCleanup::GitWorktree {
-            _temp: temp,
-            repo_path: artifact.repo_path.clone(),
-            path: workspace_path,
-        }),
-        base_commit: artifact.commit_sha.clone(),
-    })
-}
-
-fn git_worktree_artifact(artifact: &Artifact, workspace_path: &Path) -> Result<(), Box<dyn Error>> {
-    let add = git_command()
-        .args(["worktree", "add", "--quiet", "--detach"])
-        .arg(workspace_path)
-        .arg(&artifact.commit_sha)
-        .current_dir(&artifact.repo_path)
-        .output()
-        .map_err(|e| format!("failed to run git worktree add: {e}"))?;
-    if !add.status.success() {
-        return Err(format!(
-            "git worktree add failed while creating workspace: {}",
-            String::from_utf8_lossy(&add.stderr).trim()
-        )
-        .into());
-    }
-    Ok(())
-}
-
-fn git_clone_artifact(artifact: &Artifact, workspace_path: &Path) -> Result<(), Box<dyn Error>> {
-    let clone = git_command()
-        .args(["clone", "--quiet", "--no-checkout"])
-        .arg(&artifact.repo_path)
-        .arg(workspace_path)
-        .output()
-        .map_err(|e| format!("failed to run git clone: {e}"))?;
-    if !clone.status.success() {
-        return Err(format!(
-            "git clone failed while creating workspace: {}",
-            String::from_utf8_lossy(&clone.stderr).trim()
-        )
-        .into());
-    }
-
-    let checkout = git_command()
-        .args(["checkout", "--quiet", "--detach"])
-        .arg(&artifact.commit_sha)
-        .current_dir(workspace_path)
-        .output()
-        .map_err(|e| format!("failed to run git checkout: {e}"))?;
-    if !checkout.status.success() {
-        return Err(format!(
-            "git checkout failed while creating workspace: {}",
-            String::from_utf8_lossy(&checkout.stderr).trim()
-        )
-        .into());
-    }
-
-    Ok(())
+    WorkspaceFactory::new(artifact).create_temporary_workspace()
 }
 
 pub(crate) fn git_command() -> Command {
-    let mut command = Command::new("git");
-    command
-        .env_remove("GIT_DIR")
-        .env_remove("GIT_WORK_TREE")
-        .env_remove("GIT_INDEX_FILE")
-        .env_remove("GIT_PREFIX");
-    command
+    WorkspaceFactory::git_command()
 }

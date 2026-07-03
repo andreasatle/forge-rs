@@ -12,11 +12,7 @@ use crate::artifacts::{ArtifactError, ArtifactRead, ArtifactView};
 use crate::machines::scheduler::{FailureKind, NodeKind};
 use crate::node_runner::TestTargetsFn;
 use crate::node_runner::WorkAttempt;
-use crate::node_runner::planner::{
-    PlannerOutput, PlannerValidationError, parse_planner_content,
-    validate_planner_explicit_targets, validate_planner_no_recreate, validate_planner_output,
-    validate_planner_tests_required,
-};
+use crate::node_runner::planner::{PlannerOutput, PlannerOutputProcessor, PlannerValidationError};
 use crate::roles::TargetView;
 use crate::roles::policy::RolePolicy;
 use crate::roles::runner::{ProviderRoleRunner, RoleRequest, RoleRunner, RoleToolContext};
@@ -68,18 +64,12 @@ fn validate_plan_output_for_context(
     planner_out: &PlannerOutput,
     context: &PlanValidationContext,
 ) -> Result<(), PlannerValidationError> {
-    validate_planner_output(planner_out)?;
-
-    let objective_targets: Vec<String> = {
-        use crate::node_runner::planner::explicit_objective_targets_pub;
-        explicit_objective_targets_pub(&context.top_objective)
-    };
-    let exempt_targets = (context.required_test_targets_fn)(&objective_targets);
-
-    validate_planner_explicit_targets(planner_out, &context.top_objective, &exempt_targets)?;
-    validate_planner_no_recreate(planner_out, &context.top_objective, &context.existing_files)?;
-    validate_planner_tests_required(planner_out, context.required_test_targets_fn.as_ref())?;
-    Ok(())
+    PlannerOutputProcessor::new(
+        &context.top_objective,
+        &context.existing_files,
+        context.required_test_targets_fn.as_ref(),
+    )
+    .validate(planner_out)
 }
 
 pub(super) fn planner_validation_feedback(error: &PlannerValidationError) -> String {
@@ -430,7 +420,7 @@ impl<R: RoleRunner> DeliberationHandler<R> {
             .as_ref()
             .expect("plan_validation_context must be Some when this method is called");
 
-        let Some(planner_out) = parse_planner_content(content) else {
+        let Some(planner_out) = PlannerOutputProcessor::parse_content(content) else {
             return Err(ProducerValidationRetry {
                 feedback_reason: planner_parse_failure_feedback(),
                 max_retries: MAX_PLAN_VALIDATION_RETRIES,

@@ -53,12 +53,10 @@ pub(crate) fn map_output(
 /// - If parsing fails (prose or unexpected schema): emits
 ///   `PlannerOutputFallback` and returns `Failed` with `Terminal` recovery.
 fn map_plan_output(content: String, telemetry: &dyn TelemetrySink) -> NodeRunResult {
-    use crate::node_runner::planner::{
-        parse_planner_content, planner_output_to_plan_output, validate_planner_output,
-    };
+    use crate::node_runner::planner::PlannerOutputProcessor;
 
-    match parse_planner_content(&content) {
-        Some(planner_out) => match validate_planner_output(&planner_out) {
+    match PlannerOutputProcessor::parse_content(&content) {
+        Some(planner_out) => match PlannerOutputProcessor::validate_structure(&planner_out) {
             Ok(()) => {
                 let task_count = planner_out.tasks.len();
                 let dependency_count: usize =
@@ -70,7 +68,7 @@ fn map_plan_output(content: String, telemetry: &dyn TelemetrySink) -> NodeRunRes
                         dependency_count,
                     },
                 ));
-                NodeRunResult::PlanAccepted(planner_output_to_plan_output(planner_out))
+                NodeRunResult::PlanAccepted(PlannerOutputProcessor::into_plan_output(planner_out))
             }
             Err(e) => {
                 let reason = e.to_string();

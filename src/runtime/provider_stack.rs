@@ -31,8 +31,22 @@ impl ResolvedProviderStack {
     /// Resolve `provider` into metadata, start any managed servers it
     /// requires, and build the cheap/strong provider handles.
     pub fn build(provider: &ProviderConfig) -> Result<Self, Box<dyn Error>> {
-        let metadata = make_provider_run_metadata(provider)?;
-        let servers = start_managed_provider_servers(provider)?;
+        ProviderStackBuilder::new(provider).build()
+    }
+}
+
+pub struct ProviderStackBuilder<'a> {
+    provider: &'a ProviderConfig,
+}
+
+impl<'a> ProviderStackBuilder<'a> {
+    pub fn new(provider: &'a ProviderConfig) -> Self {
+        Self { provider }
+    }
+
+    pub fn build(&self) -> Result<ResolvedProviderStack, Box<dyn Error>> {
+        let metadata = self.run_metadata();
+        let servers = self.start_managed_servers()?;
 
         let cheap_llama =
             LlamaCppProvider::new(&metadata.cheap.base_url, metadata.cheap.timeout_seconds);
@@ -45,7 +59,7 @@ impl ResolvedProviderStack {
         let cheap_tokens = metadata.cheap.n_predict as u32;
         let strong_tokens = metadata.strong.n_predict as u32;
 
-        Ok(Self {
+        Ok(ResolvedProviderStack {
             metadata,
             cheap,
             strong,
@@ -54,99 +68,109 @@ impl ResolvedProviderStack {
             _servers: servers,
         })
     }
-}
 
-fn make_provider_run_metadata(
-    provider: &ProviderConfig,
-) -> Result<ProviderRunMetadata, Box<dyn Error>> {
-    let cheap = resolve_provider_tier(&provider.cheap, provider.timeout_seconds);
-    let strong = match &provider.strong {
-        Some(strong) => resolve_provider_tier(
-            strong,
-            provider
-                .strong_timeout_seconds
-                .unwrap_or(provider.timeout_seconds),
-        ),
-        None => {
-            let mut strong = cheap.clone();
-            strong.timeout_seconds = provider
-                .strong_timeout_seconds
-                .unwrap_or(provider.timeout_seconds);
-            strong
-        }
-    };
-    Ok(ProviderRunMetadata { cheap, strong })
-}
+    pub fn run_metadata(&self) -> ProviderRunMetadata {
+        let cheap = self.resolve_tier(&self.provider.cheap, self.provider.timeout_seconds);
+        let strong = match &self.provider.strong {
+            Some(strong) => self.resolve_tier(
+                strong,
+                self.provider
+                    .strong_timeout_seconds
+                    .unwrap_or(self.provider.timeout_seconds),
+            ),
+            None => {
+                let mut strong = cheap.clone();
+                strong.timeout_seconds = self
+                    .provider
+                    .strong_timeout_seconds
+                    .unwrap_or(self.provider.timeout_seconds);
+                strong
+            }
+        };
+        ProviderRunMetadata { cheap, strong }
+    }
 
-fn resolve_provider_tier(tier: &ProviderTierConfig, timeout_seconds: u64) -> ProviderTierMetadata {
-    match tier {
-        ProviderTierConfig::Unmanaged(config) => ProviderTierMetadata {
-            base_url: config.base_url.clone(),
-            model: config.model.clone(),
-            n_predict: config.n_predict,
-            timeout_seconds,
-            managed: false,
-            managed_server: None,
-        },
-        ProviderTierConfig::Managed(managed) => {
-            let config = resolve_managed_llama_cpp(managed);
-            ProviderTierMetadata {
+    fn resolve_tier(
+        &self,
+        tier: &ProviderTierConfig,
+        timeout_seconds: u64,
+    ) -> ProviderTierMetadata {
+        match tier {
+            ProviderTierConfig::Unmanaged(config) => ProviderTierMetadata {
                 base_url: config.base_url.clone(),
-                model: config.model.identity().to_string(),
-                n_predict: managed.llama_cpp.n_predict,
+                model: config.model.clone(),
+                n_predict: config.n_predict,
                 timeout_seconds,
-                managed: true,
-                managed_server: Some(managed_server_metadata(&config)),
+                managed: false,
+                managed_server: None,
+            },
+            ProviderTierConfig::Managed(managed) => {
+                let config = self.resolve_managed_llama_cpp(managed);
+                ProviderTierMetadata {
+                    base_url: config.base_url.clone(),
+                    model: config.model.identity().to_string(),
+                    n_predict: managed.llama_cpp.n_predict,
+                    timeout_seconds,
+                    managed: true,
+                    managed_server: Some(self.managed_server_metadata(&config)),
+                }
             }
         }
     }
-}
 
-fn resolve_managed_llama_cpp(managed: &ManagedProviderConfig) -> ManagedLlamaCppRuntimeConfig {
-    resolve_llama_cpp_config(&managed.llama_cpp)
-}
-
-fn managed_server_metadata(config: &ManagedLlamaCppRuntimeConfig) -> ManagedProviderServerMetadata {
-    ManagedProviderServerMetadata {
-        kind: "llama_cpp".to_string(),
-        command: config.command.clone(),
-        port: config.port,
-        context_size: config.context_size,
-        startup_timeout_seconds: config.startup_timeout_seconds,
+    fn resolve_managed_llama_cpp(
+        &self,
+        managed: &ManagedProviderConfig,
+    ) -> ManagedLlamaCppRuntimeConfig {
+        resolve_llama_cpp_config(&managed.llama_cpp)
     }
-}
 
-fn start_managed_provider_servers(
-    provider: &ProviderConfig,
-) -> Result<Vec<ManagedProviderServer>, Box<dyn Error>> {
-    let mut servers = Vec::new();
-    if let ProviderTierConfig::Managed(managed) = &provider.cheap {
-        let config = resolve_managed_llama_cpp(managed);
-        servers.push(ManagedProviderServer::start_llama_cpp(&config)?);
-        log_managed_provider_started("cheap", &config);
+    fn managed_server_metadata(
+        &self,
+        config: &ManagedLlamaCppRuntimeConfig,
+    ) -> ManagedProviderServerMetadata {
+        ManagedProviderServerMetadata {
+            kind: "llama_cpp".to_string(),
+            command: config.command.clone(),
+            port: config.port,
+            context_size: config.context_size,
+            startup_timeout_seconds: config.startup_timeout_seconds,
+        }
     }
-    if let Some(ProviderTierConfig::Managed(managed)) = &provider.strong {
-        let config = resolve_managed_llama_cpp(managed);
-        servers.push(ManagedProviderServer::start_llama_cpp(&config)?);
-        log_managed_provider_started("strong", &config);
+
+    fn start_managed_servers(&self) -> Result<Vec<ManagedProviderServer>, Box<dyn Error>> {
+        let mut servers = Vec::new();
+        if let ProviderTierConfig::Managed(managed) = &self.provider.cheap {
+            let config = self.resolve_managed_llama_cpp(managed);
+            servers.push(ManagedProviderServer::start_llama_cpp(&config)?);
+            self.log_managed_provider_started("cheap", &config);
+        }
+        if let Some(ProviderTierConfig::Managed(managed)) = &self.provider.strong {
+            let config = self.resolve_managed_llama_cpp(managed);
+            servers.push(ManagedProviderServer::start_llama_cpp(&config)?);
+            self.log_managed_provider_started("strong", &config);
+        }
+        Ok(servers)
     }
-    Ok(servers)
-}
 
-fn log_managed_provider_started(tier: &str, config: &ManagedLlamaCppRuntimeConfig) {
-    eprintln!(
-        "[provider] {:<7} {:<20} {}:{}",
-        tier,
-        managed_model_display_name(&config.model),
-        config.host,
-        config.port
-    );
-}
+    fn log_managed_provider_started(&self, tier: &str, config: &ManagedLlamaCppRuntimeConfig) {
+        eprintln!(
+            "[provider] {:<7} {:<20} {}:{}",
+            tier,
+            self.managed_model_display_name(&config.model),
+            config.host,
+            config.port
+        );
+    }
 
-/// Strips the repo/directory prefix from a managed model identifier for display.
-fn managed_model_display_name(model: &ManagedLlamaCppModelConfig) -> &str {
-    let identity = model.identity();
-    identity.rsplit('/').next().unwrap_or(identity)
+    /// Strips the repo/directory prefix from a managed model identifier for display.
+    fn managed_model_display_name<'model>(
+        &self,
+        model: &'model ManagedLlamaCppModelConfig,
+    ) -> &'model str {
+        let identity = model.identity();
+        identity.rsplit('/').next().unwrap_or(identity)
+    }
 }
 
 #[cfg(test)]
@@ -193,7 +217,7 @@ mod tests {
     fn strong_tier_falls_back_when_no_strong_provider_configured() {
         let config = unmanaged_provider("http://localhost:8080", "cheap-model", 512);
 
-        let metadata = make_provider_run_metadata(&config).unwrap();
+        let metadata = ProviderStackBuilder::new(&config).run_metadata();
 
         // When strong fields are absent, both tiers must resolve to the cheap values.
         assert_eq!(metadata.strong, metadata.cheap);
@@ -217,7 +241,7 @@ mod tests {
             strong_timeout_seconds: Some(180),
         };
 
-        let metadata = make_provider_run_metadata(&config).unwrap();
+        let metadata = ProviderStackBuilder::new(&config).run_metadata();
 
         assert_eq!(
             metadata,
@@ -259,7 +283,7 @@ mod tests {
             strong_timeout_seconds: None,
         };
 
-        let metadata = make_provider_run_metadata(&config).unwrap();
+        let metadata = ProviderStackBuilder::new(&config).run_metadata();
 
         let cheap_tier = ProviderTierMetadata {
             base_url: "http://127.0.0.1:18080".to_string(),
@@ -306,7 +330,7 @@ mod tests {
             strong_timeout_seconds: Some(180),
         };
 
-        let metadata = make_provider_run_metadata(&config).unwrap();
+        let metadata = ProviderStackBuilder::new(&config).run_metadata();
 
         assert_eq!(
             metadata,

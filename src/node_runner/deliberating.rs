@@ -15,7 +15,7 @@ use crate::roles::RolePolicy;
 use crate::telemetry::{TelemetryEvent, TelemetryRecord, TelemetrySink};
 use crate::validation::ValidationPlan;
 
-use super::planner::try_fast_plan;
+use super::planner::PlannerOutputProcessor;
 use super::runner::NodeRunner;
 use super::types::{NodeRunRequest, NodeRunResult};
 
@@ -128,8 +128,12 @@ impl<C: ProviderClient, S: ProviderClient> NodeRunner for DeliberatingNodeRunner
     fn run_node(&self, request: NodeRunRequest, telemetry: &dyn TelemetrySink) -> NodeRunResult {
         // Fast path: bypass LLM for plan nodes whose objective names exactly one source file.
         if request.kind == NodeKind::Plan
-            && let Some(plan) =
-                try_fast_plan(&request.objective, self.required_test_targets_fn.as_ref())
+            && let Some(plan) = PlannerOutputProcessor::new(
+                &request.objective,
+                std::iter::empty::<&str>(),
+                self.required_test_targets_fn.as_ref(),
+            )
+            .try_fast_plan()
         {
             let task_count = plan.children.len();
             telemetry.record(TelemetryRecord::new(

@@ -146,13 +146,375 @@ impl std::fmt::Display for PlannerValidationError {
     }
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct ObjectiveTargetSet {
+    targets: HashSet<String>,
+}
+
+impl ObjectiveTargetSet {
+    fn from_objective(top_objective: &str) -> Self {
+        Self {
+            targets: top_objective
+                .split_whitespace()
+                .map(Self::normalize_token)
+                .filter(|token| {
+                    Self::token_contains_file_separator(token)
+                        && Self::token_has_file_extension(token)
+                })
+                .collect(),
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.targets.is_empty()
+    }
+
+    fn contains(&self, target: &str) -> bool {
+        self.targets.contains(target)
+    }
+
+    fn has_code_like_target(&self) -> bool {
+        self.targets
+            .iter()
+            .any(|target| PlannerOutputProcessor::target_is_code_like(target))
+    }
+
+    fn sorted(&self) -> Vec<String> {
+        let mut sorted: Vec<String> = self.targets.iter().cloned().collect();
+        sorted.sort();
+        sorted
+    }
+
+    fn source_code_targets(&self) -> Vec<String> {
+        let mut targets: Vec<String> = self
+            .targets
+            .iter()
+            .filter(|target| {
+                PlannerOutputProcessor::target_is_code_like(target)
+                    && !PlannerOutputProcessor::target_is_test_related(target)
+            })
+            .cloned()
+            .collect();
+        targets.sort();
+        targets
+    }
+
+    fn into_vec(self) -> Vec<String> {
+        self.targets.into_iter().collect()
+    }
+
+    fn normalize_token(token: &str) -> String {
+        token
+            .trim_matches(|c: char| {
+                !(c.is_ascii_alphanumeric()
+                    || matches!(c, '.' | '/' | '\\' | '_' | '-' | '@' | '+'))
+            })
+            .trim_start_matches("./")
+            .replace('\\', "/")
+    }
+
+    fn token_contains_file_separator(token: &str) -> bool {
+        token.contains('.') || token.contains('/')
+    }
+
+    fn token_has_file_extension(token: &str) -> bool {
+        let Some(filename) = token.rsplit('/').next() else {
+            return false;
+        };
+        let Some((stem, extension)) = filename.rsplit_once('.') else {
+            return false;
+        };
+        !stem.is_empty()
+            && !extension.is_empty()
+            && extension
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'))
+    }
+}
+
+pub(crate) struct PlannerOutputProcessor<'a> {
+    top_objective: String,
+    existing_files: Vec<String>,
+    required_test_targets_fn: &'a dyn Fn(&[String]) -> Vec<String>,
+    explicit_objective_targets: ObjectiveTargetSet,
+}
+
+impl<'a> PlannerOutputProcessor<'a> {
+    pub(crate) fn new<I, S>(
+        top_objective: impl Into<String>,
+        existing_files: I,
+        required_test_targets_fn: &'a dyn Fn(&[String]) -> Vec<String>,
+    ) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        let top_objective = top_objective.into();
+        let explicit_objective_targets = ObjectiveTargetSet::from_objective(&top_objective);
+        Self {
+            top_objective,
+            existing_files: existing_files
+                .into_iter()
+                .map(|file| file.as_ref().to_string())
+                .collect(),
+            required_test_targets_fn,
+            explicit_objective_targets,
+        }
+    }
+
+    /// Attempt to parse raw provider content as a [`PlannerOutput`].
+    pub(crate) fn parse_content(content: &str) -> Option<PlannerOutput> {
+        serde_json::from_str::<PlannerOutput>(content).ok()
+    }
+
+    /// Parse a raw provider response as a [`PlannerOutput`] directly.
+    pub(crate) fn parse_response(raw: &str) -> Result<PlannerOutput, String> {
+        let text = raw.trim();
+        if !text.starts_with('{') {
+            return Err(
+                "planner response must start with '{'; preamble text is not permitted".to_string(),
+            );
+        }
+        serde_json::from_str::<PlannerOutput>(text)
+            .map_err(|e| format!("planner JSON parse error: {e}"))
+    }
+
+    /// Validate structural constraints that do not require run context.
+    pub(crate) fn validate_structure(output: &PlannerOutput) -> Result<(), PlannerValidationError> {
+        if output.tasks.is_empty() {
+            return Err(PlannerValidationError::EmptyTaskList);
+        }
+        let mut seen: HashSet<&str> = HashSet::new();
+        for task in &output.tasks {
+            if !seen.insert(task.id.as_str()) {
+                return Err(PlannerValidationError::DuplicateId(task.id.clone()));
+            }
+            if task.objective.trim().is_empty() {
+                return Err(PlannerValidationError::EmptyObjective(task.id.clone()));
+            }
+            if task.targets.is_empty() || task.targets.iter().any(|t| t.trim().is_empty()) {
+                return Err(PlannerValidationError::EmptyTargets(task.id.clone()));
+            }
+            if task.depends_on.iter().any(|d| d == &task.id) {
+                return Err(PlannerValidationError::SelfDependency(task.id.clone()));
+            }
+        }
+        let all_ids: HashSet<&str> = output.tasks.iter().map(|t| t.id.as_str()).collect();
+        for task in &output.tasks {
+            for dep in &task.depends_on {
+                if !all_ids.contains(dep.as_str()) {
+                    return Err(PlannerValidationError::UnknownDependency {
+                        task_id: task.id.clone(),
+                        dep_id: dep.clone(),
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn validate(&self, output: &PlannerOutput) -> Result<(), PlannerValidationError> {
+        Self::validate_structure(output)?;
+        let objective_targets = self.explicit_objective_targets.clone().into_vec();
+        let exempt_targets = (self.required_test_targets_fn)(&objective_targets);
+        self.validate_explicit_targets(output, &exempt_targets)?;
+        self.validate_no_recreate(output)?;
+        self.validate_tests_required(output)?;
+        Ok(())
+    }
+
+    pub(crate) fn validate_explicit_targets(
+        &self,
+        output: &PlannerOutput,
+        exempt_targets: &[String],
+    ) -> Result<(), PlannerValidationError> {
+        if self.explicit_objective_targets.is_empty()
+            || !self.explicit_objective_targets.has_code_like_target()
+        {
+            return Ok(());
+        }
+
+        for target in output.tasks.iter().flat_map(|task| task.targets.iter()) {
+            let normalized = ObjectiveTargetSet::normalize_token(target);
+            if !exempt_targets.contains(&normalized)
+                && !self.explicit_objective_targets.contains(&normalized)
+            {
+                return Err(PlannerValidationError::ExplicitTargetViolation {
+                    filename: normalized,
+                    allowed_targets: self.explicit_objective_targets.sorted(),
+                });
+            }
+        }
+
+        Ok(())
+    }
+
+    pub(crate) fn validate_no_recreate(
+        &self,
+        output: &PlannerOutput,
+    ) -> Result<(), PlannerValidationError> {
+        for task in &output.tasks {
+            for filename in &self.existing_files {
+                if task.targets.iter().any(|target| target == filename)
+                    && !self.top_objective.contains(filename)
+                {
+                    return Err(PlannerValidationError::TaskRecreatesExistingFile {
+                        task_id: task.id.clone(),
+                        filename: filename.clone(),
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn validate_tests_required(
+        &self,
+        output: &PlannerOutput,
+    ) -> Result<(), PlannerValidationError> {
+        let all_plan_targets: Vec<String> = output
+            .tasks
+            .iter()
+            .flat_map(|task| task.targets.iter().cloned())
+            .collect();
+        let required = (self.required_test_targets_fn)(&all_plan_targets);
+        if required.is_empty() {
+            return Ok(());
+        }
+        let plan_target_set: std::collections::HashSet<&str> =
+            all_plan_targets.iter().map(|s| s.as_str()).collect();
+        if required
+            .iter()
+            .any(|r| plan_target_set.contains(r.as_str()))
+        {
+            Ok(())
+        } else {
+            Err(PlannerValidationError::MissingTestsForCodeChange)
+        }
+    }
+
+    pub(crate) fn try_fast_plan(&self) -> Option<PlanOutput> {
+        let source_targets = self.explicit_objective_targets.source_code_targets();
+
+        if source_targets.len() != 1 {
+            return None;
+        }
+
+        let source = source_targets.into_iter().next().unwrap();
+        let required_validation_targets =
+            (self.required_test_targets_fn)(std::slice::from_ref(&source));
+        let work = NodeRequest {
+            id: NodeId("work".to_string()),
+            kind: NodeKind::Work,
+            objective: self.top_objective.clone(),
+            target_files: vec![source.clone()],
+            required_validation_targets: required_validation_targets.clone(),
+            dependencies: vec![],
+            validation_plan: None,
+        };
+        let mut children = vec![work];
+
+        for (i, test_target) in required_validation_targets.into_iter().enumerate() {
+            let id = if i == 0 {
+                "tests".to_string()
+            } else {
+                format!("tests-{i}")
+            };
+            children.push(NodeRequest {
+                id: NodeId(id),
+                kind: NodeKind::Work,
+                objective: format!(
+                    "Write tests that verify the work described by the following objective:\n\n\
+                     {}",
+                    self.top_objective
+                ),
+                target_files: vec![test_target],
+                required_validation_targets: vec![],
+                dependencies: vec![NodeId("work".to_string())],
+                validation_plan: None,
+            });
+        }
+
+        Some(PlanOutput { children })
+    }
+
+    pub(crate) fn into_plan_output(output: PlannerOutput) -> PlanOutput {
+        PlanOutput {
+            children: output
+                .tasks
+                .into_iter()
+                .map(|task| NodeRequest {
+                    id: NodeId(task.id),
+                    kind: NodeKind::Work,
+                    objective: task.objective,
+                    target_files: task.targets,
+                    required_validation_targets: vec![],
+                    dependencies: task.depends_on.into_iter().map(NodeId).collect(),
+                    validation_plan: None,
+                })
+                .collect(),
+        }
+    }
+
+    fn target_is_test_related(target: &str) -> bool {
+        let path = target.replace('\\', "/").to_ascii_lowercase();
+        let filename = path.rsplit('/').next().unwrap_or(path.as_str());
+        path.contains("/test/")
+            || path.contains("/tests/")
+            || path.starts_with("test/")
+            || path.starts_with("tests/")
+            || filename.starts_with("test_")
+            || filename.starts_with("test-")
+            || filename.ends_with("_test.rs")
+            || filename.ends_with("_tests.rs")
+            || filename.contains("_test.")
+            || filename.contains("-test.")
+            || filename.contains(".test.")
+            || filename.contains("_tests.")
+            || filename.contains("-tests.")
+            || filename.contains(".spec.")
+    }
+
+    fn target_is_code_like(target: &str) -> bool {
+        let extension = target
+            .rsplit_once('.')
+            .map(|(_, ext)| ext.to_ascii_lowercase())
+            .unwrap_or_default();
+        matches!(
+            extension.as_str(),
+            "c" | "cc"
+                | "cpp"
+                | "cs"
+                | "go"
+                | "java"
+                | "js"
+                | "jsx"
+                | "kt"
+                | "m"
+                | "mm"
+                | "php"
+                | "py"
+                | "rb"
+                | "rs"
+                | "scala"
+                | "swift"
+                | "ts"
+                | "tsx"
+        )
+    }
+}
+
+fn no_required_test_targets(_: &[String]) -> Vec<String> {
+    Vec::new()
+}
+
 /// Attempt to parse raw provider content as a [`PlannerOutput`].
 ///
 /// Returns `Some(PlannerOutput)` on success, `None` if the content cannot be
 /// parsed. A parse failure is not an error in the run — prose output is an
 /// expected fallback case that triggers single-work-node behaviour.
 pub fn parse_planner_content(content: &str) -> Option<PlannerOutput> {
-    serde_json::from_str::<PlannerOutput>(content).ok()
+    PlannerOutputProcessor::parse_content(content)
 }
 
 /// Parse a raw provider response as a [`PlannerOutput`] directly.
@@ -161,14 +523,7 @@ pub fn parse_planner_content(content: &str) -> Option<PlannerOutput> {
 /// role runner's retry path. A preamble before the opening `{` is rejected
 /// immediately without attempting JSON parsing.
 pub fn try_parse_planner_response(raw: &str) -> Result<PlannerOutput, String> {
-    let text = raw.trim();
-    if !text.starts_with('{') {
-        return Err(
-            "planner response must start with '{'; preamble text is not permitted".to_string(),
-        );
-    }
-    serde_json::from_str::<PlannerOutput>(text)
-        .map_err(|e| format!("planner JSON parse error: {e}"))
+    PlannerOutputProcessor::parse_response(raw)
 }
 
 /// Validate the structural constraints of a parsed [`PlannerOutput`].
@@ -182,36 +537,7 @@ pub fn try_parse_planner_response(raw: &str) -> Result<PlannerOutput, String> {
 ///
 /// Returns `Err` on the first violation. Does not attempt to repair.
 pub fn validate_planner_output(output: &PlannerOutput) -> Result<(), PlannerValidationError> {
-    if output.tasks.is_empty() {
-        return Err(PlannerValidationError::EmptyTaskList);
-    }
-    let mut seen: HashSet<&str> = HashSet::new();
-    for task in &output.tasks {
-        if !seen.insert(task.id.as_str()) {
-            return Err(PlannerValidationError::DuplicateId(task.id.clone()));
-        }
-        if task.objective.trim().is_empty() {
-            return Err(PlannerValidationError::EmptyObjective(task.id.clone()));
-        }
-        if task.targets.is_empty() || task.targets.iter().any(|t| t.trim().is_empty()) {
-            return Err(PlannerValidationError::EmptyTargets(task.id.clone()));
-        }
-        if task.depends_on.iter().any(|d| d == &task.id) {
-            return Err(PlannerValidationError::SelfDependency(task.id.clone()));
-        }
-    }
-    let all_ids: HashSet<&str> = output.tasks.iter().map(|t| t.id.as_str()).collect();
-    for task in &output.tasks {
-        for dep in &task.depends_on {
-            if !all_ids.contains(dep.as_str()) {
-                return Err(PlannerValidationError::UnknownDependency {
-                    task_id: task.id.clone(),
-                    dep_id: dep.clone(),
-                });
-            }
-        }
-    }
-    Ok(())
+    PlannerOutputProcessor::validate_structure(output)
 }
 
 /// Check that when a coding objective explicitly names target files, all
@@ -228,26 +554,12 @@ pub fn validate_planner_explicit_targets(
     top_objective: &str,
     exempt_targets: &[String],
 ) -> Result<(), PlannerValidationError> {
-    let allowed_targets = explicit_objective_targets(top_objective);
-    if allowed_targets.is_empty()
-        || !allowed_targets
-            .iter()
-            .any(|target| target_is_code_like(target))
-    {
-        return Ok(());
-    }
-
-    for target in output.tasks.iter().flat_map(|task| task.targets.iter()) {
-        let normalized = normalize_target_token(target);
-        if !exempt_targets.contains(&normalized) && !allowed_targets.contains(&normalized) {
-            return Err(PlannerValidationError::ExplicitTargetViolation {
-                filename: normalized,
-                allowed_targets: sorted_targets(&allowed_targets),
-            });
-        }
-    }
-
-    Ok(())
+    let processor = PlannerOutputProcessor::new(
+        top_objective,
+        std::iter::empty::<&str>(),
+        &no_required_test_targets,
+    );
+    processor.validate_explicit_targets(output, exempt_targets)
 }
 
 /// Check that no task in `output` targets an existing project file that is not
@@ -264,20 +576,9 @@ pub fn validate_planner_no_recreate(
     top_objective: &str,
     existing_files: &[impl AsRef<str>],
 ) -> Result<(), PlannerValidationError> {
-    for task in &output.tasks {
-        for filename in existing_files {
-            let filename = filename.as_ref();
-            if task.targets.iter().any(|target| target == filename)
-                && !top_objective.contains(filename)
-            {
-                return Err(PlannerValidationError::TaskRecreatesExistingFile {
-                    task_id: task.id.clone(),
-                    filename: filename.to_string(),
-                });
-            }
-        }
-    }
-    Ok(())
+    let processor =
+        PlannerOutputProcessor::new(top_objective, existing_files, &no_required_test_targets);
+    processor.validate_no_recreate(output)
 }
 
 /// Check that a code-changing plan includes at least one required test target.
@@ -295,121 +596,9 @@ pub fn validate_planner_tests_required(
     output: &PlannerOutput,
     required_test_targets_fn: &dyn Fn(&[String]) -> Vec<String>,
 ) -> Result<(), PlannerValidationError> {
-    let all_plan_targets: Vec<String> = output
-        .tasks
-        .iter()
-        .flat_map(|task| task.targets.iter().cloned())
-        .collect();
-    let required = required_test_targets_fn(&all_plan_targets);
-    if required.is_empty() {
-        return Ok(());
-    }
-    let plan_target_set: std::collections::HashSet<&str> =
-        all_plan_targets.iter().map(|s| s.as_str()).collect();
-    if required
-        .iter()
-        .any(|r| plan_target_set.contains(r.as_str()))
-    {
-        Ok(())
-    } else {
-        Err(PlannerValidationError::MissingTestsForCodeChange)
-    }
-}
-
-fn target_is_test_related(target: &str) -> bool {
-    let path = target.replace('\\', "/").to_ascii_lowercase();
-    let filename = path.rsplit('/').next().unwrap_or(path.as_str());
-    path.contains("/test/")
-        || path.contains("/tests/")
-        || path.starts_with("test/")
-        || path.starts_with("tests/")
-        || filename.starts_with("test_")
-        || filename.starts_with("test-")
-        || filename.ends_with("_test.rs")
-        || filename.ends_with("_tests.rs")
-        || filename.contains("_test.")
-        || filename.contains("-test.")
-        || filename.contains(".test.")
-        || filename.contains("_tests.")
-        || filename.contains("-tests.")
-        || filename.contains(".spec.")
-}
-
-fn target_is_code_like(target: &str) -> bool {
-    let extension = target
-        .rsplit_once('.')
-        .map(|(_, ext)| ext.to_ascii_lowercase())
-        .unwrap_or_default();
-    matches!(
-        extension.as_str(),
-        "c" | "cc"
-            | "cpp"
-            | "cs"
-            | "go"
-            | "java"
-            | "js"
-            | "jsx"
-            | "kt"
-            | "m"
-            | "mm"
-            | "php"
-            | "py"
-            | "rb"
-            | "rs"
-            | "scala"
-            | "swift"
-            | "ts"
-            | "tsx"
-    )
-}
-
-fn explicit_objective_targets(top_objective: &str) -> HashSet<String> {
-    top_objective
-        .split_whitespace()
-        .map(normalize_target_token)
-        .filter(|token| token_contains_file_separator(token) && token_has_file_extension(token))
-        .collect()
-}
-
-/// Public-crate wrapper that returns objective targets as a `Vec` for callers
-/// outside this module (e.g., plan validation context).
-pub(crate) fn explicit_objective_targets_pub(top_objective: &str) -> Vec<String> {
-    explicit_objective_targets(top_objective)
-        .into_iter()
-        .collect()
-}
-
-fn normalize_target_token(token: &str) -> String {
-    token
-        .trim_matches(|c: char| {
-            !(c.is_ascii_alphanumeric() || matches!(c, '.' | '/' | '\\' | '_' | '-' | '@' | '+'))
-        })
-        .trim_start_matches("./")
-        .replace('\\', "/")
-}
-
-fn token_contains_file_separator(token: &str) -> bool {
-    token.contains('.') || token.contains('/')
-}
-
-fn token_has_file_extension(token: &str) -> bool {
-    let Some(filename) = token.rsplit('/').next() else {
-        return false;
-    };
-    let Some((stem, extension)) = filename.rsplit_once('.') else {
-        return false;
-    };
-    !stem.is_empty()
-        && !extension.is_empty()
-        && extension
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'))
-}
-
-fn sorted_targets(targets: &HashSet<String>) -> Vec<String> {
-    let mut sorted: Vec<String> = targets.iter().cloned().collect();
-    sorted.sort();
-    sorted
+    let processor =
+        PlannerOutputProcessor::new("", std::iter::empty::<&str>(), required_test_targets_fn);
+    processor.validate_tests_required(output)
 }
 
 /// Attempt to build a deterministic [`PlanOutput`] from `objective` without
@@ -426,53 +615,12 @@ pub fn try_fast_plan(
     objective: &str,
     required_test_targets_fn: &dyn Fn(&[String]) -> Vec<String>,
 ) -> Option<PlanOutput> {
-    let all_targets = explicit_objective_targets(objective);
-    let mut source_targets: Vec<String> = all_targets
-        .into_iter()
-        .filter(|t| target_is_code_like(t) && !target_is_test_related(t))
-        .collect();
-    source_targets.sort();
-
-    if source_targets.len() != 1 {
-        return None;
-    }
-
-    let source = source_targets.into_iter().next().unwrap();
-    let work = NodeRequest {
-        id: NodeId("work".to_string()),
-        kind: NodeKind::Work,
-        objective: objective.to_string(),
-        target_files: vec![source.clone()],
-        required_validation_targets: required_test_targets_fn(std::slice::from_ref(&source)),
-        dependencies: vec![],
-        validation_plan: None,
-    };
-    let mut children = vec![work];
-
-    for (i, test_target) in required_test_targets_fn(std::slice::from_ref(&source))
-        .into_iter()
-        .enumerate()
-    {
-        let id = if i == 0 {
-            "tests".to_string()
-        } else {
-            format!("tests-{i}")
-        };
-        children.push(NodeRequest {
-            id: NodeId(id),
-            kind: NodeKind::Work,
-            objective: format!(
-                "Write tests that verify the work described by the following objective:\n\n\
-                 {objective}"
-            ),
-            target_files: vec![test_target],
-            required_validation_targets: vec![],
-            dependencies: vec![NodeId("work".to_string())],
-            validation_plan: None,
-        });
-    }
-
-    Some(PlanOutput { children })
+    PlannerOutputProcessor::new(
+        objective,
+        std::iter::empty::<&str>(),
+        required_test_targets_fn,
+    )
+    .try_fast_plan()
 }
 
 /// Convert a validated [`PlannerOutput`] into a scheduler [`PlanOutput`].
@@ -484,21 +632,7 @@ pub fn try_fast_plan(
 /// The scheduler's `insert_children` rewrites those planner-local ids to
 /// actual graph `NodeId`s at insertion time.
 pub fn planner_output_to_plan_output(output: PlannerOutput) -> PlanOutput {
-    PlanOutput {
-        children: output
-            .tasks
-            .into_iter()
-            .map(|task| NodeRequest {
-                id: NodeId(task.id),
-                kind: NodeKind::Work,
-                objective: task.objective,
-                target_files: task.targets,
-                required_validation_targets: vec![],
-                dependencies: task.depends_on.into_iter().map(NodeId).collect(),
-                validation_plan: None,
-            })
-            .collect(),
-    }
+    PlannerOutputProcessor::into_plan_output(output)
 }
 
 #[cfg(test)]
