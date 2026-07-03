@@ -396,7 +396,8 @@ mod tests {
         let root = temp_runs_root("manifest");
         let _ = std::fs::remove_dir_all(&root);
 
-        let r = create_run(&root, "test objective", "repo.git", &provider_metadata()).unwrap();
+        let metadata = provider_metadata();
+        let r = create_run(&root, "test objective", "repo.git", &metadata).unwrap();
 
         let manifest_path = r.run_dir.join("manifest.json");
         assert!(manifest_path.exists(), "manifest.json must exist");
@@ -406,21 +407,8 @@ mod tests {
         assert_eq!(v["run_id"], r.run_id.as_str());
         assert_eq!(v["telemetry_dir"], "telemetry");
         assert_eq!(v["provider"], "http://localhost:8080");
-        assert_eq!(v["providers"]["cheap"]["base_url"], "http://localhost:8080");
-        assert_eq!(v["providers"]["cheap"]["model"], "cheap-model");
-        assert_eq!(v["providers"]["cheap"]["n_predict"], 512);
-        assert_eq!(v["providers"]["cheap"]["timeout_seconds"], 120);
-        assert_eq!(v["providers"]["cheap"]["managed"], false);
-        assert!(v["providers"]["cheap"]["managed_server"].is_null());
-        assert_eq!(
-            v["providers"]["strong"]["base_url"],
-            "http://localhost:8081"
-        );
-        assert_eq!(v["providers"]["strong"]["model"], "strong-model");
-        assert_eq!(v["providers"]["strong"]["n_predict"], 1024);
-        assert_eq!(v["providers"]["strong"]["timeout_seconds"], 180);
-        assert_eq!(v["providers"]["strong"]["managed"], false);
-        assert!(v["providers"]["strong"]["managed_server"].is_null());
+
+        assert_eq!(v["providers"], serde_json::to_value(&metadata).unwrap());
 
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -512,16 +500,6 @@ mod tests {
         assert!(
             finalize_result.is_err(),
             "finalize must fail when run_dir is gone"
-        );
-
-        // Simulate the run.rs pattern: log and continue.
-        let run_result: Result<(), Box<dyn std::error::Error>> = Ok(());
-        if let Err(e) = finalize_result {
-            eprintln!("warning: failed to finalize manifest: {e}");
-        }
-        assert!(
-            run_result.is_ok(),
-            "run result must remain Ok despite manifest finalization failure"
         );
 
         let _ = std::fs::remove_dir_all(&root);
