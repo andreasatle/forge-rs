@@ -139,20 +139,20 @@ mod tests {
 
     #[test]
     fn ollama_response_parses_content() {
-        let json = r#"{"response":"hello"}"#;
-        let parsed: GenerateResponse = serde_json::from_str(json).unwrap();
-        let result = map_generate_response(parsed).unwrap();
-        assert_eq!(result.content, "hello");
-        assert_eq!(result.finish_reason, None);
-    }
-
-    #[test]
-    fn ollama_response_maps_done_reason_to_finish_reason() {
-        let json = r#"{"response":"hello","done_reason":"stop"}"#;
-        let parsed: GenerateResponse = serde_json::from_str(json).unwrap();
-        let result = map_generate_response(parsed).unwrap();
-        assert_eq!(result.content, "hello");
-        assert_eq!(result.finish_reason.as_deref(), Some("stop"));
+        let cases = [
+            (r#"{"response":"hello"}"#, "hello", None),
+            (
+                r#"{"response":"hello","done_reason":"stop"}"#,
+                "hello",
+                Some("stop"),
+            ),
+        ];
+        for (json, expected_content, expected_finish_reason) in cases {
+            let parsed: GenerateResponse = serde_json::from_str(json).unwrap();
+            let result = map_generate_response(parsed).unwrap();
+            assert_eq!(result.content, expected_content);
+            assert_eq!(result.finish_reason.as_deref(), expected_finish_reason);
+        }
     }
 
     #[test]
@@ -164,63 +164,49 @@ mod tests {
     }
 
     #[test]
-    fn ollama_http_429_is_retryable() {
-        assert_eq!(classify_status(429), ProviderErrorKind::Retryable);
+    fn ollama_classify_status() {
+        let cases = [
+            (429, ProviderErrorKind::Retryable),
+            (500, ProviderErrorKind::Retryable),
+            (503, ProviderErrorKind::Retryable),
+            (404, ProviderErrorKind::Terminal),
+            (400, ProviderErrorKind::Terminal),
+        ];
+        for (status, expected) in cases {
+            assert_eq!(classify_status(status), expected, "status {status}");
+        }
     }
 
     #[test]
-    fn ollama_http_500_is_retryable() {
-        assert_eq!(classify_status(500), ProviderErrorKind::Retryable);
-    }
+    fn is_timeout_source_classification() {
+        let timed_out = std::io::Error::new(std::io::ErrorKind::TimedOut, "timed out");
+        let refused = std::io::Error::new(std::io::ErrorKind::ConnectionRefused, "refused");
+        let timed_out_boxed: Box<dyn std::error::Error + 'static> = Box::new(timed_out);
+        let refused_boxed: Box<dyn std::error::Error + 'static> = Box::new(refused);
 
-    #[test]
-    fn ollama_http_503_is_retryable() {
-        assert_eq!(classify_status(503), ProviderErrorKind::Retryable);
-    }
-
-    #[test]
-    fn ollama_http_404_is_terminal() {
-        assert_eq!(classify_status(404), ProviderErrorKind::Terminal);
-    }
-
-    #[test]
-    fn ollama_http_400_is_terminal() {
-        assert_eq!(classify_status(400), ProviderErrorKind::Terminal);
-    }
-
-    #[test]
-    fn is_timeout_source_detects_timed_out_io_error() {
-        let ioe = std::io::Error::new(std::io::ErrorKind::TimedOut, "timed out");
-        let boxed: Box<dyn std::error::Error + 'static> = Box::new(ioe);
-        assert!(is_timeout_source(Some(boxed.as_ref())));
-    }
-
-    #[test]
-    fn is_timeout_source_returns_false_for_other_io_errors() {
-        let ioe = std::io::Error::new(std::io::ErrorKind::ConnectionRefused, "refused");
-        let boxed: Box<dyn std::error::Error + 'static> = Box::new(ioe);
-        assert!(!is_timeout_source(Some(boxed.as_ref())));
-    }
-
-    #[test]
-    fn is_timeout_source_returns_false_for_none() {
+        assert!(is_timeout_source(Some(timed_out_boxed.as_ref())));
+        assert!(!is_timeout_source(Some(refused_boxed.as_ref())));
         assert!(!is_timeout_source(None));
     }
 
     #[test]
-    fn ollama_provider_uses_json_format_for_json_output() {
-        let req = GenerateRequest {
-            model: "test".to_string(),
-            prompt: "hello".to_string(),
-            stream: false,
-            options: GenerateOptions { num_predict: 512 },
-            format: Some("json".to_string()),
-        };
-        let json = serde_json::to_string(&req).unwrap();
-        assert!(
-            json.contains("\"format\":\"json\""),
-            "serialized body must include format=json; got: {json}"
-        );
+    fn ollama_provider_format_serialization() {
+        let cases = [(Some("json".to_string()), true), (None, false)];
+        for (format, expect_present) in cases {
+            let req = GenerateRequest {
+                model: "test".to_string(),
+                prompt: "hello".to_string(),
+                stream: false,
+                options: GenerateOptions { num_predict: 512 },
+                format,
+            };
+            let json = serde_json::to_string(&req).unwrap();
+            assert_eq!(
+                json.contains("\"format\":\"json\""),
+                expect_present,
+                "got: {json}"
+            );
+        }
     }
 
     #[test]
@@ -231,21 +217,5 @@ mod tests {
             "root ::= \"x\"".to_string(),
         )));
         assert_eq!(format.as_deref(), Some("json"));
-    }
-
-    #[test]
-    fn ollama_provider_omits_format_when_no_output_schema() {
-        let req = GenerateRequest {
-            model: "test".to_string(),
-            prompt: "hello".to_string(),
-            stream: false,
-            options: GenerateOptions { num_predict: 512 },
-            format: None,
-        };
-        let json = serde_json::to_string(&req).unwrap();
-        assert!(
-            !json.contains("format"),
-            "serialized body must omit format when None; got: {json}"
-        );
     }
 }

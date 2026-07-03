@@ -155,10 +155,11 @@ mod tests {
 
     #[test]
     fn llama_cpp_response_parses_content() {
-        let json = r#"{"content":"hello"}"#;
+        let json = r#"{"content":"hello world"}"#;
         let parsed: CompletionResponse = serde_json::from_str(json).unwrap();
         let result = map_completion_response(parsed).unwrap();
-        assert_eq!(result.content, "hello");
+        assert_eq!(result.content, "hello world");
+        assert_eq!(result.finish_reason, None);
     }
 
     #[test]
@@ -170,113 +171,63 @@ mod tests {
     }
 
     #[test]
-    fn llama_cpp_http_429_is_retryable() {
-        assert_eq!(classify_status(429), ProviderErrorKind::Retryable);
+    fn llama_cpp_classify_status() {
+        let cases = [
+            (429, ProviderErrorKind::Retryable),
+            (500, ProviderErrorKind::Retryable),
+            (503, ProviderErrorKind::Retryable),
+            (404, ProviderErrorKind::Terminal),
+            (400, ProviderErrorKind::Terminal),
+        ];
+        for (status, expected) in cases {
+            assert_eq!(classify_status(status), expected, "status {status}");
+        }
     }
 
     #[test]
-    fn llama_cpp_http_500_is_retryable() {
-        assert_eq!(classify_status(500), ProviderErrorKind::Retryable);
+    fn llama_provider_resolve_grammar() {
+        let cases = [
+            (Some(StructuredOutput::Json), Some(JSON_GBNF.to_string())),
+            (None, None),
+            (
+                Some(StructuredOutput::Grammar("root ::= \"x\"".to_string())),
+                Some("root ::= \"x\"".to_string()),
+            ),
+        ];
+        for (output_schema, expected) in cases {
+            let req = ProviderRequest {
+                prompt: "test".to_string(),
+                max_tokens: 512,
+                output_schema,
+            };
+            let grammar = resolve_grammar(req.output_schema.as_ref());
+            assert_eq!(grammar, expected);
+        }
     }
 
     #[test]
-    fn llama_cpp_http_503_is_retryable() {
-        assert_eq!(classify_status(503), ProviderErrorKind::Retryable);
+    fn completion_request_grammar_serialization() {
+        let cases = [(None, false), (Some(JSON_GBNF.to_string()), true)];
+        for (grammar, expect_present) in cases {
+            let body = CompletionRequest {
+                prompt: "test".to_string(),
+                n_predict: 128,
+                grammar,
+            };
+            let json = serde_json::to_string(&body).unwrap();
+            assert_eq!(json.contains("\"grammar\""), expect_present);
+        }
     }
 
     #[test]
-    fn llama_cpp_http_404_is_terminal() {
-        assert_eq!(classify_status(404), ProviderErrorKind::Terminal);
-    }
+    fn is_timeout_source_classification() {
+        let timed_out = std::io::Error::new(std::io::ErrorKind::TimedOut, "timed out");
+        let refused = std::io::Error::new(std::io::ErrorKind::ConnectionRefused, "refused");
+        let timed_out_boxed: Box<dyn std::error::Error + 'static> = Box::new(timed_out);
+        let refused_boxed: Box<dyn std::error::Error + 'static> = Box::new(refused);
 
-    #[test]
-    fn llama_cpp_http_400_is_terminal() {
-        assert_eq!(classify_status(400), ProviderErrorKind::Terminal);
-    }
-
-    #[test]
-    fn llama_provider_includes_json_grammar_for_json_output() {
-        let req = ProviderRequest {
-            prompt: "test".to_string(),
-            max_tokens: 512,
-            output_schema: Some(StructuredOutput::Json),
-        };
-        let grammar = resolve_grammar(req.output_schema.as_ref());
-        assert!(grammar.is_some());
-        let g = grammar.unwrap();
-        assert!(g.contains("root"));
-        assert!(g.contains("object"));
-    }
-
-    #[test]
-    fn llama_provider_omits_grammar_without_json_output() {
-        let req = ProviderRequest {
-            prompt: "test".to_string(),
-            max_tokens: 512,
-            output_schema: None,
-        };
-        let grammar = resolve_grammar(req.output_schema.as_ref());
-        assert!(grammar.is_none());
-    }
-
-    #[test]
-    fn llama_provider_uses_role_grammar_for_grammar_output() {
-        let req = ProviderRequest {
-            prompt: "test".to_string(),
-            max_tokens: 512,
-            output_schema: Some(StructuredOutput::Grammar("root ::= \"x\"".to_string())),
-        };
-        let grammar = resolve_grammar(req.output_schema.as_ref());
-        assert_eq!(grammar.as_deref(), Some("root ::= \"x\""));
-    }
-
-    #[test]
-    fn completion_request_grammar_omitted_when_none() {
-        let body = CompletionRequest {
-            prompt: "test".to_string(),
-            n_predict: 128,
-            grammar: None,
-        };
-        let json = serde_json::to_string(&body).unwrap();
-        assert!(!json.contains("grammar"));
-    }
-
-    #[test]
-    fn completion_request_grammar_present_when_some() {
-        let body = CompletionRequest {
-            prompt: "test".to_string(),
-            n_predict: 128,
-            grammar: Some(JSON_GBNF.to_string()),
-        };
-        let json = serde_json::to_string(&body).unwrap();
-        assert!(json.contains("\"grammar\""));
-    }
-
-    #[test]
-    fn is_timeout_source_detects_timed_out_io_error() {
-        let ioe = std::io::Error::new(std::io::ErrorKind::TimedOut, "timed out");
-        let boxed: Box<dyn std::error::Error + 'static> = Box::new(ioe);
-        assert!(is_timeout_source(Some(boxed.as_ref())));
-    }
-
-    #[test]
-    fn is_timeout_source_returns_false_for_other_io_errors() {
-        let ioe = std::io::Error::new(std::io::ErrorKind::ConnectionRefused, "refused");
-        let boxed: Box<dyn std::error::Error + 'static> = Box::new(ioe);
-        assert!(!is_timeout_source(Some(boxed.as_ref())));
-    }
-
-    #[test]
-    fn is_timeout_source_returns_false_for_none() {
+        assert!(is_timeout_source(Some(timed_out_boxed.as_ref())));
+        assert!(!is_timeout_source(Some(refused_boxed.as_ref())));
         assert!(!is_timeout_source(None));
-    }
-
-    #[test]
-    fn llama_provider_maps_response_to_provider_response() {
-        let json = r#"{"content":"hello world"}"#;
-        let parsed: CompletionResponse = serde_json::from_str(json).unwrap();
-        let result = map_completion_response(parsed).unwrap();
-        assert_eq!(result.content, "hello world");
-        assert_eq!(result.finish_reason, None);
     }
 }
