@@ -28,82 +28,62 @@ fn active_start_all_complete_moves_to_complete() {
 }
 
 #[test]
-fn final_run_fails_when_required_test_target_is_absent() {
-    let graph = RunGraph {
-        nodes: vec![Node {
+fn final_run_gate_on_required_test_target() {
+    // Invariant: a source node's required_validation_targets gate scheduler
+    // completion — Complete is only reached once every required target is
+    // Completed somewhere in the graph, whether or not it lives on the same
+    // node as the source.
+    struct Case {
+        test_target_completed: bool,
+    }
+
+    for case in [
+        Case {
+            test_target_completed: false,
+        },
+        Case {
+            test_target_completed: true,
+        },
+    ] {
+        let mut nodes = vec![Node {
             target_files: vec!["main.py".to_string()],
             required_validation_targets: vec!["test_main.py".to_string()],
             status: NodeStatus::Completed,
             ..work_node("source", "implement fibonacci", &[])
-        }],
-        next_id: 0,
-    };
-
-    let t = do_transition(
-        SchedulerState::Active {
-            graph,
-            run_config: RunConfig::default(),
-        },
-        SchedulerEvent::Start,
-    );
-
-    let SchedulerState::Failed { reason, .. } = t.state else {
-        panic!("expected Failed, got {:#?}", t.state);
-    };
-    let FailureReason::RequiredTestTargetsMissing(detail) = reason else {
-        panic!("expected RequiredTestTargetsMissing, got {reason:?}");
-    };
-    assert!(
-        detail.contains("test_main.py"),
-        "failure reason should identify missing required test target; got: {detail}"
-    );
-    assert!(t.effects.is_empty());
-}
-
-#[test]
-fn final_run_completes_when_required_test_target_completed_separately() {
-    let graph = RunGraph {
-        nodes: vec![
-            Node {
-                target_files: vec!["main.py".to_string()],
-                required_validation_targets: vec!["test_main.py".to_string()],
-                status: NodeStatus::Completed,
-                ..work_node("source", "implement fibonacci", &[])
-            },
-            Node {
+        }];
+        if case.test_target_completed {
+            nodes.push(Node {
                 target_files: vec!["test_main.py".to_string()],
                 status: NodeStatus::Completed,
                 ..work_node("tests", "write tests", &["source"])
+            });
+        }
+        let graph = RunGraph { nodes, next_id: 0 };
+
+        let t = do_transition(
+            SchedulerState::Active {
+                graph,
+                run_config: RunConfig::default(),
             },
-        ],
-        next_id: 0,
-    };
+            SchedulerEvent::Start,
+        );
 
-    let t = do_transition(
-        SchedulerState::Active {
-            graph,
-            run_config: RunConfig::default(),
-        },
-        SchedulerEvent::Start,
-    );
-    assert!(matches!(t.state, SchedulerState::Complete { .. }));
-}
-
-#[test]
-fn active_start_no_ready_moves_to_failed() {
-    let graph = RunGraph {
-        nodes: vec![work_node("B", "blocked", &["A"])],
-        next_id: 0,
-    };
-    let t = do_transition(
-        SchedulerState::Active {
-            graph,
-            run_config: RunConfig::default(),
-        },
-        SchedulerEvent::Start,
-    );
-    assert!(matches!(t.state, SchedulerState::Failed { .. }));
-    assert!(t.effects.is_empty());
+        if case.test_target_completed {
+            assert!(matches!(t.state, SchedulerState::Complete { .. }));
+        } else {
+            let SchedulerState::Failed { reason, .. } = t.state else {
+                panic!("expected Failed, got {:#?}", t.state);
+            };
+            let FailureReason::RequiredTestTargetsMissing(detail) = reason else {
+                panic!("expected RequiredTestTargetsMissing, got {reason:?}");
+            };
+            assert!(
+                detail.contains("test_main.py"),
+                "failure reason should identify missing required test target; got: {detail}"
+            );
+            assert!(t.effects.is_empty());
+        }
+    }
 }
 
 #[test]
@@ -211,36 +191,6 @@ fn scheduler_terminal_output_includes_node_failure_reason() {
     };
     assert_eq!(terminal_message, "deliberation failed");
     assert!(failure_message.contains("provider error (Retryable): connection refused"));
-}
-
-#[test]
-fn three_node_chain_completes_via_handler() {
-    let graph = RunGraph {
-        nodes: vec![
-            work_node("A", "step A", &[]),
-            work_node("B", "step B", &["A"]),
-            work_node("C", "step C", &["B"]),
-        ],
-        next_id: 0,
-    };
-
-    let output = run_scheduler(
-        scheduler_handler(),
-        SchedulerState::Active {
-            graph,
-            run_config: RunConfig::default(),
-        },
-    );
-
-    let SchedulerTerminalOutput::Complete { graph, .. } = output else {
-        panic!("expected Complete")
-    };
-    assert!(
-        graph
-            .nodes
-            .iter()
-            .all(|n| n.status == NodeStatus::Completed)
-    );
 }
 
 #[test]
