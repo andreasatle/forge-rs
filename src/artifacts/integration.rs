@@ -61,32 +61,56 @@ impl std::error::Error for IntegrationError {}
 /// Commits workspace changes into the artifact's bare repository and returns
 /// the resulting artifact version.
 pub fn integrate(artifact: &Artifact, workspace: &Workspace) -> Result<Artifact, IntegrationError> {
-    integrate_inner(artifact, workspace, || {})
+    ArtifactIntegrator::new(artifact, workspace).integrate()
 }
 
-fn integrate_inner(
-    artifact: &Artifact,
-    workspace: &Workspace,
-    pre_push_hook: impl FnOnce(),
-) -> Result<Artifact, IntegrationError> {
-    check_bare_repository(artifact)?;
+pub struct ArtifactIntegrator<'a, PrePushHook = fn()> {
+    artifact: &'a Artifact,
+    workspace: &'a Workspace,
+    pre_push_hook: Option<PrePushHook>,
+}
 
-    // CAS pre-check: refuse integration immediately if the branch tip has
-    // advanced since the workspace was created. Checking before staging avoids
-    // wasted work and produces a clear error before any local commits are made.
-    let actual_tip = read_branch_tip(artifact)?;
-    if actual_tip != workspace.base_commit {
-        return Err(IntegrationError::Conflict {
-            branch: artifact.branch.clone(),
-            expected: workspace.base_commit.clone(),
-            actual: actual_tip,
-        });
+impl<'a> ArtifactIntegrator<'a, fn()> {
+    pub fn new(artifact: &'a Artifact, workspace: &'a Workspace) -> Self {
+        Self {
+            artifact,
+            workspace,
+            pre_push_hook: Some(|| {}),
+        }
+    }
+}
+
+impl<'a, PrePushHook: FnOnce()> ArtifactIntegrator<'a, PrePushHook> {
+    #[cfg(test)]
+    fn with_pre_push_hook(
+        artifact: &'a Artifact,
+        workspace: &'a Workspace,
+        pre_push_hook: PrePushHook,
+    ) -> Self {
+        Self {
+            artifact,
+            workspace,
+            pre_push_hook: Some(pre_push_hook),
+        }
     }
 
-    run_git(workspace, &["add", "--all"])?;
-    run_git(
-        workspace,
-        &[
+    fn integrate(mut self) -> Result<Artifact, IntegrationError> {
+        self.check_bare_repository()?;
+
+        // CAS pre-check: refuse integration immediately if the branch tip has
+        // advanced since the workspace was created. Checking before staging avoids
+        // wasted work and produces a clear error before any local commits are made.
+        let actual_tip = self.read_branch_tip()?;
+        if actual_tip != self.workspace.base_commit {
+            return Err(IntegrationError::Conflict {
+                branch: self.artifact.branch.clone(),
+                expected: self.workspace.base_commit.clone(),
+                actual: actual_tip,
+            });
+        }
+
+        self.run_git(&["add", "--all"])?;
+        self.run_git(&[
             "-c",
             "user.name=Forge Artifact Prototype",
             "-c",
@@ -95,167 +119,166 @@ fn integrate_inner(
             "--quiet",
             "-m",
             "Integrate artifact update",
-        ],
-    )?;
+        ])?;
 
-    let commit_sha = git_stdout(workspace, &["rev-parse", "HEAD"])?;
+        let commit_sha = self.git_stdout(&["rev-parse", "HEAD"])?;
 
-    // Allow tests to inject a race between the pre-check and the push.
-    pre_push_hook();
+        // Allow tests to inject a race between the pre-check and the push.
+        (self
+            .pre_push_hook
+            .take()
+            .expect("pre-push hook should be present"))();
 
-    push_with_lease(artifact, workspace, &commit_sha)?;
+        self.push_with_lease(&commit_sha)?;
 
-    Ok(Artifact {
-        repo_path: artifact.repo_path.clone(),
-        branch: artifact.branch.clone(),
-        commit_sha,
-    })
-}
-
-/// Pushes `new_commit` to the artifact branch using `--force-with-lease`.
-///
-/// On failure, re-reads the branch tip and returns `Conflict` when the tip
-/// has advanced past `workspace.base_commit`; otherwise returns the original
-/// `GitCommandFailed`. This distinguishes CAS races from unrelated push errors.
-fn push_with_lease(
-    artifact: &Artifact,
-    workspace: &Workspace,
-    new_commit: &str,
-) -> Result<(), IntegrationError> {
-    let branch_ref = format!("{new_commit}:refs/heads/{}", artifact.branch);
-    let lease_arg = format!(
-        "--force-with-lease=refs/heads/{}:{}",
-        artifact.branch, workspace.base_commit
-    );
-    let push = git_command()
-        .args(["push", "--quiet", &lease_arg])
-        .arg(&artifact.repo_path)
-        .arg(&branch_ref)
-        .current_dir(workspace.path())
-        .output()
-        .map_err(|e| IntegrationError::GitCommandFailed {
-            operation: "push".to_owned(),
-            stderr: e.to_string(),
-        })?;
-    if push.status.success() {
-        return Ok(());
+        Ok(Artifact {
+            repo_path: self.artifact.repo_path.clone(),
+            branch: self.artifact.branch.clone(),
+            commit_sha,
+        })
     }
 
-    let original_err = IntegrationError::GitCommandFailed {
-        operation: "push".to_owned(),
-        stderr: String::from_utf8_lossy(&push.stderr).trim().to_owned(),
-    };
-
-    // Re-read the branch tip to distinguish a CAS race from an unrelated failure.
-    // If rev-parse itself fails, fall through and return the original push error.
-    match read_branch_tip(artifact) {
-        Ok(current_tip) if current_tip != workspace.base_commit => {
-            Err(IntegrationError::Conflict {
-                branch: artifact.branch.clone(),
-                expected: workspace.base_commit.clone(),
-                actual: current_tip,
-            })
+    /// Pushes `new_commit` to the artifact branch using `--force-with-lease`.
+    ///
+    /// On failure, re-reads the branch tip and returns `Conflict` when the tip
+    /// has advanced past `workspace.base_commit`; otherwise returns the original
+    /// `GitCommandFailed`. This distinguishes CAS races from unrelated push errors.
+    fn push_with_lease(&self, new_commit: &str) -> Result<(), IntegrationError> {
+        let branch_ref = format!("{new_commit}:refs/heads/{}", self.artifact.branch);
+        let lease_arg = format!(
+            "--force-with-lease=refs/heads/{}:{}",
+            self.artifact.branch, self.workspace.base_commit
+        );
+        let push = git_command()
+            .args(["push", "--quiet", &lease_arg])
+            .arg(&self.artifact.repo_path)
+            .arg(&branch_ref)
+            .current_dir(self.workspace.path())
+            .output()
+            .map_err(|e| IntegrationError::GitCommandFailed {
+                operation: "push".to_owned(),
+                stderr: e.to_string(),
+            })?;
+        if push.status.success() {
+            return Ok(());
         }
-        _ => Err(original_err),
-    }
-}
 
-fn read_branch_tip(artifact: &Artifact) -> Result<String, IntegrationError> {
-    let refname = format!("refs/heads/{}", artifact.branch);
-    let op = format!("rev-parse {refname}");
-    let output = git_command()
-        .args(["rev-parse", &refname])
-        .current_dir(&artifact.repo_path)
-        .output()
-        .map_err(|e| IntegrationError::GitCommandFailed {
-            operation: op.clone(),
-            stderr: e.to_string(),
-        })?;
-    if !output.status.success() {
-        return Err(IntegrationError::GitCommandFailed {
-            operation: op,
-            stderr: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
-        });
-    }
-    String::from_utf8(output.stdout)
-        .map_err(|e| IntegrationError::InvalidGitOutput {
-            operation: op,
-            reason: e.to_string(),
-        })
-        .map(|s| s.trim().to_owned())
-}
+        let original_err = IntegrationError::GitCommandFailed {
+            operation: "push".to_owned(),
+            stderr: String::from_utf8_lossy(&push.stderr).trim().to_owned(),
+        };
 
-fn check_bare_repository(artifact: &Artifact) -> Result<(), IntegrationError> {
-    let op = "rev-parse --is-bare-repository".to_owned();
-    let output = git_command()
-        .args(["rev-parse", "--is-bare-repository"])
-        .current_dir(&artifact.repo_path)
-        .output()
-        .map_err(|e| IntegrationError::GitCommandFailed {
-            operation: op.clone(),
-            stderr: e.to_string(),
-        })?;
-    if !output.status.success() {
-        return Err(IntegrationError::GitCommandFailed {
-            operation: op,
-            stderr: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
-        });
+        // Re-read the branch tip to distinguish a CAS race from an unrelated failure.
+        // If rev-parse itself fails, fall through and return the original push error.
+        match self.read_branch_tip() {
+            Ok(current_tip) if current_tip != self.workspace.base_commit => {
+                Err(IntegrationError::Conflict {
+                    branch: self.artifact.branch.clone(),
+                    expected: self.workspace.base_commit.clone(),
+                    actual: current_tip,
+                })
+            }
+            _ => Err(original_err),
+        }
     }
-    let value =
-        String::from_utf8(output.stdout).map_err(|e| IntegrationError::InvalidGitOutput {
-            operation: op.clone(),
-            reason: e.to_string(),
-        })?;
-    if value.trim() != "true" {
-        return Err(IntegrationError::GitCommandFailed {
-            operation: op,
-            stderr: "repository is not bare".to_owned(),
-        });
-    }
-    Ok(())
-}
 
-fn run_git(workspace: &Workspace, args: &[&str]) -> Result<(), IntegrationError> {
-    let op = args.join(" ");
-    let output = git_command()
-        .args(args)
-        .current_dir(workspace.path())
-        .output()
-        .map_err(|e| IntegrationError::GitCommandFailed {
-            operation: op.clone(),
-            stderr: e.to_string(),
-        })?;
-    if !output.status.success() {
-        return Err(IntegrationError::GitCommandFailed {
-            operation: op,
-            stderr: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
-        });
+    fn read_branch_tip(&self) -> Result<String, IntegrationError> {
+        let refname = format!("refs/heads/{}", self.artifact.branch);
+        let op = format!("rev-parse {refname}");
+        let output = git_command()
+            .args(["rev-parse", &refname])
+            .current_dir(&self.artifact.repo_path)
+            .output()
+            .map_err(|e| IntegrationError::GitCommandFailed {
+                operation: op.clone(),
+                stderr: e.to_string(),
+            })?;
+        if !output.status.success() {
+            return Err(IntegrationError::GitCommandFailed {
+                operation: op,
+                stderr: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+            });
+        }
+        String::from_utf8(output.stdout)
+            .map_err(|e| IntegrationError::InvalidGitOutput {
+                operation: op,
+                reason: e.to_string(),
+            })
+            .map(|s| s.trim().to_owned())
     }
-    Ok(())
-}
 
-fn git_stdout(workspace: &Workspace, args: &[&str]) -> Result<String, IntegrationError> {
-    let op = args.join(" ");
-    let output = git_command()
-        .args(args)
-        .current_dir(workspace.path())
-        .output()
-        .map_err(|e| IntegrationError::GitCommandFailed {
-            operation: op.clone(),
-            stderr: e.to_string(),
-        })?;
-    if !output.status.success() {
-        return Err(IntegrationError::GitCommandFailed {
-            operation: op.clone(),
-            stderr: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
-        });
+    fn check_bare_repository(&self) -> Result<(), IntegrationError> {
+        let op = "rev-parse --is-bare-repository".to_owned();
+        let output = git_command()
+            .args(["rev-parse", "--is-bare-repository"])
+            .current_dir(&self.artifact.repo_path)
+            .output()
+            .map_err(|e| IntegrationError::GitCommandFailed {
+                operation: op.clone(),
+                stderr: e.to_string(),
+            })?;
+        if !output.status.success() {
+            return Err(IntegrationError::GitCommandFailed {
+                operation: op,
+                stderr: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+            });
+        }
+        let value =
+            String::from_utf8(output.stdout).map_err(|e| IntegrationError::InvalidGitOutput {
+                operation: op.clone(),
+                reason: e.to_string(),
+            })?;
+        if value.trim() != "true" {
+            return Err(IntegrationError::GitCommandFailed {
+                operation: op,
+                stderr: "repository is not bare".to_owned(),
+            });
+        }
+        Ok(())
     }
-    String::from_utf8(output.stdout)
-        .map_err(|e| IntegrationError::InvalidGitOutput {
-            operation: op,
-            reason: e.to_string(),
-        })
-        .map(|s| s.trim().to_owned())
+
+    fn run_git(&self, args: &[&str]) -> Result<(), IntegrationError> {
+        let op = args.join(" ");
+        let output = git_command()
+            .args(args)
+            .current_dir(self.workspace.path())
+            .output()
+            .map_err(|e| IntegrationError::GitCommandFailed {
+                operation: op.clone(),
+                stderr: e.to_string(),
+            })?;
+        if !output.status.success() {
+            return Err(IntegrationError::GitCommandFailed {
+                operation: op,
+                stderr: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+            });
+        }
+        Ok(())
+    }
+
+    fn git_stdout(&self, args: &[&str]) -> Result<String, IntegrationError> {
+        let op = args.join(" ");
+        let output = git_command()
+            .args(args)
+            .current_dir(self.workspace.path())
+            .output()
+            .map_err(|e| IntegrationError::GitCommandFailed {
+                operation: op.clone(),
+                stderr: e.to_string(),
+            })?;
+        if !output.status.success() {
+            return Err(IntegrationError::GitCommandFailed {
+                operation: op.clone(),
+                stderr: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+            });
+        }
+        String::from_utf8(output.stdout)
+            .map_err(|e| IntegrationError::InvalidGitOutput {
+                operation: op,
+                reason: e.to_string(),
+            })
+            .map(|s| s.trim().to_owned())
+    }
 }
 
 #[cfg(test)]
@@ -383,10 +406,11 @@ mod tests {
         let branch = artifact.branch.clone();
         let cell = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
         let cell2 = cell.clone();
-        let result = integrate_inner(&artifact, &workspace, move || {
+        let result = ArtifactIntegrator::with_pre_push_hook(&artifact, &workspace, move || {
             let sha = advance_branch(&bare, &branch);
             *cell2.lock().unwrap() = sha;
-        });
+        })
+        .integrate();
         let advanced_sha = cell.lock().unwrap().clone();
 
         match result {
@@ -419,11 +443,12 @@ mod tests {
         let bare_path = artifact.repo_path.clone();
         let hidden = temp.join("artifact-hidden.git");
 
-        let result = integrate_inner(&artifact, &workspace, || {
+        let result = ArtifactIntegrator::with_pre_push_hook(&artifact, &workspace, || {
             // Move the bare repo so the push target disappears.
             // rev-parse will also fail, so the fallback _ arm returns GitCommandFailed.
             fs::rename(&bare_path, &hidden).expect("rename bare repo");
-        });
+        })
+        .integrate();
 
         // Restore so TempDir cleanup can remove everything.
         let _ = fs::rename(&hidden, &bare_path);

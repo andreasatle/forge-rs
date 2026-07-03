@@ -26,14 +26,11 @@ use super::parser::{
     strip_code_fence, try_parse_producer_summary_response, try_parse_role_response,
 };
 use super::prompt::{
-    NodeReviewContract, RolePromptRender, render_completion_pressure_retry_prompt,
-    render_planner_retry_prompt, render_retry_prompt, render_reviewer_must_read_prompt,
-    render_role_prompt_with_test_plan_context, render_tool_section, role_subsource,
+    NodeReviewContract, RolePromptRender, render_role_prompt_with_test_plan_context,
+    render_tool_section, role_subsource,
 };
 use super::protocol_state::ProtocolState;
-use super::tooling::{
-    ToolDispatchOutcome, dispatch_tool_step, extract_artifact_changed, file_tool_policy_for_request,
-};
+use super::tooling::{RoleToolDispatcher, ToolDispatchOutcome, file_tool_policy_for_request};
 
 #[cfg(test)]
 use super::parser::MIN_CONTENT_LENGTH;
@@ -282,18 +279,13 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
             core_prompt.clone()
         };
 
-        let mut executor: Option<FileToolExecutor> = request.tool_context.map(|ctx| {
+        let executor: Option<FileToolExecutor> = request.tool_context.map(|ctx| {
             if let Some(workspace) = ctx.writable_workspace {
                 FileToolExecutor::with_workspace(ctx.artifact_view, workspace, policy)
             } else {
                 FileToolExecutor::with_policy(ctx.artifact_view, policy)
             }
         });
-
-        let mut current_prompt = base_prompt.clone();
-        // Accumulated observation sections, tracked separately so the prompt can be
-        // rebuilt without the tool section when completion pressure is active.
-        let mut observation_suffix = String::new();
 
         // Completion pressure applies only to Work+Producer after a successful mutation.
         let is_work_producer = request.node_kind == NodeKind::Work
@@ -310,10 +302,18 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
         let requires_read_enforcement =
             request.node_kind == NodeKind::Work && is_read_only_reviewer && has_tools;
 
-        let mut proto = ProtocolState::new(
+        let proto = ProtocolState::new(
             is_work_producer,
             is_read_only_reviewer,
             requires_read_enforcement,
+        );
+        let mut tools = RoleToolDispatcher::new(
+            executor,
+            proto,
+            telemetry,
+            subsource,
+            core_prompt,
+            base_prompt,
         );
 
         loop {
@@ -321,8 +321,8 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                 "RoleMachine",
                 subsource,
                 TelemetryEvent::RolePromptRendered {
-                    prompt: current_prompt.clone(),
-                    attempt_count: proto.current_attempt(),
+                    prompt: tools.current_prompt().to_owned(),
+                    attempt_count: tools.current_attempt(),
                 },
             ));
 
@@ -336,11 +336,11 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                 &request.node_kind,
                 &request.role,
                 &self.policy,
-                has_tools && proto.allow_tool_call(),
+                has_tools && tools.allow_tool_call(),
             );
 
             let response = match self.provider.call(ProviderRequest {
-                prompt: current_prompt.clone(),
+                prompt: tools.current_prompt().to_owned(),
                 max_tokens: self.max_tokens,
                 output_schema: Some(StructuredOutput::Grammar(grammar.to_string())),
             }) {
@@ -352,7 +352,7 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                         }
                         ProviderErrorKind::Terminal => FailureKind::ProviderTerminalFailure,
                     };
-                    let artifact_changed = extract_artifact_changed(&mut executor);
+                    let artifact_changed = tools.artifact_changed();
                     return RoleRunOutput {
                         result: RoleResult::Failed {
                             kind,
@@ -368,7 +368,7 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                 subsource,
                 TelemetryEvent::ProviderResponseReceived {
                     raw_response: response.content.clone(),
-                    attempt_count: proto.current_attempt(),
+                    attempt_count: tools.current_attempt(),
                 },
             ));
 
@@ -381,28 +381,16 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
             let mut tool_call_error: Option<String> = None;
             if let Some(json_str) = extract_json_object(trimmed) {
                 match parse_tool_request(json_str) {
-                    Ok(tool_req) => {
-                        match dispatch_tool_step(
-                            tool_req,
-                            &response.content,
-                            &mut executor,
-                            &mut proto,
-                            telemetry,
-                            subsource,
-                            &core_prompt,
-                            &mut observation_suffix,
-                            &mut current_prompt,
-                        ) {
-                            ToolDispatchOutcome::Continue => continue,
-                            ToolDispatchOutcome::Fail(result) => {
-                                let artifact_changed = extract_artifact_changed(&mut executor);
-                                return RoleRunOutput {
-                                    result,
-                                    artifact_changed,
-                                };
-                            }
+                    Ok(tool_req) => match tools.dispatch_tool_step(tool_req, &response.content) {
+                        ToolDispatchOutcome::Continue => continue,
+                        ToolDispatchOutcome::Fail(result) => {
+                            let artifact_changed = tools.artifact_changed();
+                            return RoleRunOutput {
+                                result,
+                                artifact_changed,
+                            };
                         }
-                    }
+                    },
                     Err(e) if looks_like_tool_request(json_str) => {
                         tool_call_error = Some(e);
                     }
@@ -422,12 +410,12 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                                 "RoleMachine",
                                 subsource,
                                 TelemetryEvent::ParseSucceeded {
-                                    attempt_count: proto.current_attempt(),
+                                    attempt_count: tools.current_attempt(),
                                 },
                             ));
                             let canonical = serde_json::to_string(&planner_out)
                                 .expect("validated PlannerOutput must serialize");
-                            let artifact_changed = extract_artifact_changed(&mut executor);
+                            let artifact_changed = tools.artifact_changed();
                             return RoleRunOutput {
                                 result: RoleResult::Accepted { content: canonical },
                                 artifact_changed,
@@ -441,11 +429,11 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                                 TelemetryEvent::ParseFailed {
                                     raw_response: response.content.clone(),
                                     parse_error: err.clone(),
-                                    attempt_count: proto.current_attempt(),
+                                    attempt_count: tools.current_attempt(),
                                 },
                             ));
-                            if !proto.allow_model_call() {
-                                let artifact_changed = extract_artifact_changed(&mut executor);
+                            if !tools.allow_model_call() {
+                                let artifact_changed = tools.artifact_changed();
                                 return RoleRunOutput {
                                     result: RoleResult::Failed {
                                         kind: FailureKind::PlannerValidationFailure,
@@ -454,17 +442,16 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                                     artifact_changed,
                                 };
                             }
-                            proto.record_protocol_failure();
+                            tools.record_protocol_failure();
                             telemetry.record(TelemetryRecord::new_with_subsource(
                                 "RoleMachine",
                                 subsource,
                                 TelemetryEvent::ProtocolRetry {
                                     parse_error: err.clone(),
-                                    attempt_count: proto.current_attempt(),
+                                    attempt_count: tools.current_attempt(),
                                 },
                             ));
-                            current_prompt = render_planner_retry_prompt(
-                                &base_prompt,
+                            tools.render_planner_retry_prompt(
                                 &err,
                                 &response.content,
                                 &self.policy.planner_protocol_schema,
@@ -482,11 +469,11 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                             TelemetryEvent::ParseFailed {
                                 raw_response: response.content.clone(),
                                 parse_error: effective_error.clone(),
-                                attempt_count: proto.current_attempt(),
+                                attempt_count: tools.current_attempt(),
                             },
                         ));
-                        if !proto.allow_model_call() {
-                            let artifact_changed = extract_artifact_changed(&mut executor);
+                        if !tools.allow_model_call() {
+                            let artifact_changed = tools.artifact_changed();
                             return RoleRunOutput {
                                 result: RoleResult::Failed {
                                     kind: FailureKind::ProtocolFailure,
@@ -495,17 +482,16 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                                 artifact_changed,
                             };
                         }
-                        proto.record_protocol_failure();
+                        tools.record_protocol_failure();
                         telemetry.record(TelemetryRecord::new_with_subsource(
                             "RoleMachine",
                             subsource,
                             TelemetryEvent::ProtocolRetry {
                                 parse_error: effective_error.clone(),
-                                attempt_count: proto.current_attempt(),
+                                attempt_count: tools.current_attempt(),
                             },
                         ));
-                        current_prompt = render_planner_retry_prompt(
-                            &base_prompt,
+                        tools.render_planner_retry_prompt(
                             &effective_error,
                             &response.content,
                             &self.policy.planner_protocol_schema,
@@ -526,15 +512,15 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                         // Enforce that Work-node reviewers read at least one file before
                         // accepting. list_files alone is not sufficient — the reviewer
                         // must inspect actual file contents to verify the objective.
-                        if proto.reviewer_accepted_without_reading()
+                        if tools.reviewer_accepted_without_reading()
                             && matches!(result, RoleResult::Accepted { .. })
                         {
-                            let attempt_note = if proto.read_file_attempted() == 0 {
+                            let attempt_note = if tools.read_file_attempted() == 0 {
                                 "no read_file was attempted".to_string()
                             } else {
                                 format!(
                                     "{} read_file attempt(s) were made but all failed",
-                                    proto.read_file_attempted()
+                                    tools.read_file_attempted()
                                 )
                             };
                             let parse_error = format!(
@@ -548,15 +534,15 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                                 TelemetryEvent::ParseFailed {
                                     raw_response: response.content.clone(),
                                     parse_error: parse_error.clone(),
-                                    attempt_count: proto.current_attempt(),
+                                    attempt_count: tools.current_attempt(),
                                 },
                             ));
                             // When tools are blocked (decision or completion pressure active)
                             // there is no point issuing a must-read retry prompt — the model
                             // cannot call tools and would only generate further protocol errors.
                             // Fail directly with a clear reason in that case.
-                            if proto.reviewer_accept_must_fail_immediately() {
-                                let artifact_changed = extract_artifact_changed(&mut executor);
+                            if tools.reviewer_accept_must_fail_immediately() {
+                                let artifact_changed = tools.artifact_changed();
                                 return RoleRunOutput {
                                     result: RoleResult::Failed {
                                         kind: FailureKind::ProtocolFailure,
@@ -565,27 +551,26 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                                     artifact_changed,
                                 };
                             }
-                            proto.record_protocol_failure();
+                            tools.record_protocol_failure();
                             telemetry.record(TelemetryRecord::new_with_subsource(
                                 "RoleMachine",
                                 subsource,
                                 TelemetryEvent::ProtocolRetry {
                                     parse_error: parse_error.clone(),
-                                    attempt_count: proto.current_attempt(),
+                                    attempt_count: tools.current_attempt(),
                                 },
                             ));
-                            current_prompt =
-                                render_reviewer_must_read_prompt(&base_prompt, &parse_error);
+                            tools.render_reviewer_must_read_prompt(&parse_error);
                             continue;
                         }
                         telemetry.record(TelemetryRecord::new_with_subsource(
                             "RoleMachine",
                             subsource,
                             TelemetryEvent::ParseSucceeded {
-                                attempt_count: proto.current_attempt(),
+                                attempt_count: tools.current_attempt(),
                             },
                         ));
-                        let artifact_changed = extract_artifact_changed(&mut executor);
+                        let artifact_changed = tools.artifact_changed();
                         return RoleRunOutput {
                             result,
                             artifact_changed,
@@ -607,20 +592,20 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                             TelemetryEvent::ParseFailed {
                                 raw_response: response.content.clone(),
                                 parse_error: effective_error.clone(),
-                                attempt_count: proto.current_attempt(),
+                                attempt_count: tools.current_attempt(),
                             },
                         ));
-                        if !proto.allow_model_call() {
+                        if !tools.allow_model_call() {
                             // A parse failure after completion pressure means the
                             // write was already recorded but the model could not
                             // confirm it. Label the reason so the node-runner
                             // classifier can treat it as Retry rather than Terminal.
-                            let terminal_reason = if !proto.allow_tool_call() {
+                            let terminal_reason = if !tools.allow_tool_call() {
                                 format!("protocol failure after write: {effective_error}")
                             } else {
                                 effective_error
                             };
-                            let artifact_changed = extract_artifact_changed(&mut executor);
+                            let artifact_changed = tools.artifact_changed();
                             return RoleRunOutput {
                                 result: RoleResult::Failed {
                                     kind: FailureKind::ProtocolFailure,
@@ -629,30 +614,20 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                                 artifact_changed,
                             };
                         }
-                        proto.record_protocol_failure();
+                        tools.record_protocol_failure();
                         telemetry.record(TelemetryRecord::new_with_subsource(
                             "RoleMachine",
                             subsource,
                             TelemetryEvent::ProtocolRetry {
                                 parse_error: effective_error.clone(),
-                                attempt_count: proto.current_attempt(),
+                                attempt_count: tools.current_attempt(),
                             },
                         ));
-                        current_prompt = if !proto.allow_tool_call() {
-                            render_completion_pressure_retry_prompt(
-                                &core_prompt,
-                                &observation_suffix,
-                                &effective_error,
-                                is_work_producer,
-                            )
-                        } else {
-                            render_retry_prompt(
-                                &base_prompt,
-                                &effective_error,
-                                &response.content,
-                                is_work_producer,
-                            )
-                        };
+                        tools.render_role_retry_prompt(
+                            &effective_error,
+                            &response.content,
+                            is_work_producer,
+                        );
                     }
                 }
             }
