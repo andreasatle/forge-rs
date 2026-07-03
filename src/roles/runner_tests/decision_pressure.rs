@@ -1,35 +1,6 @@
 use super::*;
 
 #[test]
-fn critic_decision_pressure_fires_after_max_read_steps() {
-    let (_temp, view) = make_view("critic-decision-pressure");
-    let provider = ScriptedProvider::from_strs(&[
-        r#"{"tool":"read_file","path":"hello.txt"}"#,
-        r#"{"tool":"read_file","path":"hello.txt"}"#,
-        r#"{"status":"accepted","content":"the file looks good"}"#,
-    ]);
-    let runner = ProviderRoleRunner::new(&provider);
-
-    let output = runner.run_role(
-        with_tool_context(critic_request("review hello.txt", "draft"), view),
-        &crate::telemetry::NoopTelemetry,
-    );
-
-    assert!(
-        matches!(output.result, RoleResult::Accepted { .. }),
-        "critic must finalize after read_file steps; got {:?}",
-        output.result
-    );
-    let requests = provider.requests.borrow();
-    assert_eq!(requests.len(), 3, "provider must be called three times");
-    let third_prompt = &requests[2].prompt;
-    assert!(
-        third_prompt.contains("sufficient evidence"),
-        "third prompt must contain decision-pressure text; got:\n{third_prompt}"
-    );
-}
-
-#[test]
 fn critic_enters_decision_pressure_after_max_read_only_steps() {
     // After exactly MAX_READ_ONLY_TOOL_STEPS tool observations Critic must
     // receive a decision-pressure observation and then return a final result.
