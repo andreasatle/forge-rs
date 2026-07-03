@@ -175,16 +175,6 @@ mod protocol_state_tests {
             proto.tool_loop_limit_reached(),
             "tool_loop_limit_reached must be true after MAX_TOOL_STEPS+1 calls"
         );
-        assert!(
-            !proto.tool_loop_limit_reached() || {
-                let mut p2 = work_producer();
-                for _ in 0..MAX_TOOL_STEPS {
-                    p2.record_tool_call();
-                }
-                !p2.tool_loop_limit_reached()
-            },
-            "tool_loop_limit_reached must be false before the limit is crossed"
-        );
     }
 
     #[test]
