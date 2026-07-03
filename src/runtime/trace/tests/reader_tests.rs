@@ -170,29 +170,32 @@ fn event_header_preview_is_none_when_no_further_fields() {
 }
 
 #[test]
-fn preview_strips_dangling_brace_from_pretty_printed_struct_variant() {
-    // A real `{:#?}` dump of a struct-like enum variant puts only the
-    // variant name and opening brace on the first line.
-    let content = "source: SchedulerMachine\nkind: StateEntered\nstate:\n\
-        Active {\n    graph: RunGraph {\n        nodes: [],\n    },\n}\n";
-    let path = Path::new("000001--scheduler-machine--state-entered.txt");
+fn preview_strips_dangling_bracket_from_pretty_printed_variant() {
+    // A real `{:#?}` dump of an enum variant puts only the variant name and
+    // opening bracket on the first line, for both struct-like and tuple-like
+    // variants.
+    let cases = [
+        (
+            "struct-like variant, dangling brace",
+            "000001--scheduler-machine--state-entered.txt",
+            "source: SchedulerMachine\nkind: StateEntered\nstate:\n\
+                Active {\n    graph: RunGraph {\n        nodes: [],\n    },\n}\n",
+            "Active",
+        ),
+        (
+            "tuple-like variant, dangling paren",
+            "000001--scheduler-machine--event-received.txt",
+            "source: SchedulerMachine\nkind: EventReceived\nevent:\n\
+                WorkAccepted(\n    NodeId(\n        \"root\",\n    ),\n)\n",
+            "WorkAccepted",
+        ),
+    ];
 
-    let header = EventHeader::parse(path, content).expect("header must parse");
-    assert_eq!(
-        header.preview.as_deref(),
-        Some("Active"),
-        "the dangling `{{` left by pretty-printed Debug output must be stripped"
-    );
-}
-
-#[test]
-fn preview_strips_dangling_paren_from_pretty_printed_tuple_variant() {
-    let content = "source: SchedulerMachine\nkind: EventReceived\nevent:\n\
-        WorkAccepted(\n    NodeId(\n        \"root\",\n    ),\n)\n";
-    let path = Path::new("000001--scheduler-machine--event-received.txt");
-
-    let header = EventHeader::parse(path, content).expect("header must parse");
-    assert_eq!(header.preview.as_deref(), Some("WorkAccepted"));
+    for (case, filename, content, expected) in cases {
+        let path = Path::new(filename);
+        let header = EventHeader::parse(path, content).expect("header must parse");
+        assert_eq!(header.preview.as_deref(), Some(expected), "case: {case}");
+    }
 }
 
 #[test]

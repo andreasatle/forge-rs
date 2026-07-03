@@ -52,26 +52,30 @@ fn missing_objective_renders_as_unknown() {
 }
 
 #[test]
-fn node_list_line_has_no_last_bracket_when_accepted() {
-    let node = accepted_node("root", "Work", "write a function");
-    let out = render("run-1", Some("obj"), 1, std::slice::from_ref(&node));
-    assert!(
-        out.contains("  root  kind=Work  status=accepted  attempts=1\n"),
-        "accepted nodes must not show a trailing [last: ...] bracket; got:\n{out}"
-    );
-}
+fn node_list_line_shows_last_bracket_only_when_failed() {
+    let cases = [
+        (
+            "accepted",
+            NodeStatus::Accepted,
+            None,
+            "  root  kind=Work  status=accepted  attempts=1\n",
+        ),
+        (
+            "failed",
+            NodeStatus::Failed,
+            Some("provider timed out".to_string()),
+            "  root  kind=Work  status=failed  attempts=1  [last: provider timed out]\n",
+        ),
+    ];
 
-#[test]
-fn node_list_line_shows_last_bracket_when_failed() {
-    let mut node = accepted_node("root", "Work", "write a function");
-    node.status = NodeStatus::Failed;
-    node.last_failure = Some("provider timed out".to_string());
+    for (case, status, last_failure, expected_line) in cases {
+        let mut node = accepted_node("root", "Work", "write a function");
+        node.status = status;
+        node.last_failure = last_failure;
 
-    let out = render("run-1", Some("obj"), 1, std::slice::from_ref(&node));
-    assert!(
-        out.contains("  root  kind=Work  status=failed  attempts=1  [last: provider timed out]\n"),
-        "failed nodes must show the terminal failure summary; got:\n{out}"
-    );
+        let out = render("run-1", Some("obj"), 1, std::slice::from_ref(&node));
+        assert!(out.contains(expected_line), "case: {case}; got:\n{out}");
+    }
 }
 
 #[test]
