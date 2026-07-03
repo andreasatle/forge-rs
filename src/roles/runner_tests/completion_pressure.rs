@@ -1,72 +1,6 @@
 use super::*;
 
 #[test]
-fn producer_completion_pressure_fires_after_write_file() {
-    let provider = ScriptedProvider::from_strs(&[
-        r#"{"tool":"write_file","path":"output.txt","content":"hello"}"#,
-        r#"{"summary":"wrote the file successfully"}"#,
-    ]);
-    let runner = ProviderRoleRunner::new(&provider);
-
-    let output = runner.run_role(
-        with_dummy_tool_context(producer_request("write a file")),
-        &crate::telemetry::NoopTelemetry,
-    );
-
-    assert!(
-        matches!(output.result, RoleResult::Accepted { .. }),
-        "producer must finalize after write_file; got {:?}",
-        output.result
-    );
-    let requests = provider.requests.borrow();
-    assert_eq!(requests.len(), 2, "provider must be called twice");
-    let second_prompt = &requests[1].prompt;
-    assert!(
-        second_prompt.contains("The requested change has already been recorded"),
-        "second prompt must contain completion-pressure hint; got:\n{second_prompt}"
-    );
-    assert!(
-        !second_prompt.contains("Available file tools:"),
-        "second prompt must not advertise tools after completion pressure; got:\n{second_prompt}"
-    );
-}
-
-#[test]
-fn successful_replace_text_observation_instructs_final_response() {
-    // hello.txt from make_view contains "hello world\n"
-    let (_temp, view) = make_view("replace-text-final");
-    let provider = ScriptedProvider::from_strs(&[
-        r#"{"tool":"replace_text","path":"hello.txt","old":"hello world","new":"goodbye"}"#,
-        r#"{"summary":"replaced hello with goodbye"}"#,
-    ]);
-    let runner = ProviderRoleRunner::new(&provider);
-
-    runner.run_role(
-        with_tool_context(
-            producer_request("replace hello with goodbye in hello.txt"),
-            view,
-        ),
-        &crate::telemetry::NoopTelemetry,
-    );
-
-    let requests = provider.requests.borrow();
-    assert_eq!(requests.len(), 2, "must call provider twice");
-    let second_prompt = &requests[1].prompt;
-    assert!(
-        second_prompt.contains("The requested change has already been recorded."),
-        "successful replace_text must include completion-pressure text; got:\n{second_prompt}"
-    );
-    assert!(
-        second_prompt.contains("Do not call any more tools."),
-        "successful replace_text must prohibit further tool calls; got:\n{second_prompt}"
-    );
-    assert!(
-        !second_prompt.contains("Available file tools:"),
-        "completion-pressure prompt must not include the tool section; got:\n{second_prompt}"
-    );
-}
-
-#[test]
 fn successful_mutation_tool_observation_instructs_final_response() {
     for (case, tool_response, final_response, objective) in [
         (
@@ -81,6 +15,12 @@ fn successful_mutation_tool_observation_instructs_final_response() {
             r#"{"summary":"deleted old.txt"}"#,
             "delete old.txt",
         ),
+        (
+            "replace_text",
+            r#"{"tool":"replace_text","path":"hello.txt","old":"hello world","new":"goodbye"}"#,
+            r#"{"summary":"replaced hello with goodbye"}"#,
+            "replace hello with goodbye in hello.txt",
+        ),
     ] {
         let provider = ScriptedProvider::from_strs(&[tool_response, final_response]);
         let runner = ProviderRoleRunner::new(&provider);
@@ -92,11 +32,16 @@ fn successful_mutation_tool_observation_instructs_final_response() {
             ],
         );
 
-        runner.run_role(
+        let output = runner.run_role(
             with_tool_context(producer_request(objective), view),
             &crate::telemetry::NoopTelemetry,
         );
 
+        assert!(
+            matches!(output.result, RoleResult::Accepted { .. }),
+            "[{case}] producer must finalize after a successful mutation; got {:?}",
+            output.result
+        );
         let requests = provider.requests.borrow();
         assert_eq!(requests.len(), 2, "[{case}] must call provider twice");
         let second_prompt = &requests[1].prompt;
@@ -111,6 +56,10 @@ fn successful_mutation_tool_observation_instructs_final_response() {
         assert!(
             !second_prompt.contains("Available file tools:"),
             "[{case}] completion-pressure prompt must not include the tool section; got:\n{second_prompt}"
+        );
+        assert!(
+            !second_prompt.contains(case),
+            "[{case}] completion-pressure prompt must not reference the tool name; got:\n{second_prompt}"
         );
     }
 }
@@ -144,32 +93,6 @@ fn read_file_after_mutation_is_completion_pressure_violation() {
     assert!(
         !third_prompt.contains("Available file tools:"),
         "CP violation prompt must not contain the tool section; got:\n{third_prompt}"
-    );
-}
-
-#[test]
-fn completion_pressure_hides_tool_section() {
-    // After a successful mutation the prompt must not contain the tool section.
-    let provider = ScriptedProvider::from_strs(&[
-        r#"{"tool":"write_file","path":"out.txt","content":"data"}"#,
-        r#"{"summary":"completed"}"#,
-    ]);
-    let runner = ProviderRoleRunner::new(&provider);
-
-    runner.run_role(
-        with_dummy_tool_context(producer_request("write out.txt")),
-        &crate::telemetry::NoopTelemetry,
-    );
-
-    let requests = provider.requests.borrow();
-    let second_prompt = &requests[1].prompt;
-    assert!(
-        !second_prompt.contains("Available file tools:"),
-        "completion-pressure prompt must not include the tool section; got:\n{second_prompt}"
-    );
-    assert!(
-        !second_prompt.contains("write_file"),
-        "completion-pressure prompt must not list write_file; got:\n{second_prompt}"
     );
 }
 
