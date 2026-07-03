@@ -217,55 +217,6 @@ fn referee_rejection_exhausts_revision_limit() {
 }
 
 #[test]
-fn max_revisions_zero_fails_on_first_referee_rejection() {
-    let waiting_referee = DeliberationState::WaitingReferee {
-        request: DeliberationRequest {
-            objective: "write a poem".to_string(),
-            context: crate::machines::deliberation::DeliberationContext::default(),
-            node_kind: crate::machines::scheduler::NodeKind::Work,
-            test_plan_context: crate::machines::scheduler::TestPlanContext::default(),
-            max_revisions: 0,
-        },
-        producer_content: "draft".to_string(),
-        critic_advisory: CriticAdvisory::AcceptedReview {
-            content: "review".to_string(),
-        },
-        feedback: vec![],
-    };
-
-    let t = step(
-        waiting_referee,
-        DeliberationEvent::RefereeRejected {
-            reason: "not good".to_string(),
-        },
-    );
-
-    assert!(
-        matches!(
-            &t.state,
-            DeliberationState::Failed {
-                reason: DeliberationFailureReason::RevisionLimitExhausted,
-                ..
-            }
-        ),
-        "expected Failed with 'revision limit exhausted', got {:?}",
-        t.state
-    );
-
-    assert!(
-        t.effects.is_empty(),
-        "terminal failure must not emit effects"
-    );
-    assert!(matches!(
-        machine().output(&t.state),
-        Some(DeliberationTerminalOutput::Failed {
-            reason: DeliberationFailureReason::RevisionLimitExhausted,
-            ..
-        })
-    ));
-}
-
-#[test]
 fn revision_then_acceptance_completes_with_revised_producer_content() {
     struct FakeMachine {
         producer_call: std::cell::Cell<usize>,

@@ -88,63 +88,6 @@ fn critic_rejection_routes_to_referee() {
 }
 
 #[test]
-fn critic_rejection_stores_typed_rejected_advisory() {
-    let after_producer = producer_accepts(
-        step(ready("write a poem"), DeliberationEvent::Start).state,
-        "draft content",
-    );
-
-    let t = step(
-        after_producer,
-        DeliberationEvent::CriticRejected {
-            reason: "the haiku is not following the 5-7-5 syllable structure".to_string(),
-        },
-    );
-
-    let critic_reason = match &t.state {
-        DeliberationState::WaitingReferee {
-            critic_advisory: CriticAdvisory::RejectedReason { reason },
-            ..
-        } => reason,
-        other => panic!(
-            "expected WaitingReferee with rejected critic advisory, got {:?}",
-            other
-        ),
-    };
-    assert!(
-        critic_reason.contains("5-7-5"),
-        "critic advisory must contain the original critique; got: {critic_reason}"
-    );
-}
-
-#[test]
-fn critic_rejection_runs_referee_instead_of_failing() {
-    let after_producer = producer_accepts(
-        step(ready("write a poem"), DeliberationEvent::Start).state,
-        "draft content",
-    );
-
-    let t = step(
-        after_producer,
-        DeliberationEvent::CriticRejected {
-            reason: "not good enough".to_string(),
-        },
-    );
-
-    assert!(
-        matches!(
-            &t.effects[..],
-            [DeliberationEffect::RunRole {
-                role: DeliberationRole::Referee,
-                ..
-            }]
-        ),
-        "Critic rejection must run Referee, got {:?}",
-        t.effects
-    );
-}
-
-#[test]
 fn role_mismatch_while_waiting_critic_fails() {
     let after_producer = producer_accepts(
         step(ready("write a poem"), DeliberationEvent::Start).state,

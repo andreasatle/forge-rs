@@ -44,7 +44,11 @@ fn referee_acceptance_completes_with_producer_content() {
 
 #[test]
 fn referee_rejection_fails_when_no_revisions_allowed() {
-    let after_critic = step(
+    // Both a fully-driven state (via producer_accepts + CriticAccepted) and a
+    // directly-constructed WaitingReferee state must hit the same
+    // RevisionLimitExhausted terminal transition — the construction style is
+    // not a meaningful axis to test separately.
+    let via_full_flow = step(
         producer_accepts(
             step(ready("write a poem"), DeliberationEvent::Start).state,
             "draft content",
@@ -55,36 +59,53 @@ fn referee_rejection_fails_when_no_revisions_allowed() {
     )
     .state;
 
-    let t = step(
-        after_critic,
-        DeliberationEvent::RefereeRejected {
-            reason: "not acceptable".to_string(),
+    let via_direct_construction = DeliberationState::WaitingReferee {
+        request: DeliberationRequest {
+            objective: "write a poem".to_string(),
+            context: crate::machines::deliberation::DeliberationContext::default(),
+            node_kind: crate::machines::scheduler::NodeKind::Work,
+            test_plan_context: crate::machines::scheduler::TestPlanContext::default(),
+            max_revisions: 0,
         },
-    );
+        producer_content: "draft".to_string(),
+        critic_advisory: CriticAdvisory::AcceptedReview {
+            content: "looks good".to_string(),
+        },
+        feedback: vec![],
+    };
 
-    assert!(
-        matches!(
-            &t.state,
-            DeliberationState::Failed {
+    for waiting_referee in [via_full_flow, via_direct_construction] {
+        let t = step(
+            waiting_referee,
+            DeliberationEvent::RefereeRejected {
+                reason: "not acceptable".to_string(),
+            },
+        );
+
+        assert!(
+            matches!(
+                &t.state,
+                DeliberationState::Failed {
+                    reason: DeliberationFailureReason::RevisionLimitExhausted,
+                    ..
+                }
+            ),
+            "expected Failed with 'revision limit exhausted', got {:?}",
+            t.state
+        );
+
+        assert!(
+            t.effects.is_empty(),
+            "terminal failure must not emit effects"
+        );
+        assert!(matches!(
+            machine().output(&t.state),
+            Some(DeliberationTerminalOutput::Failed {
                 reason: DeliberationFailureReason::RevisionLimitExhausted,
                 ..
-            }
-        ),
-        "expected Failed with 'revision limit exhausted', got {:?}",
-        t.state
-    );
-
-    assert!(
-        t.effects.is_empty(),
-        "terminal failure must not emit effects"
-    );
-    assert!(matches!(
-        machine().output(&t.state),
-        Some(DeliberationTerminalOutput::Failed {
-            reason: DeliberationFailureReason::RevisionLimitExhausted,
-            ..
-        })
-    ));
+            })
+        ));
+    }
 }
 
 #[test]
@@ -188,42 +209,4 @@ fn referee_failed_is_terminal() {
             ..
         }) if message == "authentication error"
     ));
-}
-
-#[test]
-fn referee_rejected_still_revises() {
-    // Rejected (semantic outcome) continues to loop; Failed (execution) must not.
-    let waiting_referee = DeliberationState::WaitingReferee {
-        request: DeliberationRequest {
-            objective: "write a poem".to_string(),
-            context: crate::machines::deliberation::DeliberationContext::default(),
-            node_kind: crate::machines::scheduler::NodeKind::Work,
-            test_plan_context: crate::machines::scheduler::TestPlanContext::default(),
-            max_revisions: 1,
-        },
-        producer_content: "draft".to_string(),
-        critic_advisory: CriticAdvisory::AcceptedReview {
-            content: "review".to_string(),
-        },
-        feedback: vec![],
-    };
-
-    let t = step(
-        waiting_referee,
-        DeliberationEvent::RefereeRejected {
-            reason: "needs changes".to_string(),
-        },
-    );
-
-    assert!(
-        matches!(
-            &t.state,
-            DeliberationState::WaitingProducer {
-                feedback,
-                ..
-            } if feedback.len() == 1
-        ),
-        "expected WaitingProducer revision loop, got {:?}",
-        t.state
-    );
 }
