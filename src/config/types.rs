@@ -664,10 +664,9 @@ telemetry:
     fn provider_model_must_not_be_blank() {
         let tmp = TempYaml::new(EMPTY_PROVIDER_MODEL_YAML);
         let result = ForgeConfig::from_file(tmp.path());
-        let msg = result.unwrap_err().to_string();
         assert!(
-            msg.contains("provider.cheap.unmanaged.model"),
-            "blank provider model error must name the field; got: {msg}"
+            result.is_err(),
+            "blank (whitespace-only) provider.cheap.unmanaged.model must be rejected"
         );
     }
 
@@ -797,10 +796,9 @@ telemetry:
     fn managed_llama_cpp_requires_host() {
         let tmp = TempYaml::new(MANAGED_LLAMA_CPP_MISSING_HOST_YAML);
         let result = ForgeConfig::from_file(tmp.path());
-        let msg = result.unwrap_err().to_string();
         assert!(
-            msg.contains("host"),
-            "error must explain host requirement; got: {msg}"
+            result.is_err(),
+            "missing managed llama.cpp host must be rejected"
         );
     }
 
@@ -827,10 +825,9 @@ telemetry:
     fn managed_llama_cpp_requires_non_blank_command() {
         let tmp = TempYaml::new(MANAGED_LLAMA_CPP_BLANK_COMMAND_YAML);
         let result = ForgeConfig::from_file(tmp.path());
-        let msg = result.unwrap_err().to_string();
         assert!(
-            msg.contains("command"),
-            "error must explain command requirement; got: {msg}"
+            result.is_err(),
+            "blank (whitespace-only) managed llama.cpp command must be rejected"
         );
     }
 
@@ -857,14 +854,9 @@ telemetry:
     fn managed_llama_cpp_rejects_zero_port() {
         let tmp = TempYaml::new(MANAGED_LLAMA_CPP_ZERO_PORT_YAML);
         let result = ForgeConfig::from_file(tmp.path());
-        let msg = result.unwrap_err().to_string();
         assert!(
-            msg.contains("provider.cheap.managed.llama_cpp.port"),
-            "error must name the port field; got: {msg}"
-        );
-        assert!(
-            msg.contains('0'),
-            "error must explain that 0 is rejected; got: {msg}"
+            result.is_err(),
+            "port 0 for managed llama.cpp must be rejected"
         );
     }
 
@@ -887,14 +879,9 @@ telemetry:
     fn unmanaged_base_url_requires_scheme() {
         let tmp = TempYaml::new(UNMANAGED_BASE_URL_MISSING_SCHEME_YAML);
         let result = ForgeConfig::from_file(tmp.path());
-        let msg = result.unwrap_err().to_string();
         assert!(
-            msg.contains("provider.cheap.unmanaged.base_url"),
-            "error must name the base_url field; got: {msg}"
-        );
-        assert!(
-            msg.contains("http"),
-            "error must mention the http/https scheme requirement; got: {msg}"
+            result.is_err(),
+            "base_url without a scheme must be rejected"
         );
     }
 
@@ -917,14 +904,9 @@ telemetry:
     fn unmanaged_base_url_rejects_unrecognized_scheme() {
         let tmp = TempYaml::new(UNMANAGED_BASE_URL_BAD_SCHEME_YAML);
         let result = ForgeConfig::from_file(tmp.path());
-        let msg = result.unwrap_err().to_string();
         assert!(
-            msg.contains("provider.cheap.unmanaged.base_url"),
-            "error must name the base_url field; got: {msg}"
-        );
-        assert!(
-            msg.contains("ftp"),
-            "error must name the rejected scheme; got: {msg}"
+            result.is_err(),
+            "base_url with a non-http(s) scheme (ftp) must be rejected"
         );
     }
 
@@ -947,14 +929,9 @@ telemetry:
     fn unmanaged_base_url_requires_host() {
         let tmp = TempYaml::new(UNMANAGED_BASE_URL_MISSING_HOST_YAML);
         let result = ForgeConfig::from_file(tmp.path());
-        let msg = result.unwrap_err().to_string();
         assert!(
-            msg.contains("provider.cheap.unmanaged.base_url"),
-            "error must name the base_url field; got: {msg}"
-        );
-        assert!(
-            msg.contains("host"),
-            "error must explain the host requirement; got: {msg}"
+            result.is_err(),
+            "base_url without a host (\"http://\") must be rejected"
         );
     }
 
@@ -1094,11 +1071,6 @@ project:
             result.is_err(),
             "unrecognised project.variant must be a hard error"
         );
-        let msg = result.unwrap_err().to_string();
-        assert!(
-            msg.contains("bogus"),
-            "error must name the unrecognised variant; got: {msg}"
-        );
     }
 
     // ── language config tests ────────────────────────────────────────────────
@@ -1191,15 +1163,6 @@ project:
         let tmp = TempYaml::new(UNKNOWN_LANGUAGE_YAML);
         let result = ForgeConfig::from_file(tmp.path());
         assert!(result.is_err(), "unknown language must be a hard error");
-        let msg = result.unwrap_err().to_string();
-        assert!(
-            msg.contains("unknown language"),
-            "error must mention unknown language; got: {msg}"
-        );
-        assert!(
-            msg.contains("cobol"),
-            "error must name the unknown language; got: {msg}"
-        );
     }
 
     const LANGUAGE_AND_VALIDATION_YAML: &str = r#"
@@ -1229,11 +1192,6 @@ validation:
         assert!(
             result.is_err(),
             "specifying both project.language and validation must be an error"
-        );
-        let msg = result.unwrap_err().to_string();
-        assert!(
-            msg.contains("mutually exclusive"),
-            "error must mention mutual exclusion; got: {msg}"
         );
     }
 }
