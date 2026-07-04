@@ -124,6 +124,25 @@ string ::=
 
 ws ::= ([ \t\n] ws)?"#;
 
+/// GBNF grammar constraining output to the `PlannerOutput` schema used by
+/// adapters that define worker roles: identical to [`PLANNER_GBNF`] except
+/// `role` is a required field rather than an optional one, since the planner
+/// must assign every task to one of the adapter's configured worker roles.
+pub(crate) const PLANNER_GBNF_WITH_ROLES: &str = r#"root ::= "{" ws (kind-field ws "," ws)? "\"tasks\"" ws ":" ws "[" ws task (ws "," ws task)* ws "]" ws "}" ws
+kind-field ::= "\"kind\"" ws ":" ws ("\"work\"" | "\"plan\"")
+task ::= "{" ws "\"id\"" ws ":" ws string ws "," ws "\"objective\"" ws ":" ws string ws "," ws "\"operation\"" ws ":" ws operation ws "," ws role-field ws "," ws "\"targets\"" ws ":" ws string-array ws "," ws "\"depends_on\"" ws ":" ws string-array ws "}" ws
+operation ::= "\"create\"" | "\"modify\"" | "\"delete\""
+role-field ::= "\"role\"" ws ":" ws string
+string-array ::= "[" ws (string (ws "," ws string)*)? ws "]" ws
+
+string ::=
+  "\"" (
+    [^\\"\x7F\x00-\x1F] |
+    "\\" (["\\/bfnrt] | "u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F])
+  )* "\"" ws
+
+ws ::= ([ \t\n] ws)?"#;
+
 /// Generic JSON-output-format constraints shared by every role's protocol
 /// footer: exactly one JSON object, no markdown or code fence, and no text
 /// before or after the JSON.
@@ -217,6 +236,21 @@ Each task requires `id`, `objective`, `operation`, `targets`, and `depends_on`.\
 Each `targets` array must be non-empty and list exact files the task may create, modify, or delete.\n\
 Optional `role` field: the name of one of the available worker roles to assign this task to. \
 Omit `role` to leave the task unassigned.\n\
+Optional top-level `kind` field: \"work\" (default when omitted) or \"plan\". \
+When `kind` is \"plan\", every task becomes a further planning node instead of a work node, and `targets` may be empty. \
+All tasks in one PlannerOutput share the same kind — never mix work and plan tasks in one response.";
+
+/// JSON protocol instructions for planner-style roles under an adapter that
+/// defines worker roles: identical to
+/// [`PLANNER_PROTOCOL_FOOTER_WITH_OPERATION`] except `role` is described as
+/// required, since every task must be assigned to one of the worker roles
+/// listed earlier in the prompt rather than left unassigned.
+pub(crate) const PLANNER_PROTOCOL_FOOTER_WITH_OPERATION_AND_ROLES: &str = "PlannerOutput: `tasks` must be a non-empty array.\n\
+Each task requires `id`, `objective`, `operation`, `role`, `targets`, and `depends_on`.\n\
+`operation` must be \"create\", \"modify\", or \"delete\".\n\
+Each `targets` array must be non-empty and list exact files the task may create, modify, or delete.\n\
+Required `role` field: the name of one of the available worker roles listed above. \
+Every task must be assigned to one of those roles.\n\
 Optional top-level `kind` field: \"work\" (default when omitted) or \"plan\". \
 When `kind` is \"plan\", every task becomes a further planning node instead of a work node, and `targets` may be empty. \
 All tasks in one PlannerOutput share the same kind — never mix work and plan tasks in one response.";

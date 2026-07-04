@@ -29,7 +29,7 @@ pub(crate) fn prepare_deliberation<'a, P: ProviderClient>(
     context_file_names: &[String],
 ) -> PreparedDeliberation<'a, P> {
     let plan_validation_context =
-        build_plan_validation_context(request, Arc::clone(required_test_targets_fn));
+        build_plan_validation_context(request, Arc::clone(required_test_targets_fn), policy);
     let context = build_deliberation_context(request, required_test_targets_fn, context_file_names);
     let initial_state = DeliberationState::Ready {
         request: DeliberationRequest {
@@ -57,10 +57,12 @@ pub(crate) fn prepare_deliberation<'a, P: ProviderClient>(
 fn build_plan_validation_context(
     request: &NodeRunRequest,
     required_test_targets_fn: Arc<TestTargetsFn>,
+    policy: &RolePolicy,
 ) -> Option<PlanValidationContext> {
     if request.kind == NodeKind::Plan {
         Some(PlanValidationContext {
             required_test_targets_fn,
+            available_worker_roles: policy.worker_role_descriptions.clone(),
         })
     } else {
         None

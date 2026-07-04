@@ -41,6 +41,10 @@ pub(crate) struct PlanValidationContext {
     /// project adapter requires for the source files found in that list.
     /// An empty return means no tests are required for this plan.
     pub(crate) required_test_targets_fn: Arc<TestTargetsFn>,
+    /// The adapter's configured worker role name/description pairs. Empty
+    /// when the adapter defines no worker roles, in which case task role
+    /// assignment is not validated.
+    pub(crate) available_worker_roles: Vec<(String, String)>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -92,6 +96,12 @@ pub(super) fn planner_validation_feedback(error: &PlannerValidationError) -> Str
             format!(
                 "{error}. Project validation includes a test command, so code changes must include \
                  at least one test-related task and target such as a test file."
+            )
+        }
+        PlannerValidationError::MissingTaskRole { task_id } => {
+            format!(
+                "{error}. Assign task '{task_id}' a `role` matching one of the available worker \
+                 roles listed in the prompt."
             )
         }
     }
@@ -393,7 +403,10 @@ impl<R: RoleRunner> DeliberationHandler<R> {
             .plan_validation_context
             .as_ref()
             .expect("plan_validation_context must be Some when this method is called");
-        let processor = PlannerOutputProcessor::new(context.required_test_targets_fn.as_ref());
+        let processor = PlannerOutputProcessor::new(
+            context.required_test_targets_fn.as_ref(),
+            &context.available_worker_roles,
+        );
 
         let Some(planner_out) = processor.parse_content(content) else {
             return Err(ProducerValidationRetry {

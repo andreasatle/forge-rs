@@ -385,6 +385,7 @@ fn handler_with_validation(results: Vec<RoleResult>) -> DeliberationHandler<Scri
         work_requires_artifact_mutation: false,
         plan_validation_context: Some(PlanValidationContext {
             required_test_targets_fn: Arc::new(|_| vec![]),
+            available_worker_roles: vec![],
         }),
     }
 }

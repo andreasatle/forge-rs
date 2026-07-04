@@ -12,11 +12,17 @@ pub(crate) fn map_output(
     output: DeliberationTerminalOutput,
     kind: NodeKind,
     required_test_targets_fn: &TestTargetsFn,
+    available_worker_roles: &[(String, String)],
     telemetry: &dyn TelemetrySink,
 ) -> NodeRunResult {
     match output {
         DeliberationTerminalOutput::Complete(out) => match kind {
-            NodeKind::Plan => map_plan_output(out.content, required_test_targets_fn, telemetry),
+            NodeKind::Plan => map_plan_output(
+                out.content,
+                required_test_targets_fn,
+                available_worker_roles,
+                telemetry,
+            ),
             NodeKind::Work => NodeRunResult::WorkAccepted(NodeRunWorkResult {
                 work: WorkOutput {
                     summary: out.content,
@@ -56,11 +62,12 @@ pub(crate) fn map_output(
 fn map_plan_output(
     content: String,
     required_test_targets_fn: &TestTargetsFn,
+    available_worker_roles: &[(String, String)],
     telemetry: &dyn TelemetrySink,
 ) -> NodeRunResult {
     use crate::node_runner::planner::PlannerOutputProcessor;
 
-    let processor = PlannerOutputProcessor::new(required_test_targets_fn);
+    let processor = PlannerOutputProcessor::new(required_test_targets_fn, available_worker_roles);
 
     match processor.parse_content(&content) {
         Some(planner_out) => match processor.validate_structure(&planner_out) {

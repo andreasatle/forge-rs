@@ -15,8 +15,9 @@ use crate::node_runner::planner::PlannerOutputProcessor;
 use crate::providers::{ProviderClient, ProviderErrorKind, ProviderRequest, StructuredOutput};
 use crate::roles::TargetView;
 use crate::roles::policy::{
-    PLANNER_GBNF, PLANNER_NO_OPERATION_GBNF, PLANNER_PROTOCOL_FOOTER_WITH_OPERATION, PRODUCER_GBNF,
-    PRODUCER_TOOL_GBNF, REVIEWER_TOOL_GBNF, ROLE_GBNF, RolePolicy,
+    PLANNER_GBNF, PLANNER_GBNF_WITH_ROLES, PLANNER_NO_OPERATION_GBNF,
+    PLANNER_PROTOCOL_FOOTER_WITH_OPERATION, PLANNER_PROTOCOL_FOOTER_WITH_OPERATION_AND_ROLES,
+    PRODUCER_GBNF, PRODUCER_TOOL_GBNF, REVIEWER_TOOL_GBNF, ROLE_GBNF, RolePolicy,
 };
 use crate::services::extract_json_object;
 use crate::telemetry::{TelemetryEvent, TelemetryRecord, TelemetrySink};
@@ -212,7 +213,11 @@ fn select_grammar(
                 }
             }
             NodeKind::Plan => {
-                if policy.planner_protocol_schema == PLANNER_PROTOCOL_FOOTER_WITH_OPERATION {
+                if policy.planner_protocol_schema
+                    == PLANNER_PROTOCOL_FOOTER_WITH_OPERATION_AND_ROLES
+                {
+                    PLANNER_GBNF_WITH_ROLES
+                } else if policy.planner_protocol_schema == PLANNER_PROTOCOL_FOOTER_WITH_OPERATION {
                     PLANNER_GBNF
                 } else {
                     PLANNER_NO_OPERATION_GBNF
@@ -424,7 +429,10 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                 && matches!(request.role, DeliberationRole::Producer)
             {
                 let no_required_test_targets = |_: &[String]| Vec::new();
-                let processor = PlannerOutputProcessor::new(&no_required_test_targets);
+                let processor = PlannerOutputProcessor::new(
+                    &no_required_test_targets,
+                    &self.policy.worker_role_descriptions,
+                );
                 // Direct PlannerOutput path: no status/content wrapper.
                 match processor.parse_response(&response.content) {
                     Ok(planner_out) => match processor.validate_structure(&planner_out) {

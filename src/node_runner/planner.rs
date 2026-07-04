@@ -103,6 +103,12 @@ pub enum PlannerValidationError {
     },
     /// Test validation is configured, but a code-changing plan has no test target.
     MissingTestsForCodeChange,
+    /// The adapter defines worker roles, but a work task was not assigned a
+    /// role matching one of them.
+    MissingTaskRole {
+        /// The id of the task missing a valid role assignment.
+        task_id: String,
+    },
 }
 
 impl std::fmt::Display for PlannerValidationError {
@@ -136,18 +142,29 @@ impl std::fmt::Display for PlannerValidationError {
                     "planner output changes code but does not include a test-related target"
                 )
             }
+            PlannerValidationError::MissingTaskRole { task_id } => {
+                write!(f, "task {task_id} was not assigned a valid worker role")
+            }
         }
     }
 }
 
 pub(crate) struct PlannerOutputProcessor<'a> {
     required_test_targets_fn: &'a dyn Fn(&[String]) -> Vec<String>,
+    /// The adapter's configured worker role name/description pairs. Empty
+    /// when the adapter defines no worker roles, in which case task role
+    /// assignment is not validated.
+    available_worker_roles: &'a [(String, String)],
 }
 
 impl<'a> PlannerOutputProcessor<'a> {
-    pub(crate) fn new(required_test_targets_fn: &'a dyn Fn(&[String]) -> Vec<String>) -> Self {
+    pub(crate) fn new(
+        required_test_targets_fn: &'a dyn Fn(&[String]) -> Vec<String>,
+        available_worker_roles: &'a [(String, String)],
+    ) -> Self {
         Self {
             required_test_targets_fn,
+            available_worker_roles,
         }
     }
 
@@ -184,10 +201,22 @@ impl<'a> PlannerOutputProcessor<'a> {
             if task.objective.trim().is_empty() {
                 return Err(PlannerValidationError::EmptyObjective(task.id.clone()));
             }
-            if output.kind == PlannerOutputKind::Work
-                && (task.targets.is_empty() || task.targets.iter().any(|t| t.trim().is_empty()))
-            {
-                return Err(PlannerValidationError::EmptyTargets(task.id.clone()));
+            if output.kind == PlannerOutputKind::Work {
+                if task.targets.is_empty() || task.targets.iter().any(|t| t.trim().is_empty()) {
+                    return Err(PlannerValidationError::EmptyTargets(task.id.clone()));
+                }
+                if !self.available_worker_roles.is_empty() {
+                    let role_is_valid = task.role.as_deref().is_some_and(|role| {
+                        self.available_worker_roles
+                            .iter()
+                            .any(|(name, _)| name == role)
+                    });
+                    if !role_is_valid {
+                        return Err(PlannerValidationError::MissingTaskRole {
+                            task_id: task.id.clone(),
+                        });
+                    }
+                }
             }
             if task.depends_on.iter().any(|d| d == &task.id) {
                 return Err(PlannerValidationError::SelfDependency(task.id.clone()));

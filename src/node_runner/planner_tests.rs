@@ -3,7 +3,14 @@ use super::*;
 fn processor(
     required_test_targets_fn: &dyn Fn(&[String]) -> Vec<String>,
 ) -> PlannerOutputProcessor<'_> {
-    PlannerOutputProcessor::new(required_test_targets_fn)
+    PlannerOutputProcessor::new(required_test_targets_fn, &[])
+}
+
+fn processor_with_roles<'a>(
+    required_test_targets_fn: &'a dyn Fn(&[String]) -> Vec<String>,
+    available_worker_roles: &'a [(String, String)],
+) -> PlannerOutputProcessor<'a> {
+    PlannerOutputProcessor::new(required_test_targets_fn, available_worker_roles)
 }
 
 fn parse_planner_content(content: &str) -> Option<PlannerOutput> {
@@ -224,6 +231,98 @@ fn structural_validation_rejects_invalid_plan() {
 }
 
 #[test]
+fn work_task_missing_role_rejected_when_adapter_defines_worker_roles() {
+    // Invariant: when the adapter defines worker roles, every work task must
+    // be assigned one of them; an unassigned task fails validation.
+    let roles = [("implementer".to_string(), "Implements code.".to_string())];
+    let output = PlannerOutput {
+        kind: PlannerOutputKind::Work,
+        tasks: vec![planner_task("task", "do something", &["task.txt"], &[])],
+    };
+    let err = processor_with_roles(&no_required_test_targets, &roles)
+        .validate(&output)
+        .expect_err("task with no role must fail validation when roles are configured");
+    assert_eq!(
+        err,
+        PlannerValidationError::MissingTaskRole {
+            task_id: "task".to_string()
+        }
+    );
+}
+
+#[test]
+fn work_task_with_unknown_role_rejected_when_adapter_defines_worker_roles() {
+    // Invariant: a role that does not match any configured worker role name
+    // is rejected the same as a missing one.
+    let roles = [("implementer".to_string(), "Implements code.".to_string())];
+    let mut output = PlannerOutput {
+        kind: PlannerOutputKind::Work,
+        tasks: vec![planner_task("task", "do something", &["task.txt"], &[])],
+    };
+    output.tasks[0].role = Some("nonexistent-role".to_string());
+    let err = processor_with_roles(&no_required_test_targets, &roles)
+        .validate(&output)
+        .expect_err("task with unrecognized role must fail validation");
+    assert_eq!(
+        err,
+        PlannerValidationError::MissingTaskRole {
+            task_id: "task".to_string()
+        }
+    );
+}
+
+#[test]
+fn work_task_with_valid_role_passes_when_adapter_defines_worker_roles() {
+    // Invariant: a task assigned one of the adapter's configured worker
+    // roles passes validation.
+    let roles = [("implementer".to_string(), "Implements code.".to_string())];
+    let mut output = PlannerOutput {
+        kind: PlannerOutputKind::Work,
+        tasks: vec![planner_task("task", "do something", &["task.txt"], &[])],
+    };
+    output.tasks[0].role = Some("implementer".to_string());
+    assert!(
+        processor_with_roles(&no_required_test_targets, &roles)
+            .validate(&output)
+            .is_ok(),
+        "task with a valid role must pass validation"
+    );
+}
+
+#[test]
+fn missing_role_not_enforced_when_adapter_defines_no_worker_roles() {
+    // Invariant: when the adapter defines no worker roles (e.g.
+    // DefaultProjectAdapter), role assignment stays optional — unchanged
+    // behavior from before worker roles existed.
+    let output = PlannerOutput {
+        kind: PlannerOutputKind::Work,
+        tasks: vec![planner_task("task", "do something", &["task.txt"], &[])],
+    };
+    assert!(
+        validate_planner_output(&output).is_ok(),
+        "task with no role must pass validation when no worker roles are configured"
+    );
+}
+
+#[test]
+fn plan_kind_task_missing_role_skips_role_validation() {
+    // Invariant: `kind: "plan"` tasks are exempt from role validation, the
+    // same as target validation — plan children have no concrete targets or
+    // role yet.
+    let roles = [("implementer".to_string(), "Implements code.".to_string())];
+    let output = PlannerOutput {
+        kind: PlannerOutputKind::Plan,
+        tasks: vec![planner_task("sub-plan", "decompose this further", &[], &[])],
+    };
+    assert!(
+        processor_with_roles(&no_required_test_targets, &roles)
+            .validate(&output)
+            .is_ok(),
+        "plan-kind task must not require a role even when worker roles are configured"
+    );
+}
+
+#[test]
 fn plan_kind_task_with_empty_targets_passes_structural_validation() {
     // Invariant: `kind: "plan"` tasks have no concrete files yet, so an empty
     // `targets` array must not trigger `EmptyTargets`.
@@ -272,7 +371,7 @@ fn plan_kind_skips_tests_required_check() {
             &[],
         )],
     };
-    let processor = PlannerOutputProcessor::new(&required_test_targets);
+    let processor = PlannerOutputProcessor::new(&required_test_targets, &[]);
     assert!(
         processor.validate(&output).is_ok(),
         "plan-kind output must skip the tests-required check"

@@ -5,8 +5,8 @@ use super::yaml_config::{ProjectAdapterConfig, RolePromptConfig, WorkerRoleConfi
 use crate::roles::RolePolicy;
 use crate::roles::policy::{
     DEFAULT_SYSTEM, GENERIC_CONSTRAINTS, PLANNER_PRODUCER_IDENTITY,
-    PLANNER_PROTOCOL_FOOTER_WITH_OPERATION, WORK_PRODUCER_SYSTEM, WORKER_PRODUCER_IDENTITY,
-    WorkerRolePolicy,
+    PLANNER_PROTOCOL_FOOTER_WITH_OPERATION, PLANNER_PROTOCOL_FOOTER_WITH_OPERATION_AND_ROLES,
+    WORK_PRODUCER_SYSTEM, WORKER_PRODUCER_IDENTITY, WorkerRolePolicy,
 };
 
 /// A [`ProjectAdapter`] whose role prompts and context files come from a
@@ -47,9 +47,17 @@ impl ProjectAdapter for YamlProjectAdapter {
             .workers
             .first()
             .expect("adapter config must define at least one worker role");
+        // Adapters that define worker roles must have the planner assign one
+        // to every task; the footer variant describes `role` as required
+        // rather than optional to match that expectation.
+        let planner_protocol_footer = if self.config.workers.is_empty() {
+            PLANNER_PROTOCOL_FOOTER_WITH_OPERATION
+        } else {
+            PLANNER_PROTOCOL_FOOTER_WITH_OPERATION_AND_ROLES
+        };
         RolePolicy {
             planner_producer_system: format!(
-                "Role:\n{PLANNER_PRODUCER_IDENTITY}\n{}\nConstraints:\n{GENERIC_CONSTRAINTS}\n{PLANNER_PROTOCOL_FOOTER_WITH_OPERATION}",
+                "Role:\n{PLANNER_PRODUCER_IDENTITY}\n{}\nConstraints:\n{GENERIC_CONSTRAINTS}\n{planner_protocol_footer}",
                 render_role_prompt(&planner.producer)
             ),
             worker_producer_system: format!(
@@ -72,7 +80,7 @@ impl ProjectAdapter for YamlProjectAdapter {
                 "{}\nConstraints:\n{GENERIC_CONSTRAINTS}\n{DEFAULT_SYSTEM}",
                 render_role_prompt(&worker.referee)
             ),
-            planner_protocol_schema: PLANNER_PROTOCOL_FOOTER_WITH_OPERATION.to_string(),
+            planner_protocol_schema: planner_protocol_footer.to_string(),
             language_guidance: None,
             language_constraints: None,
             worker_role_descriptions: self
@@ -128,6 +136,7 @@ fn worker_role_policy(worker: &WorkerRoleConfig) -> WorkerRolePolicy {
 mod tests {
     use super::*;
     use crate::project::yaml_config::{PlannerConfig, WorkerRoleConfig};
+    use crate::roles::policy::PLANNER_PROTOCOL_FOOTER_WITH_OPERATION_AND_ROLES;
 
     fn prompt(instructions: &str, constraints: &str) -> RolePromptConfig {
         RolePromptConfig {
@@ -201,7 +210,7 @@ mod tests {
                 "plan bounds",
                 "Constraints:",
                 GENERIC_CONSTRAINTS,
-                PLANNER_PROTOCOL_FOOTER_WITH_OPERATION,
+                PLANNER_PROTOCOL_FOOTER_WITH_OPERATION_AND_ROLES,
             ],
         );
         assert_ordered_sections(

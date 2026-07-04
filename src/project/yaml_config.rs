@@ -34,10 +34,11 @@ pub struct PlannerConfig {
 /// Referee prompts, plus a human-readable description of what the role is
 /// for.
 ///
-/// The framework assigns `role` to a node deterministically from the node's
-/// target files (see [`crate::machines::scheduler::Node::worker_role`]).
-/// Which validation contract a role runs is declared by the language
-/// plugin's per-role validation, not by this struct.
+/// The planner assigns `role` to each task explicitly, choosing from the
+/// worker roles described here (see
+/// [`crate::node_runner::planner::PlannerTask::role`]). Which validation
+/// contract a role runs is declared by the language plugin's per-role
+/// validation, not by this struct.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkerRoleConfig {
