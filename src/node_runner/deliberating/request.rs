@@ -57,11 +57,7 @@ fn build_plan_validation_context(
     request: &NodeRunRequest,
     required_test_targets_fn: Arc<TestTargetsFn>,
 ) -> Option<PlanValidationContext> {
-    // Check whether the adapter requires tests at all by probing a known code
-    // extension. This avoids threading a separate boolean alongside the fn.
-    let adapter_requires_tests = !required_test_targets_fn(&["_probe_.rs".to_string()]).is_empty();
-
-    if request.kind == NodeKind::Plan || adapter_requires_tests {
+    if request.kind == NodeKind::Plan {
         Some(PlanValidationContext {
             required_test_targets_fn,
         })
