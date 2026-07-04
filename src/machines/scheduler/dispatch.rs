@@ -67,11 +67,12 @@ pub(crate) fn dispatch_run_node<R: NodeRunner>(
     }
 }
 
-/// Builds the `[planner]`/`[worker ...]` progress-line label for a dispatched
-/// node, appending the worker role when the node has one.
+/// Builds the `[planner ...]`/`[worker ...]` progress-line label for a
+/// dispatched node, appending the short node id and (for Work nodes) the
+/// worker role when the node has one.
 fn progress_label(kind: &NodeKind, node_id: &NodeId, worker_role: &Option<String>) -> String {
     match kind {
-        NodeKind::Plan => "[planner]".to_string(),
+        NodeKind::Plan => format!("[planner {}]", node_id.short()),
         NodeKind::Work => match worker_role {
             Some(role) => format!("[worker {}/{role}]", node_id.short()),
             None => format!("[worker {}]", node_id.short()),
@@ -122,11 +123,14 @@ mod tests {
 
     #[test]
     fn plan_node_label_ignores_worker_role() {
-        // Invariant: Plan nodes always render as "[planner]", regardless of
-        // worker_role (which is always None for Plan nodes, but the label
-        // must not depend on that being true).
+        // Invariant: Plan nodes always render as "[planner <short id>]",
+        // regardless of worker_role (which is always None for Plan nodes,
+        // but the label must not depend on that being true).
         let label = progress_label(&NodeKind::Plan, &NodeId("root".to_string()), &None);
-        assert_eq!(label, "[planner]");
+        assert_eq!(
+            label,
+            format!("[planner {}]", NodeId("root".to_string()).short())
+        );
     }
 
     #[test]
