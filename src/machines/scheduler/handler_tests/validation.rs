@@ -16,6 +16,7 @@ fn validation_pass_allows_commit() {
 
     h.handle_effect(SchedulerEffect::RunNode {
         node_id: NodeId("W".to_string()),
+        worker_role: None,
         kind: NodeKind::Work,
         objective: "write a file".to_string(),
         target_files: vec![],
@@ -62,6 +63,7 @@ fn validation_failure_blocks_commit() {
 
     h.handle_effect(SchedulerEffect::RunNode {
         node_id: NodeId("W".to_string()),
+        worker_role: None,
         kind: NodeKind::Work,
         objective: "write a file".to_string(),
         target_files: vec![],
@@ -177,6 +179,7 @@ fn validation_failure_telemetry_keeps_full_diagnostics() {
 
     h.handle_effect(SchedulerEffect::RunNode {
         node_id: NodeId("W".to_string()),
+        worker_role: None,
         kind: NodeKind::Work,
         objective: "write a file".to_string(),
         target_files: vec![],
@@ -231,6 +234,7 @@ fn validation_failure_records_attempt_evidence_before_cleanup() {
 
     h.handle_effect(SchedulerEffect::RunNode {
         node_id: NodeId("W".to_string()),
+        worker_role: None,
         kind: NodeKind::Work,
         objective: "write a file".to_string(),
         target_files: vec![],
@@ -303,6 +307,7 @@ fn validator_runs_after_workspace_mutation() {
 
     h.handle_effect(SchedulerEffect::RunNode {
         node_id: NodeId("W".to_string()),
+        worker_role: None,
         kind: NodeKind::Work,
         objective: "write a file".to_string(),
         target_files: vec![],
@@ -339,6 +344,7 @@ fn no_diff_fails_before_running_validator() {
 
     h.handle_effect(SchedulerEffect::RunNode {
         node_id: NodeId("W".to_string()),
+        worker_role: None,
         kind: NodeKind::Work,
         objective: "do some work".to_string(),
         target_files: vec![],
@@ -393,6 +399,7 @@ fn validation_pass_sets_validation_passed_true() {
 
     h.handle_effect(SchedulerEffect::RunNode {
         node_id: NodeId("W".to_string()),
+        worker_role: None,
         kind: NodeKind::Work,
         objective: "write a file".to_string(),
         target_files: vec![],
@@ -437,6 +444,7 @@ fn validation_failure_sets_validation_passed_false() {
 
     h.handle_effect(SchedulerEffect::RunNode {
         node_id: NodeId("W".to_string()),
+        worker_role: None,
         kind: NodeKind::Work,
         objective: "write a file".to_string(),
         target_files: vec![],
@@ -471,6 +479,7 @@ fn no_diff_leaves_validation_passed_none() {
 
     h.handle_effect(SchedulerEffect::RunNode {
         node_id: NodeId("W".to_string()),
+        worker_role: None,
         kind: NodeKind::Work,
         objective: "do some work".to_string(),
         target_files: vec![],
@@ -510,6 +519,7 @@ fn validation_passed_true_even_when_integration_conflicts() {
 
     h.handle_effect(SchedulerEffect::RunNode {
         node_id: NodeId("W".to_string()),
+        worker_role: None,
         kind: NodeKind::Work,
         objective: "write a file".to_string(),
         target_files: vec![],
@@ -570,6 +580,7 @@ fn timeout_blocks_commit() {
 
     h.handle_effect(SchedulerEffect::RunNode {
         node_id: NodeId("W".to_string()),
+        worker_role: None,
         kind: NodeKind::Work,
         objective: "write a file".to_string(),
         target_files: vec![],

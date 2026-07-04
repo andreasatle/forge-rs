@@ -222,6 +222,7 @@ impl SchedulerMachine {
                         let node_id = ready[0].clone();
                         let (
                             kind,
+                            worker_role,
                             objective,
                             target_files,
                             test_plan_context,
@@ -232,6 +233,7 @@ impl SchedulerMachine {
                             let n = graph.get_node(&node_id);
                             (
                                 n.kind.clone(),
+                                n.worker_role.clone(),
                                 n.objective.clone(),
                                 n.target_files.clone(),
                                 graph.test_plan_context_for_node(&node_id),
@@ -242,6 +244,7 @@ impl SchedulerMachine {
                         };
                         let effect = SchedulerEffect::RunNode {
                             node_id: node_id.clone(),
+                            worker_role,
                             kind,
                             objective,
                             target_files,

@@ -144,6 +144,7 @@ fn scheduler_handler_passes_artifact_view_to_node_runner() {
 
     h.handle_effect(SchedulerEffect::RunNode {
         node_id: NodeId("n1".to_string()),
+        worker_role: None,
         kind: NodeKind::Work,
         objective: "do something".to_string(),
         target_files: vec![],
@@ -474,6 +475,7 @@ fn run_node_does_not_commit_workspace_mutation() {
 
     h.handle_effect(SchedulerEffect::RunNode {
         node_id: NodeId("W".to_string()),
+        worker_role: None,
         kind: NodeKind::Work,
         objective: "write a file".to_string(),
         target_files: vec![],
@@ -504,6 +506,7 @@ fn integrate_work_commits_pending_workspace_mutation() {
 
     h.handle_effect(SchedulerEffect::RunNode {
         node_id: NodeId("W".to_string()),
+        worker_role: None,
         kind: NodeKind::Work,
         objective: "write a file".to_string(),
         target_files: vec![],

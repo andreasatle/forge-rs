@@ -11,6 +11,7 @@ use crate::telemetry::{ConsoleTelemetry, TelemetrySink};
 
 pub(crate) struct RunNodeDispatch {
     pub(crate) node_id: NodeId,
+    pub(crate) worker_role: Option<String>,
     pub(crate) kind: NodeKind,
     pub(crate) objective: String,
     pub(crate) target_files: Vec<String>,
@@ -41,10 +42,7 @@ pub(crate) fn dispatch_run_node<R: NodeRunner>(
         commit_sha: artifact.commit_sha.clone(),
     });
 
-    let label = match &command.kind {
-        NodeKind::Plan => "[planner]".to_string(),
-        NodeKind::Work => format!("[worker {}]", command.node_id.0),
-    };
+    let label = progress_label(&command.kind, &command.node_id, &command.worker_role);
     let rendered_objective = render_objective(
         &command.objective,
         &command.target_files,
@@ -65,6 +63,18 @@ pub(crate) fn dispatch_run_node<R: NodeRunner>(
     let result = runner.run_node(request, &console_tel);
     DispatchResult {
         event: node_result_event(command.node_id, result),
+    }
+}
+
+/// Builds the `[planner]`/`[worker ...]` progress-line label for a dispatched
+/// node, appending the worker role when the node has one.
+fn progress_label(kind: &NodeKind, node_id: &NodeId, worker_role: &Option<String>) -> String {
+    match kind {
+        NodeKind::Plan => "[planner]".to_string(),
+        NodeKind::Work => match worker_role {
+            Some(role) => format!("[worker {}/{role}]", node_id.0),
+            None => format!("[worker {}]", node_id.0),
+        },
     }
 }
 
@@ -101,4 +111,36 @@ fn render_objective(
         "{objective}\n\nValidation feedback for retry:\nTarget files: {target_text}\n{}",
         feedback.diagnostics
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── progress_label ────────────────────────────────────────────────────
+
+    #[test]
+    fn plan_node_label_ignores_worker_role() {
+        // Invariant: Plan nodes always render as "[planner]", regardless of
+        // worker_role (which is always None for Plan nodes, but the label
+        // must not depend on that being true).
+        let label = progress_label(&NodeKind::Plan, &NodeId("root".to_string()), &None);
+        assert_eq!(label, "[planner]");
+    }
+
+    #[test]
+    fn work_node_label_appends_worker_role_when_present() {
+        let label = progress_label(
+            &NodeKind::Work,
+            &NodeId("a3f7c2".to_string()),
+            &Some("tester".to_string()),
+        );
+        assert_eq!(label, "[worker a3f7c2/tester]");
+    }
+
+    #[test]
+    fn work_node_label_omits_slash_when_worker_role_absent() {
+        let label = progress_label(&NodeKind::Work, &NodeId("a3f7c2".to_string()), &None);
+        assert_eq!(label, "[worker a3f7c2]");
+    }
 }

@@ -40,6 +40,7 @@ fn temporary_workspace_removed_after_integration() {
 
         h.handle_effect(SchedulerEffect::RunNode {
             node_id: NodeId("W".to_string()),
+            worker_role: None,
             kind: NodeKind::Work,
             objective: "write a file".to_string(),
             target_files: vec![],

@@ -134,6 +134,7 @@ impl<R: NodeRunner> SchedulerHandler<R> {
         match effect {
             SchedulerEffect::RunNode {
                 node_id,
+                worker_role,
                 kind,
                 objective,
                 target_files,
@@ -144,6 +145,7 @@ impl<R: NodeRunner> SchedulerHandler<R> {
             } => {
                 let command = RunNodeDispatch {
                     node_id: node_id.clone(),
+                    worker_role,
                     kind,
                     objective,
                     target_files,

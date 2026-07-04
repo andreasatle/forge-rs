@@ -48,6 +48,7 @@ fn scheduler_handler_maps_integration_error_to_failed_outcome() {
 
     h.handle_effect(SchedulerEffect::RunNode {
         node_id: NodeId("W".to_string()),
+        worker_role: None,
         kind: NodeKind::Work,
         objective: "write a file".to_string(),
         target_files: vec![],
@@ -97,6 +98,7 @@ fn scheduler_handler_maps_integration_conflict_to_failed_outcome() {
     // Run the node to stash a pending update.
     h.handle_effect(SchedulerEffect::RunNode {
         node_id: NodeId("W".to_string()),
+        worker_role: None,
         kind: NodeKind::Work,
         objective: "write a file".to_string(),
         target_files: vec![],

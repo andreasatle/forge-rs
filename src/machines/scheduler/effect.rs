@@ -29,6 +29,11 @@ pub enum SchedulerEffect {
     RunNode {
         /// The ID of the node to run, used to match the returned event.
         node_id: NodeId,
+        /// The adapter-assigned worker role for a `Work` node (e.g.
+        /// `"tester"`), or `None` for `Plan` nodes and default-role `Work`
+        /// nodes. Carried here so the dispatch layer can render it into
+        /// progress labels without re-reading the graph.
+        worker_role: Option<String>,
         /// Whether the node should plan or execute.
         kind: NodeKind,
         /// Natural-language description of what the node should accomplish.

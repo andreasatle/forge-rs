@@ -45,6 +45,7 @@ fn integration_executes_nodes_passing_validation_plan() {
 
     h.handle_effect(SchedulerEffect::RunNode {
         node_id: NodeId("W".to_string()),
+        worker_role: None,
         kind: NodeKind::Work,
         objective: "write a file".to_string(),
         target_files: vec![],
@@ -85,6 +86,7 @@ fn integration_executes_nodes_failing_validation_plan() {
 
     h.handle_effect(SchedulerEffect::RunNode {
         node_id: NodeId("W".to_string()),
+        worker_role: None,
         kind: NodeKind::Work,
         objective: "write a file".to_string(),
         target_files: vec![],
@@ -143,6 +145,7 @@ fn integration_executes_validation_plan_with_target_file_scope() {
 
     h.handle_effect(SchedulerEffect::RunNode {
         node_id: NodeId("W".to_string()),
+        worker_role: None,
         kind: NodeKind::Work,
         objective: "write scoped file".to_string(),
         target_files: vec!["scoped.py".to_string()],
@@ -194,6 +197,7 @@ fn preconditioned_step_skipped_when_file_absent() {
 
     h.handle_effect(SchedulerEffect::RunNode {
         node_id: NodeId("W".to_string()),
+        worker_role: None,
         kind: NodeKind::Work,
         objective: "write a file (no test files)".to_string(),
         target_files: vec![],

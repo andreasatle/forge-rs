@@ -7,6 +7,7 @@ fn run_node_effect_uses_node_runner() {
     let h = handler();
     let effect = SchedulerEffect::RunNode {
         node_id: NodeId("n1".to_string()),
+        worker_role: None,
         kind: NodeKind::Work,
         objective: "write some code".to_string(),
         target_files: vec![],
