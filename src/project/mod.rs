@@ -5,15 +5,13 @@
 //! target-file projection; future variants can add export config, validation
 //! config, or integration movement without changing the runtime wiring.
 
-pub mod coding;
-pub mod coding_tdd;
 pub mod default;
+pub mod loader;
 pub mod yaml;
 pub mod yaml_config;
 
-pub use coding::CodingProjectAdapter;
-pub use coding_tdd::CodingTddProjectAdapter;
 pub use default::DefaultProjectAdapter;
+pub use loader::load_adapter;
 pub use yaml::YamlProjectAdapter;
 pub use yaml_config::{ProjectAdapterConfig, RolePromptConfig, RolePromptsConfig, WorkerConfig};
 
@@ -144,7 +142,7 @@ fn safe_target_error(error: crate::artifacts::ArtifactError) -> String {
 mod tests {
     use super::*;
     use crate::artifacts::ArtifactError;
-    use crate::project::{CodingProjectAdapter, DefaultProjectAdapter};
+    use crate::project::{DefaultProjectAdapter, load_adapter};
 
     // ── safe_target_error ────────────────────────────────────────────────────
 
@@ -187,10 +185,14 @@ mod tests {
 
     #[test]
     fn coding_adapter_context_file_names_includes_readme() {
-        let names = CodingProjectAdapter.context_file_names();
+        let dir =
+            std::env::temp_dir().join(format!("forge-rs-project-mod-test-{}", std::process::id()));
+        let names = load_adapter(&dir, "coding.yaml")
+            .unwrap()
+            .context_file_names();
         assert!(
             names.contains(&"README.md".to_string()),
-            "CodingProjectAdapter must include README.md as a context file; got: {names:?}"
+            "coding.yaml adapter must include README.md as a context file; got: {names:?}"
         );
     }
 }

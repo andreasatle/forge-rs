@@ -19,9 +19,18 @@ pub struct ForgeConfig {
     #[serde(default)]
     pub validation: Option<ValidationConfig>,
     /// Names the project adapter YAML file governing role prompt policy
-    /// (e.g. `"coding.yaml"`, `"coding_tdd.yaml"`). Required; there is no default.
+    /// (e.g. `"coding.yaml"`, `"coding_tdd.yaml"`, or a user-defined
+    /// adapter's filename). Required; there is no default. Resolved against
+    /// `adapters_dir`.
     #[serde(default)]
     pub adapter: String,
+    /// Directory containing project adapter YAML files, resolved relative to
+    /// the directory containing the config file. Built-in adapters
+    /// (`coding.yaml`, `coding_tdd.yaml`) are written here on first use;
+    /// dropping a new YAML file in is enough to define a user adapter, with
+    /// no Rust changes. Defaults to `"adapters"`.
+    #[serde(default = "default_adapters_dir")]
+    pub adapters_dir: String,
     /// Names the language plugin YAML file providing init and validation
     /// specs (e.g. `"python.yaml"`, `"rust.yaml"`). Omitting means no
     /// language plugin. Mutually exclusive with an explicit `validation` block.
@@ -40,6 +49,10 @@ pub struct ArtifactConfig {
 
 fn default_provider_timeout_seconds() -> u64 {
     120
+}
+
+fn default_adapters_dir() -> String {
+    "adapters".to_string()
 }
 
 fn default_managed_startup_timeout_seconds() -> u64 {
@@ -224,6 +237,7 @@ impl ForgeConfig {
     ///
     /// Returns an error if:
     /// - `adapter` is absent.
+    /// - `adapter` does not resolve to a loadable adapter YAML in `adapters_dir`.
     /// - Both `plugin` and `validation` are specified (mutually exclusive).
     /// - `plugin` names an unknown language plugin.
     pub fn from_file(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
@@ -237,11 +251,15 @@ impl ForgeConfig {
         if let Some(dir) = config_dir {
             config.artifact.repo_path = resolve_relative(&config.artifact.repo_path, dir);
             config.telemetry.directory = resolve_relative(&config.telemetry.directory, dir);
+            config.adapters_dir = resolve_relative(&config.adapters_dir, dir);
         }
 
         if config.adapter.trim().is_empty() {
             return Err("adapter is required".into());
         }
+
+        crate::project::load_adapter(Path::new(&config.adapters_dir), &config.adapter)
+            .map_err(|e| format!("invalid adapter '{}': {e}", config.adapter))?;
 
         if config.plugin.is_some() && config.validation.is_some() {
             return Err("plugin and validation.commands are mutually exclusive; \

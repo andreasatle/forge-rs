@@ -5,6 +5,7 @@
 //! initial [`SchedulerState`].
 
 use std::error::Error;
+use std::path::Path;
 use std::rc::Rc;
 
 use crate::config::ForgeConfig;
@@ -50,6 +51,7 @@ impl RunSession {
 
         let setup = ProjectRuntimeSetup::build(
             &self.config.adapter,
+            Path::new(&self.config.adapters_dir),
             self.config.plugin.as_deref(),
             self.config.validation.as_ref(),
         )?;

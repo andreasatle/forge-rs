@@ -2,12 +2,22 @@ use super::*;
 use crate::config::ValidationConfig;
 use crate::language::registry::language_spec;
 
+/// A shared adapters directory for this test module. Loading a built-in
+/// adapter bootstraps it here on first use; every test in this module reuses
+/// the same directory since none of them mutate adapter files.
+fn adapters_dir() -> std::path::PathBuf {
+    std::env::temp_dir().join(format!(
+        "forge-rs-project-setup-test-adapters-{}",
+        std::process::id()
+    ))
+}
+
 fn builder<'a>(
     adapter: &str,
     plugin: Option<&str>,
     validation: Option<&'a ValidationConfig>,
 ) -> ProjectRuntimeSetupBuilder<'a> {
-    ProjectRuntimeSetupBuilder::new(adapter, plugin, validation).unwrap()
+    ProjectRuntimeSetupBuilder::new(adapter, &adapters_dir(), plugin, validation).unwrap()
 }
 
 // ── adapter selection ────────────────────────────────────────────────────
@@ -50,7 +60,7 @@ fn runtime_selects_coding_tdd_adapter() {
 
 #[test]
 fn unknown_adapter_fails_loudly() {
-    let result = ProjectRuntimeSetupBuilder::new("bogus.yaml", None, None);
+    let result = ProjectRuntimeSetupBuilder::new("bogus.yaml", &adapters_dir(), None, None);
     assert!(result.is_err(), "unrecognised adapter must be a hard error");
 }
 
@@ -100,7 +110,8 @@ fn runtime_role_policy_has_no_language_constraints_when_plugin_unset() {
 
 #[test]
 fn unknown_plugin_fails_loudly() {
-    let result = ProjectRuntimeSetupBuilder::new("coding.yaml", Some("bogus.yaml"), None);
+    let result =
+        ProjectRuntimeSetupBuilder::new("coding.yaml", &adapters_dir(), Some("bogus.yaml"), None);
     assert!(result.is_err(), "unrecognised plugin must be a hard error");
 }
 
@@ -228,7 +239,8 @@ fn project_requires_tests_false_when_no_validation() {
 
 #[test]
 fn build_derives_validator_and_validation_plan_from_language() {
-    let setup = ProjectRuntimeSetup::build("coding.yaml", Some("rust.yaml"), None).unwrap();
+    let setup = ProjectRuntimeSetup::build("coding.yaml", &adapters_dir(), Some("rust.yaml"), None)
+        .unwrap();
     assert!(
         setup.work_node_plan.is_some(),
         "a configured language plugin must produce a validation plan"
@@ -248,7 +260,9 @@ fn validation_node_plan_uses_reduced_python_commands() {
     // (ruff check only) rather than the full Work-node plan (ruff + pyright +
     // pytest), so tester nodes aren't required to pass the full test
     // suite before their own test files exist.
-    let setup = ProjectRuntimeSetup::build("coding.yaml", Some("python.yaml"), None).unwrap();
+    let setup =
+        ProjectRuntimeSetup::build("coding.yaml", &adapters_dir(), Some("python.yaml"), None)
+            .unwrap();
     let plan = setup
         .validation_node_plan
         .expect("python plugin must produce a validation_node_plan");
@@ -274,7 +288,8 @@ fn validation_node_plan_falls_back_to_work_plan_when_unset() {
     // Invariant: a language spec without validation_node_commands (e.g. rust)
     // must not silently drop validation for tester nodes — it falls back
     // to the same full plan used for other Work nodes.
-    let setup = ProjectRuntimeSetup::build("coding.yaml", Some("rust.yaml"), None).unwrap();
+    let setup = ProjectRuntimeSetup::build("coding.yaml", &adapters_dir(), Some("rust.yaml"), None)
+        .unwrap();
     assert_eq!(
         setup.validation_node_plan, setup.work_node_plan,
         "validation_node_plan must equal work_node_plan when validation_node_commands is empty"

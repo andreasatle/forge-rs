@@ -661,6 +661,47 @@ fn config_parses_adapter() {
     );
 }
 
+#[test]
+fn config_default_adapters_dir_is_resolved_against_config_dir() {
+    // Invariant: adapters_dir defaults to "adapters" and, like repo_path and
+    // telemetry.directory, is resolved relative to the config file's
+    // directory rather than the process cwd.
+    let tmp = TempYaml::new(EXAMPLE_YAML);
+    let config = ForgeConfig::from_file(tmp.path()).unwrap();
+    let config_dir = std::path::Path::new(tmp.path()).parent().unwrap();
+    let expected = config_dir.join("adapters").to_string_lossy().into_owned();
+    assert_eq!(config.adapters_dir, expected);
+}
+
+const UNKNOWN_ADAPTER_YAML: &str = r#"
+objective: "test"
+artifact:
+  repo_path: ".forge/artifacts/main.git"
+  branch: "main"
+provider:
+  cheap:
+    unmanaged:
+      base_url: "http://localhost:8080"
+      model: "llama-test"
+      n_predict: 512
+telemetry:
+  directory: "runs"
+adapter: bogus_adapter_that_does_not_exist.yaml
+"#;
+
+#[test]
+fn unknown_adapter_filename_fails_at_config_load_time() {
+    // Invariant: an adapter name that isn't a built-in and doesn't exist in
+    // adapters_dir must fail from_file itself, not wait until the run
+    // actually starts.
+    let tmp = TempYaml::new(UNKNOWN_ADAPTER_YAML);
+    let result = ForgeConfig::from_file(tmp.path());
+    assert!(
+        result.is_err(),
+        "unrecognised adapter filename must be a hard error at config load time"
+    );
+}
+
 // ── plugin config tests ──────────────────────────────────────────────────
 
 const RUST_PLUGIN_YAML: &str = r#"

@@ -6,6 +6,7 @@
 //! `resume` derive identical wiring from identical config.
 
 use std::error::Error;
+use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
@@ -14,7 +15,7 @@ use crate::config::ValidationConfig;
 use crate::language::registry::language_spec_for_plugin;
 use crate::language::spec::LanguageSpec;
 use crate::node_runner::TestTargetsFn;
-use crate::project::{CodingProjectAdapter, CodingTddProjectAdapter, ProjectAdapter};
+use crate::project::{ProjectAdapter, load_adapter};
 use crate::roles::RolePolicy;
 use crate::validation::{
     AlwaysPassValidator, CommandSpec, CommandValidator, ValidationPlan, ValidationScope,
@@ -33,17 +34,18 @@ pub struct ProjectRuntimeSetup {
 }
 
 impl ProjectRuntimeSetup {
-    /// `adapter` names a bundled project adapter YAML file (e.g.
-    /// `"coding.yaml"`); `plugin` optionally names a bundled language plugin
-    /// YAML file (e.g. `"python.yaml"`). Both are validated by
-    /// [`crate::config::ForgeConfig::from_file`] in the common case, but an
-    /// unrecognised name is still a hard error here.
+    /// `adapter` names a project adapter YAML file (e.g. `"coding.yaml"`),
+    /// loaded from `adapters_dir`; `plugin` optionally names a bundled
+    /// language plugin YAML file (e.g. `"python.yaml"`). Both are validated
+    /// by [`crate::config::ForgeConfig::from_file`] in the common case, but
+    /// an unrecognised name is still a hard error here.
     pub fn build(
         adapter: &str,
+        adapters_dir: &Path,
         plugin: Option<&str>,
         validation: Option<&ValidationConfig>,
     ) -> Result<Self, Box<dyn Error>> {
-        Ok(ProjectRuntimeSetupBuilder::new(adapter, plugin, validation)?.build())
+        Ok(ProjectRuntimeSetupBuilder::new(adapter, adapters_dir, plugin, validation)?.build())
     }
 }
 
@@ -56,13 +58,14 @@ struct ProjectRuntimeSetupBuilder<'a> {
 impl<'a> ProjectRuntimeSetupBuilder<'a> {
     fn new(
         adapter: &str,
+        adapters_dir: &Path,
         plugin: Option<&str>,
         validation: Option<&'a ValidationConfig>,
     ) -> Result<Self, Box<dyn Error>> {
         Ok(Self {
             validation,
             language_spec: Self::select_plugin(plugin)?,
-            adapter: Self::select_adapter(adapter)?,
+            adapter: Self::select_adapter(adapter, adapters_dir)?,
         })
     }
 
@@ -77,13 +80,13 @@ impl<'a> ProjectRuntimeSetupBuilder<'a> {
         }
     }
 
-    /// Selects the bundled adapter named by `adapter` (e.g. `"coding.yaml"`).
-    fn select_adapter(adapter: &str) -> Result<Box<dyn ProjectAdapter>, Box<dyn Error>> {
-        match adapter {
-            "coding.yaml" => Ok(Box::new(CodingProjectAdapter)),
-            "coding_tdd.yaml" => Ok(Box::new(CodingTddProjectAdapter)),
-            other => Err(format!("unknown adapter: '{other}'").into()),
-        }
+    /// Loads the adapter named by `adapter` (e.g. `"coding.yaml"`) from
+    /// `adapters_dir`, bootstrapping built-in adapters on first use.
+    fn select_adapter(
+        adapter: &str,
+        adapters_dir: &Path,
+    ) -> Result<Box<dyn ProjectAdapter>, Box<dyn Error>> {
+        Ok(Box::new(load_adapter(adapters_dir, adapter)?))
     }
 
     /// Resolves the bundled language spec named by `plugin` (e.g. `"python.yaml"`).

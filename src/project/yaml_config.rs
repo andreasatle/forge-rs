@@ -57,8 +57,9 @@ pub struct WorkerConfig {
 
 /// Full YAML-deserializable configuration for a [`super::YamlProjectAdapter`].
 ///
-/// Covers everything [`crate::project::CodingProjectAdapter`] currently
-/// hardcodes: role prompts and ambient context file names.
+/// Covers role prompts and ambient context file names for a project
+/// adapter, whether built-in (`coding.yaml`, `coding_tdd.yaml`) or
+/// user-defined.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectAdapterConfig {
