@@ -75,6 +75,12 @@ impl ProjectAdapter for YamlProjectAdapter {
             planner_protocol_schema: PLANNER_PROTOCOL_FOOTER_WITH_OPERATION.to_string(),
             language_guidance: None,
             language_constraints: None,
+            worker_role_descriptions: self
+                .config
+                .workers
+                .iter()
+                .map(|w| (w.role.clone(), w.description.clone()))
+                .collect(),
         }
     }
 

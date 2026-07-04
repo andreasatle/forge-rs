@@ -50,5 +50,9 @@ mod tests {
         );
         assert_eq!(policy.language_guidance, expected.language_guidance);
         assert_eq!(policy.language_constraints, expected.language_constraints);
+        assert_eq!(
+            policy.worker_role_descriptions,
+            expected.worker_role_descriptions
+        );
     }
 }

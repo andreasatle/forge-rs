@@ -115,6 +115,64 @@ fn review_contract_renders_for_reviewers_only() {
     assert!(has_review_contract(&referee_prompt));
 }
 
+#[test]
+fn worker_role_descriptions_render_for_planner_producer_only() {
+    // Invariant: the "Available worker roles" section is built from
+    // RolePolicy::worker_role_descriptions and appears only in the
+    // Plan-node Producer's prompt — Critic, Referee, and the Work-node
+    // Producer never assign roles, so they must not see it.
+    let policy = RolePolicy {
+        worker_role_descriptions: vec![
+            ("tester".to_string(), "Writes test files.".to_string()),
+            ("implementer".to_string(), "Writes source code.".to_string()),
+        ],
+        ..RolePolicy::default()
+    };
+
+    let cases = [
+        (
+            "planner producer",
+            plan_request("plan the work"),
+            PLAN_RESPONSE,
+        ),
+        (
+            "worker producer",
+            producer_request("do the work"),
+            r#"{"summary":"work done"}"#,
+        ),
+        (
+            "critic",
+            critic_request("review the draft", "draft"),
+            r#"{"status":"rejected","reason":"needs work"}"#,
+        ),
+        (
+            "referee",
+            referee_request("approve the result", "draft", "review"),
+            r#"{"status":"rejected","reason":"not ready"}"#,
+        ),
+    ];
+
+    for (label, request, response) in cases {
+        let provider = ScriptedProvider::from_strs(&[response]);
+        let runner = ProviderRoleRunner::new_with_policy(&provider, policy.clone());
+        runner.run_role(request, &crate::telemetry::NoopTelemetry);
+        let prompt = provider.requests.borrow()[0].prompt.clone();
+        if label == "planner producer" {
+            assert!(
+                prompt.contains("Available worker roles:")
+                    && prompt.contains("- tester: Writes test files.")
+                    && prompt.contains("- implementer: Writes source code."),
+                "{label} prompt must list worker role descriptions; got:\n{prompt}"
+            );
+        } else {
+            assert!(
+                !prompt.contains("Available worker roles:"),
+                "{label} prompt must not list worker role descriptions; got:\n{prompt}"
+            );
+        }
+    }
+}
+
 fn first_prompt(request: RoleRequest, response: &str) -> String {
     let provider = ScriptedProvider::from_strs(&[response]);
     let runner = ProviderRoleRunner::new(&provider);

@@ -332,6 +332,9 @@ pub(super) struct RolePromptRender<'a> {
     pub(super) target_views: &'a [TargetView],
     pub(super) test_plan_context: &'a TestPlanContext,
     pub(super) review_contract: Option<&'a NodeReviewContract>,
+    /// Worker role name/description pairs to surface to the model. Callers
+    /// pass an empty slice for every role except the Plan-node Producer.
+    pub(super) worker_role_descriptions: &'a [(String, String)],
 }
 
 pub(super) fn render_role_prompt_with_test_plan_context(input: RolePromptRender<'_>) -> String {
@@ -370,8 +373,23 @@ pub(super) fn render_role_prompt_with_test_plan_context(input: RolePromptRender<
         let reasons: Vec<&str> = input.feedback.iter().map(|f| f.reason.as_str()).collect();
         parts.push(format!("Revision feedback: {}", reasons.join("; ")));
     }
+    if !input.worker_role_descriptions.is_empty() {
+        parts.push(render_worker_role_descriptions(
+            input.worker_role_descriptions,
+        ));
+    }
     parts.push(input.system.to_string());
     parts.join("\n")
+}
+
+/// Renders the "Available worker roles" section shown to the Plan-node
+/// Producer so it can assign roles explicitly to each task.
+fn render_worker_role_descriptions(roles: &[(String, String)]) -> String {
+    let mut lines = vec!["Available worker roles:".to_string()];
+    for (role, description) in roles {
+        lines.push(format!("- {role}: {description}"));
+    }
+    lines.join("\n")
 }
 
 fn render_deliberation_context(

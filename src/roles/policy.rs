@@ -258,6 +258,14 @@ pub struct RolePolicy {
     ///
     /// [`LanguageSpec::constraints`]: crate::language::LanguageSpec::constraints
     pub language_constraints: Option<String>,
+    /// Worker role name/description pairs, surfaced to the Plan-node
+    /// Producer so it can assign roles explicitly to each task.
+    ///
+    /// Sourced from the adapter's `workers` list
+    /// (`WorkerRoleConfig::role`/`WorkerRoleConfig::description`). Empty
+    /// when the adapter defines no worker roles, in which case the section
+    /// is omitted from the rendered prompt.
+    pub worker_role_descriptions: Vec<(String, String)>,
 }
 
 impl Default for RolePolicy {
@@ -272,6 +280,7 @@ impl Default for RolePolicy {
             planner_protocol_schema: PLANNER_PROTOCOL_FOOTER.to_string(),
             language_guidance: None,
             language_constraints: None,
+            worker_role_descriptions: Vec::new(),
         }
     }
 }

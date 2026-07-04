@@ -243,6 +243,15 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
             &request.test_plan_context,
             has_tools,
         );
+        // Only the Plan-node Producer sees the available worker roles — it is
+        // the only role that assigns roles to tasks.
+        let worker_role_descriptions: &[(String, String)] = if request.node_kind == NodeKind::Plan
+            && matches!(request.role, DeliberationRole::Producer)
+        {
+            &self.policy.worker_role_descriptions
+        } else {
+            &[]
+        };
         let core_prompt = render_role_prompt_with_test_plan_context(RolePromptRender {
             system,
             role: &request.role,
@@ -254,6 +263,7 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
             target_views: &request.target_views,
             test_plan_context: &request.test_plan_context,
             review_contract: review_contract.as_ref(),
+            worker_role_descriptions,
         });
         let core_prompt = match &self.policy.language_guidance {
             Some(guidance) => format!("{core_prompt}\n\nLanguage guidance:\n{guidance}"),
