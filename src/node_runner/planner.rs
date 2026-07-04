@@ -397,19 +397,20 @@ impl<'a> PlannerOutputProcessor<'a> {
                 .tasks
                 .into_iter()
                 .map(|task| {
-                    let kind = if !task.targets.is_empty()
+                    let worker_role = if !task.targets.is_empty()
                         && task
                             .targets
                             .iter()
                             .all(|target| validation_targets.contains(target))
                     {
-                        NodeKind::Validation
+                        Some("tester".to_string())
                     } else {
-                        NodeKind::Work
+                        None
                     };
                     NodeRequest {
                         id: NodeId(task.id),
-                        kind,
+                        kind: NodeKind::Work,
+                        worker_role,
                         objective: task.objective,
                         target_files: task.targets,
                         required_validation_targets: vec![],

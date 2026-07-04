@@ -115,6 +115,7 @@ fn terminal_failure_produces_failed_scheduler_terminal_output() {
         nodes: vec![Node {
             id: NodeId("T".to_string()),
             kind: NodeKind::Work,
+            worker_role: None,
             objective: "fail this step".to_string(),
             target_files: vec![],
             required_validation_targets: vec![],
@@ -146,6 +147,7 @@ fn scheduler_terminal_output_includes_node_failure_reason() {
         nodes: vec![Node {
             id: NodeId("T".to_string()),
             kind: NodeKind::Work,
+            worker_role: None,
             objective: "fail this step".to_string(),
             target_files: vec![],
             required_validation_targets: vec![],
@@ -461,6 +463,7 @@ fn split_success_reports_recovery() {
             Node {
                 id: source_id.clone(),
                 kind: NodeKind::Work,
+                worker_role: None,
                 objective: "complex task".to_string(),
                 target_files: vec![],
                 required_validation_targets: vec![],
@@ -477,6 +480,7 @@ fn split_success_reports_recovery() {
             Node {
                 id: split_id,
                 kind: NodeKind::Plan,
+                worker_role: None,
                 objective: "decompose complex task".to_string(),
                 target_files: vec![],
                 required_validation_targets: vec![],

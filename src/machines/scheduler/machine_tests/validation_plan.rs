@@ -42,6 +42,7 @@ fn plan_expansion_stamps_validation_plan_onto_work_children() {
                 children: vec![NodeRequest {
                     id: NodeId("work".to_string()),
                     kind: NodeKind::Work,
+                    worker_role: None,
                     objective: "do the work".to_string(),
                     target_files: vec![],
                     required_validation_targets: vec![],

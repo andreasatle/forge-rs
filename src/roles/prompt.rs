@@ -316,8 +316,7 @@ impl NodeReviewContract {
             planned_follow_up_targets: test_plan_context.planned_test_targets.clone(),
             covered_test_targets,
             missing_test_targets,
-            requires_file_inspection: matches!(node_kind, NodeKind::Work | NodeKind::Validation)
-                && has_tools,
+            requires_file_inspection: *node_kind == NodeKind::Work && has_tools,
         })
     }
 }

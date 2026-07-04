@@ -520,10 +520,10 @@ fn planner_tasks_become_node_requests() {
 }
 
 #[test]
-fn task_targeting_only_derived_validation_targets_becomes_validation_kind() {
+fn task_targeting_only_derived_validation_targets_becomes_tester_role() {
     // Invariant: a task whose targets are entirely covered by the adapter's
     // derived validation targets (e.g. a test file for another task's source
-    // file) is classified as NodeKind::Validation, not NodeKind::Work.
+    // file) is assigned the "tester" worker role, not left with no role.
     fn required_test_targets(targets: &[String]) -> Vec<String> {
         targets
             .iter()
@@ -558,20 +558,22 @@ fn task_targeting_only_derived_validation_targets_becomes_validation_kind() {
         .find(|c| c.id == NodeId("impl".to_string()))
         .unwrap();
     assert_eq!(impl_child.kind, NodeKind::Work);
+    assert_eq!(impl_child.worker_role, None);
 
     let test_child = plan
         .children
         .iter()
         .find(|c| c.id == NodeId("test".to_string()))
         .unwrap();
-    assert_eq!(test_child.kind, NodeKind::Validation);
+    assert_eq!(test_child.kind, NodeKind::Work);
+    assert_eq!(test_child.worker_role, Some("tester".to_string()));
 }
 
 #[test]
-fn task_targeting_source_and_test_files_together_stays_work_kind() {
-    // Invariant: a task is only reclassified as Validation when ALL of its
+fn task_targeting_source_and_test_files_together_stays_untested_role() {
+    // Invariant: a task is only assigned the tester role when ALL of its
     // targets are derived validation targets. A task mixing a source file
-    // with a test file must stay Work.
+    // with a test file must have no worker role.
     fn required_test_targets(targets: &[String]) -> Vec<String> {
         targets
             .iter()
@@ -592,6 +594,7 @@ fn task_targeting_source_and_test_files_together_stays_work_kind() {
     let plan = processor("", &[], &required_test_targets).into_plan(output);
 
     assert_eq!(plan.children[0].kind, NodeKind::Work);
+    assert_eq!(plan.children[0].worker_role, None);
 }
 
 #[test]

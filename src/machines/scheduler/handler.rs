@@ -152,11 +152,7 @@ impl<R: NodeRunner> SchedulerHandler<R> {
                     attempt,
                     retry_feedback,
                 };
-                let work_attempt = if matches!(
-                    command.kind,
-                    crate::machines::scheduler::NodeKind::Work
-                        | crate::machines::scheduler::NodeKind::Validation
-                ) {
+                let work_attempt = if command.kind == crate::machines::scheduler::NodeKind::Work {
                     self.integration
                         .prepare_work_attempt(command.node_id.clone(), command.attempt)
                 } else {

@@ -39,6 +39,22 @@ pub struct RolePromptsConfig {
     pub worker_referee: RolePromptConfig,
 }
 
+/// A worker role this project adapter defines, and which reduced or full
+/// validation contract applies to nodes assigned that role.
+///
+/// `validation` is a project-adapter-facing label (e.g. `"ruff_only"`,
+/// `"full"`); it documents the adapter's intent but is not resolved by this
+/// struct. The framework assigns `role` to a node deterministically from the
+/// node's target files (see [`crate::machines::scheduler::Node::worker_role`]).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkerConfig {
+    /// The worker role name (e.g. `"tester"`, `"implementer"`).
+    pub role: String,
+    /// Which validation contract this role runs (adapter-facing label only).
+    pub validation: String,
+}
+
 /// Full YAML-deserializable configuration for a [`super::YamlProjectAdapter`].
 ///
 /// Covers everything [`crate::project::CodingProjectAdapter`] currently
@@ -51,6 +67,9 @@ pub struct ProjectAdapterConfig {
     /// Artifact file names included as ambient context in prompts.
     #[serde(default)]
     pub context_files: Vec<String>,
+    /// Worker roles this project adapter defines.
+    #[serde(default)]
+    pub workers: Vec<WorkerConfig>,
 }
 
 #[cfg(test)]

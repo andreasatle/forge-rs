@@ -47,6 +47,11 @@ pub struct NodeRequest {
     pub id: NodeId,
     /// Whether the new node should plan or execute.
     pub kind: NodeKind,
+    /// The adapter-assigned worker role for a `Work` node (e.g. `"tester"`).
+    ///
+    /// `None` for `Plan` nodes and for `Work` nodes with no distinct role.
+    /// Copied verbatim onto the resulting `Node.worker_role`.
+    pub worker_role: Option<String>,
     /// Natural-language description of what the new node should accomplish.
     pub objective: String,
     /// Structured target files this node is expected and allowed to touch.

@@ -113,6 +113,7 @@ impl SchedulerMachine {
         let root = Node {
             id: NodeId("root".to_string()),
             kind: NodeKind::Plan,
+            worker_role: None,
             objective: request.objective,
             target_files: vec![],
             required_validation_targets: vec![],

@@ -42,6 +42,7 @@ impl NodeRunner for StaticNodeRunner {
                 children: vec![NodeRequest {
                     id: NodeId("child-work".to_string()),
                     kind: NodeKind::Work,
+                    worker_role: None,
                     objective: format!("work for: {}", request.objective),
                     target_files: vec![],
                     required_validation_targets: vec![],
@@ -49,13 +50,11 @@ impl NodeRunner for StaticNodeRunner {
                     validation_plan: None,
                 }],
             }),
-            NodeKind::Work | NodeKind::Validation => {
-                NodeRunResult::WorkAccepted(NodeRunWorkResult {
-                    work: WorkOutput {
-                        summary: format!("completed: {}", request.objective),
-                    },
-                })
-            }
+            NodeKind::Work => NodeRunResult::WorkAccepted(NodeRunWorkResult {
+                work: WorkOutput {
+                    summary: format!("completed: {}", request.objective),
+                },
+            }),
         }
     }
 }

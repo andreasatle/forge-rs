@@ -161,12 +161,12 @@ impl<'a> ProjectRuntimeSetupBuilder<'a> {
         }
     }
 
-    /// Build the reduced [`ValidationPlan`] stamped onto every `Validation`
-    /// node at plan-expansion time.
+    /// Build the reduced [`ValidationPlan`] stamped onto every tester-role
+    /// `Work` node at plan-expansion time.
     ///
     /// Falls back to [`Self::work_node_plan`] when the language spec declares
     /// no `validation_node_commands` (or no language plugin is configured),
-    /// so `Validation` nodes are never left with a weaker contract than the
+    /// so tester nodes are never left with a weaker contract than the
     /// project otherwise requires.
     fn validation_node_plan(&self) -> Option<ValidationPlan> {
         if let Some(spec) = &self.language_spec {

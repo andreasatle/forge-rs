@@ -19,6 +19,7 @@ fn plan_child_depth_limit_fails_scheduler() {
                 children: vec![NodeRequest {
                     id: NodeId("nested-plan".to_string()),
                     kind: NodeKind::Plan,
+                    worker_role: None,
                     objective: "nested plan".to_string(),
                     target_files: vec![],
                     required_validation_targets: vec![],
@@ -77,6 +78,7 @@ fn plan_expansion_respects_graph_size_limit() {
                     NodeRequest {
                         id: NodeId("child-1".to_string()),
                         kind: NodeKind::Work,
+                        worker_role: None,
                         objective: "child one".to_string(),
                         target_files: vec![],
                         required_validation_targets: vec![],
@@ -86,6 +88,7 @@ fn plan_expansion_respects_graph_size_limit() {
                     NodeRequest {
                         id: NodeId("child-2".to_string()),
                         kind: NodeKind::Work,
+                        worker_role: None,
                         objective: "child two".to_string(),
                         target_files: vec![],
                         required_validation_targets: vec![],

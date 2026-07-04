@@ -244,9 +244,9 @@ fn build_derives_validator_and_validation_plan_from_language() {
 
 #[test]
 fn validation_node_plan_uses_reduced_python_commands() {
-    // Invariant: NodeKind::Validation nodes get a reduced validation plan
+    // Invariant: tester-role Work nodes get a reduced validation plan
     // (ruff check only) rather than the full Work-node plan (ruff + pyright +
-    // pytest), so validation nodes aren't required to pass the full test
+    // pytest), so tester nodes aren't required to pass the full test
     // suite before their own test files exist.
     let setup = ProjectRuntimeSetup::build("coding.yaml", Some("python.yaml"), None).unwrap();
     let plan = setup
@@ -272,8 +272,8 @@ fn validation_node_plan_uses_reduced_python_commands() {
 #[test]
 fn validation_node_plan_falls_back_to_work_plan_when_unset() {
     // Invariant: a language spec without validation_node_commands (e.g. rust)
-    // must not silently drop validation for Validation nodes — it falls back
-    // to the same full plan used for Work nodes.
+    // must not silently drop validation for tester nodes — it falls back
+    // to the same full plan used for other Work nodes.
     let setup = ProjectRuntimeSetup::build("coding.yaml", Some("rust.yaml"), None).unwrap();
     assert_eq!(
         setup.validation_node_plan, setup.work_node_plan,

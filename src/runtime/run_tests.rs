@@ -273,6 +273,7 @@ fn runtime_summary_uses_post_integration_artifact_commit() {
                     children: vec![NodeRequest {
                         id: NodeId("work".to_string()),
                         kind: NodeKind::Work,
+                        worker_role: None,
                         objective: "generate result.txt".to_string(),
                         target_files: vec![],
                         required_validation_targets: vec![],
@@ -280,7 +281,7 @@ fn runtime_summary_uses_post_integration_artifact_commit() {
                         validation_plan: None,
                     }],
                 }),
-                NodeKind::Work | NodeKind::Validation => {
+                NodeKind::Work => {
                     request
                         .work_attempt
                         .expect("artifact Work must receive a WorkAttempt")
@@ -459,6 +460,7 @@ fn successful_validated_run_sets_validation_passed_true() {
                     children: vec![NodeRequest {
                         id: NodeId("work".to_string()),
                         kind: NodeKind::Work,
+                        worker_role: None,
                         objective: "write result.txt".to_string(),
                         target_files: vec![],
                         required_validation_targets: vec![],
@@ -466,7 +468,7 @@ fn successful_validated_run_sets_validation_passed_true() {
                         validation_plan: None,
                     }],
                 }),
-                NodeKind::Work | NodeKind::Validation => {
+                NodeKind::Work => {
                     request
                         .work_attempt
                         .expect("artifact Work must receive a WorkAttempt")
@@ -542,6 +544,7 @@ fn validation_failure_sets_validation_passed_false_in_manifest() {
                     children: vec![NodeRequest {
                         id: NodeId("work".to_string()),
                         kind: NodeKind::Work,
+                        worker_role: None,
                         objective: "write result.txt".to_string(),
                         target_files: vec![],
                         required_validation_targets: vec![],
@@ -549,7 +552,7 @@ fn validation_failure_sets_validation_passed_false_in_manifest() {
                         validation_plan: None,
                     }],
                 }),
-                NodeKind::Work | NodeKind::Validation => {
+                NodeKind::Work => {
                     request
                         .work_attempt
                         .expect("artifact Work must receive a WorkAttempt")

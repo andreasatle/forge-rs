@@ -17,13 +17,11 @@ pub(crate) fn map_output(
     match output {
         DeliberationTerminalOutput::Complete(out) => match kind {
             NodeKind::Plan => map_plan_output(out.content, required_test_targets_fn, telemetry),
-            NodeKind::Work | NodeKind::Validation => {
-                NodeRunResult::WorkAccepted(NodeRunWorkResult {
-                    work: WorkOutput {
-                        summary: out.content,
-                    },
-                })
-            }
+            NodeKind::Work => NodeRunResult::WorkAccepted(NodeRunWorkResult {
+                work: WorkOutput {
+                    summary: out.content,
+                },
+            }),
         },
         DeliberationTerminalOutput::Failed { kind, message, .. } => {
             let recovery = classify_deliberation_failure(kind, &message);

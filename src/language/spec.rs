@@ -59,10 +59,11 @@ pub struct LanguageValidationSpec {
     /// source targets named in a task.
     #[serde(default)]
     pub validation_targets: Vec<ValidationTargetRule>,
-    /// Reduced command set used to validate `NodeKind::Validation` nodes.
+    /// Reduced command set used to validate nodes assigned the `tester`
+    /// worker role.
     ///
-    /// When empty (the default), validation nodes fall back to `commands` —
-    /// the same full validation plan used for `Work` nodes.
+    /// When empty (the default), tester nodes fall back to `commands` — the
+    /// same full validation plan used for other `Work` nodes.
     #[serde(default)]
     pub validation_node_commands: Vec<CommandSpec>,
 }

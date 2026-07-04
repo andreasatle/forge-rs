@@ -121,6 +121,7 @@ fn work_node(id: &str, objective: &str) -> Node {
     Node {
         id: NodeId(id.to_string()),
         kind: NodeKind::Work,
+        worker_role: None,
         objective: objective.to_string(),
         target_files: vec![],
         required_validation_targets: vec![],
@@ -140,6 +141,7 @@ fn work_node_with_deps(id: &str, objective: &str, deps: &[&str]) -> Node {
     Node {
         id: NodeId(id.to_string()),
         kind: NodeKind::Work,
+        worker_role: None,
         objective: objective.to_string(),
         target_files: vec![],
         required_validation_targets: vec![],

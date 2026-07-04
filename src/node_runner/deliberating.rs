@@ -46,13 +46,14 @@ pub struct DeliberatingNodeRunner<C, S> {
     role_policy: RolePolicy,
     required_test_targets_fn: Arc<TestTargetsFn>,
     context_file_names: Vec<String>,
-    /// Validation plan stamped onto every `Work` node request produced by this runner.
+    /// Validation plan stamped onto every non-tester `Work` node request
+    /// produced by this runner.
     ///
     /// `None` means no per-node plan; integration falls back to the global
     /// handler-level validator.
     work_node_plan: Option<ValidationPlan>,
-    /// Validation plan stamped onto every `Validation` node request produced by
-    /// this runner.
+    /// Validation plan stamped onto every tester-role `Work` node request
+    /// produced by this runner.
     ///
     /// `None` means no per-node plan; integration falls back to the global
     /// handler-level validator.
@@ -129,8 +130,8 @@ impl<C, S> DeliberatingNodeRunner<C, S> {
         self
     }
 
-    /// Supply the validation plan stamped onto every `Validation` node this
-    /// runner produces.
+    /// Supply the validation plan stamped onto every tester-role `Work` node
+    /// this runner produces.
     ///
     /// The plan is cloned onto each [`NodeRequest`](crate::machines::scheduler::NodeRequest)
     /// when a plan node expands.  When not set (the default), nodes carry no
@@ -174,26 +175,26 @@ impl<C: ProviderClient, S: ProviderClient> NodeRunner for DeliberatingNodeRunner
 
 impl<C, S> DeliberatingNodeRunner<C, S> {
     /// Stamp the plan-derived metadata and the correct validation plan onto
-    /// every non-`Plan` [`NodeRequest`] in `plan`, based on each child's kind.
+    /// every non-`Plan` [`NodeRequest`] in `plan`, based on each child's
+    /// worker role.
     fn stamp_plan_metadata(
         &self,
         mut plan: crate::machines::scheduler::PlanOutput,
     ) -> crate::machines::scheduler::PlanOutput {
         for child in &mut plan.children {
-            match child.kind {
-                NodeKind::Work => {
-                    child.required_validation_targets =
-                        (self.required_test_targets_fn)(&child.target_files);
-                    if self.work_node_plan.is_some() {
-                        child.validation_plan = self.work_node_plan.clone();
-                    }
+            if child.kind != NodeKind::Work {
+                continue;
+            }
+            if child.worker_role.as_deref() == Some("tester") {
+                if self.validation_node_plan.is_some() {
+                    child.validation_plan = self.validation_node_plan.clone();
                 }
-                NodeKind::Validation => {
-                    if self.validation_node_plan.is_some() {
-                        child.validation_plan = self.validation_node_plan.clone();
-                    }
+            } else {
+                child.required_validation_targets =
+                    (self.required_test_targets_fn)(&child.target_files);
+                if self.work_node_plan.is_some() {
+                    child.validation_plan = self.work_node_plan.clone();
                 }
-                NodeKind::Plan => {}
             }
         }
         plan

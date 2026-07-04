@@ -181,6 +181,7 @@ mod tests {
         Node {
             id: NodeId(id.to_string()),
             kind: NodeKind::Work,
+            worker_role: None,
             objective: format!("do {id}"),
             target_files: vec![],
             required_validation_targets: vec![],

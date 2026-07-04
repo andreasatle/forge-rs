@@ -110,6 +110,7 @@ mod tests {
         YamlProjectAdapter::new(ProjectAdapterConfig {
             role_prompts: role_prompts(),
             context_files: vec!["README.md".to_string()],
+            workers: vec![],
         })
     }
 
@@ -217,6 +218,7 @@ mod tests {
             let adapter = YamlProjectAdapter::new(ProjectAdapterConfig {
                 role_prompts: role_prompts(),
                 context_files,
+                workers: vec![],
             });
             assert_eq!(adapter.context_file_names(), expected);
         }

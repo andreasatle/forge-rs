@@ -29,7 +29,7 @@ use crate::validation::ValidationPlan;
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct NodeId(pub String);
 
-/// Whether a node performs planning, execution, or validation.
+/// Whether a node performs planning or execution.
 ///
 /// The distinction determines what output the scheduler expects back and how it
 /// reacts to that output:
@@ -41,19 +41,12 @@ pub struct NodeId(pub String);
 ///   string. When the runner reports `WorkAccepted`, the node moves to
 ///   `Integrating` and an `IntegrateWork` effect is emitted. The node reaches
 ///   `Completed` only after `IntegrationSucceeded` arrives.
-/// - `Validation` nodes carry out a task whose purpose is to validate other
-///   implementation work (today, test-writing). They dispatch and integrate
-///   exactly like `Work` nodes; the distinction exists so runtime wiring can
-///   apply a different validation contract to them.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum NodeKind {
     /// A planning node. Decomposes an objective into child nodes.
     Plan,
     /// An execution node. Carries out a concrete, bounded task.
     Work,
-    /// A validation node. Carries out a task that validates other work
-    /// (e.g. writing tests), dispatched and integrated like `Work`.
-    Validation,
 }
 
 /// Structured test-target context for a work node.
@@ -167,6 +160,16 @@ pub struct Node {
     pub id: NodeId,
     /// Whether this node plans or executes.
     pub kind: NodeKind,
+    /// The adapter-assigned worker role for a `Work` node (e.g. `"tester"`).
+    ///
+    /// Assigned deterministically by the planner from the node's target files
+    /// using the project adapter's worker definitions. `None` for `Plan`
+    /// nodes and for `Work` nodes with no distinct role (the default,
+    /// full-validation worker). Preserved unchanged through retries and model
+    /// escalation; reset to `None` on `Split`, which always creates a `Plan`
+    /// node.
+    #[serde(default)]
+    pub worker_role: Option<String>,
     /// A natural-language description of what this node should accomplish.
     /// Passed verbatim to the runner; preserved across retries and escalations.
     pub objective: String,
@@ -346,8 +349,7 @@ impl RunGraph {
     }
 
     pub(super) fn validate_required_tests_completed(&self) -> Result<(), String> {
-        let is_work_like =
-            |node: &&Node| matches!(node.kind, NodeKind::Work | NodeKind::Validation);
+        let is_work_like = |node: &&Node| node.kind == NodeKind::Work;
 
         let completed_targets: HashSet<&str> = self
             .nodes
@@ -510,6 +512,7 @@ impl RunGraph {
             self.nodes.push(Node {
                 id,
                 kind: req.kind,
+                worker_role: req.worker_role,
                 objective: req.objective,
                 target_files: req.target_files,
                 required_validation_targets: req.required_validation_targets,
@@ -658,12 +661,10 @@ impl RunGraph {
     pub(super) fn invalid_integration_reason(&self, node_id: &NodeId) -> Option<String> {
         match self.node_for_running(node_id) {
             None => Some(format!("node {} not found in graph", node_id.0)),
-            Some(node) if !matches!(node.kind, NodeKind::Work | NodeKind::Validation) => {
-                Some(format!(
-                    "node {} is {:?} but IntegrationReturned requires a Work or Validation node",
-                    node_id.0, node.kind
-                ))
-            }
+            Some(node) if node.kind != NodeKind::Work => Some(format!(
+                "node {} is {:?} but IntegrationReturned requires a Work node",
+                node_id.0, node.kind
+            )),
             Some(node) if node.status != NodeStatus::Integrating => Some(format!(
                 "node {} has status {:?} but IntegrationReturned requires Integrating",
                 node_id.0, node.status
@@ -692,7 +693,7 @@ pub(super) fn attempts_exhausted(node: &Node) -> bool {
 pub(super) fn plan_child_depth(parent_depth: usize, kind: &NodeKind) -> usize {
     match kind {
         NodeKind::Plan => parent_depth + 1,
-        NodeKind::Work | NodeKind::Validation => parent_depth,
+        NodeKind::Work => parent_depth,
     }
 }
 
@@ -730,10 +731,6 @@ pub(super) fn invalid_node_event_reason(
     match (node_kind, event) {
         (NodeKind::Work, SchedulerEvent::PlanAccepted { .. }) => Some(format!(
             "node {} is Work but received PlanAccepted outcome",
-            node_id.0
-        )),
-        (NodeKind::Validation, SchedulerEvent::PlanAccepted { .. }) => Some(format!(
-            "node {} is Validation but received PlanAccepted outcome",
             node_id.0
         )),
         (NodeKind::Plan, SchedulerEvent::WorkAccepted { .. }) => Some(format!(

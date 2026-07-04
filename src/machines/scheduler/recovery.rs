@@ -245,6 +245,7 @@ impl RecoveryApplicator {
     fn apply_retry(self, retry_message: &str) -> RunGraph {
         let (
             kind,
+            worker_role,
             objective,
             target_files,
             required_validation_targets,
@@ -257,6 +258,7 @@ impl RecoveryApplicator {
             let n = self.graph.get_node(&self.node_id);
             (
                 n.kind.clone(),
+                n.worker_role.clone(),
                 n.objective.clone(),
                 n.target_files.clone(),
                 n.required_validation_targets.clone(),
@@ -276,6 +278,7 @@ impl RecoveryApplicator {
         let replacement = Node {
             id: replacement_id.clone(),
             kind,
+            worker_role,
             objective,
             target_files,
             required_validation_targets,
@@ -310,6 +313,7 @@ impl RecoveryApplicator {
         let split_node = Node {
             id: split_id.clone(),
             kind: NodeKind::Plan,
+            worker_role: None,
             objective: message,
             target_files,
             required_validation_targets,
@@ -331,6 +335,7 @@ impl RecoveryApplicator {
     fn apply_elevate(self) -> RunGraph {
         let (
             kind,
+            worker_role,
             objective,
             target_files,
             required_validation_targets,
@@ -342,6 +347,7 @@ impl RecoveryApplicator {
             let n = self.graph.get_node(&self.node_id);
             (
                 n.kind.clone(),
+                n.worker_role.clone(),
                 n.objective.clone(),
                 n.target_files.clone(),
                 n.required_validation_targets.clone(),
@@ -358,6 +364,7 @@ impl RecoveryApplicator {
         let replacement = Node {
             id: elevated_id.clone(),
             kind,
+            worker_role,
             objective,
             target_files,
             required_validation_targets,
@@ -405,7 +412,7 @@ impl RecoveryApplicator {
     /// receive feedback; all other failure kinds return `None` so the objective
     /// stays clean.
     fn build_retry_feedback(&self, kind: &NodeKind, retry_message: &str) -> Option<RetryFeedback> {
-        if !matches!(kind, NodeKind::Work | NodeKind::Validation)
+        if *kind != NodeKind::Work
             || !matches!(
                 self.failure_kind,
                 FailureKind::ValidationFailure | FailureKind::WorkSemanticValidationFailure

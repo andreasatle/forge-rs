@@ -198,7 +198,7 @@ fn select_grammar(
             }
         }
         DeliberationRole::Producer => match node_kind {
-            NodeKind::Work | NodeKind::Validation => {
+            NodeKind::Work => {
                 if tools_active {
                     PRODUCER_TOOL_GBNF
                 } else {
@@ -231,16 +231,9 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
             (NodeKind::Plan, DeliberationRole::Producer) => &self.policy.planner_producer_system,
             (NodeKind::Plan, DeliberationRole::Critic) => &self.policy.planner_critic_system,
             (NodeKind::Plan, DeliberationRole::Referee) => &self.policy.planner_referee_system,
-            (NodeKind::Work, DeliberationRole::Producer)
-            | (NodeKind::Validation, DeliberationRole::Producer) => {
-                &self.policy.worker_producer_system
-            }
-            (NodeKind::Work, DeliberationRole::Critic)
-            | (NodeKind::Validation, DeliberationRole::Critic) => &self.policy.worker_critic_system,
-            (NodeKind::Work, DeliberationRole::Referee)
-            | (NodeKind::Validation, DeliberationRole::Referee) => {
-                &self.policy.worker_referee_system
-            }
+            (NodeKind::Work, DeliberationRole::Producer) => &self.policy.worker_producer_system,
+            (NodeKind::Work, DeliberationRole::Critic) => &self.policy.worker_critic_system,
+            (NodeKind::Work, DeliberationRole::Referee) => &self.policy.worker_referee_system,
         };
 
         let review_contract = NodeReviewContract::for_role(
@@ -286,9 +279,9 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
             }
         });
 
-        // Completion pressure applies only to Work/Validation+Producer after a
+        // Completion pressure applies only to Work+Producer after a
         // successful mutation.
-        let is_work_producer = matches!(request.node_kind, NodeKind::Work | NodeKind::Validation)
+        let is_work_producer = request.node_kind == NodeKind::Work
             && matches!(request.role, DeliberationRole::Producer);
         // Decision pressure applies to Critic and Referee after bounded read-only tool use.
         let is_read_only_reviewer = matches!(
@@ -300,9 +293,7 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
         // actual file contents. This enforcement only applies when tools are
         // available; plan-node reviewers judge structure, not file contents.
         let requires_read_enforcement =
-            matches!(request.node_kind, NodeKind::Work | NodeKind::Validation)
-                && is_read_only_reviewer
-                && has_tools;
+            request.node_kind == NodeKind::Work && is_read_only_reviewer && has_tools;
 
         let proto = ProtocolState::new(
             is_work_producer,

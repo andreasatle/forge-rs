@@ -134,6 +134,7 @@ fn checkpoint_load_round_trip() {
                 Node {
                     id: NodeId("A".to_string()),
                     kind: NodeKind::Work,
+                    worker_role: None,
                     objective: "do A".to_string(),
                     target_files: vec![],
                     required_validation_targets: vec![],

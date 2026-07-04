@@ -27,10 +27,10 @@ fn marker_plan(marker: &str) -> ValidationPlan {
 #[test]
 fn plan_stamps_work_and_validation_children_with_distinct_plans() {
     // Invariant: a planner task whose targets are entirely derived validation
-    // targets (e.g. a test file) is classified as NodeKind::Validation and
+    // targets (e.g. a test file) is assigned the "tester" worker role and
     // stamped with the runner's validation_node_plan, while a task targeting
-    // source files stays NodeKind::Work and gets the work_node_plan — the two
-    // node kinds must never share the same validation contract when distinct
+    // source files gets no worker role and the work_node_plan — the two
+    // roles must never share the same validation contract when distinct
     // plans are configured.
     let plan_json = r#"{"tasks":[
         {"id":"task-1","objective":"Modify main.py","operation":"modify","targets":["main.py"],"depends_on":[]},
@@ -57,6 +57,7 @@ fn plan_stamps_work_and_validation_children_with_distinct_plans() {
         .find(|c| c.target_files == vec!["main.py".to_string()])
         .expect("main.py task must be present");
     assert_eq!(work_child.kind, NodeKind::Work);
+    assert_eq!(work_child.worker_role, None);
     assert_eq!(work_child.validation_plan, Some(marker_plan("work-marker")));
     assert_eq!(
         work_child.required_validation_targets,
@@ -69,14 +70,15 @@ fn plan_stamps_work_and_validation_children_with_distinct_plans() {
         .iter()
         .find(|c| c.target_files == vec!["tests/test_main.py".to_string()])
         .expect("tests/test_main.py task must be present");
-    assert_eq!(validation_child.kind, NodeKind::Validation);
+    assert_eq!(validation_child.kind, NodeKind::Work);
+    assert_eq!(validation_child.worker_role, Some("tester".to_string()));
     assert_eq!(
         validation_child.validation_plan,
         Some(marker_plan("validation-marker"))
     );
     assert!(
         validation_child.required_validation_targets.is_empty(),
-        "Validation node must not carry its own required validation targets"
+        "tester node must not carry its own required validation targets"
     );
 }
 
