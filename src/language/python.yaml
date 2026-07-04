@@ -43,3 +43,7 @@ validation:
   validation_targets:
     - pattern: "{stem}.py"
       target: "tests/test_{stem}.py"
+  validation_node_commands:
+    - program: uv
+      args: ["run", "ruff", "check"]
+      scope: changed_files

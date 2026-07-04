@@ -1,4 +1,84 @@
+use std::sync::Arc;
+
 use super::*;
+use crate::validation::{ValidationPlan, ValidationStage, ValidationStep};
+
+fn python_test_targets(targets: &[String]) -> Vec<String> {
+    let rules = crate::language::language_spec("python")
+        .expect("python language spec must load")
+        .validation
+        .validation_targets;
+    crate::validation::derive_validation_targets(&rules, targets)
+}
+
+fn marker_plan(marker: &str) -> ValidationPlan {
+    ValidationPlan {
+        steps: vec![ValidationStep {
+            command: vec!["echo".to_string(), marker.to_string()],
+            when_artifacts_present: vec![],
+            scope: crate::validation::ValidationScope::Workspace,
+            stage: ValidationStage::PreIntegration,
+            must_pass: true,
+        }],
+        timeout_seconds: 120,
+    }
+}
+
+#[test]
+fn plan_stamps_work_and_validation_children_with_distinct_plans() {
+    // Invariant: a planner task whose targets are entirely derived validation
+    // targets (e.g. a test file) is classified as NodeKind::Validation and
+    // stamped with the runner's validation_node_plan, while a task targeting
+    // source files stays NodeKind::Work and gets the work_node_plan — the two
+    // node kinds must never share the same validation contract when distinct
+    // plans are configured.
+    let plan_json = r#"{"tasks":[
+        {"id":"task-1","objective":"Modify main.py","operation":"modify","targets":["main.py"],"depends_on":[]},
+        {"id":"task-2","objective":"Add tests for main.py","operation":"create","targets":["tests/test_main.py"],"depends_on":["task-1"]}
+    ]}"#;
+    let provider = ScriptedProvider::from_strs(&[
+        plan_json,
+        r#"{"status":"accepted","content":"plan looks good"}"#,
+        r#"{"status":"accepted","content":"plan approved"}"#,
+    ]);
+    let runner = DeliberatingNodeRunner::new(&provider, &provider)
+        .with_required_test_targets_fn(Arc::new(python_test_targets))
+        .with_work_node_plan(Some(marker_plan("work-marker")))
+        .with_validation_node_plan(Some(marker_plan("validation-marker")));
+
+    let result = runner.run_node(plan_request("Modify main.py and its tests"), &NoopTelemetry);
+    let NodeRunResult::PlanAccepted(plan) = result else {
+        panic!("expected PlanAccepted");
+    };
+
+    let work_child = plan
+        .children
+        .iter()
+        .find(|c| c.target_files == vec!["main.py".to_string()])
+        .expect("main.py task must be present");
+    assert_eq!(work_child.kind, NodeKind::Work);
+    assert_eq!(work_child.validation_plan, Some(marker_plan("work-marker")));
+    assert_eq!(
+        work_child.required_validation_targets,
+        vec!["tests/test_main.py".to_string()],
+        "Work node must carry its derived required validation target"
+    );
+
+    let validation_child = plan
+        .children
+        .iter()
+        .find(|c| c.target_files == vec!["tests/test_main.py".to_string()])
+        .expect("tests/test_main.py task must be present");
+    assert_eq!(validation_child.kind, NodeKind::Validation);
+    assert_eq!(
+        validation_child.validation_plan,
+        Some(marker_plan("validation-marker"))
+    );
+    assert!(
+        validation_child.required_validation_targets.is_empty(),
+        "Validation node must not carry its own required validation targets"
+    );
+}
 
 #[test]
 fn deliberating_runner_threads_max_tokens_to_provider() {

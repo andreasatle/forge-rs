@@ -46,11 +46,17 @@ pub struct DeliberatingNodeRunner<C, S> {
     role_policy: RolePolicy,
     required_test_targets_fn: Arc<TestTargetsFn>,
     context_file_names: Vec<String>,
-    /// Validation plan stamped onto every Work node request produced by this runner.
+    /// Validation plan stamped onto every `Work` node request produced by this runner.
     ///
     /// `None` means no per-node plan; integration falls back to the global
     /// handler-level validator.
-    validation_plan: Option<ValidationPlan>,
+    work_node_plan: Option<ValidationPlan>,
+    /// Validation plan stamped onto every `Validation` node request produced by
+    /// this runner.
+    ///
+    /// `None` means no per-node plan; integration falls back to the global
+    /// handler-level validator.
+    validation_node_plan: Option<ValidationPlan>,
 }
 
 impl<C, S> DeliberatingNodeRunner<C, S> {
@@ -68,7 +74,8 @@ impl<C, S> DeliberatingNodeRunner<C, S> {
             role_policy: RolePolicy::default(),
             required_test_targets_fn: Arc::new(|_| vec![]),
             context_file_names: vec![],
-            validation_plan: None,
+            work_node_plan: None,
+            validation_node_plan: None,
         }
     }
 
@@ -111,14 +118,25 @@ impl<C, S> DeliberatingNodeRunner<C, S> {
         self
     }
 
-    /// Supply the validation plan stamped onto every Work node this runner
+    /// Supply the validation plan stamped onto every `Work` node this runner
     /// produces.
     ///
     /// The plan is cloned onto each [`NodeRequest`](crate::machines::scheduler::NodeRequest)
     /// when a plan node expands.  When not set (the default), nodes carry no
     /// plan and integration falls back to the handler-level validator.
-    pub fn with_validation_plan(mut self, plan: Option<ValidationPlan>) -> Self {
-        self.validation_plan = plan;
+    pub fn with_work_node_plan(mut self, plan: Option<ValidationPlan>) -> Self {
+        self.work_node_plan = plan;
+        self
+    }
+
+    /// Supply the validation plan stamped onto every `Validation` node this
+    /// runner produces.
+    ///
+    /// The plan is cloned onto each [`NodeRequest`](crate::machines::scheduler::NodeRequest)
+    /// when a plan node expands.  When not set (the default), nodes carry no
+    /// plan and integration falls back to the handler-level validator.
+    pub fn with_validation_node_plan(mut self, plan: Option<ValidationPlan>) -> Self {
+        self.validation_node_plan = plan;
         self
     }
 }
@@ -155,18 +173,27 @@ impl<C: ProviderClient, S: ProviderClient> NodeRunner for DeliberatingNodeRunner
 }
 
 impl<C, S> DeliberatingNodeRunner<C, S> {
-    /// Stamp `self.validation_plan` onto every Work-kind [`NodeRequest`] in `plan`.
+    /// Stamp the plan-derived metadata and the correct validation plan onto
+    /// every non-`Plan` [`NodeRequest`] in `plan`, based on each child's kind.
     fn stamp_plan_metadata(
         &self,
         mut plan: crate::machines::scheduler::PlanOutput,
     ) -> crate::machines::scheduler::PlanOutput {
         for child in &mut plan.children {
-            if child.kind == NodeKind::Work {
-                child.required_validation_targets =
-                    (self.required_test_targets_fn)(&child.target_files);
-            }
-            if self.validation_plan.is_some() && child.kind == NodeKind::Work {
-                child.validation_plan = self.validation_plan.clone();
+            match child.kind {
+                NodeKind::Work => {
+                    child.required_validation_targets =
+                        (self.required_test_targets_fn)(&child.target_files);
+                    if self.work_node_plan.is_some() {
+                        child.validation_plan = self.work_node_plan.clone();
+                    }
+                }
+                NodeKind::Validation => {
+                    if self.validation_node_plan.is_some() {
+                        child.validation_plan = self.validation_node_plan.clone();
+                    }
+                }
+                NodeKind::Plan => {}
             }
         }
         plan

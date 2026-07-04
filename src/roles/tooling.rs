@@ -299,7 +299,7 @@ pub(super) fn file_tool_policy_for_request(
     target_files: &[String],
 ) -> FileToolPolicy {
     let mut policy = file_tool_policy_for_role(role);
-    if node_kind == &NodeKind::Work && !target_files.is_empty() {
+    if matches!(node_kind, NodeKind::Work | NodeKind::Validation) && !target_files.is_empty() {
         policy.allowed_paths = Some(target_files.to_vec());
     }
     policy

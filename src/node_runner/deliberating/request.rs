@@ -95,7 +95,9 @@ fn build_handler<'a, P: ProviderClient>(
     policy: &RolePolicy,
     plan_validation_context: Option<PlanValidationContext>,
 ) -> ProviderBackedDeliberationHandler<&'a P> {
-    if request.kind == NodeKind::Work && request.artifact_view.is_none() {
+    if matches!(request.kind, NodeKind::Work | NodeKind::Validation)
+        && request.artifact_view.is_none()
+    {
         ProviderBackedDeliberationHandler::new_non_artifact_work_with_policy(
             provider,
             max_tokens,

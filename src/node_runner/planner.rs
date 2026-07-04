@@ -383,18 +383,39 @@ impl<'a> PlannerOutputProcessor<'a> {
     }
 
     pub(crate) fn into_plan(self, output: PlannerOutput) -> PlanOutput {
+        let all_targets: Vec<String> = output
+            .tasks
+            .iter()
+            .flat_map(|task| task.targets.iter().cloned())
+            .collect();
+        let validation_targets: HashSet<String> = (self.required_test_targets_fn)(&all_targets)
+            .into_iter()
+            .collect();
+
         PlanOutput {
             children: output
                 .tasks
                 .into_iter()
-                .map(|task| NodeRequest {
-                    id: NodeId(task.id),
-                    kind: NodeKind::Work,
-                    objective: task.objective,
-                    target_files: task.targets,
-                    required_validation_targets: vec![],
-                    dependencies: task.depends_on.into_iter().map(NodeId).collect(),
-                    validation_plan: None,
+                .map(|task| {
+                    let kind = if !task.targets.is_empty()
+                        && task
+                            .targets
+                            .iter()
+                            .all(|target| validation_targets.contains(target))
+                    {
+                        NodeKind::Validation
+                    } else {
+                        NodeKind::Work
+                    };
+                    NodeRequest {
+                        id: NodeId(task.id),
+                        kind,
+                        objective: task.objective,
+                        target_files: task.targets,
+                        required_validation_targets: vec![],
+                        dependencies: task.depends_on.into_iter().map(NodeId).collect(),
+                        validation_plan: None,
+                    }
                 })
                 .collect(),
         }

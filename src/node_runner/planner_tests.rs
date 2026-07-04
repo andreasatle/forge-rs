@@ -520,6 +520,81 @@ fn planner_tasks_become_node_requests() {
 }
 
 #[test]
+fn task_targeting_only_derived_validation_targets_becomes_validation_kind() {
+    // Invariant: a task whose targets are entirely covered by the adapter's
+    // derived validation targets (e.g. a test file for another task's source
+    // file) is classified as NodeKind::Validation, not NodeKind::Work.
+    fn required_test_targets(targets: &[String]) -> Vec<String> {
+        targets
+            .iter()
+            .filter(|t| t.as_str() == "main.py")
+            .map(|_| "tests/test_main.py".to_string())
+            .collect()
+    }
+
+    let output = PlannerOutput {
+        tasks: vec![
+            PlannerTask {
+                id: "impl".to_string(),
+                objective: "modify main.py".to_string(),
+                operation: Some(PlannerOperation::Modify),
+                targets: vec!["main.py".to_string()],
+                depends_on: vec![],
+            },
+            PlannerTask {
+                id: "test".to_string(),
+                objective: "add tests for main.py".to_string(),
+                operation: Some(PlannerOperation::Create),
+                targets: vec!["tests/test_main.py".to_string()],
+                depends_on: vec!["impl".to_string()],
+            },
+        ],
+    };
+    let plan = processor("", &[], &required_test_targets).into_plan(output);
+
+    let impl_child = plan
+        .children
+        .iter()
+        .find(|c| c.id == NodeId("impl".to_string()))
+        .unwrap();
+    assert_eq!(impl_child.kind, NodeKind::Work);
+
+    let test_child = plan
+        .children
+        .iter()
+        .find(|c| c.id == NodeId("test".to_string()))
+        .unwrap();
+    assert_eq!(test_child.kind, NodeKind::Validation);
+}
+
+#[test]
+fn task_targeting_source_and_test_files_together_stays_work_kind() {
+    // Invariant: a task is only reclassified as Validation when ALL of its
+    // targets are derived validation targets. A task mixing a source file
+    // with a test file must stay Work.
+    fn required_test_targets(targets: &[String]) -> Vec<String> {
+        targets
+            .iter()
+            .filter(|t| t.as_str() == "main.py")
+            .map(|_| "tests/test_main.py".to_string())
+            .collect()
+    }
+
+    let output = PlannerOutput {
+        tasks: vec![PlannerTask {
+            id: "combined".to_string(),
+            objective: "modify main.py and its tests".to_string(),
+            operation: Some(PlannerOperation::Modify),
+            targets: vec!["main.py".to_string(), "tests/test_main.py".to_string()],
+            depends_on: vec![],
+        }],
+    };
+    let plan = processor("", &[], &required_test_targets).into_plan(output);
+
+    assert_eq!(plan.children[0].kind, NodeKind::Work);
+}
+
+#[test]
 fn planner_dependencies_preserved() {
     let output = PlannerOutput {
         tasks: vec![

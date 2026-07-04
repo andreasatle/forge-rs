@@ -405,7 +405,7 @@ impl RecoveryApplicator {
     /// receive feedback; all other failure kinds return `None` so the objective
     /// stays clean.
     fn build_retry_feedback(&self, kind: &NodeKind, retry_message: &str) -> Option<RetryFeedback> {
-        if *kind != NodeKind::Work
+        if !matches!(kind, NodeKind::Work | NodeKind::Validation)
             || !matches!(
                 self.failure_kind,
                 FailureKind::ValidationFailure | FailureKind::WorkSemanticValidationFailure

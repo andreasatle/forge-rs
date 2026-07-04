@@ -49,11 +49,13 @@ impl NodeRunner for StaticNodeRunner {
                     validation_plan: None,
                 }],
             }),
-            NodeKind::Work => NodeRunResult::WorkAccepted(NodeRunWorkResult {
-                work: WorkOutput {
-                    summary: format!("completed: {}", request.objective),
-                },
-            }),
+            NodeKind::Work | NodeKind::Validation => {
+                NodeRunResult::WorkAccepted(NodeRunWorkResult {
+                    work: WorkOutput {
+                        summary: format!("completed: {}", request.objective),
+                    },
+                })
+            }
         }
     }
 }

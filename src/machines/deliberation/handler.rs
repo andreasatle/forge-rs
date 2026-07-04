@@ -233,9 +233,10 @@ impl<P> DeliberationHandler<ProviderRoleRunner<P>> {
         plan_validation_context: Option<PlanValidationContext>,
         work_attempt: Option<WorkAttempt>,
     ) -> Self {
+        let is_work_like = matches!(node_kind, NodeKind::Work | NodeKind::Validation);
         assert!(
-            node_kind != NodeKind::Work || artifact_view.is_some(),
-            "artifact-producing Work handlers require an ArtifactView; use \
+            !is_work_like || artifact_view.is_some(),
+            "artifact-producing Work/Validation handlers require an ArtifactView; use \
              new_non_artifact_work for explicit summary-only Work"
         );
         Self {
@@ -243,7 +244,7 @@ impl<P> DeliberationHandler<ProviderRoleRunner<P>> {
                 .with_policy(policy),
             artifact_view,
             work_attempt,
-            work_requires_artifact_mutation: node_kind == NodeKind::Work,
+            work_requires_artifact_mutation: is_work_like,
             plan_validation_context,
         }
     }
@@ -392,7 +393,9 @@ impl<R: RoleRunner> DeliberationHandler<R> {
             return self.validate_plan_producer_content(content);
         }
 
-        if *node_kind == NodeKind::Work && self.work_requires_artifact_mutation {
+        if matches!(node_kind, NodeKind::Work | NodeKind::Validation)
+            && self.work_requires_artifact_mutation
+        {
             return self.validate_work_producer_output(artifact_changed);
         }
 

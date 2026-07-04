@@ -44,6 +44,7 @@ pub(crate) fn dispatch_run_node<R: NodeRunner>(
     let label = match &command.kind {
         NodeKind::Plan => "[planner]".to_string(),
         NodeKind::Work => format!("[worker {}]", command.node_id.0),
+        NodeKind::Validation => format!("[validator {}]", command.node_id.0),
     };
     let rendered_objective = render_objective(
         &command.objective,

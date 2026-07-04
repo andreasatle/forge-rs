@@ -280,7 +280,7 @@ fn runtime_summary_uses_post_integration_artifact_commit() {
                         validation_plan: None,
                     }],
                 }),
-                NodeKind::Work => {
+                NodeKind::Work | NodeKind::Validation => {
                     request
                         .work_attempt
                         .expect("artifact Work must receive a WorkAttempt")
@@ -466,7 +466,7 @@ fn successful_validated_run_sets_validation_passed_true() {
                         validation_plan: None,
                     }],
                 }),
-                NodeKind::Work => {
+                NodeKind::Work | NodeKind::Validation => {
                     request
                         .work_attempt
                         .expect("artifact Work must receive a WorkAttempt")
@@ -549,7 +549,7 @@ fn validation_failure_sets_validation_passed_false_in_manifest() {
                         validation_plan: None,
                     }],
                 }),
-                NodeKind::Work => {
+                NodeKind::Work | NodeKind::Validation => {
                     request
                         .work_attempt
                         .expect("artifact Work must receive a WorkAttempt")

@@ -2,6 +2,7 @@
 
 use crate::machines::deliberation::DeliberationTerminalOutput;
 use crate::machines::scheduler::{FailureKind, NodeFailure, NodeKind, RecoveryAction, WorkOutput};
+use crate::node_runner::TestTargetsFn;
 use crate::telemetry::{TelemetryEvent, TelemetryRecord, TelemetrySink};
 
 use crate::node_runner::classify::{classify_deliberation_failure, recovery_label};
@@ -10,16 +11,19 @@ use crate::node_runner::types::{NodeRunResult, NodeRunWorkResult};
 pub(crate) fn map_output(
     output: DeliberationTerminalOutput,
     kind: NodeKind,
+    required_test_targets_fn: &TestTargetsFn,
     telemetry: &dyn TelemetrySink,
 ) -> NodeRunResult {
     match output {
         DeliberationTerminalOutput::Complete(out) => match kind {
-            NodeKind::Plan => map_plan_output(out.content, telemetry),
-            NodeKind::Work => NodeRunResult::WorkAccepted(NodeRunWorkResult {
-                work: WorkOutput {
-                    summary: out.content,
-                },
-            }),
+            NodeKind::Plan => map_plan_output(out.content, required_test_targets_fn, telemetry),
+            NodeKind::Work | NodeKind::Validation => {
+                NodeRunResult::WorkAccepted(NodeRunWorkResult {
+                    work: WorkOutput {
+                        summary: out.content,
+                    },
+                })
+            }
         },
         DeliberationTerminalOutput::Failed { kind, message, .. } => {
             let recovery = classify_deliberation_failure(kind, &message);
@@ -52,12 +56,15 @@ pub(crate) fn map_output(
 ///   recovery.
 /// - If parsing fails (prose or unexpected schema): emits
 ///   `PlannerOutputFallback` and returns `Failed` with `Terminal` recovery.
-fn map_plan_output(content: String, telemetry: &dyn TelemetrySink) -> NodeRunResult {
+fn map_plan_output(
+    content: String,
+    required_test_targets_fn: &TestTargetsFn,
+    telemetry: &dyn TelemetrySink,
+) -> NodeRunResult {
     use crate::node_runner::planner::PlannerOutputProcessor;
 
-    let no_required_test_targets = |_: &[String]| Vec::new();
     let processor =
-        PlannerOutputProcessor::new("", std::iter::empty::<&str>(), &no_required_test_targets);
+        PlannerOutputProcessor::new("", std::iter::empty::<&str>(), required_test_targets_fn);
 
     match processor.parse_content(&content) {
         Some(planner_out) => match processor.validate_structure(&planner_out) {

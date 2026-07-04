@@ -162,6 +162,7 @@ fn register_fake_language(label: &str) -> String {
                 runs_tests: false,
                 commands: vec![],
                 validation_targets: vec![],
+                validation_node_commands: vec![],
             },
         },
     );

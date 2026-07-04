@@ -27,7 +27,8 @@ pub struct ProjectRuntimeSetup {
     pub role_policy: RolePolicy,
     pub context_file_names: Vec<String>,
     pub required_test_targets_fn: Arc<TestTargetsFn>,
-    pub validation_plan: Option<ValidationPlan>,
+    pub work_node_plan: Option<ValidationPlan>,
+    pub validation_node_plan: Option<ValidationPlan>,
     pub validator: Rc<dyn Validator>,
 }
 
@@ -70,7 +71,8 @@ impl<'a> ProjectRuntimeSetupBuilder<'a> {
             role_policy: self.role_policy(),
             context_file_names: self.context_file_names(),
             required_test_targets_fn: self.required_test_targets_fn(),
-            validation_plan: self.validation_plan(),
+            work_node_plan: self.work_node_plan(),
+            validation_node_plan: self.validation_node_plan(),
             validator: self.validator(),
         }
     }
@@ -148,30 +150,54 @@ impl<'a> ProjectRuntimeSetupBuilder<'a> {
 
     /// Build a [`ValidationPlan`] from the language spec or explicit config.
     ///
-    /// The plan is stamped onto every Work node at plan-expansion time.  This
+    /// The plan is stamped onto every `Work` node at plan-expansion time.  This
     /// captures the validation contract at node-creation time so it survives
     /// checkpoint/resume unchanged, regardless of any later config edits.
-    fn validation_plan(&self) -> Option<ValidationPlan> {
+    fn work_node_plan(&self) -> Option<ValidationPlan> {
         if let Some(spec) = &self.language_spec {
-            let steps = spec
-                .validation
-                .commands
-                .iter()
-                .cloned()
-                .map(|cmd| ValidationStep {
-                    command: std::iter::once(cmd.program).chain(cmd.args).collect(),
-                    when_artifacts_present: cmd.when_files_present,
-                    scope: cmd.scope,
-                    stage: ValidationStage::PreIntegration,
-                    must_pass: true,
-                })
-                .collect();
-            Some(ValidationPlan {
-                steps,
-                timeout_seconds: 120,
-            })
+            Some(Self::plan_from_commands(&spec.validation.commands))
         } else {
             self.validation_config_plan()
+        }
+    }
+
+    /// Build the reduced [`ValidationPlan`] stamped onto every `Validation`
+    /// node at plan-expansion time.
+    ///
+    /// Falls back to [`Self::work_node_plan`] when the language spec declares
+    /// no `validation_node_commands` (or no language plugin is configured),
+    /// so `Validation` nodes are never left with a weaker contract than the
+    /// project otherwise requires.
+    fn validation_node_plan(&self) -> Option<ValidationPlan> {
+        if let Some(spec) = &self.language_spec {
+            if spec.validation.validation_node_commands.is_empty() {
+                self.work_node_plan()
+            } else {
+                Some(Self::plan_from_commands(
+                    &spec.validation.validation_node_commands,
+                ))
+            }
+        } else {
+            self.validation_config_plan()
+        }
+    }
+
+    /// Convert a slice of language-spec [`CommandSpec`]s into a [`ValidationPlan`].
+    fn plan_from_commands(commands: &[CommandSpec]) -> ValidationPlan {
+        let steps = commands
+            .iter()
+            .cloned()
+            .map(|cmd| ValidationStep {
+                command: std::iter::once(cmd.program).chain(cmd.args).collect(),
+                when_artifacts_present: cmd.when_files_present,
+                scope: cmd.scope,
+                stage: ValidationStage::PreIntegration,
+                must_pass: true,
+            })
+            .collect();
+        ValidationPlan {
+            steps,
+            timeout_seconds: 120,
         }
     }
 

@@ -691,7 +691,7 @@ fn accepted_work_with_no_artifact_mutation_triggers_revision_feedback() {
 }
 
 #[test]
-#[should_panic(expected = "artifact-producing Work handlers require an ArtifactView")]
+#[should_panic(expected = "artifact-producing Work/Validation handlers require an ArtifactView")]
 fn artifact_work_constructor_requires_artifact_view() {
     let _handler = ProviderBackedDeliberationHandler::new_with_view(
         ScriptedProvider::from_strs(&[]),
