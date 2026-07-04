@@ -1,7 +1,7 @@
 //! Flat chronological trace view (`--summary`) and the `--prompts`/
 //! `--failures` full-content views.
 
-use super::reader::EventHeader;
+use super::reader::{EventHeader, short_id};
 
 /// Print a one-line summary of every telemetry file in `paths`, in order.
 pub(super) fn print_summary(paths: &[std::path::PathBuf]) -> std::io::Result<()> {
@@ -48,7 +48,7 @@ pub(super) fn print_failures(paths: &[std::path::PathBuf]) -> std::io::Result<()
 pub(super) fn summary_line(header: &EventHeader) -> String {
     let mut line = header.to_string();
     if let Some(node_id) = &header.node_id {
-        line.push_str(&format!("  node={node_id}"));
+        line.push_str(&format!("  node={}", short_id(node_id)));
     }
     if let Some(attempt) = &header.attempt {
         line.push_str(&format!("  attempt={attempt}"));

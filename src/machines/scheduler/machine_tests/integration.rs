@@ -53,6 +53,7 @@ fn scheduler_terminal_output_includes_integration_failure_reason() {
             retry_feedback: None,
         }],
         next_id: 0,
+        id_seed: 0,
     };
 
     let t = do_transition(
@@ -90,14 +91,13 @@ fn scheduler_terminal_output_includes_integration_failure_reason() {
 fn integration_failure_routes_to_recovery_replacement() {
     // Graph: A -> B -> C; B is Integrating (work accepted, integration pending).
     // Invariant: whichever recovery action fires on IntegrationFailed, the
-    // original B becomes Failed, exactly one replacement is inserted with the
-    // recovery-specific id suffix/kind/tier/attempt and origin source B, C's
-    // dependency is remapped from B to the replacement, and the scheduler
-    // returns to Active with no effects.
+    // original B becomes Failed, exactly one replacement is inserted with a
+    // fresh id, the recovery-specific kind/tier/attempt and origin source B,
+    // C's dependency is remapped from B to the replacement, and the
+    // scheduler returns to Active with no effects.
     struct Case {
         recovery: RecoveryAction,
         initial_attempt: u32,
-        expected_id_prefix: &'static str,
         expected_kind: NodeKind,
         expected_tier: ModelTier,
     }
@@ -108,7 +108,6 @@ fn integration_failure_routes_to_recovery_replacement() {
                 message: "retry after integration failure".to_string(),
             },
             initial_attempt: 0,
-            expected_id_prefix: "B-retry-",
             expected_kind: NodeKind::Work,
             expected_tier: ModelTier::Cheap,
         },
@@ -117,7 +116,6 @@ fn integration_failure_routes_to_recovery_replacement() {
                 message: "use stronger model".to_string(),
             },
             initial_attempt: 1,
-            expected_id_prefix: "B-elevated-",
             expected_kind: NodeKind::Work,
             expected_tier: ModelTier::Strong,
         },
@@ -126,7 +124,6 @@ fn integration_failure_routes_to_recovery_replacement() {
                 message: "decompose step B".to_string(),
             },
             initial_attempt: 0,
-            expected_id_prefix: "B-split-",
             expected_kind: NodeKind::Plan,
             expected_tier: ModelTier::Strong,
         },
@@ -140,6 +137,7 @@ fn integration_failure_routes_to_recovery_replacement() {
                 work_node("C", "step C", &["B"]),
             ],
             next_id: 0,
+            id_seed: 0,
         };
         graph.nodes[0].status = NodeStatus::Completed;
         graph.nodes[1].status = NodeStatus::Integrating;
@@ -167,22 +165,24 @@ fn integration_failure_routes_to_recovery_replacement() {
         let b = graph.nodes.iter().find(|n| n.id.0 == "B").expect("B");
         assert_eq!(b.status, NodeStatus::Failed);
 
+        // Found by its origin source rather than by parsing the id.
         let replacement = graph
             .nodes
             .iter()
-            .find(|n| n.id.0.starts_with(case.expected_id_prefix))
-            .unwrap_or_else(|| panic!("no replacement with prefix {}", case.expected_id_prefix));
+            .find(|n| {
+                matches!(
+                    &n.origin,
+                    NodeOrigin::Retry { source }
+                    | NodeOrigin::ElevateModel { source }
+                    | NodeOrigin::Split { source }
+                        if source.0 == "B"
+                )
+            })
+            .expect("no replacement with origin source B");
         assert_eq!(replacement.kind, case.expected_kind);
         assert_eq!(replacement.model_tier, case.expected_tier);
         assert_eq!(replacement.attempt, case.initial_attempt + 1);
         assert_eq!(replacement.status, NodeStatus::Pending);
-        let source = match &replacement.origin {
-            NodeOrigin::Retry { source }
-            | NodeOrigin::ElevateModel { source }
-            | NodeOrigin::Split { source } => source,
-            other => panic!("unexpected origin: {other:?}"),
-        };
-        assert_eq!(*source, NodeId("B".to_string()));
 
         let c = graph.nodes.iter().find(|n| n.id.0 == "C").expect("C");
         assert!(

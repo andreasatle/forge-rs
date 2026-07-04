@@ -117,6 +117,7 @@ fn retry_worker_receives_validation_diagnostics_and_can_fix_file() {
         graph: RunGraph {
             nodes: vec![node],
             next_id: 0,
+            id_seed: 0,
         },
         run_config: RunConfig::default(),
     };

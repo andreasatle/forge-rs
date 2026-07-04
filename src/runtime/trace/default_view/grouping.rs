@@ -1,6 +1,7 @@
 //! Turns a node/attempt-contextualized telemetry stream into
 //! `Vec<NodeSummary>`.
 
+use super::super::reader::short_id;
 use super::parsing::{ContextRecord, RawRecord, debug_field, event_variant_name};
 use super::{AttemptEvent, AttemptSummary, NodeStatus, NodeSummary};
 
@@ -88,7 +89,10 @@ impl DefaultTraceGrouper {
         self.nodes
             .into_iter()
             .map(|n| NodeSummary {
-                node_id: n.node_id,
+                // Grouping/dedup above uses the full id; only the rendered
+                // summary is shortened, so the default trace view stays
+                // readable with UUID node ids.
+                node_id: short_id(&n.node_id).to_string(),
                 kind: n.kind,
                 objective: n.objective,
                 status: n.status,
@@ -110,8 +114,8 @@ impl DefaultTraceGrouper {
     /// `RunNode` dispatch (constant across retries), and node status is decided
     /// by whichever attempt last reports a terminal outcome.
     ///
-    /// A retried node gets a brand-new node id (e.g. `root-child-1-retry-2`),
-    /// never a repeat dispatch of the same id — so
+    /// A retried node gets a brand-new node id, never a repeat dispatch of
+    /// the same id — so
     /// `NodeFailed`/`IntegrationFailed` always ends *this* node's story,
     /// regardless of `recovery` kind ("exhausted" runs never emit a `Terminal`
     /// recovery; the scheduler just stops retrying).

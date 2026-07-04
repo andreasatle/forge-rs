@@ -73,7 +73,7 @@ pub struct ConsoleTelemetry<'a> {
 
 impl<'a> ConsoleTelemetry<'a> {
     /// Create a new `ConsoleTelemetry` that prefixes every progress line with
-    /// `label` (e.g. `"[planner]"` or `"[worker root-child-0]"`).
+    /// `label` (e.g. `"[planner]"` or `"[worker a3f7c2b1/tester]"`).
     pub fn new(inner: &'a dyn TelemetrySink, label: impl Into<String>) -> Self {
         Self {
             inner,

@@ -13,21 +13,35 @@
 //! - `NodeId` values are unique within a `RunGraph` and never reused.
 //! - Nodes are never removed from the graph; status fields move forward only.
 //! - `RunGraph::next_id` is an internal generator cursor used when the
-//!   scheduler mints new identifiers.
+//!   scheduler mints new identifiers. `RunGraph::id_seed` is drawn once (in
+//!   `SchedulerMachine::initial_state`, outside the pure transition loop) and
+//!   carried unchanged through every transition; minted ids are a
+//!   deterministic function of `(id_seed, next_id)`, so `transition` remains
+//!   a pure function of `(state, event)` even though ids look random.
 
 use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use super::event::SchedulerEvent;
 use crate::validation::ValidationPlan;
 
 /// An opaque, stable identifier for a node in the run graph.
 ///
-/// IDs are unique within a run. The string form is human-readable but must not
-/// be parsed; its internal structure is an implementation detail.
+/// IDs are unique within a run and formatted as a UUID. The string form must
+/// not be parsed; its internal structure is an implementation detail.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct NodeId(pub String);
+
+impl NodeId {
+    /// The first 8 characters, for compact display in logs, progress
+    /// messages, and the trace viewer. Equality, dependency edges, and
+    /// lookups must always use the full id; this is a display-only helper.
+    pub fn short(&self) -> &str {
+        self.0.get(..8).unwrap_or(&self.0)
+    }
+}
 
 /// Whether a node performs planning or execution.
 ///
@@ -241,6 +255,10 @@ pub struct RunGraph {
     /// Graph validation treats existing `NodeId` strings as opaque and does
     /// not parse them to verify this cursor.
     pub next_id: u32,
+    /// Random seed this run's node ids are derived from. Drawn once when the
+    /// graph is created and carried unchanged thereafter; see the module
+    /// docs for why this keeps id minting deterministic.
+    pub id_seed: u128,
 }
 
 /// Maximum number of attempts allowed per objective before recovery stops.
@@ -382,6 +400,7 @@ impl RunGraph {
 
     pub(super) fn mark_node(self, node_id: &NodeId, status: NodeStatus) -> RunGraph {
         let next_id = self.next_id;
+        let id_seed = self.id_seed;
         RunGraph {
             nodes: self
                 .nodes
@@ -394,6 +413,7 @@ impl RunGraph {
                 })
                 .collect(),
             next_id,
+            id_seed,
         }
     }
 
@@ -403,6 +423,7 @@ impl RunGraph {
         summary: String,
     ) -> RunGraph {
         let next_id = self.next_id;
+        let id_seed = self.id_seed;
         RunGraph {
             nodes: self
                 .nodes
@@ -416,6 +437,7 @@ impl RunGraph {
                 })
                 .collect(),
             next_id,
+            id_seed,
         }
     }
 
@@ -427,6 +449,7 @@ impl RunGraph {
 
     pub(super) fn remap_pending_dependencies(self, old_id: &NodeId, new_id: &NodeId) -> RunGraph {
         let next_id = self.next_id;
+        let id_seed = self.id_seed;
         RunGraph {
             nodes: self
                 .nodes
@@ -443,6 +466,7 @@ impl RunGraph {
                 })
                 .collect(),
             next_id,
+            id_seed,
         }
     }
 
@@ -469,6 +493,7 @@ impl RunGraph {
         tainted.remove(failed_id);
 
         let next_id = self.next_id;
+        let id_seed = self.id_seed;
         RunGraph {
             nodes: self
                 .nodes
@@ -481,6 +506,7 @@ impl RunGraph {
                 })
                 .collect(),
             next_id,
+            id_seed,
         }
     }
 
@@ -495,13 +521,13 @@ impl RunGraph {
             .iter()
             .enumerate()
             .map(|(i, req)| {
-                let graph_id = NodeId(format!("{}-child-{}", parent_id.0, self.next_id + i as u32));
+                let graph_id = derive_node_id(self.id_seed, self.next_id + i as u32);
                 (req.id.clone(), graph_id)
             })
             .collect();
 
         for req in children {
-            let id = NodeId(format!("{}-child-{}", parent_id.0, self.next_id));
+            let id = derive_node_id(self.id_seed, self.next_id);
             self.next_id += 1;
             let plan_depth = plan_child_depth(parent_depth, &req.kind);
             let dependencies = req
@@ -686,6 +712,21 @@ impl RunGraph {
 
 pub(super) fn attempts_exhausted(node: &Node) -> bool {
     node.attempt >= MAX_ATTEMPTS
+}
+
+/// Deterministically derives a fresh, UUID-formatted [`NodeId`] from `seed`
+/// and `counter`.
+///
+/// `MAX_GRAPH_NODES` bounds every run to a tiny fraction of the `u32`
+/// counter space, so a plain wrapping add cannot collide in practice. The
+/// version/variant bits are stamped so the result reads as a standard v4
+/// UUID even though it isn't drawn from an RNG.
+pub(super) fn derive_node_id(seed: u128, counter: u32) -> NodeId {
+    let mixed = seed.wrapping_add(counter as u128);
+    let mut bytes = mixed.to_be_bytes();
+    bytes[6] = (bytes[6] & 0x0F) | 0x40;
+    bytes[8] = (bytes[8] & 0x3F) | 0x80;
+    NodeId(Uuid::from_bytes(bytes).to_string())
 }
 
 // ── depth/size helpers ─────────────────────────────────────────────────────────

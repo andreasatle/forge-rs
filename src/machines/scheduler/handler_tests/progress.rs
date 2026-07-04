@@ -41,6 +41,7 @@ fn node_failure_reason_preserved_in_full_in_telemetry() {
         graph: RunGraph {
             nodes: vec![work_node("fail-node", "do some work")],
             next_id: 0,
+            id_seed: 0,
         },
         run_config: RunConfig::default(),
     };
@@ -92,6 +93,7 @@ fn telemetry_failure_does_not_change_scheduler_behavior() {
         graph: RunGraph {
             nodes: vec![work_node("W", "do some work")],
             next_id: 0,
+            id_seed: 0,
         },
         run_config: RunConfig::default(),
     };
@@ -135,6 +137,7 @@ fn artifact_commit_still_succeeds_when_telemetry_fails() {
         graph: RunGraph {
             nodes: vec![work_node("W", "write a file")],
             next_id: 0,
+            id_seed: 0,
         },
         run_config: RunConfig::default(),
     };

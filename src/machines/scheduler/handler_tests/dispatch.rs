@@ -47,6 +47,7 @@ fn single_work_node_flows_through_runner_to_terminal_output() {
             graph: RunGraph {
                 nodes: vec![work_node("W", objective)],
                 next_id: 0,
+                id_seed: 0,
             },
             run_config: RunConfig::default(),
         };

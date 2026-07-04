@@ -8,6 +8,7 @@ fn empty_graph() -> RunGraph {
     RunGraph {
         nodes: vec![],
         next_id: 0,
+        id_seed: 0,
     }
 }
 

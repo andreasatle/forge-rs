@@ -397,17 +397,20 @@ fn node_with_no_terminal_event_is_unknown() {
 
 #[test]
 fn multiple_nodes_preserve_first_seen_order() {
+    // Node ids are real UUIDs in production and so always differ within
+    // their first 8 characters; these fixture ids are chosen to differ
+    // there too, since NodeSummary.node_id is shortened for display.
     let nodes = build(vec![
-        run_node("root", 0, "Plan", "decompose"),
-        plan_accepted("root"),
-        run_node("root-child-0", 0, "Work", "first task"),
-        integration_succeeded("root-child-0"),
-        run_node("root-child-1", 0, "Work", "second task"),
-        integration_succeeded("root-child-1"),
+        run_node("root0000", 0, "Plan", "decompose"),
+        plan_accepted("root0000"),
+        run_node("childaaa1", 0, "Work", "first task"),
+        integration_succeeded("childaaa1"),
+        run_node("childbbb2", 0, "Work", "second task"),
+        integration_succeeded("childbbb2"),
     ]);
 
     let ids: Vec<_> = nodes.iter().map(|n| n.node_id.as_str()).collect();
-    assert_eq!(ids, vec!["root", "root-child-0", "root-child-1"]);
+    assert_eq!(ids, vec!["root0000", "childaaa", "childbbb"]);
 }
 
 #[test]

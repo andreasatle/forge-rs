@@ -58,7 +58,11 @@ fn final_run_gate_on_required_test_target() {
                 ..work_node("tests", "write tests", &["source"])
             });
         }
-        let graph = RunGraph { nodes, next_id: 0 };
+        let graph = RunGraph {
+            nodes,
+            next_id: 0,
+            id_seed: 0,
+        };
 
         let t = do_transition(
             SchedulerState::Active {
@@ -130,6 +134,7 @@ fn terminal_failure_produces_failed_scheduler_terminal_output() {
             retry_feedback: None,
         }],
         next_id: 0,
+        id_seed: 0,
     };
     let output = run_scheduler(
         scheduler_handler(),
@@ -162,6 +167,7 @@ fn scheduler_terminal_output_includes_node_failure_reason() {
             retry_feedback: None,
         }],
         next_id: 0,
+        id_seed: 0,
     };
 
     let t = do_transition(
@@ -207,6 +213,7 @@ fn split_remaps_downstream_dependencies_and_chain_completes() {
             work_node("C", "step C", &["B"]),
         ],
         next_id: 0,
+        id_seed: 0,
     };
 
     // Dispatch A.
@@ -292,11 +299,12 @@ fn split_remaps_downstream_dependencies_and_chain_completes() {
     let b = graph.nodes.iter().find(|n| n.id.0 == "B").expect("B");
     assert_eq!(b.status, NodeStatus::Failed);
 
-    // Verify: split Plan node P exists with the right kind.
+    // Verify: split Plan node P exists with the right kind. Found by its
+    // NodeOrigin::Split source, not by parsing the id.
     let p = graph
         .nodes
         .iter()
-        .find(|n| n.id.0.starts_with("B-split-"))
+        .find(|n| matches!(&n.origin, NodeOrigin::Split { source } if source.0 == "B"))
         .expect("split Plan node");
     let split_id = p.id.clone();
     assert_eq!(p.kind, NodeKind::Plan);
@@ -496,6 +504,7 @@ fn split_success_reports_recovery() {
             },
         ],
         next_id: 1,
+        id_seed: 0,
     };
     let state = SchedulerState::Complete { graph };
     let output = SchedulerMachine
@@ -522,6 +531,7 @@ fn event_at_terminal_state_returns_protocol_violation() {
     let terminal_graph = RunGraph {
         nodes: vec![terminal_node],
         next_id: 0,
+        id_seed: 0,
     };
     for (label, state) in [
         (

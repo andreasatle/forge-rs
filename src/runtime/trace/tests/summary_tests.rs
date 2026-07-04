@@ -9,6 +9,8 @@ use crate::runtime::trace::summary::{
 fn summary_line_formats_optional_context_and_preview() {
     let cases = [
         (
+            // node_id is shortened to its first 8 characters in the
+            // rendered line, matching the [worker <short-id>] log format.
             "node and attempt",
             EventHeader {
                 counter: "000012".to_string(),
@@ -19,7 +21,7 @@ fn summary_line_formats_optional_context_and_preview() {
                 kind: "StateEntered".to_string(),
                 preview: None,
             },
-            "000012  DeliberationMachine  StateEntered  node=root-child-0  attempt=1",
+            "000012  DeliberationMachine  StateEntered  node=root-chi  attempt=1",
         ),
         (
             "preview",

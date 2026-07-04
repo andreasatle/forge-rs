@@ -5,6 +5,7 @@ fn plan_child_depth_limit_fails_scheduler() {
     let mut graph = RunGraph {
         nodes: vec![plan_node("P", "plan something", &[])],
         next_id: 0,
+        id_seed: 0,
     };
     graph.nodes[0].plan_depth = MAX_PLAN_DEPTH;
 
@@ -50,6 +51,7 @@ fn dependencies_block_pending_nodes() {
             work_node("B", "second", &["A"]),
         ],
         next_id: 0,
+        id_seed: 0,
     };
 
     let ready = SchedulerMachine::find_ready(&graph);
@@ -193,6 +195,7 @@ fn split_depth_limit_fails_scheduler() {
     let mut graph = RunGraph {
         nodes: vec![work_node("W", "complex task", &[])],
         next_id: 0,
+        id_seed: 0,
     };
     graph.nodes[0].plan_depth = MAX_PLAN_DEPTH;
 
@@ -231,6 +234,7 @@ fn no_ready_reports_missing_dependency() {
     let graph = RunGraph {
         nodes: vec![work_node("C", "do C", &["B"])],
         next_id: 0,
+        id_seed: 0,
     };
     let t = do_transition(
         SchedulerState::Active {
@@ -265,6 +269,7 @@ fn no_ready_reports_blocked_or_possible_cycle() {
             work_node("B", "do B", &["A"]),
         ],
         next_id: 0,
+        id_seed: 0,
     };
     let t = do_transition(
         SchedulerState::Active {
@@ -296,6 +301,7 @@ fn duplicate_node_ids_fail_graph_validation() {
             work_node("A", "second task", &[]),
         ],
         next_id: 0,
+        id_seed: 0,
     };
     let t = do_transition(
         SchedulerState::Active {
@@ -330,6 +336,7 @@ fn graph_validation_does_not_parse_node_ids() {
             work_node("custom-123", "custom task", &["task-999"]),
         ],
         next_id: 0,
+        id_seed: 0,
     };
     let t = do_transition(
         SchedulerState::Active {
@@ -391,6 +398,7 @@ fn origin_with_missing_source_fails_validation() {
         let graph = RunGraph {
             nodes: vec![node_b],
             next_id: 0,
+            id_seed: 0,
         };
         let t = do_transition(
             SchedulerState::Active {

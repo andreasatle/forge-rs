@@ -10,7 +10,8 @@ use super::config::RunConfig;
 use super::effect::SchedulerEffect;
 use super::failure::{ExhaustedAction, FailureKind, FailureReason};
 use super::graph::{
-    MAX_ATTEMPTS, MAX_GRAPH_NODES, MAX_PLAN_DEPTH, attempts_exhausted, validate_split_depth,
+    MAX_ATTEMPTS, MAX_GRAPH_NODES, MAX_PLAN_DEPTH, attempts_exhausted, derive_node_id,
+    validate_split_depth,
 };
 use super::graph::{
     ModelTier, Node, NodeId, NodeKind, NodeOrigin, NodeStatus, RetryFeedback, RunGraph,
@@ -270,11 +271,7 @@ impl RecoveryApplicator {
             )
         };
         let retry_feedback = self.build_retry_feedback(&kind, retry_message);
-        let replacement_id = NodeId(format!(
-            "{}-retry-{}",
-            Self::retry_base_id(&self.node_id.0),
-            self.graph.next_id
-        ));
+        let replacement_id = derive_node_id(self.graph.id_seed, self.graph.next_id);
         let replacement = Node {
             id: replacement_id.clone(),
             kind,
@@ -308,7 +305,7 @@ impl RecoveryApplicator {
                 n.plan_depth + 1,
             )
         };
-        let split_id = NodeId(format!("{}-split-{}", self.node_id.0, self.graph.next_id));
+        let split_id = derive_node_id(self.graph.id_seed, self.graph.next_id);
         // Split creates a new Plan node; validation_plan and retry_feedback belong to Work nodes only.
         let split_node = Node {
             id: split_id.clone(),
@@ -357,10 +354,7 @@ impl RecoveryApplicator {
                 n.validation_plan.clone(),
             )
         };
-        let elevated_id = NodeId(format!(
-            "{}-elevated-{}",
-            self.node_id.0, self.graph.next_id
-        ));
+        let elevated_id = derive_node_id(self.graph.id_seed, self.graph.next_id);
         let replacement = Node {
             id: elevated_id.clone(),
             kind,
@@ -387,23 +381,6 @@ impl RecoveryApplicator {
         let graph = self.graph.mark_node(&self.node_id, NodeStatus::Failed);
         let graph = graph.push_node(replacement);
         graph.remap_pending_dependencies(&self.node_id, replacement_id)
-    }
-
-    /// Strips a trailing `-retry-<digits>` suffix from a node id, so repeated
-    /// retries replace the suffix instead of chaining
-    /// (`root-child-1-retry-4`, not `root-child-1-retry-2-retry-3-retry-4`).
-    fn retry_base_id(id: &str) -> &str {
-        match id.rfind("-retry-") {
-            Some(idx) => {
-                let suffix = &id[idx + "-retry-".len()..];
-                if !suffix.is_empty() && suffix.bytes().all(|b| b.is_ascii_digit()) {
-                    &id[..idx]
-                } else {
-                    id
-                }
-            }
-            None => id,
-        }
     }
 
     /// Builds `RetryFeedback` for validation-class failures on Work nodes.

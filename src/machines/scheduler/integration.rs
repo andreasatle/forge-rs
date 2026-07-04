@@ -130,7 +130,7 @@ impl IntegrationService {
         target_files: Vec<String>,
         validation_plan: Option<ValidationPlan>,
     ) -> SchedulerEvent {
-        eprintln!("[integration] start {}", node_id.0);
+        eprintln!("[integration] start {}", node_id.short());
 
         let failed_attempt = self
             .failed_attempts

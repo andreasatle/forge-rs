@@ -34,7 +34,8 @@ pub(crate) fn dispatch_run_node<R: NodeRunner>(
 ) -> DispatchResult {
     eprintln!(
         "[scheduler] dispatch {} {:?}",
-        command.node_id.0, command.kind
+        command.node_id.short(),
+        command.kind
     );
 
     let artifact_view = artifact_snapshot.as_ref().map(|artifact| ArtifactView {
@@ -72,8 +73,8 @@ fn progress_label(kind: &NodeKind, node_id: &NodeId, worker_role: &Option<String
     match kind {
         NodeKind::Plan => "[planner]".to_string(),
         NodeKind::Work => match worker_role {
-            Some(role) => format!("[worker {}/{role}]", node_id.0),
-            None => format!("[worker {}]", node_id.0),
+            Some(role) => format!("[worker {}/{role}]", node_id.short()),
+            None => format!("[worker {}]", node_id.short()),
         },
     }
 }

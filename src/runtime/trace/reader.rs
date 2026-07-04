@@ -168,3 +168,10 @@ pub(super) fn truncate(s: &str, max_chars: usize) -> String {
     truncated.push('…');
     truncated
 }
+
+/// The first 8 characters of a node id, for compact display in trace output.
+/// Node ids are full UUIDs; the trace viewer shows only this short prefix,
+/// matching the `[worker <short-id>]` form used in log/progress output.
+pub(super) fn short_id(id: &str) -> &str {
+    id.get(..8).unwrap_or(id)
+}

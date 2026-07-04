@@ -33,6 +33,7 @@ fn recovery_creates_replacement_node() {
         let graph = RunGraph {
             nodes: vec![work_node("W", "do the task", &[])],
             next_id: 0,
+            id_seed: 0,
         };
         let t = do_transition(
             SchedulerState::Waiting {
@@ -77,6 +78,7 @@ fn validation_failure_creates_retry_feedback() {
     let mut graph = RunGraph {
         nodes: vec![work_node("W", "fix main", &[])],
         next_id: 0,
+        id_seed: 0,
     };
     graph.nodes[0].target_files = vec!["main.py".to_string()];
     graph.nodes[0].status = NodeStatus::Integrating;
@@ -171,6 +173,7 @@ fn work_semantic_validation_failure_retries_with_artifact_feedback() {
         let mut graph = RunGraph {
             nodes: vec![work_node("W", "modify src/lib.rs", &[])],
             next_id: 0,
+            id_seed: 0,
         };
         graph.nodes[0].target_files = case.target_files.clone();
         graph.nodes[0].validation_plan = case.validation_plan.clone();
@@ -240,6 +243,7 @@ fn recovery_preserves_plan_depth() {
         let mut graph = RunGraph {
             nodes: vec![work_node("W", "do the task", &[])],
             next_id: 0,
+            id_seed: 0,
         };
         graph.nodes[0].plan_depth = 7;
 
@@ -300,6 +304,7 @@ fn recovery_exhaustion_fails_scheduler() {
         let graph = RunGraph {
             nodes: vec![node],
             next_id: 0,
+            id_seed: 0,
         };
 
         let t = do_transition(
@@ -358,6 +363,7 @@ fn terminal_failure_cancels_downstream_chain() {
             work_node("D", "step D", &["C"]),
         ],
         next_id: 0,
+        id_seed: 0,
     };
     graph.nodes[0].status = NodeStatus::Completed;
 
@@ -409,6 +415,7 @@ fn split_below_attempt_limit_still_creates_plan_node() {
             work_node("C", "step C", &["W"]),
         ],
         next_id: 0,
+        id_seed: 0,
     };
     graph.nodes[0].status = NodeStatus::Completed;
 
@@ -437,11 +444,12 @@ fn split_below_attempt_limit_still_creates_plan_node() {
     let w = graph.nodes.iter().find(|n| n.id.0 == "W").expect("W");
     assert_eq!(w.status, NodeStatus::Failed);
 
-    // Split Plan node exists with attempt=1 and Strong tier.
+    // Split Plan node exists with attempt=1 and Strong tier. Found by its
+    // NodeOrigin::Split source, not by parsing the id.
     let split = graph
         .nodes
         .iter()
-        .find(|n| n.id.0.starts_with("W-split-"))
+        .find(|n| matches!(&n.origin, NodeOrigin::Split { source } if source.0 == "W"))
         .expect("split Plan node");
     assert_eq!(split.kind, NodeKind::Plan);
     assert_eq!(split.status, NodeStatus::Pending);
@@ -470,6 +478,7 @@ fn integration_failure_terminal_cancels_downstream_dependents() {
             work_node("D", "step D", &["C"]),
         ],
         next_id: 0,
+        id_seed: 0,
     };
     graph.nodes[0].status = NodeStatus::Completed;
     graph.nodes[1].status = NodeStatus::Integrating;
@@ -541,6 +550,7 @@ fn integration_failure_exhaustion_fails_scheduler() {
         let graph = RunGraph {
             nodes: vec![node],
             next_id: 0,
+            id_seed: 0,
         };
 
         let t = do_transition(
@@ -584,6 +594,7 @@ fn single_tier_elevate_falls_back_to_retry() {
     let graph = RunGraph {
         nodes: vec![work_node("W", "do elevate", &[])],
         next_id: 0,
+        id_seed: 0,
     };
     let t = SchedulerMachine.transition(
         SchedulerState::Waiting {
@@ -632,6 +643,7 @@ fn single_tier_elevate_exhausted_gives_clear_terminal_failure() {
     let graph = RunGraph {
         nodes: vec![node],
         next_id: 0,
+        id_seed: 0,
     };
     let t = SchedulerMachine.transition(
         SchedulerState::Waiting {
@@ -678,6 +690,7 @@ fn elevate_at_strong_tier_falls_back_to_retry() {
     let graph = RunGraph {
         nodes: vec![node],
         next_id: 0,
+        id_seed: 0,
     };
     let t = SchedulerMachine.transition(
         SchedulerState::Waiting {
@@ -729,6 +742,7 @@ fn validation_retry_feedback_includes_all_structured_target_files() {
     let mut graph = RunGraph {
         nodes: vec![work_node("W", "fix main", &[])],
         next_id: 0,
+        id_seed: 0,
     };
     graph.nodes[0].target_files = vec!["main.py".to_string(), "test_main.py".to_string()];
     graph.nodes[0].status = NodeStatus::Integrating;
@@ -777,6 +791,7 @@ fn repeated_validation_retries_do_not_duplicate_feedback_blocks() {
     let mut graph = RunGraph {
         nodes: vec![work_node("W", "fix main", &[])],
         next_id: 0,
+        id_seed: 0,
     };
     graph.nodes[0].target_files = vec!["main.py".to_string()];
     graph.nodes[0].status = NodeStatus::Integrating;
@@ -835,13 +850,15 @@ fn repeated_validation_retries_do_not_duplicate_feedback_blocks() {
 }
 
 #[test]
-fn repeated_retries_replace_suffix_instead_of_chaining() {
-    // Invariant: a retry id always carries exactly one `-retry-N` suffix,
-    // replacing the previous one rather than accumulating
-    // (`W-retry-2`, never `W-retry-1-retry-2`).
+fn repeated_retries_each_mint_a_fresh_id_and_chain_origin_by_source() {
+    // Invariant: each retry mints a brand-new, distinct node id, and its
+    // NodeOrigin::Retry source points at the immediately-preceding attempt
+    // (not the original node) — lineage is tracked structurally via
+    // NodeOrigin, never by parsing the id.
     let graph = RunGraph {
         nodes: vec![work_node("W", "do retry", &[])],
         next_id: 0,
+        id_seed: 0,
     };
 
     let t1 = do_transition(
@@ -864,12 +881,15 @@ fn repeated_retries_replace_suffix_instead_of_chaining() {
         panic!("expected Active after first retry");
     };
     let retry1_id = graph.nodes[1].id.clone();
-    assert_eq!(
-        retry1_id.0.matches("-retry-").count(),
-        1,
-        "first retry id must carry a single -retry- segment: {}",
-        retry1_id.0
+    assert_ne!(
+        retry1_id,
+        NodeId("W".to_string()),
+        "first retry must mint a new id, not reuse the original"
     );
+    match &graph.nodes[1].origin {
+        NodeOrigin::Retry { source } => assert_eq!(*source, NodeId("W".to_string())),
+        other => panic!("expected Retry origin, got {other:?}"),
+    }
     graph.nodes[1].status = NodeStatus::Running;
 
     let t2 = do_transition(
@@ -891,18 +911,18 @@ fn repeated_retries_replace_suffix_instead_of_chaining() {
     let SchedulerState::Active { graph, .. } = t2.state else {
         panic!("expected Active after second retry");
     };
-    let retry2_id = &graph.nodes[2].id;
-    assert_eq!(
-        retry2_id.0.matches("-retry-").count(),
-        1,
-        "second retry id must not chain -retry- segments: {}",
-        retry2_id.0
+    let retry2 = &graph.nodes[2];
+    assert_ne!(
+        retry2.id, retry1_id,
+        "second retry must mint a new id, not reuse the first retry's"
     );
-    assert!(
-        retry2_id.0.starts_with("W-retry-"),
-        "second retry id must be based on the original id, not the intermediate retry id: {}",
-        retry2_id.0
-    );
+    match &retry2.origin {
+        NodeOrigin::Retry { source } => assert_eq!(
+            *source, retry1_id,
+            "second retry's origin must point at the first retry, not the original W"
+        ),
+        other => panic!("expected Retry origin, got {other:?}"),
+    }
 }
 
 #[test]
@@ -912,6 +932,7 @@ fn retry_target_files_unchanged_across_retries() {
     let mut graph = RunGraph {
         nodes: vec![work_node("W", "fix main", &[])],
         next_id: 0,
+        id_seed: 0,
     };
     let original_targets = vec!["main.py".to_string(), "test_main.py".to_string()];
     graph.nodes[0].target_files = original_targets.clone();

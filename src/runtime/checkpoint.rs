@@ -91,6 +91,9 @@ mod tests {
         RunGraph {
             nodes: vec![a, b],
             next_id: 2,
+            // A near-max value, not 0, so round-trip tests actually exercise
+            // full u128 JSON precision rather than a degenerate case.
+            id_seed: u128::MAX - 1,
         }
     }
 
@@ -112,6 +115,7 @@ mod tests {
             RunGraph {
                 nodes: vec![original, retry],
                 next_id: 2,
+                id_seed: 0,
             }
         };
 
