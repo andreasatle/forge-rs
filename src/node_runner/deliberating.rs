@@ -9,11 +9,10 @@ mod request;
 use std::sync::Arc;
 
 use crate::machines::scheduler::{ModelTier, NodeKind};
-use crate::node_runner::TestTargetsFn;
+use crate::node_runner::{TestTargetsFn, ValidationPlanForRoleFn};
 use crate::providers::ProviderClient;
 use crate::roles::RolePolicy;
 use crate::telemetry::TelemetrySink;
-use crate::validation::ValidationPlan;
 
 use super::runner::NodeRunner;
 use super::types::{NodeRunRequest, NodeRunResult};
@@ -46,18 +45,12 @@ pub struct DeliberatingNodeRunner<C, S> {
     role_policy: RolePolicy,
     required_test_targets_fn: Arc<TestTargetsFn>,
     context_file_names: Vec<String>,
-    /// Validation plan stamped onto every non-tester `Work` node request
-    /// produced by this runner.
+    /// Looks up the validation plan stamped onto a `Work` node request based
+    /// on its assigned worker role, produced by this runner.
     ///
-    /// `None` means no per-node plan; integration falls back to the global
-    /// handler-level validator.
-    work_node_plan: Option<ValidationPlan>,
-    /// Validation plan stamped onto every tester-role `Work` node request
-    /// produced by this runner.
-    ///
-    /// `None` means no per-node plan; integration falls back to the global
-    /// handler-level validator.
-    validation_node_plan: Option<ValidationPlan>,
+    /// Returning `None` for a role means no per-node plan; integration falls
+    /// back to the global handler-level validator.
+    validation_plan_for_role_fn: Arc<ValidationPlanForRoleFn>,
 }
 
 impl<C, S> DeliberatingNodeRunner<C, S> {
@@ -75,8 +68,7 @@ impl<C, S> DeliberatingNodeRunner<C, S> {
             role_policy: RolePolicy::default(),
             required_test_targets_fn: Arc::new(|_| vec![]),
             context_file_names: vec![],
-            work_node_plan: None,
-            validation_node_plan: None,
+            validation_plan_for_role_fn: Arc::new(|_| None),
         }
     }
 
@@ -119,25 +111,16 @@ impl<C, S> DeliberatingNodeRunner<C, S> {
         self
     }
 
-    /// Supply the validation plan stamped onto every `Work` node this runner
-    /// produces.
+    /// Supply the per-role validation plan lookup stamped onto every `Work`
+    /// node this runner produces.
     ///
-    /// The plan is cloned onto each [`NodeRequest`](crate::machines::scheduler::NodeRequest)
-    /// when a plan node expands.  When not set (the default), nodes carry no
-    /// plan and integration falls back to the handler-level validator.
-    pub fn with_work_node_plan(mut self, plan: Option<ValidationPlan>) -> Self {
-        self.work_node_plan = plan;
-        self
-    }
-
-    /// Supply the validation plan stamped onto every tester-role `Work` node
-    /// this runner produces.
-    ///
-    /// The plan is cloned onto each [`NodeRequest`](crate::machines::scheduler::NodeRequest)
-    /// when a plan node expands.  When not set (the default), nodes carry no
-    /// plan and integration falls back to the handler-level validator.
-    pub fn with_validation_node_plan(mut self, plan: Option<ValidationPlan>) -> Self {
-        self.validation_node_plan = plan;
+    /// Called with each node's assigned worker role when a plan node
+    /// expands, and the resulting plan is stamped onto that
+    /// [`NodeRequest`](crate::machines::scheduler::NodeRequest). When not set
+    /// (the default), nodes carry no plan and integration falls back to the
+    /// handler-level validator.
+    pub fn with_validation_plan_for_role_fn(mut self, f: Arc<ValidationPlanForRoleFn>) -> Self {
+        self.validation_plan_for_role_fn = f;
         self
     }
 }
@@ -185,17 +168,10 @@ impl<C, S> DeliberatingNodeRunner<C, S> {
             if child.kind != NodeKind::Work {
                 continue;
             }
-            if child.worker_role.as_deref() == Some("tester") {
-                if self.validation_node_plan.is_some() {
-                    child.validation_plan = self.validation_node_plan.clone();
-                }
-            } else {
-                child.required_validation_targets =
-                    (self.required_test_targets_fn)(&child.target_files);
-                if self.work_node_plan.is_some() {
-                    child.validation_plan = self.work_node_plan.clone();
-                }
-            }
+            child.required_validation_targets =
+                (self.required_test_targets_fn)(&child.target_files);
+            child.validation_plan =
+                (self.validation_plan_for_role_fn)(child.worker_role.as_deref());
         }
         plan
     }

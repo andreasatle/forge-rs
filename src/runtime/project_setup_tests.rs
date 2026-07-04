@@ -257,7 +257,7 @@ fn build_derives_validator_and_validation_plan_from_language() {
     )
     .unwrap();
     assert!(
-        setup.work_node_plan.is_some(),
+        (setup.validation_plan_for_role_fn)(None).is_some(),
         "a configured language plugin must produce a validation plan"
     );
     assert!(
@@ -270,42 +270,43 @@ fn build_derives_validator_and_validation_plan_from_language() {
 }
 
 #[test]
-fn validation_node_plan_uses_reduced_python_commands() {
-    // Invariant: tester-role Work nodes get a reduced validation plan
-    // (ruff check only) rather than the full Work-node plan (ruff + pyright +
-    // pytest), so tester nodes aren't required to pass the full test
-    // suite before their own test files exist.
+fn validation_plan_for_role_uses_python_tester_role_override() {
+    // Invariant: a `tester`-role Work node gets the python plugin's
+    // role-specific validation plan (ruff check only) rather than the
+    // plugin's default plan (ruff + pyright + pytest), so tester nodes
+    // aren't required to pass the full test suite before their own test
+    // files exist.
     let setup = ProjectRuntimeSetup::build(
         &adapter_path("coding.yaml"),
         Some(&plugin_path("python.yaml")),
         None,
     )
     .unwrap();
-    let plan = setup
-        .validation_node_plan
-        .expect("python plugin must produce a validation_node_plan");
+    let plan = (setup.validation_plan_for_role_fn)(Some("tester"))
+        .expect("python plugin's tester role override must produce a validation plan");
     assert_eq!(
         plan.steps.len(),
         1,
-        "python validation_node_plan must contain exactly one step; got: {:?}",
+        "python tester validation plan must contain exactly one step; got: {:?}",
         plan.steps
     );
     assert!(
         plan.steps[0].command.contains(&"ruff".to_string()),
-        "python validation_node_plan must run ruff; got: {:?}",
+        "python tester validation plan must run ruff; got: {:?}",
         plan.steps[0].command
     );
     assert!(
         !plan.steps[0].command.contains(&"pytest".to_string()),
-        "python validation_node_plan must not run pytest"
+        "python tester validation plan must not run pytest"
     );
 }
 
 #[test]
-fn validation_node_plan_falls_back_to_work_plan_when_unset() {
-    // Invariant: a language spec without validation_node_commands (e.g. rust)
-    // must not silently drop validation for tester nodes — it falls back
-    // to the same full plan used for other Work nodes.
+fn validation_plan_for_role_falls_back_to_default_when_role_has_no_override() {
+    // Invariant: a role absent from the language spec's `roles` list (e.g.
+    // any role under rust, which declares no overrides at all) must not
+    // silently drop validation — it falls back to the same default plan
+    // used for nodes with no role assigned.
     let setup = ProjectRuntimeSetup::build(
         &adapter_path("coding.yaml"),
         Some(&plugin_path("rust.yaml")),
@@ -313,7 +314,8 @@ fn validation_node_plan_falls_back_to_work_plan_when_unset() {
     )
     .unwrap();
     assert_eq!(
-        setup.validation_node_plan, setup.work_node_plan,
-        "validation_node_plan must equal work_node_plan when validation_node_commands is empty"
+        (setup.validation_plan_for_role_fn)(Some("tester")),
+        (setup.validation_plan_for_role_fn)(None),
+        "a role with no override must fall back to the default validation plan"
     );
 }

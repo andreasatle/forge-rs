@@ -200,7 +200,6 @@ validation:
       when_files_present: []
       scope: workspace
   validation_targets: []
-  validation_node_commands: []
 "#;
 
 // ── language_spec bare-id convenience ────────────────────────────────────

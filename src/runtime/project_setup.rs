@@ -5,6 +5,7 @@
 //! [`ProjectRuntimeSetup::build`] is the single entry point so `run` and
 //! `resume` derive identical wiring from identical config.
 
+use std::collections::HashMap;
 use std::error::Error;
 use std::path::Path;
 use std::rc::Rc;
@@ -14,7 +15,7 @@ use std::time::Duration;
 use crate::config::ValidationConfig;
 use crate::language::registry::load_plugin as load_language_plugin;
 use crate::language::spec::LanguageSpec;
-use crate::node_runner::TestTargetsFn;
+use crate::node_runner::{TestTargetsFn, ValidationPlanForRoleFn};
 use crate::project::{ProjectAdapter, load_adapter};
 use crate::roles::RolePolicy;
 use crate::validation::{
@@ -28,8 +29,7 @@ pub struct ProjectRuntimeSetup {
     pub role_policy: RolePolicy,
     pub context_file_names: Vec<String>,
     pub required_test_targets_fn: Arc<TestTargetsFn>,
-    pub work_node_plan: Option<ValidationPlan>,
-    pub validation_node_plan: Option<ValidationPlan>,
+    pub validation_plan_for_role_fn: Arc<ValidationPlanForRoleFn>,
     pub validator: Rc<dyn Validator>,
 }
 
@@ -71,8 +71,7 @@ impl<'a> ProjectRuntimeSetupBuilder<'a> {
             role_policy: self.role_policy(),
             context_file_names: self.context_file_names(),
             required_test_targets_fn: self.required_test_targets_fn(),
-            work_node_plan: self.work_node_plan(),
-            validation_node_plan: self.validation_node_plan(),
+            validation_plan_for_role_fn: self.validation_plan_for_role_fn(),
             validator: self.validator(),
         }
     }
@@ -142,12 +141,14 @@ impl<'a> ProjectRuntimeSetupBuilder<'a> {
         })
     }
 
-    /// Build a [`ValidationPlan`] from the language spec or explicit config.
+    /// Build the default [`ValidationPlan`] from the language spec or explicit
+    /// config, used for nodes with no worker role or whose role has no
+    /// override in the language spec's `roles` list.
     ///
     /// The plan is stamped onto every `Work` node at plan-expansion time.  This
     /// captures the validation contract at node-creation time so it survives
     /// checkpoint/resume unchanged, regardless of any later config edits.
-    fn work_node_plan(&self) -> Option<ValidationPlan> {
+    fn default_validation_plan(&self) -> Option<ValidationPlan> {
         if let Some(spec) = &self.language_spec {
             Some(Self::plan_from_commands(&spec.validation.commands))
         } else {
@@ -155,25 +156,33 @@ impl<'a> ProjectRuntimeSetupBuilder<'a> {
         }
     }
 
-    /// Build the reduced [`ValidationPlan`] stamped onto every tester-role
-    /// `Work` node at plan-expansion time.
+    /// Build the per-role validation plan lookup stamped onto every `Work`
+    /// node at plan-expansion time, keyed by the node's assigned worker role.
     ///
-    /// Falls back to [`Self::work_node_plan`] when the language spec declares
-    /// no `validation_node_commands` (or no language plugin is configured),
-    /// so tester nodes are never left with a weaker contract than the
-    /// project otherwise requires.
-    fn validation_node_plan(&self) -> Option<ValidationPlan> {
-        if let Some(spec) = &self.language_spec {
-            if spec.validation.validation_node_commands.is_empty() {
-                self.work_node_plan()
-            } else {
-                Some(Self::plan_from_commands(
-                    &spec.validation.validation_node_commands,
-                ))
-            }
-        } else {
-            self.validation_config_plan()
-        }
+    /// A role present in the language spec's `roles` list gets that role's
+    /// own `validation.commands`; every other role (including no role at
+    /// all) falls back to [`Self::default_validation_plan`].
+    fn validation_plan_for_role_fn(&self) -> Arc<ValidationPlanForRoleFn> {
+        let default_plan = self.default_validation_plan();
+        let role_plans: HashMap<String, ValidationPlan> = self
+            .language_spec
+            .as_ref()
+            .map(|spec| {
+                spec.roles
+                    .iter()
+                    .map(|role| {
+                        (
+                            role.role.clone(),
+                            Self::plan_from_commands(&role.validation.commands),
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        Arc::new(move |role: Option<&str>| {
+            role.and_then(|name| role_plans.get(name).cloned())
+                .or_else(|| default_plan.clone())
+        })
     }
 
     /// Convert a slice of language-spec [`CommandSpec`]s into a [`ValidationPlan`].

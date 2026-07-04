@@ -63,8 +63,7 @@ impl RunSession {
                 .with_role_policy(setup.role_policy)
                 .with_required_test_targets_fn(setup.required_test_targets_fn)
                 .with_context_file_names(setup.context_file_names)
-                .with_work_node_plan(setup.work_node_plan)
-                .with_validation_node_plan(setup.validation_node_plan);
+                .with_validation_plan_for_role_fn(setup.validation_plan_for_role_fn);
         let handler = SchedulerHandler::with_artifact(runner, artifact)
             .with_telemetry(Rc::clone(&self.sink))
             .with_validator(setup.validator)

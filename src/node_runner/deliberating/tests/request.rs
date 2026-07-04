@@ -26,10 +26,11 @@ fn marker_plan(marker: &str) -> ValidationPlan {
 
 #[test]
 fn plan_stamps_work_and_validation_children_with_distinct_plans() {
-    // Invariant: a planner task explicitly assigned the "tester" role is
-    // stamped with the runner's validation_node_plan, while a task with no
-    // assigned role gets the work_node_plan — the two roles must never share
-    // the same validation contract when distinct plans are configured.
+    // Invariant: a planner task explicitly assigned the "tester" role gets
+    // the validation plan the role-lookup function returns for that role,
+    // while a task with no assigned role gets the plan returned for `None`
+    // — the two must never share the same validation contract when the
+    // lookup function distinguishes them.
     let plan_json = r#"{"tasks":[
         {"id":"task-1","objective":"Modify main.py","operation":"modify","targets":["main.py"],"depends_on":[]},
         {"id":"task-2","objective":"Add tests for main.py","operation":"create","role":"tester","targets":["tests/test_main.py"],"depends_on":["task-1"]}
@@ -41,8 +42,12 @@ fn plan_stamps_work_and_validation_children_with_distinct_plans() {
     ]);
     let runner = DeliberatingNodeRunner::new(&provider, &provider)
         .with_required_test_targets_fn(Arc::new(python_test_targets))
-        .with_work_node_plan(Some(marker_plan("work-marker")))
-        .with_validation_node_plan(Some(marker_plan("validation-marker")));
+        .with_validation_plan_for_role_fn(Arc::new(|role: Option<&str>| {
+            Some(match role {
+                Some("tester") => marker_plan("validation-marker"),
+                _ => marker_plan("work-marker"),
+            })
+        }));
 
     let result = runner.run_node(plan_request("Modify main.py and its tests"), &NoopTelemetry);
     let NodeRunResult::PlanAccepted(plan) = result else {
