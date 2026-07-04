@@ -26,15 +26,13 @@ fn marker_plan(marker: &str) -> ValidationPlan {
 
 #[test]
 fn plan_stamps_work_and_validation_children_with_distinct_plans() {
-    // Invariant: a planner task whose targets are entirely derived validation
-    // targets (e.g. a test file) is assigned the "tester" worker role and
-    // stamped with the runner's validation_node_plan, while a task targeting
-    // source files gets no worker role and the work_node_plan — the two
-    // roles must never share the same validation contract when distinct
-    // plans are configured.
+    // Invariant: a planner task explicitly assigned the "tester" role is
+    // stamped with the runner's validation_node_plan, while a task with no
+    // assigned role gets the work_node_plan — the two roles must never share
+    // the same validation contract when distinct plans are configured.
     let plan_json = r#"{"tasks":[
         {"id":"task-1","objective":"Modify main.py","operation":"modify","targets":["main.py"],"depends_on":[]},
-        {"id":"task-2","objective":"Add tests for main.py","operation":"create","targets":["tests/test_main.py"],"depends_on":["task-1"]}
+        {"id":"task-2","objective":"Add tests for main.py","operation":"create","role":"tester","targets":["tests/test_main.py"],"depends_on":["task-1"]}
     ]}"#;
     let provider = ScriptedProvider::from_strs(&[
         plan_json,

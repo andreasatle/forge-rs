@@ -149,6 +149,7 @@ fn planner_task(id: &str, objective: &str, targets: &[&str], depends_on: &[&str]
         id: id.to_string(),
         objective: objective.to_string(),
         operation: Some(PlannerOperation::Modify),
+        role: None,
         targets: targets.iter().map(|s| s.to_string()).collect(),
         depends_on: depends_on.iter().map(|s| s.to_string()).collect(),
     }
@@ -299,6 +300,7 @@ fn code_target_without_test_target_rejected_when_tests_required() {
             id: "main".to_string(),
             objective: "Modify main.py.".to_string(),
             operation: Some(PlannerOperation::Modify),
+            role: None,
             targets: vec!["main.py".to_string()],
             depends_on: vec![],
         }],
@@ -319,6 +321,7 @@ fn code_target_with_test_target_passes_when_tests_required() {
                 id: "main".to_string(),
                 objective: "Modify main.py.".to_string(),
                 operation: Some(PlannerOperation::Modify),
+                role: None,
                 targets: vec!["main.py".to_string()],
                 depends_on: vec![],
             },
@@ -326,6 +329,7 @@ fn code_target_with_test_target_passes_when_tests_required() {
                 id: "tests".to_string(),
                 objective: "Add tests for main.py.".to_string(),
                 operation: Some(PlannerOperation::Modify),
+                role: None,
                 targets: vec!["tests/test_main.py".to_string()],
                 depends_on: vec!["main".to_string()],
             },
@@ -346,6 +350,7 @@ fn tests_required_passes_when_adapter_requires_nothing() {
             id: "main".to_string(),
             objective: "Modify main.py.".to_string(),
             operation: Some(PlannerOperation::Modify),
+            role: None,
             targets: vec!["main.py".to_string()],
             depends_on: vec![],
         }],
@@ -367,6 +372,7 @@ fn planner_tasks_become_node_requests() {
                 id: "step-one".to_string(),
                 objective: "do step one".to_string(),
                 operation: Some(PlannerOperation::Modify),
+                role: None,
                 targets: vec!["one.txt".to_string()],
                 depends_on: vec![],
             },
@@ -374,6 +380,7 @@ fn planner_tasks_become_node_requests() {
                 id: "step-two".to_string(),
                 objective: "do step two".to_string(),
                 operation: Some(PlannerOperation::Modify),
+                role: None,
                 targets: vec!["two.txt".to_string()],
                 depends_on: vec![],
             },
@@ -402,6 +409,7 @@ fn plan_kind_output_produces_plan_children_with_no_worker_role() {
                 id: "sub-a".to_string(),
                 objective: "decompose part a".to_string(),
                 operation: None,
+                role: None,
                 targets: vec![],
                 depends_on: vec![],
             },
@@ -409,6 +417,7 @@ fn plan_kind_output_produces_plan_children_with_no_worker_role() {
                 id: "sub-b".to_string(),
                 objective: "decompose part b".to_string(),
                 operation: None,
+                role: None,
                 targets: vec![],
                 depends_on: vec!["sub-a".to_string()],
             },
@@ -427,18 +436,10 @@ fn plan_kind_output_produces_plan_children_with_no_worker_role() {
 }
 
 #[test]
-fn task_targeting_only_derived_validation_targets_becomes_tester_role() {
-    // Invariant: a task whose targets are entirely covered by the adapter's
-    // derived validation targets (e.g. a test file for another task's source
-    // file) is assigned the "tester" worker role, not left with no role.
-    fn required_test_targets(targets: &[String]) -> Vec<String> {
-        targets
-            .iter()
-            .filter(|t| t.as_str() == "main.py")
-            .map(|_| "tests/test_main.py".to_string())
-            .collect()
-    }
-
+fn task_role_becomes_node_request_worker_role() {
+    // Invariant: the planner now assigns worker roles explicitly per task —
+    // `task.role` is carried straight through to `NodeRequest::worker_role`,
+    // with no framework classification based on targets.
     let output = PlannerOutput {
         kind: PlannerOutputKind::Work,
         tasks: vec![
@@ -446,6 +447,7 @@ fn task_targeting_only_derived_validation_targets_becomes_tester_role() {
                 id: "impl".to_string(),
                 objective: "modify main.py".to_string(),
                 operation: Some(PlannerOperation::Modify),
+                role: Some("implementer".to_string()),
                 targets: vec!["main.py".to_string()],
                 depends_on: vec![],
             },
@@ -453,54 +455,45 @@ fn task_targeting_only_derived_validation_targets_becomes_tester_role() {
                 id: "test".to_string(),
                 objective: "add tests for main.py".to_string(),
                 operation: Some(PlannerOperation::Create),
+                role: Some("tester".to_string()),
                 targets: vec!["tests/test_main.py".to_string()],
                 depends_on: vec!["impl".to_string()],
             },
         ],
     };
-    let plan = processor(&required_test_targets).into_plan(output);
+    let plan = planner_output_to_plan_output(output);
 
     let impl_child = plan
         .children
         .iter()
         .find(|c| c.id == NodeId("impl".to_string()))
         .unwrap();
-    assert_eq!(impl_child.kind, NodeKind::Work);
-    assert_eq!(impl_child.worker_role, None);
+    assert_eq!(impl_child.worker_role, Some("implementer".to_string()));
 
     let test_child = plan
         .children
         .iter()
         .find(|c| c.id == NodeId("test".to_string()))
         .unwrap();
-    assert_eq!(test_child.kind, NodeKind::Work);
     assert_eq!(test_child.worker_role, Some("tester".to_string()));
 }
 
 #[test]
-fn task_targeting_source_and_test_files_together_stays_untested_role() {
-    // Invariant: a task is only assigned the tester role when ALL of its
-    // targets are derived validation targets. A task mixing a source file
-    // with a test file must have no worker role.
-    fn required_test_targets(targets: &[String]) -> Vec<String> {
-        targets
-            .iter()
-            .filter(|t| t.as_str() == "main.py")
-            .map(|_| "tests/test_main.py".to_string())
-            .collect()
-    }
-
+fn task_without_role_gets_no_worker_role() {
+    // Invariant: a missing `role` means no worker role assigned — the
+    // planner's absence of an assignment is not backfilled by the framework.
     let output = PlannerOutput {
         kind: PlannerOutputKind::Work,
         tasks: vec![PlannerTask {
             id: "combined".to_string(),
             objective: "modify main.py and its tests".to_string(),
             operation: Some(PlannerOperation::Modify),
+            role: None,
             targets: vec!["main.py".to_string(), "tests/test_main.py".to_string()],
             depends_on: vec![],
         }],
     };
-    let plan = processor(&required_test_targets).into_plan(output);
+    let plan = planner_output_to_plan_output(output);
 
     assert_eq!(plan.children[0].kind, NodeKind::Work);
     assert_eq!(plan.children[0].worker_role, None);
@@ -515,6 +508,7 @@ fn planner_dependencies_preserved() {
                 id: "tests".to_string(),
                 objective: "write tests".to_string(),
                 operation: Some(PlannerOperation::Modify),
+                role: None,
                 targets: vec!["tests.txt".to_string()],
                 depends_on: vec![],
             },
@@ -522,6 +516,7 @@ fn planner_dependencies_preserved() {
                 id: "impl".to_string(),
                 objective: "implement".to_string(),
                 operation: Some(PlannerOperation::Modify),
+                role: None,
                 targets: vec!["impl.txt".to_string()],
                 depends_on: vec!["tests".to_string()],
             },

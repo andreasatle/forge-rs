@@ -25,6 +25,13 @@ pub struct PlannerTask {
     /// kept as adapter-supplied metadata.
     #[serde(default)]
     pub operation: Option<PlannerOperation>,
+    /// Worker role this task is assigned to, chosen by the planner from the
+    /// adapter's configured worker roles.
+    ///
+    /// `None` when the planner does not assign a role, in which case the
+    /// resulting `NodeRequest` gets no worker role either.
+    #[serde(default)]
+    pub role: Option<String>,
     /// Explicit artifact files this task is allowed and expected to touch.
     pub targets: Vec<String>,
     /// Ids of other tasks in the same output that must complete before this one.
@@ -241,41 +248,20 @@ impl<'a> PlannerOutputProcessor<'a> {
             PlannerOutputKind::Work => NodeKind::Work,
             PlannerOutputKind::Plan => NodeKind::Plan,
         };
-        let all_targets: Vec<String> = output
-            .tasks
-            .iter()
-            .flat_map(|task| task.targets.iter().cloned())
-            .collect();
-        let validation_targets: HashSet<String> = (self.required_test_targets_fn)(&all_targets)
-            .into_iter()
-            .collect();
 
         PlanOutput {
             children: output
                 .tasks
                 .into_iter()
-                .map(|task| {
-                    let worker_role = if child_kind == NodeKind::Work
-                        && !task.targets.is_empty()
-                        && task
-                            .targets
-                            .iter()
-                            .all(|target| validation_targets.contains(target))
-                    {
-                        Some("tester".to_string())
-                    } else {
-                        None
-                    };
-                    NodeRequest {
-                        id: NodeId(task.id),
-                        kind: child_kind.clone(),
-                        worker_role,
-                        objective: task.objective,
-                        target_files: task.targets,
-                        required_validation_targets: vec![],
-                        dependencies: task.depends_on.into_iter().map(NodeId).collect(),
-                        validation_plan: None,
-                    }
+                .map(|task| NodeRequest {
+                    id: NodeId(task.id),
+                    kind: child_kind.clone(),
+                    worker_role: task.role,
+                    objective: task.objective,
+                    target_files: task.targets,
+                    required_validation_targets: vec![],
+                    dependencies: task.depends_on.into_iter().map(NodeId).collect(),
+                    validation_plan: None,
                 })
                 .collect(),
         }
