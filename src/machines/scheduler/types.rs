@@ -109,12 +109,14 @@ pub enum RecoveryAction {
         /// A human-readable note about why the retry was requested.
         message: String,
     },
-    /// Create a new `Plan` node (at `ModelTier::Strong`) whose objective is
-    /// `message`. The planner will decompose the failed objective into
+    /// Create a new `Plan` node (at `ModelTier::Strong`) that re-plans the
+    /// failed node's original objective, with `message` carried alongside it
+    /// as diagnostic context. The planner will decompose the objective into
     /// sub-tasks. Use when the task proved too large or ambiguous to execute
     /// directly.
     Split {
-        /// The objective for the new plan node that will decompose the work.
+        /// Diagnostic context describing why the task needs decomposition.
+        /// Not the new plan node's objective.
         message: String,
     },
     /// Create a replacement node with `ModelTier::Strong`, incrementing

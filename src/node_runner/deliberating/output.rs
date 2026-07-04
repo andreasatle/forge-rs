@@ -60,7 +60,7 @@ fn map_plan_output(
 ) -> NodeRunResult {
     use crate::node_runner::planner::PlannerOutputProcessor;
 
-    let processor = PlannerOutputProcessor::new("", required_test_targets_fn);
+    let processor = PlannerOutputProcessor::new(required_test_targets_fn);
 
     match processor.parse_content(&content) {
         Some(planner_out) => match processor.validate_structure(&planner_out) {

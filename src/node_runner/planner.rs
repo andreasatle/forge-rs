@@ -94,14 +94,6 @@ pub enum PlannerValidationError {
         /// The unknown dependency id that was referenced.
         dep_id: String,
     },
-    /// The top-level coding objective explicitly named target files, but a
-    /// non-test task targets a different file.
-    ExplicitTargetViolation {
-        /// The filename targeted by the invalid task.
-        filename: String,
-        /// Non-test targets explicitly named by the objective.
-        allowed_targets: Vec<String>,
-    },
     /// Test validation is configured, but a code-changing plan has no test target.
     MissingTestsForCodeChange,
 }
@@ -131,16 +123,6 @@ impl std::fmt::Display for PlannerValidationError {
             PlannerValidationError::UnknownDependency { task_id, dep_id } => {
                 write!(f, "task {task_id} depends on unknown id: {dep_id}")
             }
-            PlannerValidationError::ExplicitTargetViolation {
-                filename,
-                allowed_targets,
-            } => {
-                write!(
-                    f,
-                    "task targets non-test file '{filename}' but the objective explicitly targets {}",
-                    allowed_targets.join(", ")
-                )
-            }
             PlannerValidationError::MissingTestsForCodeChange => {
                 write!(
                     f,
@@ -151,92 +133,14 @@ impl std::fmt::Display for PlannerValidationError {
     }
 }
 
-#[derive(Clone, Debug)]
-pub(crate) struct ObjectiveTargetSet {
-    targets: HashSet<String>,
-}
-
-impl ObjectiveTargetSet {
-    fn from_objective(top_objective: &str) -> Self {
-        Self {
-            targets: top_objective
-                .split_whitespace()
-                .map(Self::normalize_token)
-                .filter(|token| {
-                    Self::token_contains_file_separator(token)
-                        && Self::token_has_file_extension(token)
-                })
-                .collect(),
-        }
-    }
-
-    fn is_empty(&self) -> bool {
-        self.targets.is_empty()
-    }
-
-    fn contains(&self, target: &str) -> bool {
-        self.targets.contains(target)
-    }
-
-    fn has_code_like_target(&self) -> bool {
-        self.targets
-            .iter()
-            .any(|target| PlannerOutputProcessor::target_is_code_like(target))
-    }
-
-    fn sorted(&self) -> Vec<String> {
-        let mut sorted: Vec<String> = self.targets.iter().cloned().collect();
-        sorted.sort();
-        sorted
-    }
-
-    fn into_vec(self) -> Vec<String> {
-        self.targets.into_iter().collect()
-    }
-
-    fn normalize_token(token: &str) -> String {
-        token
-            .trim_matches(|c: char| {
-                !(c.is_ascii_alphanumeric()
-                    || matches!(c, '.' | '/' | '\\' | '_' | '-' | '@' | '+'))
-            })
-            .trim_start_matches("./")
-            .replace('\\', "/")
-    }
-
-    fn token_contains_file_separator(token: &str) -> bool {
-        token.contains('.') || token.contains('/')
-    }
-
-    fn token_has_file_extension(token: &str) -> bool {
-        let Some(filename) = token.rsplit('/').next() else {
-            return false;
-        };
-        let Some((stem, extension)) = filename.rsplit_once('.') else {
-            return false;
-        };
-        !stem.is_empty()
-            && !extension.is_empty()
-            && extension
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'))
-    }
-}
-
 pub(crate) struct PlannerOutputProcessor<'a> {
     required_test_targets_fn: &'a dyn Fn(&[String]) -> Vec<String>,
-    explicit_objective_targets: ObjectiveTargetSet,
 }
 
 impl<'a> PlannerOutputProcessor<'a> {
-    pub(crate) fn new(
-        top_objective: impl Into<String>,
-        required_test_targets_fn: &'a dyn Fn(&[String]) -> Vec<String>,
-    ) -> Self {
-        let explicit_objective_targets = ObjectiveTargetSet::from_objective(&top_objective.into());
+    pub(crate) fn new(required_test_targets_fn: &'a dyn Fn(&[String]) -> Vec<String>) -> Self {
         Self {
             required_test_targets_fn,
-            explicit_objective_targets,
         }
     }
 
@@ -303,36 +207,7 @@ impl<'a> PlannerOutputProcessor<'a> {
             // validation does not apply until they are decomposed further.
             return Ok(());
         }
-        let objective_targets = self.explicit_objective_targets.clone().into_vec();
-        let exempt_targets = (self.required_test_targets_fn)(&objective_targets);
-        self.validate_explicit_targets(output, &exempt_targets)?;
         self.validate_tests_required(output)?;
-        Ok(())
-    }
-
-    pub(crate) fn validate_explicit_targets(
-        &self,
-        output: &PlannerOutput,
-        exempt_targets: &[String],
-    ) -> Result<(), PlannerValidationError> {
-        if self.explicit_objective_targets.is_empty()
-            || !self.explicit_objective_targets.has_code_like_target()
-        {
-            return Ok(());
-        }
-
-        for target in output.tasks.iter().flat_map(|task| task.targets.iter()) {
-            let normalized = ObjectiveTargetSet::normalize_token(target);
-            if !exempt_targets.contains(&normalized)
-                && !self.explicit_objective_targets.contains(&normalized)
-            {
-                return Err(PlannerValidationError::ExplicitTargetViolation {
-                    filename: normalized,
-                    allowed_targets: self.explicit_objective_targets.sorted(),
-                });
-            }
-        }
-
         Ok(())
     }
 
@@ -404,34 +279,6 @@ impl<'a> PlannerOutputProcessor<'a> {
                 })
                 .collect(),
         }
-    }
-
-    fn target_is_code_like(target: &str) -> bool {
-        let extension = target
-            .rsplit_once('.')
-            .map(|(_, ext)| ext.to_ascii_lowercase())
-            .unwrap_or_default();
-        matches!(
-            extension.as_str(),
-            "c" | "cc"
-                | "cpp"
-                | "cs"
-                | "go"
-                | "java"
-                | "js"
-                | "jsx"
-                | "kt"
-                | "m"
-                | "mm"
-                | "php"
-                | "py"
-                | "rb"
-                | "rs"
-                | "scala"
-                | "swift"
-                | "ts"
-                | "tsx"
-        )
     }
 }
 

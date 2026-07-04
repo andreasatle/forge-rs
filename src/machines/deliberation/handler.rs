@@ -37,7 +37,6 @@ pub(crate) const TARGET_VIEW_BUDGET: usize = 16 * 1024;
 /// Structured context used to validate planner output for a Plan node.
 #[derive(Clone)]
 pub(crate) struct PlanValidationContext {
-    pub(crate) top_objective: String,
     /// Called with all targets in the plan; returns the test-file paths the
     /// project adapter requires for the source files found in that list.
     /// An empty return means no tests are required for this plan.
@@ -87,15 +86,6 @@ pub(super) fn planner_validation_feedback(error: &PlannerValidationError) -> Str
             format!(
                 "{error}. Task '{task_id}' depends on '{dep_id}', which does not exist in this \
                  plan. Only reference task ids defined in the same plan."
-            )
-        }
-        PlannerValidationError::ExplicitTargetViolation {
-            allowed_targets, ..
-        } => {
-            format!(
-                "The objective explicitly targets {}. Remove all non-test targets except {}.",
-                allowed_targets.join(", "),
-                allowed_targets.join(", ")
             )
         }
         PlannerValidationError::MissingTestsForCodeChange => {
@@ -401,10 +391,7 @@ impl<R: RoleRunner> DeliberationHandler<R> {
             .plan_validation_context
             .as_ref()
             .expect("plan_validation_context must be Some when this method is called");
-        let processor = PlannerOutputProcessor::new(
-            &context.top_objective,
-            context.required_test_targets_fn.as_ref(),
-        );
+        let processor = PlannerOutputProcessor::new(context.required_test_targets_fn.as_ref());
 
         let Some(planner_out) = processor.parse_content(content) else {
             return Err(ProducerValidationRetry {

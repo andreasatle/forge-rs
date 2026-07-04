@@ -285,9 +285,10 @@ impl RecoveryApplicator {
     }
 
     fn apply_split(self, message: String) -> RunGraph {
-        let (target_files, required_validation_targets, deps, attempt, plan_depth) = {
+        let (objective, target_files, required_validation_targets, deps, attempt, plan_depth) = {
             let n = self.graph.get_node(&self.node_id);
             (
+                n.objective.clone(),
                 n.target_files.clone(),
                 n.required_validation_targets.clone(),
                 n.dependencies.clone(),
@@ -296,12 +297,18 @@ impl RecoveryApplicator {
             )
         };
         let split_id = new_node_id();
-        // Split creates a new Plan node; validation_plan and retry_feedback belong to Work nodes only.
+        // Split creates a new Plan node to re-plan the original objective;
+        // `message` is diagnostic context, not the objective itself. The
+        // new node re-plans the same task, so its objective is preserved
+        // and the diagnostic is appended for the planner's benefit.
+        // validation_plan and retry_feedback belong to Work nodes only.
         let split_node = Node {
             id: split_id.clone(),
             kind: NodeKind::Plan,
             worker_role: None,
-            objective: message,
+            objective: format!(
+                "{objective}\n\nThe previous attempt failed and requires decomposition:\n{message}"
+            ),
             target_files,
             required_validation_targets,
             dependencies: deps,

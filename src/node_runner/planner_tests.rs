@@ -1,42 +1,32 @@
 use super::*;
 
-fn processor<'a>(
-    top_objective: &str,
-    required_test_targets_fn: &'a dyn Fn(&[String]) -> Vec<String>,
-) -> PlannerOutputProcessor<'a> {
-    PlannerOutputProcessor::new(top_objective, required_test_targets_fn)
+fn processor(
+    required_test_targets_fn: &dyn Fn(&[String]) -> Vec<String>,
+) -> PlannerOutputProcessor<'_> {
+    PlannerOutputProcessor::new(required_test_targets_fn)
 }
 
 fn parse_planner_content(content: &str) -> Option<PlannerOutput> {
-    processor("", &no_required_test_targets).parse_content(content)
+    processor(&no_required_test_targets).parse_content(content)
 }
 
 fn try_parse_planner_response(raw: &str) -> Result<PlannerOutput, String> {
-    processor("", &no_required_test_targets).parse_response(raw)
+    processor(&no_required_test_targets).parse_response(raw)
 }
 
 fn validate_planner_output(output: &PlannerOutput) -> Result<(), PlannerValidationError> {
-    processor("", &no_required_test_targets).validate(output)
-}
-
-fn validate_planner_explicit_targets(
-    output: &PlannerOutput,
-    top_objective: &str,
-    exempt_targets: &[String],
-) -> Result<(), PlannerValidationError> {
-    processor(top_objective, &no_required_test_targets)
-        .validate_explicit_targets(output, exempt_targets)
+    processor(&no_required_test_targets).validate(output)
 }
 
 fn validate_planner_tests_required(
     output: &PlannerOutput,
     required_test_targets_fn: &dyn Fn(&[String]) -> Vec<String>,
 ) -> Result<(), PlannerValidationError> {
-    processor("", required_test_targets_fn).validate_tests_required(output)
+    processor(required_test_targets_fn).validate_tests_required(output)
 }
 
 fn planner_output_to_plan_output(output: PlannerOutput) -> PlanOutput {
-    processor("", &no_required_test_targets).into_plan(output)
+    processor(&no_required_test_targets).into_plan(output)
 }
 
 // ── Direct planner response parsing ─────────────────────────────────────────
@@ -263,17 +253,15 @@ fn plan_kind_task_still_requires_non_empty_objective() {
 }
 
 #[test]
-fn plan_kind_skips_explicit_target_and_tests_required_checks() {
+fn plan_kind_skips_tests_required_check() {
     // Invariant: `kind: "plan"` tasks are exempt from target-based
-    // validation entirely (explicit targets, tests-required). This task's
-    // target shape — a file not named by the objective, with no test target —
-    // would fail both checks under `kind: "work"` (see other tests in this
-    // module); under `kind: "plan"` it must pass.
+    // validation entirely. This task's target shape — no test target — would
+    // fail the tests-required check under `kind: "work"` (see other tests in
+    // this module); under `kind: "plan"` it must pass.
     fn required_test_targets(_: &[String]) -> Vec<String> {
         vec!["tests/test_main.py".to_string()]
     }
 
-    let top_objective = "Modify main.py to print a haiku.";
     let output = PlannerOutput {
         kind: PlannerOutputKind::Plan,
         tasks: vec![planner_task(
@@ -283,10 +271,10 @@ fn plan_kind_skips_explicit_target_and_tests_required_checks() {
             &[],
         )],
     };
-    let processor = PlannerOutputProcessor::new(top_objective, &required_test_targets);
+    let processor = PlannerOutputProcessor::new(&required_test_targets);
     assert!(
         processor.validate(&output).is_ok(),
-        "plan-kind output must skip explicit-target and tests-required checks"
+        "plan-kind output must skip the tests-required check"
     );
 }
 
@@ -365,108 +353,6 @@ fn tests_required_passes_when_adapter_requires_nothing() {
     assert!(
         validate_planner_tests_required(&output, &no_tests).is_ok(),
         "plan-only task must pass when adapter requires no tests"
-    );
-}
-
-#[test]
-fn explicit_objective_target_rejects_unlisted_non_exempt_target() {
-    // Invariant: target not in objective and not in adapter exemptions is rejected.
-    let output = PlannerOutput {
-        kind: PlannerOutputKind::Work,
-        tasks: vec![
-            PlannerTask {
-                id: "main".to_string(),
-                objective: "Modify main.py.".to_string(),
-                operation: Some(PlannerOperation::Modify),
-                targets: vec!["main.py".to_string()],
-                depends_on: vec![],
-            },
-            PlannerTask {
-                id: "config".to_string(),
-                objective: "Modify project config.".to_string(),
-                operation: Some(PlannerOperation::Modify),
-                targets: vec!["pyproject.toml".to_string()],
-                depends_on: vec![],
-            },
-            PlannerTask {
-                id: "tests".to_string(),
-                objective: "Add tests for main.py.".to_string(),
-                operation: Some(PlannerOperation::Create),
-                targets: vec!["tests/test_main.py".to_string()],
-                depends_on: vec!["main".to_string()],
-            },
-        ],
-    };
-    let exempt = python_tests(&["main.py".to_string()]);
-    let err =
-        validate_planner_explicit_targets(&output, "Modify main.py to print a haiku.", &exempt)
-            .expect_err("pyproject.toml must be rejected when only main.py is named");
-    assert_eq!(
-        err,
-        PlannerValidationError::ExplicitTargetViolation {
-            filename: "pyproject.toml".to_string(),
-            allowed_targets: vec!["main.py".to_string()],
-        }
-    );
-}
-
-#[test]
-fn explicit_objective_target_allows_adapter_exempt_test_target() {
-    // Invariant: adapter-provided test targets are exempt from the explicit-target check.
-    let output = PlannerOutput {
-        kind: PlannerOutputKind::Work,
-        tasks: vec![
-            PlannerTask {
-                id: "main".to_string(),
-                objective: "Modify main.py.".to_string(),
-                operation: Some(PlannerOperation::Modify),
-                targets: vec!["main.py".to_string()],
-                depends_on: vec![],
-            },
-            PlannerTask {
-                id: "tests".to_string(),
-                objective: "Add tests for main.py.".to_string(),
-                operation: Some(PlannerOperation::Create),
-                targets: vec!["tests/test_main.py".to_string()],
-                depends_on: vec!["main".to_string()],
-            },
-        ],
-    };
-    let exempt = python_tests(&["main.py".to_string()]);
-    assert!(
-        validate_planner_explicit_targets(&output, "Modify main.py to print a haiku.", &exempt)
-            .is_ok(),
-        "tests/test_main.py must be allowed as adapter-exempt test target"
-    );
-}
-
-#[test]
-fn explicit_objective_target_no_exemptions_rejects_test_target() {
-    // Invariant: when adapter provides no exemptions, test targets are not automatically allowed.
-    let output = PlannerOutput {
-        kind: PlannerOutputKind::Work,
-        tasks: vec![
-            PlannerTask {
-                id: "main".to_string(),
-                objective: "Modify main.py.".to_string(),
-                operation: Some(PlannerOperation::Modify),
-                targets: vec!["main.py".to_string()],
-                depends_on: vec![],
-            },
-            PlannerTask {
-                id: "tests".to_string(),
-                objective: "Add tests for main.py.".to_string(),
-                operation: Some(PlannerOperation::Create),
-                targets: vec!["tests/test_main.py".to_string()],
-                depends_on: vec!["main".to_string()],
-            },
-        ],
-    };
-    let result =
-        validate_planner_explicit_targets(&output, "Modify main.py to print a haiku.", &[]);
-    assert!(
-        result.is_err(),
-        "tests/test_main.py must be rejected when adapter provides no exemptions"
     );
 }
 
@@ -572,7 +458,7 @@ fn task_targeting_only_derived_validation_targets_becomes_tester_role() {
             },
         ],
     };
-    let plan = processor("", &required_test_targets).into_plan(output);
+    let plan = processor(&required_test_targets).into_plan(output);
 
     let impl_child = plan
         .children
@@ -614,7 +500,7 @@ fn task_targeting_source_and_test_files_together_stays_untested_role() {
             depends_on: vec![],
         }],
     };
-    let plan = processor("", &required_test_targets).into_plan(output);
+    let plan = processor(&required_test_targets).into_plan(output);
 
     assert_eq!(plan.children[0].kind, NodeKind::Work);
     assert_eq!(plan.children[0].worker_role, None);
