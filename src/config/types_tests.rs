@@ -662,14 +662,36 @@ fn config_parses_adapter() {
 }
 
 #[test]
-fn config_default_adapters_dir_is_resolved_against_config_dir() {
-    // Invariant: adapters_dir defaults to "adapters" and, like repo_path and
-    // telemetry.directory, is resolved relative to the config file's
-    // directory rather than the process cwd.
+fn config_default_adapters_and_plugins_dirs_are_binary_relative() {
+    // Invariant: when adapters_dir/plugins_dir are omitted, they default to
+    // "adapters"/"plugins" directories next to the running executable (not
+    // the config file's directory), so built-ins ship alongside the binary
+    // without requiring a config entry.
     let tmp = TempYaml::new(EXAMPLE_YAML);
     let config = ForgeConfig::from_file(tmp.path()).unwrap();
+    assert_eq!(
+        config.adapters_dir,
+        crate::services::binary_relative_dir("adapters").to_string_lossy()
+    );
+    assert_eq!(
+        config.plugins_dir,
+        crate::services::binary_relative_dir("plugins").to_string_lossy()
+    );
+}
+
+#[test]
+fn config_explicit_adapters_dir_resolves_against_config_dir() {
+    // Invariant: an explicitly configured adapters_dir behaves like
+    // repo_path/telemetry.directory — a relative path resolves against the
+    // config file's directory rather than the binary's.
+    let yaml = format!("{EXAMPLE_YAML}\nadapters_dir: my-adapters\n");
+    let tmp = TempYaml::new(&yaml);
+    let config = ForgeConfig::from_file(tmp.path()).unwrap();
     let config_dir = std::path::Path::new(tmp.path()).parent().unwrap();
-    let expected = config_dir.join("adapters").to_string_lossy().into_owned();
+    let expected = config_dir
+        .join("my-adapters")
+        .to_string_lossy()
+        .into_owned();
     assert_eq!(config.adapters_dir, expected);
 }
 
@@ -693,12 +715,12 @@ adapter: bogus_adapter_that_does_not_exist.yaml
 fn unknown_adapter_filename_fails_at_config_load_time() {
     // Invariant: an adapter name that isn't a built-in and doesn't exist in
     // adapters_dir must fail from_file itself, not wait until the run
-    // actually starts.
+    // actually starts, with a clear "adapter not found: <filename>" message.
     let tmp = TempYaml::new(UNKNOWN_ADAPTER_YAML);
-    let result = ForgeConfig::from_file(tmp.path());
-    assert!(
-        result.is_err(),
-        "unrecognised adapter filename must be a hard error at config load time"
+    let err = ForgeConfig::from_file(tmp.path()).unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "adapter not found: bogus_adapter_that_does_not_exist.yaml"
     );
 }
 
@@ -790,8 +812,8 @@ plugin: cobol.yaml
 #[test]
 fn unknown_plugin_fails_loudly() {
     let tmp = TempYaml::new(UNKNOWN_PLUGIN_YAML);
-    let result = ForgeConfig::from_file(tmp.path());
-    assert!(result.is_err(), "unknown plugin must be a hard error");
+    let err = ForgeConfig::from_file(tmp.path()).unwrap_err();
+    assert_eq!(err.to_string(), "plugin not found: cobol.yaml");
 }
 
 const PLUGIN_AND_VALIDATION_YAML: &str = r#"

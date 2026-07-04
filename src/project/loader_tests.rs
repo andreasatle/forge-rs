@@ -90,8 +90,8 @@ fn user_defined_adapter_loads_from_disk_with_no_rust_changes() {
 #[test]
 fn unknown_adapter_is_a_hard_error() {
     let dir = unique_dir();
-    let result = load_adapter(&dir, "bogus.yaml");
-    assert!(result.is_err(), "unrecognised adapter must be a hard error");
+    let err = load_adapter(&dir, "bogus.yaml").unwrap_err();
+    assert_eq!(err.to_string(), "adapter not found: bogus.yaml");
 }
 
 // ── coding_tdd adapter content ───────────────────────────────────────────

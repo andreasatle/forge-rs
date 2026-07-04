@@ -13,6 +13,23 @@
 //! If a component has durable state and transitions over time, it belongs under
 //! `machines/`, not `services/`.
 
+use std::path::PathBuf;
+
+/// A directory named `subdir` next to the currently running executable.
+///
+/// Used as the default location for resource directories (project adapters,
+/// language plugins) that ship alongside the binary rather than being
+/// embedded in it, so a fresh install already has its built-ins in place
+/// without requiring a config entry. Falls back to a bare relative path
+/// (resolved against the process's current directory) if the executable's
+/// own path cannot be determined.
+pub fn binary_relative_dir(subdir: &str) -> PathBuf {
+    std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|dir| dir.join(subdir)))
+        .unwrap_or_else(|| PathBuf::from(subdir))
+}
+
 /// Extract the first balanced JSON object from `s`.
 ///
 /// Returns a slice of `s` from the opening `{` to the matching `}`, ignoring
@@ -54,6 +71,19 @@ pub fn extract_json_object(s: &str) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── binary_relative_dir ──────────────────────────────────────────────
+
+    #[test]
+    fn binary_relative_dir_is_named_subdir_next_to_current_exe() {
+        let dir = binary_relative_dir("adapters");
+        let exe_dir = std::env::current_exe()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .to_path_buf();
+        assert_eq!(dir, exe_dir.join("adapters"));
+    }
 
     #[test]
     fn extract_bare_object() {

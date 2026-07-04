@@ -59,11 +59,7 @@ pub fn load_adapter(dir: &Path, filename: &str) -> Result<YamlProjectAdapter, Bo
 /// it concurrently (a no-op).
 fn seed_builtin(dir: &Path, filename: &str) -> Result<(), Box<dyn Error>> {
     let Some(seed) = builtin_seed(filename) else {
-        return Err(format!(
-            "unknown adapter: '{filename}' (no such file in {}, and it is not a built-in adapter)",
-            dir.display()
-        )
-        .into());
+        return Err(format!("adapter not found: {filename}").into());
     };
 
     fs::create_dir_all(dir)?;

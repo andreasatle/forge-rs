@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::config::ValidationConfig;
-use crate::language::registry::language_spec_for_plugin;
+use crate::language::registry::load_plugin as load_language_plugin;
 use crate::language::spec::LanguageSpec;
 use crate::node_runner::TestTargetsFn;
 use crate::project::{ProjectAdapter, load_adapter};
@@ -35,17 +35,27 @@ pub struct ProjectRuntimeSetup {
 
 impl ProjectRuntimeSetup {
     /// `adapter` names a project adapter YAML file (e.g. `"coding.yaml"`),
-    /// loaded from `adapters_dir`; `plugin` optionally names a bundled
-    /// language plugin YAML file (e.g. `"python.yaml"`). Both are validated
-    /// by [`crate::config::ForgeConfig::from_file`] in the common case, but
-    /// an unrecognised name is still a hard error here.
+    /// loaded from `adapters_dir`; `plugin` optionally names a language
+    /// plugin YAML file (e.g. `"python.yaml"`), loaded from `plugins_dir`.
+    /// Both are validated by [`crate::config::ForgeConfig::from_file`] in the
+    /// common case, but an unrecognised name is still a hard error here.
     pub fn build(
         adapter: &str,
         adapters_dir: &Path,
         plugin: Option<&str>,
+        plugins_dir: &Path,
         validation: Option<&ValidationConfig>,
     ) -> Result<Self, Box<dyn Error>> {
-        Ok(ProjectRuntimeSetupBuilder::new(adapter, adapters_dir, plugin, validation)?.build())
+        Ok(
+            ProjectRuntimeSetupBuilder::new(
+                adapter,
+                adapters_dir,
+                plugin,
+                plugins_dir,
+                validation,
+            )?
+            .build(),
+        )
     }
 }
 
@@ -60,11 +70,12 @@ impl<'a> ProjectRuntimeSetupBuilder<'a> {
         adapter: &str,
         adapters_dir: &Path,
         plugin: Option<&str>,
+        plugins_dir: &Path,
         validation: Option<&'a ValidationConfig>,
     ) -> Result<Self, Box<dyn Error>> {
         Ok(Self {
             validation,
-            language_spec: Self::select_plugin(plugin)?,
+            language_spec: Self::select_plugin(plugin, plugins_dir)?,
             adapter: Self::select_adapter(adapter, adapters_dir)?,
         })
     }
@@ -89,14 +100,16 @@ impl<'a> ProjectRuntimeSetupBuilder<'a> {
         Ok(Box::new(load_adapter(adapters_dir, adapter)?))
     }
 
-    /// Resolves the bundled language spec named by `plugin` (e.g. `"python.yaml"`).
-    fn select_plugin(plugin: Option<&str>) -> Result<Option<LanguageSpec>, Box<dyn Error>> {
+    /// Loads the language plugin named by `plugin` (e.g. `"python.yaml"`)
+    /// from `plugins_dir`, bootstrapping built-in plugins on first use.
+    fn select_plugin(
+        plugin: Option<&str>,
+        plugins_dir: &Path,
+    ) -> Result<Option<LanguageSpec>, Box<dyn Error>> {
         let Some(name) = plugin else {
             return Ok(None);
         };
-        language_spec_for_plugin(name)
-            .map(Some)
-            .ok_or_else(|| format!("unknown plugin: '{name}'").into())
+        Ok(Some(load_language_plugin(plugins_dir, name)?))
     }
 
     fn role_policy(&self) -> RolePolicy {

@@ -10,6 +10,7 @@ use crate::roles::policy::{
 
 /// A [`ProjectAdapter`] whose role prompts and context files come from a
 /// [`ProjectAdapterConfig`], rather than being hardcoded in Rust.
+#[derive(Debug)]
 pub struct YamlProjectAdapter {
     config: ProjectAdapterConfig,
 }
