@@ -187,7 +187,9 @@ fn recovery_respects_graph_size_limit() {
 // ── RecoverySummary / output classification tests ─────────────────────────
 
 #[test]
-fn split_depth_limit_fails_scheduler() {
+fn split_depth_limit_falls_back_to_elevate_model() {
+    // When splitting further would exceed the plan depth limit, Split
+    // recovery must fall back to ElevateModel rather than failing outright.
     let mut graph = RunGraph {
         nodes: vec![work_node("W", "complex task", &[])],
     };
@@ -210,15 +212,66 @@ fn split_depth_limit_fails_scheduler() {
         },
     );
 
-    let SchedulerState::Failed { graph, reason } = t.state else {
-        panic!("expected Failed, got {:#?}", t.state);
+    let SchedulerState::Active { graph, .. } = t.state else {
+        panic!("expected Active, got {:#?}", t.state);
     };
-    assert_eq!(graph.nodes.len(), 1, "must not insert split plan");
+    assert_eq!(
+        graph.nodes.len(),
+        2,
+        "must insert an ElevateModel replacement"
+    );
     assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
-    let FailureReason::PlanDepthExceeded { limit } = reason else {
-        panic!("expected PlanDepthExceeded, got {reason:?}");
+    let replacement = &graph.nodes[1];
+    assert_eq!(replacement.kind, NodeKind::Work, "elevate keeps node kind");
+    assert_eq!(replacement.model_tier, ModelTier::Strong);
+    assert!(
+        matches!(replacement.origin, NodeOrigin::ElevateModel { .. }),
+        "expected ElevateModel origin, got {:?}",
+        replacement.origin
+    );
+    assert!(t.effects.is_empty());
+}
+
+#[test]
+fn split_depth_limit_with_no_strong_tier_falls_back_to_retry() {
+    // If Split isn't viable due to depth AND ElevateModel isn't viable either
+    // (no strong tier available), the fallback chain lands on Retry, not a
+    // hard failure.
+    let mut graph = RunGraph {
+        nodes: vec![work_node("W", "complex task", &[])],
     };
-    assert_eq!(limit, MAX_PLAN_DEPTH, "unexpected depth limit");
+    graph.nodes[0].plan_depth = MAX_PLAN_DEPTH;
+
+    let t = do_transition(
+        SchedulerState::Waiting {
+            graph: running(graph, "W"),
+            run_config: RunConfig {
+                has_strong_tier: false,
+            },
+        },
+        SchedulerEvent::NodeFailed {
+            node_id: NodeId("W".to_string()),
+            failure: NodeFailure {
+                kind: FailureKind::DeliberationFailure,
+                message: "task too complex".to_string(),
+                recovery: RecoveryAction::Split {
+                    message: "decompose the work".to_string(),
+                },
+            },
+        },
+    );
+
+    let SchedulerState::Active { graph, .. } = t.state else {
+        panic!("expected Active, got {:#?}", t.state);
+    };
+    assert_eq!(graph.nodes.len(), 2);
+    let replacement = &graph.nodes[1];
+    assert!(
+        matches!(replacement.origin, NodeOrigin::Retry { .. }),
+        "expected Retry fallback, got {:?}",
+        replacement.origin
+    );
+    assert_eq!(replacement.model_tier, ModelTier::Cheap);
     assert!(t.effects.is_empty());
 }
 

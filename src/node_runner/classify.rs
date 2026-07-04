@@ -24,7 +24,7 @@ pub fn classify_deliberation_failure(kind: FailureKind, message: &str) -> Recove
                  for whole-file rewrites instead of retrying another replace_text."
             ),
         },
-        FailureKind::DeliberationFailure => RecoveryAction::ElevateModel {
+        FailureKind::DeliberationFailure => RecoveryAction::Split {
             message: format!("semantic failure: {message}"),
         },
         FailureKind::ProviderTerminalFailure

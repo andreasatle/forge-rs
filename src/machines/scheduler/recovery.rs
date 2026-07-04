@@ -10,8 +10,7 @@ use super::config::RunConfig;
 use super::effect::SchedulerEffect;
 use super::failure::{ExhaustedAction, FailureKind, FailureReason};
 use super::graph::{
-    MAX_ATTEMPTS, MAX_GRAPH_NODES, MAX_PLAN_DEPTH, attempts_exhausted, new_node_id,
-    validate_split_depth,
+    MAX_ATTEMPTS, MAX_GRAPH_NODES, attempts_exhausted, new_node_id, validate_split_depth,
 };
 use super::graph::{
     ModelTier, Node, NodeId, NodeKind, NodeOrigin, NodeStatus, RetryFeedback, RunGraph,
@@ -126,22 +125,10 @@ impl RecoveryApplicator {
                         },
                         effects: vec![],
                     }
-                } else if !self.graph.graph_has_capacity(1) {
-                    let graph = self.mark_failed();
-                    failed_transition(
-                        graph,
-                        FailureReason::GraphCapacityExceeded {
-                            limit: MAX_GRAPH_NODES,
-                        },
-                    )
-                } else if !split_depth_ok {
-                    let graph = self.mark_failed();
-                    failed_transition(
-                        graph,
-                        FailureReason::PlanDepthExceeded {
-                            limit: MAX_PLAN_DEPTH,
-                        },
-                    )
+                } else if !split_depth_ok || !self.graph.graph_has_capacity(1) {
+                    // Splitting further isn't viable; fall back to strengthening
+                    // the model on the same task instead of failing outright.
+                    self.elevate_model()
                 } else {
                     let run_config = self.run_config.clone();
                     let graph = self.apply_split(message);
@@ -152,75 +139,7 @@ impl RecoveryApplicator {
                 }
             }
 
-            RecoveryAction::ElevateModel { .. } => {
-                let (can_elevate, exhausted) = {
-                    let node = self.graph.get_node(&self.node_id);
-                    let can =
-                        self.run_config.has_strong_tier && node.model_tier == ModelTier::Cheap;
-                    (can, attempts_exhausted(node))
-                };
-
-                if !can_elevate {
-                    if exhausted {
-                        let failed_node_id = self.node_id.0.clone();
-                        let graph = self.mark_failed();
-                        Transition {
-                            state: SchedulerState::Failed {
-                                graph,
-                                reason: FailureReason::NoHigherModelTierAvailable {
-                                    node_id: failed_node_id,
-                                    max_attempts: MAX_ATTEMPTS,
-                                },
-                            },
-                            effects: vec![],
-                        }
-                    } else if !self.graph.graph_has_capacity(1) {
-                        let graph = self.mark_failed();
-                        failed_transition(
-                            graph,
-                            FailureReason::GraphCapacityExceeded {
-                                limit: MAX_GRAPH_NODES,
-                            },
-                        )
-                    } else {
-                        let run_config = self.run_config.clone();
-                        let graph = self.apply_retry("");
-                        Transition {
-                            state: SchedulerState::Active { graph, run_config },
-                            effects: vec![],
-                        }
-                    }
-                } else if exhausted {
-                    let failed_node_id = self.node_id.0.clone();
-                    let graph = self.mark_failed();
-                    Transition {
-                        state: SchedulerState::Failed {
-                            graph,
-                            reason: FailureReason::AttemptsExhausted {
-                                node_id: failed_node_id,
-                                max_attempts: MAX_ATTEMPTS,
-                                recovery_action: ExhaustedAction::ElevateModel,
-                            },
-                        },
-                        effects: vec![],
-                    }
-                } else if !self.graph.graph_has_capacity(1) {
-                    let graph = self.mark_failed();
-                    failed_transition(
-                        graph,
-                        FailureReason::GraphCapacityExceeded {
-                            limit: MAX_GRAPH_NODES,
-                        },
-                    )
-                } else {
-                    let run_config = self.run_config.clone();
-                    let graph = self.apply_elevate();
-                    Transition {
-                        state: SchedulerState::Active { graph, run_config },
-                        effects: vec![],
-                    }
-                }
-            }
+            RecoveryAction::ElevateModel { .. } => self.elevate_model(),
 
             RecoveryAction::Terminal { message } => {
                 let graph = self.graph.mark_node(&self.node_id, NodeStatus::Failed);
@@ -241,6 +160,77 @@ impl RecoveryApplicator {
 
     fn mark_failed(self) -> RunGraph {
         self.graph.mark_node(&self.node_id, NodeStatus::Failed)
+    }
+
+    /// Applies `ElevateModel` recovery, also used as the fallback when `Split`
+    /// is not viable (plan depth limit reached or graph at capacity).
+    fn elevate_model(self) -> Transition<SchedulerState, SchedulerEffect> {
+        let (can_elevate, exhausted) = {
+            let node = self.graph.get_node(&self.node_id);
+            let can = self.run_config.has_strong_tier && node.model_tier == ModelTier::Cheap;
+            (can, attempts_exhausted(node))
+        };
+
+        if !can_elevate {
+            if exhausted {
+                let failed_node_id = self.node_id.0.clone();
+                let graph = self.mark_failed();
+                Transition {
+                    state: SchedulerState::Failed {
+                        graph,
+                        reason: FailureReason::NoHigherModelTierAvailable {
+                            node_id: failed_node_id,
+                            max_attempts: MAX_ATTEMPTS,
+                        },
+                    },
+                    effects: vec![],
+                }
+            } else if !self.graph.graph_has_capacity(1) {
+                let graph = self.mark_failed();
+                failed_transition(
+                    graph,
+                    FailureReason::GraphCapacityExceeded {
+                        limit: MAX_GRAPH_NODES,
+                    },
+                )
+            } else {
+                let run_config = self.run_config.clone();
+                let graph = self.apply_retry("");
+                Transition {
+                    state: SchedulerState::Active { graph, run_config },
+                    effects: vec![],
+                }
+            }
+        } else if exhausted {
+            let failed_node_id = self.node_id.0.clone();
+            let graph = self.mark_failed();
+            Transition {
+                state: SchedulerState::Failed {
+                    graph,
+                    reason: FailureReason::AttemptsExhausted {
+                        node_id: failed_node_id,
+                        max_attempts: MAX_ATTEMPTS,
+                        recovery_action: ExhaustedAction::ElevateModel,
+                    },
+                },
+                effects: vec![],
+            }
+        } else if !self.graph.graph_has_capacity(1) {
+            let graph = self.mark_failed();
+            failed_transition(
+                graph,
+                FailureReason::GraphCapacityExceeded {
+                    limit: MAX_GRAPH_NODES,
+                },
+            )
+        } else {
+            let run_config = self.run_config.clone();
+            let graph = self.apply_elevate();
+            Transition {
+                state: SchedulerState::Active { graph, run_config },
+                effects: vec![],
+            }
+        }
     }
 
     fn apply_retry(self, retry_message: &str) -> RunGraph {

@@ -66,17 +66,18 @@ fn retryable_failure_produces_retry_action() {
 }
 
 #[test]
-fn semantic_failure_produces_elevate_action() {
+fn semantic_failure_produces_split_action() {
     // Revision limit exhaustion is a semantic failure regardless of the Referee's
     // rejection wording. The runner allows 1 revision, so both Referee rejections
-    // are needed to exhaust the budget and produce ElevateModel.
+    // are needed to exhaust the budget and produce Split (re-plan before
+    // escalating to a stronger model).
     let cases: &[(&str, &str, &str)] = &[
         (
-            "semantic-elevate",
+            "semantic-split",
             "needs improvement",
             "still not good enough",
         ),
-        ("deliberation-elevate", "task too large", "task too large"),
+        ("deliberation-split", "task too large", "task too large"),
     ];
 
     for (dir, first_reason, second_reason) in cases {
@@ -109,8 +110,8 @@ fn semantic_failure_produces_elevate_action() {
             panic!("[{dir}] expected Failed; got success or plan");
         };
         assert!(
-            matches!(failure.recovery, RecoveryAction::ElevateModel { .. }),
-            "[{dir}] semantic failure must produce ElevateModel recovery; got {:?}",
+            matches!(failure.recovery, RecoveryAction::Split { .. }),
+            "[{dir}] semantic failure must produce Split recovery; got {:?}",
             failure.recovery
         );
         let records = telemetry.into_records();
@@ -127,7 +128,7 @@ fn semantic_failure_produces_elevate_action() {
         if let Some(r) = classified {
             match &r.event {
                 crate::telemetry::TelemetryEvent::FailureClassified { recovery, .. } => {
-                    assert_eq!(recovery, "ElevateModel", "[{dir}]");
+                    assert_eq!(recovery, "Split", "[{dir}]");
                 }
                 _ => unreachable!(),
             }
