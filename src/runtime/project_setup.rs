@@ -59,11 +59,39 @@ impl<'a> ProjectRuntimeSetupBuilder<'a> {
         plugin: Option<&Path>,
         validation: Option<&'a ValidationConfig>,
     ) -> Result<Self, Box<dyn Error>> {
+        let adapter = Self::select_adapter(adapter)?;
+        let language_spec = Self::select_plugin(plugin)?;
+        if let (Some(plugin_path), Some(spec)) = (plugin, &language_spec) {
+            Self::validate_worker_roles(adapter.as_ref(), spec, plugin_path)?;
+        }
         Ok(Self {
             validation,
-            language_spec: Self::select_plugin(plugin)?,
-            adapter: Self::select_adapter(adapter)?,
+            language_spec,
+            adapter,
         })
+    }
+
+    /// Every worker role the adapter defines must have a matching entry in
+    /// the plugin's `roles` list, so a missing per-role validation override
+    /// is a hard error at config load time rather than a silent fallback to
+    /// the plugin's default validation at run time.
+    fn validate_worker_roles(
+        adapter: &dyn ProjectAdapter,
+        spec: &LanguageSpec,
+        plugin_path: &Path,
+    ) -> Result<(), Box<dyn Error>> {
+        let plugin_roles: std::collections::HashSet<&str> =
+            spec.roles.iter().map(|role| role.role.as_str()).collect();
+        for (role, _) in &adapter.role_policy().worker_role_descriptions {
+            if !plugin_roles.contains(role.as_str()) {
+                return Err(format!(
+                    "adapter role '{role}' is not defined in plugin '{}'",
+                    plugin_path.display()
+                )
+                .into());
+            }
+        }
+        Ok(())
     }
 
     fn build(&self) -> ProjectRuntimeSetup {

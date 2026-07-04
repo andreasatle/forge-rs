@@ -1,6 +1,8 @@
 use super::*;
 use crate::config::ValidationConfig;
-use crate::language::registry::language_spec;
+use crate::language::registry::{language_spec, register_test_language_spec};
+use crate::language::spec::LanguageRoleConfig;
+use crate::language::{LanguageInitSpec, LanguageSpec, LanguageValidationSpec};
 use std::path::PathBuf;
 
 fn adapter_path(name: &str) -> PathBuf {
@@ -124,6 +126,55 @@ fn unknown_plugin_fails_loudly() {
         None,
     );
     assert!(result.is_err(), "unrecognised plugin must be a hard error");
+}
+
+#[test]
+fn adapter_role_missing_from_plugin_roles_fails_loudly() {
+    // Invariant: when a plugin is configured, every worker role the adapter
+    // defines must have a matching entry in the plugin's `roles` list — a
+    // plugin that only covers some of the adapter's roles is a hard error at
+    // config load time, not a silent fallback to default validation at run
+    // time.
+    let id = "test-plugin-missing-tester-role";
+    register_test_language_spec(
+        id,
+        LanguageSpec {
+            prompt_guidance: String::new(),
+            constraints: String::new(),
+            init: LanguageInitSpec {
+                gitignore: vec![],
+                commands: vec![],
+            },
+            validation: LanguageValidationSpec {
+                runs_tests: false,
+                commands: vec![],
+                validation_targets: vec![],
+            },
+            roles: vec![LanguageRoleConfig {
+                role: "implementer".to_string(),
+                validation: LanguageValidationSpec {
+                    runs_tests: false,
+                    commands: vec![],
+                    validation_targets: vec![],
+                },
+            }],
+        },
+    );
+
+    let result = ProjectRuntimeSetupBuilder::new(
+        &adapter_path("coding_tdd.yaml"),
+        Some(std::path::Path::new(id)),
+        None,
+    );
+    let err = match result {
+        Ok(_) => panic!("adapter role missing from plugin roles must be a hard error"),
+        Err(e) => e.to_string(),
+    };
+
+    assert_eq!(
+        err,
+        format!("adapter role 'tester' is not defined in plugin '{id}'")
+    );
 }
 
 // ── make_validator ───────────────────────────────────────────────────────
@@ -304,7 +355,7 @@ fn validation_plan_for_role_uses_python_tester_role_override() {
 #[test]
 fn validation_plan_for_role_falls_back_to_default_when_role_has_no_override() {
     // Invariant: a role absent from the language spec's `roles` list (e.g.
-    // any role under rust, which declares no overrides at all) must not
+    // any role that isn't one of rust's configured overrides) must not
     // silently drop validation — it falls back to the same default plan
     // used for nodes with no role assigned.
     let setup = ProjectRuntimeSetup::build(
@@ -314,7 +365,7 @@ fn validation_plan_for_role_falls_back_to_default_when_role_has_no_override() {
     )
     .unwrap();
     assert_eq!(
-        (setup.validation_plan_for_role_fn)(Some("tester")),
+        (setup.validation_plan_for_role_fn)(Some("reviewer")),
         (setup.validation_plan_for_role_fn)(None),
         "a role with no override must fall back to the default validation plan"
     );

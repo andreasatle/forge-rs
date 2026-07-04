@@ -32,3 +32,27 @@ validation:
   validation_targets:
     - pattern: "{stem}.rs"
       target: "{stem}_test.rs"
+roles:
+  - role: tester
+    validation:
+      runs_tests: false
+      commands:
+        - program: cargo
+          args: ["fmt", "--check"]
+          scope: workspace
+  - role: implementer
+    validation:
+      runs_tests: true
+      commands:
+        - program: cargo
+          args: ["fmt", "--check"]
+          scope: workspace
+        - program: cargo
+          args: ["check"]
+          scope: workspace
+        - program: cargo
+          args: ["test"]
+          scope: workspace
+      validation_targets:
+        - pattern: "{stem}.rs"
+          target: "{stem}_test.rs"
