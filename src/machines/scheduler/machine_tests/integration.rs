@@ -52,8 +52,6 @@ fn scheduler_terminal_output_includes_integration_failure_reason() {
             validation_plan: None,
             retry_feedback: None,
         }],
-        next_id: 0,
-        id_seed: 0,
     };
 
     let t = do_transition(
@@ -136,8 +134,6 @@ fn integration_failure_routes_to_recovery_replacement() {
                 work_node("B", "step B", &["A"]),
                 work_node("C", "step C", &["B"]),
             ],
-            next_id: 0,
-            id_seed: 0,
         };
         graph.nodes[0].status = NodeStatus::Completed;
         graph.nodes[1].status = NodeStatus::Integrating;

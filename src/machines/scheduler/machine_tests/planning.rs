@@ -11,11 +11,9 @@ fn initial_state_creates_root_plan_node() {
     };
     assert_eq!(graph.nodes.len(), 1);
     let root = &graph.nodes[0];
-    // Invariant: the root id is minted from the graph's own id_seed at
-    // counter 0, exactly like every other node id, and next_id advances past
-    // it — no hardcoded "root" string.
-    assert_eq!(root.id, graph::derive_node_id(graph.id_seed, 0));
-    assert_eq!(graph.next_id, 1);
+    // Invariant: the root id is a freshly minted random UUID, not a
+    // hardcoded "root" string.
+    assert_ne!(root.id, NodeId("root".to_string()));
     assert_eq!(root.kind, NodeKind::Plan);
     assert_eq!(root.status, NodeStatus::Pending);
     assert_eq!(root.objective, "plan the project");
@@ -28,8 +26,6 @@ fn initial_state_creates_root_plan_node() {
 fn plan_node_creates_work_child() {
     let graph = RunGraph {
         nodes: vec![plan_node("P", "plan something", &[])],
-        next_id: 0,
-        id_seed: 0,
     };
     let t = do_transition(
         SchedulerState::Waiting {
@@ -67,8 +63,6 @@ fn plan_node_creates_work_child() {
 fn plan_with_unknown_dependency_fails_scheduler() {
     let graph = RunGraph {
         nodes: vec![plan_node("P", "plan something", &[])],
-        next_id: 0,
-        id_seed: 0,
     };
     let graph_before = running(graph, "P");
     let t = do_transition(
@@ -121,8 +115,6 @@ fn plan_with_unknown_dependency_fails_scheduler() {
 fn plan_with_valid_dependencies_still_succeeds() {
     let graph = RunGraph {
         nodes: vec![plan_node("P", "plan something", &[])],
-        next_id: 0,
-        id_seed: 0,
     };
     let t = do_transition(
         SchedulerState::Waiting {
@@ -161,8 +153,6 @@ fn sibling_dependencies_are_resolved_to_graph_ids() {
     // rewritten to the actual graph NodeId assigned to A on insertion.
     let graph = RunGraph {
         nodes: vec![plan_node("P", "plan something", &[])],
-        next_id: 0,
-        id_seed: 0,
     };
     let t = do_transition(
         SchedulerState::Waiting {
@@ -237,8 +227,6 @@ fn planner_can_create_two_work_nodes_with_dependency() {
     // on A. Verify the scheduler runs A first, then B after A completes.
     let graph = RunGraph {
         nodes: vec![plan_node("root", "plan a two-step task", &[])],
-        next_id: 0,
-        id_seed: 0,
     };
 
     // Dispatch the root plan node.
@@ -443,8 +431,6 @@ fn source_work_dispatch_includes_planned_dependent_test_targets() {
                 ..work_node("tests", "write tests", &["source"])
             },
         ],
-        next_id: 0,
-        id_seed: 0,
     };
 
     let t = do_transition(
@@ -485,8 +471,6 @@ fn source_work_dispatch_without_planned_test_target_reports_gap() {
             required_validation_targets: vec!["test_main.py".to_string()],
             ..work_node("source", "implement fibonacci", &[])
         }],
-        next_id: 0,
-        id_seed: 0,
     };
 
     let t = do_transition(

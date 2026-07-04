@@ -55,8 +55,6 @@ fn plan_node(id: &str, objective: &str, deps: &[&str]) -> Node {
 fn single_work_graph() -> RunGraph {
     RunGraph {
         nodes: vec![work_node("A", "do a thing", &[])],
-        next_id: 0,
-        id_seed: 0,
     }
 }
 
@@ -67,8 +65,6 @@ fn chain_graph() -> RunGraph {
             work_node("B", "step two", &["A"]),
             work_node("C", "step three", &["B"]),
         ],
-        next_id: 0,
-        id_seed: 0,
     }
 }
 
@@ -96,11 +92,7 @@ fn graph_with_filler_nodes(first: Node, total_nodes: usize) -> RunGraph {
         node.status = NodeStatus::Completed;
         nodes.push(node);
     }
-    RunGraph {
-        nodes,
-        next_id: 0,
-        id_seed: 0,
-    }
+    RunGraph { nodes }
 }
 
 fn do_transition(

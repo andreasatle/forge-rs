@@ -132,8 +132,6 @@ pub fn normalize_for_resume(state: SchedulerState) -> SchedulerState {
 }
 
 fn reset_active_nodes(graph: RunGraph) -> RunGraph {
-    let next_id = graph.next_id;
-    let id_seed = graph.id_seed;
     RunGraph {
         nodes: graph
             .nodes
@@ -145,8 +143,6 @@ fn reset_active_nodes(graph: RunGraph) -> RunGraph {
                 n
             })
             .collect(),
-        next_id,
-        id_seed,
     }
 }
 
@@ -206,8 +202,6 @@ mod tests {
                     work_node("A", NodeStatus::Completed),
                     work_node("B", NodeStatus::Pending),
                 ],
-                next_id: 2,
-                id_seed: 0,
             },
             run_config: RunConfig::default(),
         }
@@ -318,8 +312,6 @@ mod tests {
                 work_node("A", NodeStatus::Completed),
                 work_node("B", NodeStatus::Integrating),
             ],
-            next_id: 0,
-            id_seed: 0,
         };
         let state = SchedulerState::Waiting {
             graph,
@@ -348,8 +340,6 @@ mod tests {
                     work_node("E", NodeStatus::Running),
                     work_node("F", NodeStatus::Integrating),
                 ],
-                next_id: 0,
-                id_seed: 0,
             },
             run_config: RunConfig::default(),
         };

@@ -12,12 +12,10 @@
 //!
 //! - `NodeId` values are unique within a `RunGraph` and never reused.
 //! - Nodes are never removed from the graph; status fields move forward only.
-//! - `RunGraph::next_id` is an internal generator cursor used when the
-//!   scheduler mints new identifiers. `RunGraph::id_seed` is drawn once (in
-//!   `SchedulerMachine::initial_state`, outside the pure transition loop) and
-//!   carried unchanged through every transition; minted ids are a
-//!   deterministic function of `(id_seed, next_id)`, so `transition` remains
-//!   a pure function of `(state, event)` even though ids look random.
+//! - Fresh `NodeId`s are minted with `Uuid::new_v4()` at each node creation
+//!   site, so `SchedulerMachine::transition` is not a pure function of
+//!   `(state, event)` for the exact ids it produces, though the resulting
+//!   graph shape is otherwise deterministic.
 
 use std::collections::{HashMap, HashSet};
 
@@ -241,7 +239,7 @@ pub struct Node {
     pub retry_feedback: Option<RetryFeedback>,
 }
 
-/// The complete set of nodes for one Forge run, plus the internal ID cursor.
+/// The complete set of nodes for one Forge run.
 ///
 /// The graph only grows: nodes are appended on plan expansion and recovery, but
 /// never removed. This ensures the full execution history is always available
@@ -251,14 +249,6 @@ pub struct RunGraph {
     /// All nodes, in insertion order. The ordering has no semantic meaning;
     /// the scheduler scans the vec when computing ready sets.
     pub nodes: Vec<Node>,
-    /// Internal cursor used to mint fresh `NodeId`s without global state.
-    /// Graph validation treats existing `NodeId` strings as opaque and does
-    /// not parse them to verify this cursor.
-    pub next_id: u32,
-    /// Random seed this run's node ids are derived from. Drawn once when the
-    /// graph is created and carried unchanged thereafter; see the module
-    /// docs for why this keeps id minting deterministic.
-    pub id_seed: u128,
 }
 
 /// Maximum number of attempts allowed per objective before recovery stops.
@@ -398,79 +388,52 @@ impl RunGraph {
 
     // ── graph mutations ────────────────────────────────────────────────────────
 
-    pub(super) fn mark_node(self, node_id: &NodeId, status: NodeStatus) -> RunGraph {
-        let next_id = self.next_id;
-        let id_seed = self.id_seed;
-        RunGraph {
-            nodes: self
-                .nodes
-                .into_iter()
-                .map(|mut n| {
-                    if &n.id == node_id {
-                        n.status = status.clone();
-                    }
-                    n
-                })
-                .collect(),
-            next_id,
-            id_seed,
+    pub(super) fn mark_node(mut self, node_id: &NodeId, status: NodeStatus) -> RunGraph {
+        for n in &mut self.nodes {
+            if &n.id == node_id {
+                n.status = status.clone();
+            }
         }
+        self
     }
 
     pub(super) fn mark_node_completed_with_summary(
-        self,
+        mut self,
         node_id: &NodeId,
         summary: String,
     ) -> RunGraph {
-        let next_id = self.next_id;
-        let id_seed = self.id_seed;
-        RunGraph {
-            nodes: self
-                .nodes
-                .into_iter()
-                .map(|mut n| {
-                    if &n.id == node_id {
-                        n.status = NodeStatus::Completed;
-                        n.summary = Some(summary.clone());
-                    }
-                    n
-                })
-                .collect(),
-            next_id,
-            id_seed,
+        for n in &mut self.nodes {
+            if &n.id == node_id {
+                n.status = NodeStatus::Completed;
+                n.summary = Some(summary.clone());
+            }
         }
+        self
     }
 
     pub(super) fn push_node(mut self, node: Node) -> RunGraph {
         self.nodes.push(node);
-        self.next_id += 1;
         self
     }
 
-    pub(super) fn remap_pending_dependencies(self, old_id: &NodeId, new_id: &NodeId) -> RunGraph {
-        let next_id = self.next_id;
-        let id_seed = self.id_seed;
-        RunGraph {
-            nodes: self
-                .nodes
-                .into_iter()
-                .map(|mut n| {
-                    if n.status == NodeStatus::Pending {
-                        n.dependencies = n
-                            .dependencies
-                            .into_iter()
-                            .map(|dep| if &dep == old_id { new_id.clone() } else { dep })
-                            .collect();
+    pub(super) fn remap_pending_dependencies(
+        mut self,
+        old_id: &NodeId,
+        new_id: &NodeId,
+    ) -> RunGraph {
+        for n in &mut self.nodes {
+            if n.status == NodeStatus::Pending {
+                for dep in &mut n.dependencies {
+                    if dep == old_id {
+                        *dep = new_id.clone();
                     }
-                    n
-                })
-                .collect(),
-            next_id,
-            id_seed,
+                }
+            }
         }
+        self
     }
 
-    pub(super) fn cancel_pending_dependents(self, failed_id: &NodeId) -> RunGraph {
+    pub(super) fn cancel_pending_dependents(mut self, failed_id: &NodeId) -> RunGraph {
         let mut tainted: HashSet<NodeId> = HashSet::new();
         tainted.insert(failed_id.clone());
 
@@ -492,22 +455,12 @@ impl RunGraph {
 
         tainted.remove(failed_id);
 
-        let next_id = self.next_id;
-        let id_seed = self.id_seed;
-        RunGraph {
-            nodes: self
-                .nodes
-                .into_iter()
-                .map(|mut n| {
-                    if tainted.contains(&n.id) {
-                        n.status = NodeStatus::Cancelled;
-                    }
-                    n
-                })
-                .collect(),
-            next_id,
-            id_seed,
+        for n in &mut self.nodes {
+            if tainted.contains(&n.id) {
+                n.status = NodeStatus::Cancelled;
+            }
         }
+        self
     }
 
     pub(super) fn insert_children(
@@ -519,16 +472,11 @@ impl RunGraph {
 
         let local_to_graph: HashMap<NodeId, NodeId> = children
             .iter()
-            .enumerate()
-            .map(|(i, req)| {
-                let graph_id = derive_node_id(self.id_seed, self.next_id + i as u32);
-                (req.id.clone(), graph_id)
-            })
+            .map(|req| (req.id.clone(), new_node_id()))
             .collect();
 
         for req in children {
-            let id = derive_node_id(self.id_seed, self.next_id);
-            self.next_id += 1;
+            let id = local_to_graph[&req.id].clone();
             let plan_depth = plan_child_depth(parent_depth, &req.kind);
             let dependencies = req
                 .dependencies
@@ -714,19 +662,9 @@ pub(super) fn attempts_exhausted(node: &Node) -> bool {
     node.attempt >= MAX_ATTEMPTS
 }
 
-/// Deterministically derives a fresh, UUID-formatted [`NodeId`] from `seed`
-/// and `counter`.
-///
-/// `MAX_GRAPH_NODES` bounds every run to a tiny fraction of the `u32`
-/// counter space, so a plain wrapping add cannot collide in practice. The
-/// version/variant bits are stamped so the result reads as a standard v4
-/// UUID even though it isn't drawn from an RNG.
-pub(super) fn derive_node_id(seed: u128, counter: u32) -> NodeId {
-    let mixed = seed.wrapping_add(counter as u128);
-    let mut bytes = mixed.to_be_bytes();
-    bytes[6] = (bytes[6] & 0x0F) | 0x40;
-    bytes[8] = (bytes[8] & 0x3F) | 0x80;
-    NodeId(Uuid::from_bytes(bytes).to_string())
+/// Mints a fresh, random `NodeId`.
+pub(super) fn new_node_id() -> NodeId {
+    NodeId(Uuid::new_v4().to_string())
 }
 
 // ── depth/size helpers ─────────────────────────────────────────────────────────

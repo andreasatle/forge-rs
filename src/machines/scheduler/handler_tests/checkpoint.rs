@@ -86,8 +86,6 @@ fn checkpoint_written_after_node_returned() {
     let state = SchedulerState::Active {
         graph: RunGraph {
             nodes: vec![work_node("W", "do some work")],
-            next_id: 0,
-            id_seed: 0,
         },
         run_config: RunConfig::default(),
     };
@@ -152,8 +150,6 @@ fn checkpoint_load_round_trip() {
                 },
                 work_node("B", "do B"),
             ],
-            next_id: 1,
-            id_seed: 0,
         },
         run_config: RunConfig::default(),
     };

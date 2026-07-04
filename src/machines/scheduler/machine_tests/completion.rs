@@ -58,11 +58,7 @@ fn final_run_gate_on_required_test_target() {
                 ..work_node("tests", "write tests", &["source"])
             });
         }
-        let graph = RunGraph {
-            nodes,
-            next_id: 0,
-            id_seed: 0,
-        };
+        let graph = RunGraph { nodes };
 
         let t = do_transition(
             SchedulerState::Active {
@@ -133,8 +129,6 @@ fn terminal_failure_produces_failed_scheduler_terminal_output() {
             validation_plan: None,
             retry_feedback: None,
         }],
-        next_id: 0,
-        id_seed: 0,
     };
     let output = run_scheduler(
         scheduler_handler(),
@@ -166,8 +160,6 @@ fn scheduler_terminal_output_includes_node_failure_reason() {
             validation_plan: None,
             retry_feedback: None,
         }],
-        next_id: 0,
-        id_seed: 0,
     };
 
     let t = do_transition(
@@ -212,8 +204,6 @@ fn split_remaps_downstream_dependencies_and_chain_completes() {
             work_node("B", "do split", &["A"]),
             work_node("C", "step C", &["B"]),
         ],
-        next_id: 0,
-        id_seed: 0,
     };
 
     // Dispatch A.
@@ -503,8 +493,6 @@ fn split_success_reports_recovery() {
                 retry_feedback: None,
             },
         ],
-        next_id: 1,
-        id_seed: 0,
     };
     let state = SchedulerState::Complete { graph };
     let output = SchedulerMachine
@@ -530,8 +518,6 @@ fn event_at_terminal_state_returns_protocol_violation() {
     terminal_node.status = NodeStatus::Completed;
     let terminal_graph = RunGraph {
         nodes: vec![terminal_node],
-        next_id: 0,
-        id_seed: 0,
     };
     for (label, state) in [
         (

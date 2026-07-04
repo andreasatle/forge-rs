@@ -10,7 +10,7 @@ use super::config::RunConfig;
 use super::effect::SchedulerEffect;
 use super::failure::{ExhaustedAction, FailureKind, FailureReason};
 use super::graph::{
-    MAX_ATTEMPTS, MAX_GRAPH_NODES, MAX_PLAN_DEPTH, attempts_exhausted, derive_node_id,
+    MAX_ATTEMPTS, MAX_GRAPH_NODES, MAX_PLAN_DEPTH, attempts_exhausted, new_node_id,
     validate_split_depth,
 };
 use super::graph::{
@@ -271,7 +271,7 @@ impl RecoveryApplicator {
             )
         };
         let retry_feedback = self.build_retry_feedback(&kind, retry_message);
-        let replacement_id = derive_node_id(self.graph.id_seed, self.graph.next_id);
+        let replacement_id = new_node_id();
         let replacement = Node {
             id: replacement_id.clone(),
             kind,
@@ -305,7 +305,7 @@ impl RecoveryApplicator {
                 n.plan_depth + 1,
             )
         };
-        let split_id = derive_node_id(self.graph.id_seed, self.graph.next_id);
+        let split_id = new_node_id();
         // Split creates a new Plan node; validation_plan and retry_feedback belong to Work nodes only.
         let split_node = Node {
             id: split_id.clone(),
@@ -354,7 +354,7 @@ impl RecoveryApplicator {
                 n.validation_plan.clone(),
             )
         };
-        let elevated_id = derive_node_id(self.graph.id_seed, self.graph.next_id);
+        let elevated_id = new_node_id();
         let replacement = Node {
             id: elevated_id.clone(),
             kind,

@@ -36,8 +36,7 @@ pub struct WorkOutput {
 ///
 /// The `id` field is a planner-supplied local name used solely for same-batch
 /// dependency detection during validation. It does not become the node's graph
-/// `NodeId`; actual graph IDs are generated from the `RunGraph::next_id` counter
-/// at insertion time.
+/// `NodeId`; actual graph IDs are freshly generated at insertion time.
 #[derive(Clone, Debug, PartialEq)]
 pub struct NodeRequest {
     /// Planner-assigned local name for this request.

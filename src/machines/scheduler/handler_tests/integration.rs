@@ -178,8 +178,6 @@ fn work_node_workspace_mutation_creates_new_commit() {
     let state = SchedulerState::Active {
         graph: RunGraph {
             nodes: vec![work_node("W", "write a file")],
-            next_id: 0,
-            id_seed: 0,
         },
         run_config: RunConfig::default(),
     };
@@ -208,8 +206,6 @@ fn second_work_node_sees_first_work_node_changes() {
                 work_node_with_deps("A", "write the file", &[]),
                 work_node_with_deps("B", "read the file", &["A"]),
             ],
-            next_id: 0,
-            id_seed: 0,
         },
         run_config: RunConfig::default(),
     };
@@ -237,8 +233,6 @@ fn work_node_without_update_preserves_commit() {
     let state = SchedulerState::Active {
         graph: RunGraph {
             nodes: vec![work_node("W", "do some work")],
-            next_id: 0,
-            id_seed: 0,
         },
         run_config: RunConfig::default(),
     };
@@ -269,8 +263,6 @@ fn rejected_work_attempt_records_evidence_and_retry_starts_clean() {
     let state = SchedulerState::Active {
         graph: RunGraph {
             nodes: vec![work_node("W", "dirty then retry")],
-            next_id: 0,
-            id_seed: 0,
         },
         run_config: RunConfig::default(),
     };
@@ -339,11 +331,7 @@ fn revision_exhaustion_records_final_work_attempt_evidence_before_cleanup() {
     // terminal at the scheduler boundary while still exercising one node run.
     node.attempt = 3;
     let state = SchedulerState::Active {
-        graph: RunGraph {
-            nodes: vec![node],
-            next_id: 0,
-            id_seed: 0,
-        },
+        graph: RunGraph { nodes: vec![node] },
         run_config: RunConfig::default(),
     };
 
@@ -427,8 +415,6 @@ fn deliberation_revision_stays_inside_single_scheduler_attempt_until_acceptance(
     let state = SchedulerState::Active {
         graph: RunGraph {
             nodes: vec![work_node("W", "revise then accept")],
-            next_id: 0,
-            id_seed: 0,
         },
         run_config: RunConfig::default(),
     };

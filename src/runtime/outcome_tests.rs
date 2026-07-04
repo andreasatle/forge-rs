@@ -5,11 +5,7 @@ use crate::machines::scheduler::{
 use std::path::PathBuf;
 
 fn empty_graph() -> RunGraph {
-    RunGraph {
-        nodes: vec![],
-        next_id: 0,
-        id_seed: 0,
-    }
+    RunGraph { nodes: vec![] }
 }
 
 #[test]

@@ -29,8 +29,6 @@ fn plan_expansion_stamps_validation_plan_onto_work_children() {
     let plan = one_step_plan();
     let graph = RunGraph {
         nodes: vec![plan_node("P", "plan it", &[])],
-        next_id: 0,
-        id_seed: 0,
     };
     let t = do_transition(
         SchedulerState::Waiting {
@@ -87,8 +85,6 @@ fn checkpoint_roundtrip_preserves_validation_plan_in_node() {
     let state = SchedulerState::Active {
         graph: RunGraph {
             nodes: vec![node_with_plan("W", "work with plan", plan.clone())],
-            next_id: 0,
-            id_seed: 0,
         },
         run_config: RunConfig::default(),
     };
@@ -116,8 +112,6 @@ fn retry_preserves_validation_plan() {
     let plan = one_step_plan();
     let graph = RunGraph {
         nodes: vec![node_with_plan("W", "do work", plan.clone())],
-        next_id: 0,
-        id_seed: 0,
     };
     let t = do_transition(
         SchedulerState::Waiting {
@@ -170,8 +164,6 @@ fn checkpointed_plan_is_independent_of_later_config() {
     let state = SchedulerState::Active {
         graph: RunGraph {
             nodes: vec![node_with_plan("W", "work", original_plan.clone())],
-            next_id: 0,
-            id_seed: 0,
         },
         run_config: RunConfig::default(),
     };

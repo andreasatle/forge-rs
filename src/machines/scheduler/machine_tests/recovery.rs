@@ -32,8 +32,6 @@ fn recovery_creates_replacement_node() {
     for case in cases {
         let graph = RunGraph {
             nodes: vec![work_node("W", "do the task", &[])],
-            next_id: 0,
-            id_seed: 0,
         };
         let t = do_transition(
             SchedulerState::Waiting {
@@ -77,8 +75,6 @@ fn validation_failure_creates_retry_feedback() {
     // live in retry_feedback so the machine never parses sentinel text back out.
     let mut graph = RunGraph {
         nodes: vec![work_node("W", "fix main", &[])],
-        next_id: 0,
-        id_seed: 0,
     };
     graph.nodes[0].target_files = vec!["main.py".to_string()];
     graph.nodes[0].status = NodeStatus::Integrating;
@@ -172,8 +168,6 @@ fn work_semantic_validation_failure_retries_with_artifact_feedback() {
     for case in cases {
         let mut graph = RunGraph {
             nodes: vec![work_node("W", "modify src/lib.rs", &[])],
-            next_id: 0,
-            id_seed: 0,
         };
         graph.nodes[0].target_files = case.target_files.clone();
         graph.nodes[0].validation_plan = case.validation_plan.clone();
@@ -242,8 +236,6 @@ fn recovery_preserves_plan_depth() {
     ] {
         let mut graph = RunGraph {
             nodes: vec![work_node("W", "do the task", &[])],
-            next_id: 0,
-            id_seed: 0,
         };
         graph.nodes[0].plan_depth = 7;
 
@@ -301,11 +293,7 @@ fn recovery_exhaustion_fails_scheduler() {
     ] {
         let mut node = work_node("W", "failing task", &[]);
         node.attempt = MAX_ATTEMPTS;
-        let graph = RunGraph {
-            nodes: vec![node],
-            next_id: 0,
-            id_seed: 0,
-        };
+        let graph = RunGraph { nodes: vec![node] };
 
         let t = do_transition(
             SchedulerState::Waiting {
@@ -362,8 +350,6 @@ fn terminal_failure_cancels_downstream_chain() {
             work_node("C", "step C", &["B"]),
             work_node("D", "step D", &["C"]),
         ],
-        next_id: 0,
-        id_seed: 0,
     };
     graph.nodes[0].status = NodeStatus::Completed;
 
@@ -414,8 +400,6 @@ fn split_below_attempt_limit_still_creates_plan_node() {
             work_node("W", "complex task", &["A"]),
             work_node("C", "step C", &["W"]),
         ],
-        next_id: 0,
-        id_seed: 0,
     };
     graph.nodes[0].status = NodeStatus::Completed;
 
@@ -477,8 +461,6 @@ fn integration_failure_terminal_cancels_downstream_dependents() {
             work_node("C", "step C", &["B"]),
             work_node("D", "step D", &["C"]),
         ],
-        next_id: 0,
-        id_seed: 0,
     };
     graph.nodes[0].status = NodeStatus::Completed;
     graph.nodes[1].status = NodeStatus::Integrating;
@@ -547,11 +529,7 @@ fn integration_failure_exhaustion_fails_scheduler() {
         let mut node = work_node("B", "step B", &[]);
         node.status = NodeStatus::Integrating;
         node.attempt = MAX_ATTEMPTS;
-        let graph = RunGraph {
-            nodes: vec![node],
-            next_id: 0,
-            id_seed: 0,
-        };
+        let graph = RunGraph { nodes: vec![node] };
 
         let t = do_transition(
             SchedulerState::Waiting {
@@ -593,8 +571,6 @@ fn single_tier_elevate_falls_back_to_retry() {
     // it must fall back to Retry, preserving the original model tier.
     let graph = RunGraph {
         nodes: vec![work_node("W", "do elevate", &[])],
-        next_id: 0,
-        id_seed: 0,
     };
     let t = SchedulerMachine.transition(
         SchedulerState::Waiting {
@@ -640,11 +616,7 @@ fn single_tier_elevate_exhausted_gives_clear_terminal_failure() {
     // in the reason string.
     let mut node = work_node("W", "hard task", &[]);
     node.attempt = MAX_ATTEMPTS;
-    let graph = RunGraph {
-        nodes: vec![node],
-        next_id: 0,
-        id_seed: 0,
-    };
+    let graph = RunGraph { nodes: vec![node] };
     let t = SchedulerMachine.transition(
         SchedulerState::Waiting {
             graph: running(graph, "W"),
@@ -687,11 +659,7 @@ fn elevate_at_strong_tier_falls_back_to_retry() {
     // even with has_strong_tier: true. Must fall back to Retry.
     let mut node = work_node("W", "hard task at strong", &[]);
     node.model_tier = ModelTier::Strong;
-    let graph = RunGraph {
-        nodes: vec![node],
-        next_id: 0,
-        id_seed: 0,
-    };
+    let graph = RunGraph { nodes: vec![node] };
     let t = SchedulerMachine.transition(
         SchedulerState::Waiting {
             graph: running(graph, "W"),
@@ -741,8 +709,6 @@ fn validation_retry_feedback_includes_all_structured_target_files() {
     // prompt, but the scheduler carries them as a typed field, not in objective).
     let mut graph = RunGraph {
         nodes: vec![work_node("W", "fix main", &[])],
-        next_id: 0,
-        id_seed: 0,
     };
     graph.nodes[0].target_files = vec!["main.py".to_string(), "test_main.py".to_string()];
     graph.nodes[0].status = NodeStatus::Integrating;
@@ -790,8 +756,6 @@ fn repeated_validation_retries_do_not_duplicate_feedback_blocks() {
     // The objective field stays immutable (the original task description only).
     let mut graph = RunGraph {
         nodes: vec![work_node("W", "fix main", &[])],
-        next_id: 0,
-        id_seed: 0,
     };
     graph.nodes[0].target_files = vec!["main.py".to_string()];
     graph.nodes[0].status = NodeStatus::Integrating;
@@ -857,8 +821,6 @@ fn repeated_retries_each_mint_a_fresh_id_and_chain_origin_by_source() {
     // NodeOrigin, never by parsing the id.
     let graph = RunGraph {
         nodes: vec![work_node("W", "do retry", &[])],
-        next_id: 0,
-        id_seed: 0,
     };
 
     let t1 = do_transition(
@@ -931,8 +893,6 @@ fn retry_target_files_unchanged_across_retries() {
     // to the original node's target_files, regardless of retry count.
     let mut graph = RunGraph {
         nodes: vec![work_node("W", "fix main", &[])],
-        next_id: 0,
-        id_seed: 0,
     };
     let original_targets = vec!["main.py".to_string(), "test_main.py".to_string()];
     graph.nodes[0].target_files = original_targets.clone();

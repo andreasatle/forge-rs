@@ -109,14 +109,9 @@ impl SchedulerMachine {
     /// Creates a `SchedulerState::Active` containing a single root `Plan` node
     /// whose objective is taken from the request. The `run_config` is embedded
     /// in the state so `transition` is fully reproducible from `(state, event)`.
-    ///
-    /// Draws a random `id_seed` for the graph here, outside the pure
-    /// transition loop, so every node id minted afterwards is a deterministic
-    /// function of `(id_seed, next_id)` — see the `graph` module docs.
     pub fn initial_state(request: RunRequest, run_config: RunConfig) -> SchedulerState {
-        let id_seed = uuid::Uuid::new_v4().as_u128();
         let root = Node {
-            id: graph::derive_node_id(id_seed, 0),
+            id: graph::new_node_id(),
             kind: NodeKind::Plan,
             worker_role: None,
             objective: request.objective,
@@ -133,11 +128,7 @@ impl SchedulerMachine {
             retry_feedback: None,
         };
         SchedulerState::Active {
-            graph: RunGraph {
-                nodes: vec![root],
-                next_id: 1,
-                id_seed,
-            },
+            graph: RunGraph { nodes: vec![root] },
             run_config,
         }
     }

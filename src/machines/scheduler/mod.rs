@@ -39,7 +39,6 @@
 //! - Retry, ElevateModel, and Split are attempt-limited.
 //! - A `Terminal` recovery halts the entire run immediately.
 //! - `NodeId` strings are opaque; graph validation must not parse them.
-//! - `RunGraph::next_id` is only an internal generator cursor.
 
 mod checkpoint;
 mod config;

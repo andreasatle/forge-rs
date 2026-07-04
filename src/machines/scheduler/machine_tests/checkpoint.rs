@@ -31,8 +31,6 @@ fn event_kind_or_status_mismatch_fails_with_protocol_violation() {
             graph: running(
                 RunGraph {
                     nodes: vec![plan_node("P", "plan something", &[])],
-                    next_id: 0,
-                    id_seed: 0,
                 },
                 "P",
             ),
@@ -58,8 +56,6 @@ fn event_kind_or_status_mismatch_fails_with_protocol_violation() {
             graph: {
                 let mut g = RunGraph {
                     nodes: vec![work_node("B", "do work", &[])],
-                    next_id: 0,
-                    id_seed: 0,
                 };
                 g.nodes[0].status = NodeStatus::Integrating;
                 g
@@ -88,8 +84,6 @@ fn event_kind_or_status_mismatch_fails_with_protocol_violation() {
             graph: running(
                 RunGraph {
                     nodes: vec![plan_node("P", "plan something", &[])],
-                    next_id: 0,
-                    id_seed: 0,
                 },
                 "P",
             ),
@@ -135,8 +129,6 @@ fn wrong_node_id_fails_scheduler_with_protocol_violation() {
             graph: running(
                 RunGraph {
                     nodes: vec![work_node("A", "task A", &[])],
-                    next_id: 0,
-                    id_seed: 0,
                 },
                 "A",
             ),
@@ -153,8 +145,6 @@ fn wrong_node_id_fails_scheduler_with_protocol_violation() {
             graph: {
                 let mut g = RunGraph {
                     nodes: vec![work_node("A", "task A", &[])],
-                    next_id: 0,
-                    id_seed: 0,
                 };
                 g.nodes[0].status = NodeStatus::Integrating;
                 g
@@ -172,8 +162,6 @@ fn wrong_node_id_fails_scheduler_with_protocol_violation() {
             graph: {
                 let mut g = RunGraph {
                     nodes: vec![work_node("B", "do B", &[]), work_node("C", "do C", &[])],
-                    next_id: 0,
-                    id_seed: 0,
                 };
                 g.nodes[1].status = NodeStatus::Running;
                 g
@@ -299,8 +287,6 @@ fn waiting_with_no_active_node_fails_with_protocol_violation() {
                         work_node("A", "done", &[]),
                         work_node("B", "also done", &["A"]),
                     ],
-                    next_id: 0,
-                    id_seed: 0,
                 };
                 g.nodes[0].status = NodeStatus::Completed;
                 g.nodes[1].status = NodeStatus::Completed;
@@ -311,8 +297,6 @@ fn waiting_with_no_active_node_fails_with_protocol_violation() {
         Case {
             graph: RunGraph {
                 nodes: vec![work_node("B", "do B", &[])],
-                next_id: 0,
-                id_seed: 0,
             },
         },
     ];
@@ -410,8 +394,6 @@ fn waiting_state_rejects_multiple_active_nodes() {
     // B and C are both active — violates the serial invariant.
     let mut graph = RunGraph {
         nodes: vec![work_node("B", "do B", &[]), work_node("C", "do C", &[])],
-        next_id: 0,
-        id_seed: 0,
     };
     graph.nodes[0].status = NodeStatus::Running;
     graph.nodes[1].status = NodeStatus::Running;
