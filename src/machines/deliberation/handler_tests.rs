@@ -137,6 +137,7 @@ fn run_role_effect(
         objective: objective.to_string(),
         context: Box::new(crate::machines::deliberation::DeliberationContext::default()),
         node_kind,
+        worker_role: None,
         test_plan_context: TestPlanContext::default(),
         producer_content: producer_content.map(|s| s.to_string()),
         critic_content: critic_content.map(|s| s.to_string()),
@@ -150,6 +151,7 @@ fn ready(objective: &str, node_kind: NodeKind, max_revisions: usize) -> Delibera
             objective: objective.to_string(),
             context: crate::machines::deliberation::DeliberationContext::default(),
             node_kind,
+            worker_role: None,
             test_plan_context: TestPlanContext::default(),
             max_revisions,
         },
@@ -242,6 +244,7 @@ fn structured_targets_flow_to_worker_role_request() {
             ..Default::default()
         }),
         node_kind: NodeKind::Work,
+        worker_role: None,
         test_plan_context: TestPlanContext::default(),
         producer_content: None,
         critic_content: None,

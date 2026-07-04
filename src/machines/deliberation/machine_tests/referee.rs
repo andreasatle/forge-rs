@@ -66,6 +66,7 @@ fn referee_rejection_fails_when_no_revisions_allowed() {
             node_kind: crate::machines::scheduler::NodeKind::Work,
             test_plan_context: crate::machines::scheduler::TestPlanContext::default(),
             max_revisions: 0,
+            worker_role: None,
         },
         producer_content: "draft".to_string(),
         critic_advisory: CriticAdvisory::AcceptedReview {
@@ -117,6 +118,7 @@ fn role_mismatch_while_waiting_referee_fails() {
             node_kind: crate::machines::scheduler::NodeKind::Work,
             test_plan_context: crate::machines::scheduler::TestPlanContext::default(),
             max_revisions: 0,
+            worker_role: None,
         },
         producer_content: "draft".to_string(),
         critic_advisory: CriticAdvisory::AcceptedReview {
@@ -165,6 +167,7 @@ fn referee_failed_is_terminal() {
             node_kind: crate::machines::scheduler::NodeKind::Work,
             test_plan_context: crate::machines::scheduler::TestPlanContext::default(),
             max_revisions: 1,
+            worker_role: None,
         },
         producer_content: "draft".to_string(),
         critic_advisory: CriticAdvisory::AcceptedReview {

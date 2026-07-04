@@ -75,6 +75,7 @@ mod tests {
             model_tier: ModelTier::Cheap,
             attempt: 0,
             artifact_view: None,
+            worker_role: None,
             work_attempt: None,
         }
     }
@@ -89,6 +90,7 @@ mod tests {
             model_tier: ModelTier::Cheap,
             attempt: 0,
             artifact_view: None,
+            worker_role: None,
             work_attempt: None,
         }
     }

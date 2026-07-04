@@ -61,6 +61,7 @@ fn run_machine_deliberation_smoke_test() {
             node_kind: crate::machines::scheduler::NodeKind::Work,
             test_plan_context: crate::machines::scheduler::TestPlanContext::default(),
             max_revisions: 0,
+            worker_role: None,
         },
     };
 
@@ -118,6 +119,7 @@ fn run_machine_provider_failure_smoke_test() {
             node_kind: crate::machines::scheduler::NodeKind::Work,
             test_plan_context: crate::machines::scheduler::TestPlanContext::default(),
             max_revisions: 0,
+            worker_role: None,
         },
     };
 
@@ -184,6 +186,7 @@ fn run_machine_producer_rejection_returns_failed_output() {
             node_kind: crate::machines::scheduler::NodeKind::Work,
             test_plan_context: crate::machines::scheduler::TestPlanContext::default(),
             max_revisions: 0,
+            worker_role: None,
         },
     };
 

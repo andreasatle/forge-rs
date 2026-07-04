@@ -155,6 +155,7 @@ fn producer_validation_retry_exhaustion_fails() {
             node_kind: crate::machines::scheduler::NodeKind::Work,
             test_plan_context: crate::machines::scheduler::TestPlanContext::default(),
             max_revisions: 0,
+            worker_role: None,
         },
         producer_content: "draft content".to_string(),
         feedback: vec![],

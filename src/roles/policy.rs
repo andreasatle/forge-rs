@@ -221,6 +221,21 @@ Optional top-level `kind` field: \"work\" (default when omitted) or \"plan\". \
 When `kind` is \"plan\", every task becomes a further planning node instead of a work node, and `targets` may be empty. \
 All tasks in one PlannerOutput share the same kind — never mix work and plan tasks in one response.";
 
+/// Producer/Critic/Referee system prompts for one named worker role.
+///
+/// Selected in place of the shared `worker_*_system` fields on [`RolePolicy`]
+/// when a Work node carries a `worker_role` that matches an entry in
+/// [`RolePolicy::worker_role_policies`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct WorkerRolePolicy {
+    /// System instruction for this role's Producer.
+    pub producer_system: String,
+    /// System instruction for this role's Critic.
+    pub critic_system: String,
+    /// System instruction for this role's Referee.
+    pub referee_system: String,
+}
+
 /// Per-role system prompt policy.
 ///
 /// Each field is injected verbatim as the final paragraph of the rendered
@@ -271,6 +286,13 @@ pub struct RolePolicy {
     /// when the adapter defines no worker roles, in which case the section
     /// is omitted from the rendered prompt.
     pub worker_role_descriptions: Vec<(String, String)>,
+    /// Per-role Producer/Critic/Referee prompts, keyed by worker role name.
+    ///
+    /// A Work node whose `worker_role` matches a key here uses that entry's
+    /// prompts instead of `worker_producer_system`/`worker_critic_system`/
+    /// `worker_referee_system`. Nodes with no role, or a role absent from
+    /// this map, fall back to the shared fields.
+    pub worker_role_policies: std::collections::HashMap<String, WorkerRolePolicy>,
 }
 
 impl Default for RolePolicy {
@@ -286,6 +308,7 @@ impl Default for RolePolicy {
             language_guidance: None,
             language_constraints: None,
             worker_role_descriptions: Vec::new(),
+            worker_role_policies: std::collections::HashMap::new(),
         }
     }
 }

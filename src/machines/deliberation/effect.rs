@@ -27,6 +27,9 @@ pub enum DeliberationEffect {
         /// Whether this run is for a plan node or a work node. Selects the
         /// matching node-kind-specific system prompt from the role policy.
         node_kind: NodeKind,
+        /// The worker role assigned to this Work node, if any. Selects a
+        /// per-role system prompt from the role policy when present.
+        worker_role: Option<String>,
         /// Structured test-target planning context forwarded to the role prompt.
         test_plan_context: TestPlanContext,
         /// Content produced by the Producer. `None` when dispatching Producer.

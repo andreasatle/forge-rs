@@ -173,6 +173,85 @@ fn worker_role_descriptions_render_for_planner_producer_only() {
     }
 }
 
+#[test]
+fn work_node_producer_uses_matching_worker_role_prompt() {
+    // Invariant: a Work-node role whose worker_role matches an entry in
+    // RolePolicy::worker_role_policies is rendered with that entry's prompt,
+    // not the shared worker_producer_system field.
+    let policy = RolePolicy {
+        worker_producer_system: "SHARED PRODUCER MARKER".to_string(),
+        worker_role_policies: [(
+            "tester".to_string(),
+            crate::roles::policy::WorkerRolePolicy {
+                producer_system: "TESTER PRODUCER MARKER".to_string(),
+                critic_system: "TESTER CRITIC MARKER".to_string(),
+                referee_system: "TESTER REFEREE MARKER".to_string(),
+            },
+        )]
+        .into_iter()
+        .collect(),
+        ..RolePolicy::default()
+    };
+
+    let mut request = producer_request("do the work");
+    request.worker_role = Some("tester".to_string());
+
+    let provider = ScriptedProvider::from_strs(&[r#"{"summary":"work done"}"#]);
+    let runner = ProviderRoleRunner::new_with_policy(&provider, policy);
+    runner.run_role(request, &crate::telemetry::NoopTelemetry);
+    let prompt = provider.requests.borrow()[0].prompt.clone();
+
+    assert!(
+        prompt.contains("TESTER PRODUCER MARKER"),
+        "expected the tester role's own prompt; got:\n{prompt}"
+    );
+    assert!(
+        !prompt.contains("SHARED PRODUCER MARKER"),
+        "shared worker prompt must not be used when a matching role policy exists; got:\n{prompt}"
+    );
+}
+
+#[test]
+fn work_node_falls_back_to_shared_prompt_when_role_unset_or_unmatched() {
+    // Invariant: a Work node with no worker_role, or one absent from
+    // worker_role_policies, still uses the shared worker_*_system fields —
+    // per-role dispatch must not change behavior for adapters with no
+    // configured worker roles, or nodes the planner left unassigned.
+    let policy = RolePolicy {
+        worker_producer_system: "SHARED PRODUCER MARKER".to_string(),
+        worker_role_policies: [(
+            "tester".to_string(),
+            crate::roles::policy::WorkerRolePolicy {
+                producer_system: "TESTER PRODUCER MARKER".to_string(),
+                critic_system: "TESTER CRITIC MARKER".to_string(),
+                referee_system: "TESTER REFEREE MARKER".to_string(),
+            },
+        )]
+        .into_iter()
+        .collect(),
+        ..RolePolicy::default()
+    };
+
+    for worker_role in [None, Some("implementer".to_string())] {
+        let mut request = producer_request("do the work");
+        request.worker_role = worker_role.clone();
+
+        let provider = ScriptedProvider::from_strs(&[r#"{"summary":"work done"}"#]);
+        let runner = ProviderRoleRunner::new_with_policy(&provider, policy.clone());
+        runner.run_role(request, &crate::telemetry::NoopTelemetry);
+        let prompt = provider.requests.borrow()[0].prompt.clone();
+
+        assert!(
+            prompt.contains("SHARED PRODUCER MARKER"),
+            "worker_role {worker_role:?} must fall back to the shared prompt; got:\n{prompt}"
+        );
+        assert!(
+            !prompt.contains("TESTER PRODUCER MARKER"),
+            "worker_role {worker_role:?} must not pick up an unrelated role's prompt; got:\n{prompt}"
+        );
+    }
+}
+
 fn first_prompt(request: RoleRequest, response: &str) -> String {
     let provider = ScriptedProvider::from_strs(&[response]);
     let runner = ProviderRoleRunner::new(&provider);

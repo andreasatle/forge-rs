@@ -23,6 +23,7 @@ fn producer_prompt_for_targets(
             critic_content: None,
             feedback: vec![],
             node_kind: NodeKind::Work,
+            worker_role: None,
             tool_context: Some(RoleToolContext {
                 artifact_view: Box::new(view),
                 writable_workspace: None,

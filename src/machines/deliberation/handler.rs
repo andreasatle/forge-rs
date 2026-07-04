@@ -254,6 +254,7 @@ impl<R: RoleRunner> DeliberationHandler<R> {
                 objective,
                 context,
                 node_kind,
+                worker_role,
                 test_plan_context,
                 producer_content,
                 critic_content,
@@ -301,6 +302,7 @@ impl<R: RoleRunner> DeliberationHandler<R> {
                     critic_content,
                     feedback,
                     node_kind,
+                    worker_role,
                     tool_context,
                 };
                 let output = self.runner.run_role(request, telemetry);

@@ -69,6 +69,7 @@ fn main() {
             objective: objective.to_string(),
             context: DeliberationContext::default(),
             node_kind: NodeKind::Work,
+            worker_role: None,
             test_plan_context: TestPlanContext::default(),
             max_revisions,
         },

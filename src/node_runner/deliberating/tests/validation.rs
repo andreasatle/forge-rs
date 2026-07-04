@@ -79,6 +79,7 @@ fn referee_reads_file_and_rejects_default_content_causes_node_failure() {
         model_tier: ModelTier::Cheap,
         attempt: 0,
         artifact_view: Some(view),
+        worker_role: None,
         work_attempt: Some(work_attempt),
     };
     let result = runner.run_node(request, &NoopTelemetry);
@@ -122,6 +123,7 @@ fn producer_read_file_does_not_satisfy_critic_read_requirement() {
         model_tier: ModelTier::Cheap,
         attempt: 0,
         artifact_view: Some(view),
+        worker_role: None,
         work_attempt: None,
     };
     let result = runner.run_node(request, &NoopTelemetry);
@@ -156,6 +158,7 @@ fn planner_missing_test_target_sends_revision_feedback_and_retries() {
         model_tier: ModelTier::Cheap,
         attempt: 0,
         artifact_view: None,
+        worker_role: None,
         work_attempt: None,
     };
     let result = runner.run_node(request, &NoopTelemetry);

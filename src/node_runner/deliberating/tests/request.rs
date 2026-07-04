@@ -134,6 +134,51 @@ fn runtime_uses_project_adapter_role_policy() {
     );
 }
 
+#[test]
+fn worker_role_dispatches_to_matching_role_policy() {
+    // Invariant: a Work node's worker_role selects that role's own
+    // producer/critic/referee prompts from RolePolicy::worker_role_policies
+    // end-to-end through node dispatch, instead of always falling back to
+    // the shared worker_producer_system field.
+    let policy = crate::roles::RolePolicy {
+        worker_producer_system: "SHARED_MARKER".to_string(),
+        worker_role_policies: [(
+            "tester".to_string(),
+            crate::roles::policy::WorkerRolePolicy {
+                producer_system: "TESTER_MARKER".to_string(),
+                critic_system: "TESTER_CRITIC_MARKER".to_string(),
+                referee_system: "TESTER_REFEREE_MARKER".to_string(),
+            },
+        )]
+        .into_iter()
+        .collect(),
+        ..crate::roles::RolePolicy::default()
+    };
+
+    let provider = RecordingProvider::from_strs(&[
+        r#"{"summary":"completed"}"#,
+        r#"{"status":"accepted","content":"review ok"}"#,
+        r#"{"status":"accepted","content":"approved"}"#,
+    ]);
+    let runner = DeliberatingNodeRunner::new(&provider, &provider).with_role_policy(policy);
+
+    let mut request = work_request("test worker role dispatch");
+    request.worker_role = Some("tester".to_string());
+    runner.run_node(request, &NoopTelemetry);
+
+    let prompts = provider.recorded_prompts();
+    assert!(
+        prompts[0].contains("TESTER_MARKER"),
+        "Work-node Producer with worker_role=tester must use the tester role's prompt; got:\n{}",
+        prompts[0]
+    );
+    assert!(
+        !prompts[0].contains("SHARED_MARKER"),
+        "must not fall back to the shared worker prompt when a matching role policy exists; got:\n{}",
+        prompts[0]
+    );
+}
+
 // --- model-tier routing tests ---
 
 #[test]

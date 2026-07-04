@@ -75,6 +75,9 @@ pub struct DeliberationRequest {
     /// Whether this deliberation is for a plan node or a work node.
     /// Carried on every emitted `RunRole` so the effect is self-describing.
     pub node_kind: NodeKind,
+    /// The worker role assigned to this Work node, if any. Carried on every
+    /// emitted `RunRole` so the effect is self-describing.
+    pub worker_role: Option<String>,
     /// Structured test-target planning context forwarded to role prompts.
     pub test_plan_context: TestPlanContext,
     /// Maximum number of revision loops allowed.

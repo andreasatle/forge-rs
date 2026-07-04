@@ -1,11 +1,12 @@
 //! Project adapter driven entirely by a YAML-loaded [`ProjectAdapterConfig`].
 
 use super::ProjectAdapter;
-use super::yaml_config::{ProjectAdapterConfig, RolePromptConfig};
+use super::yaml_config::{ProjectAdapterConfig, RolePromptConfig, WorkerRoleConfig};
 use crate::roles::RolePolicy;
 use crate::roles::policy::{
     DEFAULT_SYSTEM, GENERIC_CONSTRAINTS, PLANNER_PRODUCER_IDENTITY,
     PLANNER_PROTOCOL_FOOTER_WITH_OPERATION, WORK_PRODUCER_SYSTEM, WORKER_PRODUCER_IDENTITY,
+    WorkerRolePolicy,
 };
 
 /// A [`ProjectAdapter`] whose role prompts and context files come from a
@@ -38,10 +39,9 @@ impl ProjectAdapter for YamlProjectAdapter {
         // the adapter's own Instructions:/Constraints: sections and before
         // the role's protocol-specific footer.
         let planner = &self.config.planner;
-        // RolePolicy has not yet been wired to dispatch per worker role, so
-        // every Work node is still rendered with a single Producer/Critic/
-        // Referee prompt. Until that dispatch exists, the first configured
-        // worker role stands in for "the" worker prompt.
+        // The shared worker_*_system fields below fall back to the first
+        // configured worker role; node_runner dispatch selects a Work node's
+        // own role from worker_role_policies when its worker_role matches.
         let worker = self
             .config
             .workers
@@ -81,6 +81,12 @@ impl ProjectAdapter for YamlProjectAdapter {
                 .iter()
                 .map(|w| (w.role.clone(), w.description.clone()))
                 .collect(),
+            worker_role_policies: self
+                .config
+                .workers
+                .iter()
+                .map(|w| (w.role.clone(), worker_role_policy(w)))
+                .collect(),
         }
     }
 
@@ -97,6 +103,25 @@ fn render_role_prompt(prompt: &RolePromptConfig) -> String {
         "Instructions:\n{}\nConstraints:\n{}",
         prompt.instructions, prompt.constraints
     )
+}
+
+/// Build one worker role's Producer/Critic/Referee prompts, composed the
+/// same way as the shared `worker_*_system` fields in [`YamlProjectAdapter::role_policy`].
+fn worker_role_policy(worker: &WorkerRoleConfig) -> WorkerRolePolicy {
+    WorkerRolePolicy {
+        producer_system: format!(
+            "Role:\n{WORKER_PRODUCER_IDENTITY}\n{}\nConstraints:\n{GENERIC_CONSTRAINTS}\n{WORK_PRODUCER_SYSTEM}",
+            render_role_prompt(&worker.producer)
+        ),
+        critic_system: format!(
+            "{}\nConstraints:\n{GENERIC_CONSTRAINTS}\n{DEFAULT_SYSTEM}",
+            render_role_prompt(&worker.critic)
+        ),
+        referee_system: format!(
+            "{}\nConstraints:\n{GENERIC_CONSTRAINTS}\n{DEFAULT_SYSTEM}",
+            render_role_prompt(&worker.referee)
+        ),
+    }
 }
 
 #[cfg(test)]
@@ -233,8 +258,8 @@ mod tests {
     #[test]
     fn role_policy_uses_first_worker_role_when_multiple_are_configured() {
         // Invariant: with more than one worker role configured, role_policy
-        // sources the (not-yet-per-role) worker prompt from the first entry,
-        // not the last.
+        // sources the shared worker_*_system fallback fields from the first
+        // entry, not the last.
         let mut workers = worker_configs();
         workers.push(WorkerRoleConfig {
             role: "tester".to_string(),
@@ -255,6 +280,39 @@ mod tests {
                 .contains("build it"),
             "expected first worker role's prompt to be used"
         );
+    }
+
+    #[test]
+    fn role_policy_populates_worker_role_policies_per_role() {
+        // Invariant: every configured worker role gets its own entry in
+        // worker_role_policies, keyed by role name, with its own
+        // producer/critic/referee prompts distinct from other roles' —
+        // this is what lets node dispatch pick a per-role prompt instead of
+        // always falling back to the first-worker shared fields.
+        let mut workers = worker_configs();
+        workers.push(WorkerRoleConfig {
+            role: "tester".to_string(),
+            description: "Writes tests.".to_string(),
+            producer: prompt("test it", "test bounds"),
+            critic: prompt("review the tests", "review test bounds"),
+            referee: prompt("decide the tests", "decide test bounds"),
+        });
+        let adapter = YamlProjectAdapter::new(ProjectAdapterConfig {
+            planner: planner_config(),
+            workers,
+            context_files: vec![],
+        });
+        let policy = adapter.role_policy();
+
+        assert_eq!(policy.worker_role_policies.len(), 2);
+        let implementer = &policy.worker_role_policies["implementer"];
+        assert!(implementer.producer_system.contains("build it"));
+        assert!(implementer.critic_system.contains("review the work"));
+        assert!(implementer.referee_system.contains("decide the work"));
+        let tester = &policy.worker_role_policies["tester"];
+        assert!(tester.producer_system.contains("test it"));
+        assert!(tester.critic_system.contains("review the tests"));
+        assert!(tester.referee_system.contains("decide the tests"));
     }
 
     // ── context_file_names ────────────────────────────────────────────────────

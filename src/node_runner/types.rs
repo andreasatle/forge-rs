@@ -22,6 +22,8 @@ pub struct NodeRunRequest {
     pub node_id: NodeId,
     /// Natural-language description of what the node should accomplish.
     pub objective: String,
+    /// The worker role assigned to this Work node, if any.
+    pub worker_role: Option<String>,
     /// Structured target files this node is expected and allowed to touch.
     pub target_files: Vec<String>,
     /// Structured test-target context computed from graph metadata.

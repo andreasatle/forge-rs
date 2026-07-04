@@ -25,6 +25,7 @@ fn ready(objective: &str) -> DeliberationState {
             node_kind: crate::machines::scheduler::NodeKind::Work,
             test_plan_context: crate::machines::scheduler::TestPlanContext::default(),
             max_revisions: 0,
+            worker_role: None,
         },
     }
 }

@@ -180,6 +180,7 @@ fn make_role_request(role: DeliberationRole, objective: &str) -> RoleRequest {
         critic_content: None,
         feedback: vec![],
         node_kind: NodeKind::Work,
+        worker_role: None,
         tool_context: None,
     }
 }

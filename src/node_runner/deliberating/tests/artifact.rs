@@ -64,6 +64,7 @@ fn reviewer_can_read_work_attempt_target_file_with_relative_path() {
         model_tier: ModelTier::Cheap,
         attempt: 0,
         artifact_view: Some(view),
+        worker_role: None,
         work_attempt: Some(work_attempt),
     };
 

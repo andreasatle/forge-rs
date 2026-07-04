@@ -18,6 +18,7 @@ fn prepared_deliberation_keeps_canonical_objective_and_structured_context_separa
         model_tier: ModelTier::Cheap,
         attempt: 0,
         artifact_view: Some(view),
+        worker_role: None,
         work_attempt: None,
     };
 
@@ -72,6 +73,7 @@ fn artifact_view_context_is_visible_to_deliberation_prompt() {
         model_tier: ModelTier::Cheap,
         attempt: 0,
         artifact_view: Some(view),
+        worker_role: None,
         work_attempt: None,
     };
     runner.run_node(request, &NoopTelemetry);
@@ -112,6 +114,7 @@ fn context_file_content_is_included_in_prompt_when_present() {
         model_tier: ModelTier::Cheap,
         attempt: 0,
         artifact_view: Some(view),
+        worker_role: None,
         work_attempt: None,
     };
     runner.run_node(request, &NoopTelemetry);
@@ -153,6 +156,7 @@ fn absent_context_file_is_silently_omitted_from_prompt() {
         model_tier: ModelTier::Cheap,
         attempt: 0,
         artifact_view: Some(view),
+        worker_role: None,
         work_attempt: None,
     };
     runner.run_node(request, &NoopTelemetry);
@@ -188,6 +192,7 @@ fn no_context_file_names_produces_no_extra_content() {
         model_tier: ModelTier::Cheap,
         attempt: 0,
         artifact_view: Some(view),
+        worker_role: None,
         work_attempt: None,
     };
     runner.run_node(request, &NoopTelemetry);

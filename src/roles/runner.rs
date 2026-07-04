@@ -80,6 +80,12 @@ pub struct RoleRequest {
     /// Whether the role is acting on a planner or worker node.
     /// Selects the matching node-kind-specific system prompt from the policy.
     pub node_kind: NodeKind,
+    /// The worker role assigned to this Work node, if any.
+    ///
+    /// When set and present in [`RolePolicy::worker_role_policies`], selects
+    /// that role's Producer/Critic/Referee prompts in place of the shared
+    /// `worker_*_system` fields. Ignored for Plan nodes.
+    pub worker_role: Option<String>,
     /// File tool context. When `Some`, the role may issue tool requests before
     /// returning a final result. When `None`, tool request JSON is still detected
     /// but produces an error observation rather than a real tool execution.
@@ -227,13 +233,24 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
             &request.context.target_files,
         );
 
+        let worker_role_policy = request
+            .worker_role
+            .as_deref()
+            .and_then(|role| self.policy.worker_role_policies.get(role));
+
         let system = match (&request.node_kind, &request.role) {
             (NodeKind::Plan, DeliberationRole::Producer) => &self.policy.planner_producer_system,
             (NodeKind::Plan, DeliberationRole::Critic) => &self.policy.planner_critic_system,
             (NodeKind::Plan, DeliberationRole::Referee) => &self.policy.planner_referee_system,
-            (NodeKind::Work, DeliberationRole::Producer) => &self.policy.worker_producer_system,
-            (NodeKind::Work, DeliberationRole::Critic) => &self.policy.worker_critic_system,
-            (NodeKind::Work, DeliberationRole::Referee) => &self.policy.worker_referee_system,
+            (NodeKind::Work, DeliberationRole::Producer) => worker_role_policy
+                .map(|p| &p.producer_system)
+                .unwrap_or(&self.policy.worker_producer_system),
+            (NodeKind::Work, DeliberationRole::Critic) => worker_role_policy
+                .map(|p| &p.critic_system)
+                .unwrap_or(&self.policy.worker_critic_system),
+            (NodeKind::Work, DeliberationRole::Referee) => worker_role_policy
+                .map(|p| &p.referee_system)
+                .unwrap_or(&self.policy.worker_referee_system),
         };
 
         let review_contract = NodeReviewContract::for_role(

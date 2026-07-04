@@ -36,6 +36,7 @@ pub(crate) fn prepare_deliberation<'a, P: ProviderClient>(
             objective: request.objective.clone(),
             context,
             node_kind: request.kind.clone(),
+            worker_role: request.worker_role.clone(),
             test_plan_context: request.test_plan_context.clone(),
             max_revisions: 1,
         },

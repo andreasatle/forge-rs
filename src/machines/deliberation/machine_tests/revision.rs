@@ -11,6 +11,7 @@ fn referee_rejection_after_critic_rejection_loops_when_revisions_remain() {
                     node_kind: crate::machines::scheduler::NodeKind::Work,
                     test_plan_context: crate::machines::scheduler::TestPlanContext::default(),
                     max_revisions: 1,
+                    worker_role: None,
                 },
             },
             DeliberationEvent::Start,
@@ -119,6 +120,7 @@ fn referee_rejection_loops_to_producer_with_feedback() {
             node_kind: crate::machines::scheduler::NodeKind::Work,
             test_plan_context: crate::machines::scheduler::TestPlanContext::default(),
             max_revisions: 1,
+            worker_role: None,
         },
         producer_content: "draft".to_string(),
         critic_advisory: CriticAdvisory::AcceptedReview {
@@ -174,6 +176,7 @@ fn referee_rejection_exhausts_revision_limit() {
             node_kind: crate::machines::scheduler::NodeKind::Work,
             test_plan_context: crate::machines::scheduler::TestPlanContext::default(),
             max_revisions: 1,
+            worker_role: None,
         },
         producer_content: "draft".to_string(),
         critic_advisory: CriticAdvisory::AcceptedReview {
@@ -300,6 +303,7 @@ fn revision_then_acceptance_completes_with_revised_producer_content() {
             node_kind: crate::machines::scheduler::NodeKind::Work,
             test_plan_context: crate::machines::scheduler::TestPlanContext::default(),
             max_revisions: 1,
+            worker_role: None,
         },
     };
 

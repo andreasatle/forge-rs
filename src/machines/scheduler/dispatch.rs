@@ -53,6 +53,7 @@ pub(crate) fn dispatch_run_node<R: NodeRunner>(
         kind: command.kind,
         node_id: command.node_id.clone(),
         objective: rendered_objective,
+        worker_role: command.worker_role,
         target_files: command.target_files,
         test_plan_context: command.test_plan_context,
         model_tier: command.model_tier,
