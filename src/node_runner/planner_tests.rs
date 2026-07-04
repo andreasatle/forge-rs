@@ -138,6 +138,29 @@ fn prose_content_fails_parse() {
     assert!(result.is_none(), "prose must not parse as PlannerOutput");
 }
 
+// ── Recursive planning: `kind` field ────────────────────────────────────────
+
+#[test]
+fn missing_kind_field_defaults_to_work() {
+    // Invariant: planners that predate recursive planning omit `kind`
+    // entirely; their output must still parse and behave as `Work`.
+    let json =
+        r#"{"tasks":[{"id":"a","objective":"do alpha","targets":["alpha.txt"],"depends_on":[]}]}"#;
+    let output = parse_planner_content(json).expect("parse must return Some");
+    assert_eq!(output.kind, PlannerOutputKind::Work);
+}
+
+#[test]
+fn explicit_plan_kind_parses_with_empty_targets() {
+    // Invariant: `kind: "plan"` tasks have no concrete files yet, so an empty
+    // `targets` array must parse successfully rather than being rejected at
+    // the JSON level.
+    let json = r#"{"kind":"plan","tasks":[{"id":"a","objective":"decompose alpha","targets":[],"depends_on":[]}]}"#;
+    let output = parse_planner_content(json).expect("parse must return Some");
+    assert_eq!(output.kind, PlannerOutputKind::Plan);
+    assert!(output.tasks[0].targets.is_empty());
+}
+
 // ── Validation ──────────────────────────────────────────────────────────────
 
 fn planner_task(id: &str, objective: &str, targets: &[&str], depends_on: &[&str]) -> PlannerTask {
@@ -156,6 +179,7 @@ fn structural_validation_rejects_invalid_plan() {
         (
             "duplicate id",
             PlannerOutput {
+                kind: PlannerOutputKind::Work,
                 tasks: vec![
                     planner_task("x", "first", &["first.txt"], &[]),
                     planner_task("x", "second", &["second.txt"], &[]),
@@ -166,6 +190,7 @@ fn structural_validation_rejects_invalid_plan() {
         (
             "empty objective",
             PlannerOutput {
+                kind: PlannerOutputKind::Work,
                 tasks: vec![planner_task("task", "   ", &["task.txt"], &[])],
             },
             PlannerValidationError::EmptyObjective("task".to_string()),
@@ -173,6 +198,7 @@ fn structural_validation_rejects_invalid_plan() {
         (
             "empty targets",
             PlannerOutput {
+                kind: PlannerOutputKind::Work,
                 tasks: vec![planner_task("task", "do something", &[], &[])],
             },
             PlannerValidationError::EmptyTargets("task".to_string()),
@@ -180,6 +206,7 @@ fn structural_validation_rejects_invalid_plan() {
         (
             "self dependency",
             PlannerOutput {
+                kind: PlannerOutputKind::Work,
                 tasks: vec![planner_task(
                     "loop",
                     "do something",
@@ -192,6 +219,7 @@ fn structural_validation_rejects_invalid_plan() {
         (
             "unknown dependency",
             PlannerOutput {
+                kind: PlannerOutputKind::Work,
                 tasks: vec![planner_task(
                     "task",
                     "do something",
@@ -211,6 +239,66 @@ fn structural_validation_rejects_invalid_plan() {
             .expect_err(&format!("[{case}] validate_planner_output must return Err"));
         assert_eq!(err, *expected, "[{case}]");
     }
+}
+
+#[test]
+fn plan_kind_task_with_empty_targets_passes_structural_validation() {
+    // Invariant: `kind: "plan"` tasks have no concrete files yet, so an empty
+    // `targets` array must not trigger `EmptyTargets`.
+    let output = PlannerOutput {
+        kind: PlannerOutputKind::Plan,
+        tasks: vec![planner_task("sub-plan", "decompose this further", &[], &[])],
+    };
+    assert!(
+        validate_planner_output(&output).is_ok(),
+        "plan-kind task with empty targets must pass validation"
+    );
+}
+
+#[test]
+fn plan_kind_task_still_requires_non_empty_objective() {
+    // Invariant: the `kind` field only exempts target-related validation —
+    // structural checks like a non-empty objective still apply.
+    let output = PlannerOutput {
+        kind: PlannerOutputKind::Plan,
+        tasks: vec![planner_task("sub-plan", "   ", &[], &[])],
+    };
+    assert_eq!(
+        validate_planner_output(&output),
+        Err(PlannerValidationError::EmptyObjective(
+            "sub-plan".to_string()
+        ))
+    );
+}
+
+#[test]
+fn plan_kind_skips_explicit_target_no_recreate_and_tests_required_checks() {
+    // Invariant: `kind: "plan"` tasks are exempt from target-based
+    // validation entirely (explicit targets, no-recreate, tests-required).
+    // This task's target shape — an existing infra file, not named by the
+    // objective, with no test target — would fail all three checks under
+    // `kind: "work"` (see other tests in this module); under `kind: "plan"`
+    // it must pass.
+    fn required_test_targets(_: &[String]) -> Vec<String> {
+        vec!["tests/test_main.py".to_string()]
+    }
+
+    let top_objective = "Modify main.py to print a haiku.";
+    let output = PlannerOutput {
+        kind: PlannerOutputKind::Plan,
+        tasks: vec![planner_task(
+            "sub-plan",
+            "decompose the pyproject.toml change",
+            &["pyproject.toml"],
+            &[],
+        )],
+    };
+    let processor =
+        PlannerOutputProcessor::new(top_objective, ["pyproject.toml"], &required_test_targets);
+    assert!(
+        processor.validate(&output).is_ok(),
+        "plan-kind output must skip explicit-target, no-recreate, and tests-required checks"
+    );
 }
 
 // ── No-recreate validation ───────────────────────────────────────────────────
@@ -234,6 +322,7 @@ fn task_targeting_existing_file_not_in_objective_is_rejected() {
 
     for (task_id, filename) in cases {
         let output = PlannerOutput {
+            kind: PlannerOutputKind::Work,
             tasks: vec![PlannerTask {
                 id: task_id.to_string(),
                 objective: format!("Touch {filename}."),
@@ -261,6 +350,7 @@ fn task_targeting_existing_file_not_in_objective_is_rejected() {
 fn task_for_objective_target_only_passes_no_recreate_validation() {
     // Only a main.py task — no infrastructure files touched.
     let output = PlannerOutput {
+        kind: PlannerOutputKind::Work,
         tasks: vec![PlannerTask {
             id: "main".to_string(),
             objective: "Write a haiku about Python state machines in main.py.".to_string(),
@@ -292,6 +382,7 @@ fn no_tests(_: &[String]) -> Vec<String> {
 fn code_target_without_test_target_rejected_when_tests_required() {
     // Invariant: plan with only a source file fails when adapter requires a test file.
     let output = PlannerOutput {
+        kind: PlannerOutputKind::Work,
         tasks: vec![PlannerTask {
             id: "main".to_string(),
             objective: "Modify main.py.".to_string(),
@@ -310,6 +401,7 @@ fn code_target_without_test_target_rejected_when_tests_required() {
 fn code_target_with_test_target_passes_when_tests_required() {
     // Invariant: plan with source + adapter-required test file passes validation.
     let output = PlannerOutput {
+        kind: PlannerOutputKind::Work,
         tasks: vec![
             PlannerTask {
                 id: "main".to_string(),
@@ -337,6 +429,7 @@ fn code_target_with_test_target_passes_when_tests_required() {
 fn tests_required_passes_when_adapter_requires_nothing() {
     // Invariant: when the adapter returns no required tests, any plan passes.
     let output = PlannerOutput {
+        kind: PlannerOutputKind::Work,
         tasks: vec![PlannerTask {
             id: "main".to_string(),
             objective: "Modify main.py.".to_string(),
@@ -355,6 +448,7 @@ fn tests_required_passes_when_adapter_requires_nothing() {
 fn explicit_objective_target_rejects_unlisted_non_exempt_target() {
     // Invariant: target not in objective and not in adapter exemptions is rejected.
     let output = PlannerOutput {
+        kind: PlannerOutputKind::Work,
         tasks: vec![
             PlannerTask {
                 id: "main".to_string(),
@@ -396,6 +490,7 @@ fn explicit_objective_target_rejects_unlisted_non_exempt_target() {
 fn explicit_objective_target_allows_adapter_exempt_test_target() {
     // Invariant: adapter-provided test targets are exempt from the explicit-target check.
     let output = PlannerOutput {
+        kind: PlannerOutputKind::Work,
         tasks: vec![
             PlannerTask {
                 id: "main".to_string(),
@@ -425,6 +520,7 @@ fn explicit_objective_target_allows_adapter_exempt_test_target() {
 fn explicit_objective_target_no_exemptions_rejects_test_target() {
     // Invariant: when adapter provides no exemptions, test targets are not automatically allowed.
     let output = PlannerOutput {
+        kind: PlannerOutputKind::Work,
         tasks: vec![
             PlannerTask {
                 id: "main".to_string(),
@@ -454,6 +550,7 @@ fn explicit_objective_target_no_exemptions_rejects_test_target() {
 fn no_recreate_allows_existing_file_when_objective_names_it() {
     // Objective explicitly targets pyproject.toml — planner task is allowed.
     let output = PlannerOutput {
+        kind: PlannerOutputKind::Work,
         tasks: vec![PlannerTask {
             id: "config".to_string(),
             objective: "Update pyproject.toml to add a new dependency.".to_string(),
@@ -472,6 +569,7 @@ fn no_recreate_allows_existing_file_when_objective_names_it() {
 #[test]
 fn no_recreate_empty_existing_files_always_passes() {
     let output = PlannerOutput {
+        kind: PlannerOutputKind::Work,
         tasks: vec![PlannerTask {
             id: "any".to_string(),
             objective: "Create anything at all.".to_string(),
@@ -491,6 +589,7 @@ fn no_recreate_empty_existing_files_always_passes() {
 #[test]
 fn planner_tasks_become_node_requests() {
     let output = PlannerOutput {
+        kind: PlannerOutputKind::Work,
         tasks: vec![
             PlannerTask {
                 id: "step-one".to_string(),
@@ -520,6 +619,42 @@ fn planner_tasks_become_node_requests() {
 }
 
 #[test]
+fn plan_kind_output_produces_plan_children_with_no_worker_role() {
+    // Invariant: `kind: "plan"` maps every task to a `NodeKind::Plan` child
+    // (not the hardcoded `Work` of prior behavior), and such children never
+    // get a "tester" worker role since they carry no concrete targets.
+    let output = PlannerOutput {
+        kind: PlannerOutputKind::Plan,
+        tasks: vec![
+            PlannerTask {
+                id: "sub-a".to_string(),
+                objective: "decompose part a".to_string(),
+                operation: None,
+                targets: vec![],
+                depends_on: vec![],
+            },
+            PlannerTask {
+                id: "sub-b".to_string(),
+                objective: "decompose part b".to_string(),
+                operation: None,
+                targets: vec![],
+                depends_on: vec!["sub-a".to_string()],
+            },
+        ],
+    };
+    let plan = planner_output_to_plan_output(output);
+    assert_eq!(plan.children.len(), 2);
+    for child in &plan.children {
+        assert_eq!(child.kind, NodeKind::Plan);
+        assert_eq!(child.worker_role, None);
+    }
+    assert_eq!(
+        plan.children[1].dependencies,
+        vec![NodeId("sub-a".to_string())]
+    );
+}
+
+#[test]
 fn task_targeting_only_derived_validation_targets_becomes_tester_role() {
     // Invariant: a task whose targets are entirely covered by the adapter's
     // derived validation targets (e.g. a test file for another task's source
@@ -533,6 +668,7 @@ fn task_targeting_only_derived_validation_targets_becomes_tester_role() {
     }
 
     let output = PlannerOutput {
+        kind: PlannerOutputKind::Work,
         tasks: vec![
             PlannerTask {
                 id: "impl".to_string(),
@@ -583,6 +719,7 @@ fn task_targeting_source_and_test_files_together_stays_untested_role() {
     }
 
     let output = PlannerOutput {
+        kind: PlannerOutputKind::Work,
         tasks: vec![PlannerTask {
             id: "combined".to_string(),
             objective: "modify main.py and its tests".to_string(),
@@ -600,6 +737,7 @@ fn task_targeting_source_and_test_files_together_stays_untested_role() {
 #[test]
 fn planner_dependencies_preserved() {
     let output = PlannerOutput {
+        kind: PlannerOutputKind::Work,
         tasks: vec![
             PlannerTask {
                 id: "tests".to_string(),

@@ -43,12 +43,33 @@ pub enum PlannerOperation {
     Delete,
 }
 
+/// Whether a planner output's tasks become `Work` or `Plan` children.
+///
+/// All tasks in a single [`PlannerOutput`] share one kind — a planner cannot
+/// mix concrete work with further sub-planning in the same batch. Absent from
+/// the JSON, this defaults to `Work` for backward compatibility with planners
+/// that predate recursive planning.
+#[derive(Clone, Copy, Deserialize, Serialize, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum PlannerOutputKind {
+    /// Tasks become `Work` children that perform concrete, bounded work.
+    #[default]
+    Work,
+    /// Tasks become `Plan` children that will be decomposed further before
+    /// any work starts. Used when the objective is too complex to break down
+    /// into concrete file targets directly.
+    Plan,
+}
+
 /// The structured JSON output the planner is expected to produce.
 ///
 /// Each task becomes a scheduler [`NodeRequest`]. The `depends_on` entries
 /// reference other tasks by id within the same output batch.
 #[derive(Deserialize, Serialize, Debug)]
 pub struct PlannerOutput {
+    /// Whether `tasks` become `Work` or `Plan` children. Defaults to `Work`.
+    #[serde(default)]
+    pub kind: PlannerOutputKind,
     /// The ordered list of tasks the planner wants the scheduler to execute.
     pub tasks: Vec<PlannerTask>,
 }
@@ -281,7 +302,9 @@ impl<'a> PlannerOutputProcessor<'a> {
             if task.objective.trim().is_empty() {
                 return Err(PlannerValidationError::EmptyObjective(task.id.clone()));
             }
-            if task.targets.is_empty() || task.targets.iter().any(|t| t.trim().is_empty()) {
+            if output.kind == PlannerOutputKind::Work
+                && (task.targets.is_empty() || task.targets.iter().any(|t| t.trim().is_empty()))
+            {
                 return Err(PlannerValidationError::EmptyTargets(task.id.clone()));
             }
             if task.depends_on.iter().any(|d| d == &task.id) {
@@ -304,6 +327,11 @@ impl<'a> PlannerOutputProcessor<'a> {
 
     pub(crate) fn validate(&self, output: &PlannerOutput) -> Result<(), PlannerValidationError> {
         self.validate_structure(output)?;
+        if output.kind == PlannerOutputKind::Plan {
+            // Plan children have no concrete files yet, so target-based
+            // validation does not apply until they are decomposed further.
+            return Ok(());
+        }
         let objective_targets = self.explicit_objective_targets.clone().into_vec();
         let exempt_targets = (self.required_test_targets_fn)(&objective_targets);
         self.validate_explicit_targets(output, &exempt_targets)?;
@@ -383,6 +411,10 @@ impl<'a> PlannerOutputProcessor<'a> {
     }
 
     pub(crate) fn into_plan(self, output: PlannerOutput) -> PlanOutput {
+        let child_kind = match output.kind {
+            PlannerOutputKind::Work => NodeKind::Work,
+            PlannerOutputKind::Plan => NodeKind::Plan,
+        };
         let all_targets: Vec<String> = output
             .tasks
             .iter()
@@ -397,7 +429,8 @@ impl<'a> PlannerOutputProcessor<'a> {
                 .tasks
                 .into_iter()
                 .map(|task| {
-                    let worker_role = if !task.targets.is_empty()
+                    let worker_role = if child_kind == NodeKind::Work
+                        && !task.targets.is_empty()
                         && task
                             .targets
                             .iter()
@@ -409,7 +442,7 @@ impl<'a> PlannerOutputProcessor<'a> {
                     };
                     NodeRequest {
                         id: NodeId(task.id),
-                        kind: NodeKind::Work,
+                        kind: child_kind.clone(),
                         worker_role,
                         objective: task.objective,
                         target_files: task.targets,

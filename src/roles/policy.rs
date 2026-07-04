@@ -86,11 +86,14 @@ ws ::= ([ \t\n] ws)?"#;
 
 /// GBNF grammar constraining output to the `PlannerOutput` schema used by
 /// adapters that model tasks as concrete operations
-/// (`{"tasks":[{"id":...,"objective":...,"operation":"create|modify|delete","targets":[...],"depends_on":[...]}]}`).
-pub(crate) const PLANNER_GBNF: &str = r#"root ::= "{" ws "\"tasks\"" ws ":" ws "[" ws task (ws "," ws task)* ws "]" ws "}" ws
-task ::= "{" ws "\"id\"" ws ":" ws string ws "," ws "\"objective\"" ws ":" ws string ws "," ws "\"operation\"" ws ":" ws operation ws "," ws "\"targets\"" ws ":" ws string-array-nonempty ws "," ws "\"depends_on\"" ws ":" ws string-array ws "}" ws
+/// (`{"kind":"work|plan","tasks":[{"id":...,"objective":...,"operation":"create|modify|delete","targets":[...],"depends_on":[...]}]}`).
+/// The top-level `kind` field is optional (grammar permits its omission,
+/// defaulting to `work` on the parsing side); `targets` may be empty since
+/// `kind: "plan"` tasks have no concrete files yet.
+pub(crate) const PLANNER_GBNF: &str = r#"root ::= "{" ws (kind-field ws "," ws)? "\"tasks\"" ws ":" ws "[" ws task (ws "," ws task)* ws "]" ws "}" ws
+kind-field ::= "\"kind\"" ws ":" ws ("\"work\"" | "\"plan\"")
+task ::= "{" ws "\"id\"" ws ":" ws string ws "," ws "\"objective\"" ws ":" ws string ws "," ws "\"operation\"" ws ":" ws operation ws "," ws "\"targets\"" ws ":" ws string-array ws "," ws "\"depends_on\"" ws ":" ws string-array ws "}" ws
 operation ::= "\"create\"" | "\"modify\"" | "\"delete\""
-string-array-nonempty ::= "[" ws (string (ws "," ws string)*) ws "]" ws
 string-array ::= "[" ws (string (ws "," ws string)*)? ws "]" ws
 
 string ::=
@@ -208,7 +211,10 @@ editing them.";
 pub(crate) const PLANNER_PROTOCOL_FOOTER_WITH_OPERATION: &str = "PlannerOutput: `tasks` must be a non-empty array.\n\
 Each task requires `id`, `objective`, `operation`, `targets`, and `depends_on`.\n\
 `operation` must be \"create\", \"modify\", or \"delete\".\n\
-Each `targets` array must be non-empty and list exact files the task may create, modify, or delete.";
+Each `targets` array must be non-empty and list exact files the task may create, modify, or delete.\n\
+Optional top-level `kind` field: \"work\" (default when omitted) or \"plan\". \
+When `kind` is \"plan\", every task becomes a further planning node instead of a work node, and `targets` may be empty. \
+All tasks in one PlannerOutput share the same kind — never mix work and plan tasks in one response.";
 
 /// Per-role system prompt policy.
 ///
