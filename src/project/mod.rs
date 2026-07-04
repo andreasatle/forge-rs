@@ -13,7 +13,7 @@ pub mod yaml_config;
 pub use default::DefaultProjectAdapter;
 pub use loader::load_adapter;
 pub use yaml::YamlProjectAdapter;
-pub use yaml_config::{ProjectAdapterConfig, RolePromptConfig, RolePromptsConfig, WorkerConfig};
+pub use yaml_config::{PlannerConfig, ProjectAdapterConfig, RolePromptConfig, WorkerRoleConfig};
 
 use crate::artifacts::ArtifactRead;
 use crate::machines::deliberation::DeliberationRole;

@@ -22,25 +22,28 @@ fn repo_adapter(name: &str) -> PathBuf {
 }
 
 const CUSTOM_ADAPTER_YAML: &str = r#"
-role_prompts:
-  planner_producer:
+planner:
+  producer:
     instructions: "custom planner instructions"
     constraints: "custom planner constraints"
-  worker_producer:
-    instructions: "custom worker instructions"
-    constraints: "custom worker constraints"
-  planner_critic:
+  critic:
     instructions: "custom critic instructions"
     constraints: "custom critic constraints"
-  worker_critic:
-    instructions: "custom worker critic instructions"
-    constraints: "custom worker critic constraints"
-  planner_referee:
+  referee:
     instructions: "custom referee instructions"
     constraints: "custom referee constraints"
-  worker_referee:
-    instructions: "custom worker referee instructions"
-    constraints: "custom worker referee constraints"
+workers:
+  - role: implementer
+    description: "Implements code changes."
+    producer:
+      instructions: "custom worker instructions"
+      constraints: "custom worker constraints"
+    critic:
+      instructions: "custom worker critic instructions"
+      constraints: "custom worker critic constraints"
+    referee:
+      instructions: "custom worker referee instructions"
+      constraints: "custom worker referee constraints"
 "#;
 
 // ── built-in adapters ────────────────────────────────────────────────────

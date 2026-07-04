@@ -37,31 +37,40 @@ impl ProjectAdapter for YamlProjectAdapter {
         // GENERIC_CONSTRAINTS renders as its own Constraints: section, after
         // the adapter's own Instructions:/Constraints: sections and before
         // the role's protocol-specific footer.
-        let prompts = &self.config.role_prompts;
+        let planner = &self.config.planner;
+        // RolePolicy has not yet been wired to dispatch per worker role, so
+        // every Work node is still rendered with a single Producer/Critic/
+        // Referee prompt. Until that dispatch exists, the first configured
+        // worker role stands in for "the" worker prompt.
+        let worker = self
+            .config
+            .workers
+            .first()
+            .expect("adapter config must define at least one worker role");
         RolePolicy {
             planner_producer_system: format!(
                 "Role:\n{PLANNER_PRODUCER_IDENTITY}\n{}\nConstraints:\n{GENERIC_CONSTRAINTS}\n{PLANNER_PROTOCOL_FOOTER_WITH_OPERATION}",
-                render_role_prompt(&prompts.planner_producer)
+                render_role_prompt(&planner.producer)
             ),
             worker_producer_system: format!(
                 "Role:\n{WORKER_PRODUCER_IDENTITY}\n{}\nConstraints:\n{GENERIC_CONSTRAINTS}\n{WORK_PRODUCER_SYSTEM}",
-                render_role_prompt(&prompts.worker_producer)
+                render_role_prompt(&worker.producer)
             ),
             planner_critic_system: format!(
                 "{}\nConstraints:\n{GENERIC_CONSTRAINTS}\n{DEFAULT_SYSTEM}",
-                render_role_prompt(&prompts.planner_critic)
+                render_role_prompt(&planner.critic)
             ),
             worker_critic_system: format!(
                 "{}\nConstraints:\n{GENERIC_CONSTRAINTS}\n{DEFAULT_SYSTEM}",
-                render_role_prompt(&prompts.worker_critic)
+                render_role_prompt(&worker.critic)
             ),
             planner_referee_system: format!(
                 "{}\nConstraints:\n{GENERIC_CONSTRAINTS}\n{DEFAULT_SYSTEM}",
-                render_role_prompt(&prompts.planner_referee)
+                render_role_prompt(&planner.referee)
             ),
             worker_referee_system: format!(
                 "{}\nConstraints:\n{GENERIC_CONSTRAINTS}\n{DEFAULT_SYSTEM}",
-                render_role_prompt(&prompts.worker_referee)
+                render_role_prompt(&worker.referee)
             ),
             planner_protocol_schema: PLANNER_PROTOCOL_FOOTER_WITH_OPERATION.to_string(),
             language_guidance: None,
@@ -87,7 +96,7 @@ fn render_role_prompt(prompt: &RolePromptConfig) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::project::yaml_config::{RolePromptConfig, RolePromptsConfig};
+    use crate::project::yaml_config::{PlannerConfig, WorkerRoleConfig};
 
     fn prompt(instructions: &str, constraints: &str) -> RolePromptConfig {
         RolePromptConfig {
@@ -96,22 +105,29 @@ mod tests {
         }
     }
 
-    fn role_prompts() -> RolePromptsConfig {
-        RolePromptsConfig {
-            planner_producer: prompt("plan it", "plan bounds"),
-            worker_producer: prompt("build it", "build bounds"),
-            planner_critic: prompt("review the plan", "review plan bounds"),
-            worker_critic: prompt("review the work", "review work bounds"),
-            planner_referee: prompt("decide the plan", "decide plan bounds"),
-            worker_referee: prompt("decide the work", "decide work bounds"),
+    fn planner_config() -> PlannerConfig {
+        PlannerConfig {
+            producer: prompt("plan it", "plan bounds"),
+            critic: prompt("review the plan", "review plan bounds"),
+            referee: prompt("decide the plan", "decide plan bounds"),
         }
+    }
+
+    fn worker_configs() -> Vec<WorkerRoleConfig> {
+        vec![WorkerRoleConfig {
+            role: "implementer".to_string(),
+            description: "Implements code changes.".to_string(),
+            producer: prompt("build it", "build bounds"),
+            critic: prompt("review the work", "review work bounds"),
+            referee: prompt("decide the work", "decide work bounds"),
+        }]
     }
 
     fn adapter() -> YamlProjectAdapter {
         YamlProjectAdapter::new(ProjectAdapterConfig {
-            role_prompts: role_prompts(),
+            planner: planner_config(),
+            workers: worker_configs(),
             context_files: vec!["README.md".to_string()],
-            workers: vec![],
         })
     }
 
@@ -136,10 +152,11 @@ mod tests {
     #[test]
     fn role_policy_maps_each_field_from_config() {
         // Invariant: every RolePolicy field is composed from the matching
-        // RolePromptsConfig field's instructions and constraints, rendered as
-        // separate labeled sections, followed by the generic Constraints:
-        // section and the shared framework protocol constants, in that
-        // order — with no field left hardcoded or swapped.
+        // config field's instructions and constraints, rendered as separate
+        // labeled sections, followed by the generic Constraints: section and
+        // the shared framework protocol constants, in that order — with no
+        // field left hardcoded or swapped. Worker fields come from the first
+        // configured worker role.
         let policy = adapter().role_policy();
 
         assert_ordered_sections(
@@ -207,6 +224,33 @@ mod tests {
         }
     }
 
+    #[test]
+    fn role_policy_uses_first_worker_role_when_multiple_are_configured() {
+        // Invariant: with more than one worker role configured, role_policy
+        // sources the (not-yet-per-role) worker prompt from the first entry,
+        // not the last.
+        let mut workers = worker_configs();
+        workers.push(WorkerRoleConfig {
+            role: "tester".to_string(),
+            description: "Writes tests.".to_string(),
+            producer: prompt("test it", "test bounds"),
+            critic: prompt("review the tests", "review test bounds"),
+            referee: prompt("decide the tests", "decide test bounds"),
+        });
+        let adapter = YamlProjectAdapter::new(ProjectAdapterConfig {
+            planner: planner_config(),
+            workers,
+            context_files: vec![],
+        });
+        assert!(
+            adapter
+                .role_policy()
+                .worker_producer_system
+                .contains("build it"),
+            "expected first worker role's prompt to be used"
+        );
+    }
+
     // ── context_file_names ────────────────────────────────────────────────────
 
     #[test]
@@ -217,9 +261,9 @@ mod tests {
         ];
         for (context_files, expected) in cases {
             let adapter = YamlProjectAdapter::new(ProjectAdapterConfig {
-                role_prompts: role_prompts(),
+                planner: planner_config(),
+                workers: worker_configs(),
                 context_files,
-                workers: vec![],
             });
             assert_eq!(adapter.context_file_names(), expected);
         }
@@ -230,25 +274,28 @@ mod tests {
     #[test]
     fn from_yaml_str_builds_working_adapter() {
         let yaml = r#"
-role_prompts:
-  planner_producer:
+planner:
+  producer:
     instructions: "plan it"
     constraints: "plan bounds"
-  worker_producer:
-    instructions: "build it"
-    constraints: "build bounds"
-  planner_critic:
+  critic:
     instructions: "review the plan"
     constraints: "review plan bounds"
-  worker_critic:
-    instructions: "review the work"
-    constraints: "review work bounds"
-  planner_referee:
+  referee:
     instructions: "decide the plan"
     constraints: "decide plan bounds"
-  worker_referee:
-    instructions: "decide the work"
-    constraints: "decide work bounds"
+workers:
+  - role: implementer
+    description: "Implements code changes."
+    producer:
+      instructions: "build it"
+      constraints: "build bounds"
+    critic:
+      instructions: "review the work"
+      constraints: "review work bounds"
+    referee:
+      instructions: "decide the work"
+      constraints: "decide work bounds"
 context_files:
   - README.md
 "#;
