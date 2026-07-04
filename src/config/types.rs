@@ -18,35 +18,18 @@ pub struct ForgeConfig {
     /// Optional validation commands run after workspace update, before integration.
     #[serde(default)]
     pub validation: Option<ValidationConfig>,
-    /// Names the project adapter YAML file governing role prompt policy
-    /// (e.g. `"coding.yaml"`, `"coding_tdd.yaml"`, or a user-defined
-    /// adapter's filename). Required; there is no default. Resolved against
-    /// `adapters_dir`.
+    /// Path to the project adapter YAML file governing role prompt policy
+    /// (e.g. `"adapters/coding_tdd.yaml"`). Required; there is no default. A
+    /// relative path is resolved against the directory containing the
+    /// config file, like `artifact.repo_path`.
     #[serde(default)]
     pub adapter: String,
-    /// Directory containing project adapter YAML files. Built-in adapters
-    /// (`coding.yaml`, `coding_tdd.yaml`) are written here on first use;
-    /// dropping a new YAML file in is enough to define a user adapter, with
-    /// no Rust changes.
-    ///
-    /// When omitted, defaults to an `adapters` directory next to the running
-    /// executable, so built-ins ship alongside the binary with no config
-    /// entry required. When set, a relative path is resolved against the
-    /// directory containing the config file, like `artifact.repo_path`.
-    #[serde(default)]
-    pub adapters_dir: String,
-    /// Names the language plugin YAML file providing init and validation
-    /// specs (e.g. `"python.yaml"`, `"rust.yaml"`, or a user-defined
-    /// plugin's filename). Omitting means no language plugin. Mutually
-    /// exclusive with an explicit `validation` block. Resolved against
-    /// `plugins_dir`.
+    /// Path to the language plugin YAML file providing init and validation
+    /// specs (e.g. `"plugins/python.yaml"`). Omitting means no language
+    /// plugin. Mutually exclusive with an explicit `validation` block.
+    /// Resolved the same way as `adapter`.
     #[serde(default)]
     pub plugin: Option<String>,
-    /// Directory containing language plugin YAML files. Follows the same
-    /// resolution rules as `adapters_dir`, defaulting to a `plugins`
-    /// directory next to the running executable.
-    #[serde(default)]
-    pub plugins_dir: String,
 }
 
 /// Artifact repository configuration.
@@ -238,18 +221,18 @@ pub struct ValidationConfig {
 impl ForgeConfig {
     /// Load a `ForgeConfig` from a YAML file at `path`.
     ///
-    /// Relative paths in `artifact.repo_path` and `telemetry.directory` are
-    /// resolved against the directory containing the config file, not the
-    /// process working directory. `adapters_dir`/`plugins_dir` follow the
-    /// same rule when set explicitly; when omitted they default to
-    /// `adapters`/`plugins` directories next to the running executable (see
-    /// [`crate::services::binary_relative_dir`]).
+    /// `adapter` and `plugin` are resolved and loaded first, before any
+    /// other config field is validated or any provider/artifact setup
+    /// happens — a missing or invalid adapter/plugin fails immediately.
+    /// Relative paths (in `adapter`, `plugin`, `artifact.repo_path`, and
+    /// `telemetry.directory`) are resolved against the directory containing
+    /// the config file, not the process working directory.
     ///
     /// Returns an error if:
-    /// - `adapter` is absent.
-    /// - `adapter` does not resolve to a loadable adapter YAML in `adapters_dir`.
+    /// - `adapter` is absent or blank.
+    /// - `adapter` does not resolve to a loadable adapter YAML file.
     /// - Both `plugin` and `validation` are specified (mutually exclusive).
-    /// - `plugin` does not resolve to a loadable plugin YAML in `plugins_dir`.
+    /// - `plugin` does not resolve to a loadable plugin YAML file.
     pub fn from_file(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
         let config_path = Path::new(path);
         let content = std::fs::read_to_string(config_path)?;
@@ -258,51 +241,37 @@ impl ForgeConfig {
         // Resolve relative paths against the config file's directory so that
         // `forge start path/to/forge.yaml` works correctly from any cwd.
         let config_dir = config_path.parent().filter(|p| !p.as_os_str().is_empty());
-        if let Some(dir) = config_dir {
-            config.artifact.repo_path = resolve_relative(&config.artifact.repo_path, dir);
-            config.telemetry.directory = resolve_relative(&config.telemetry.directory, dir);
-        }
-        config.adapters_dir = resolve_resource_dir(&config.adapters_dir, config_dir, "adapters");
-        config.plugins_dir = resolve_resource_dir(&config.plugins_dir, config_dir, "plugins");
 
         if config.adapter.trim().is_empty() {
             return Err("adapter is required".into());
         }
-
-        crate::project::load_adapter(Path::new(&config.adapters_dir), &config.adapter)?;
+        if let Some(dir) = config_dir {
+            config.adapter = resolve_relative(&config.adapter, dir);
+        }
+        crate::project::load_adapter(Path::new(&config.adapter))?;
 
         if config.plugin.is_some() && config.validation.is_some() {
             return Err("plugin and validation.commands are mutually exclusive; \
                  remove one or the other"
                 .into());
         }
-
+        if let Some(dir) = config_dir
+            && let Some(plugin) = &mut config.plugin
+        {
+            *plugin = resolve_relative(plugin, dir);
+        }
         if let Some(plugin) = &config.plugin {
-            crate::language::registry::load_plugin(Path::new(&config.plugins_dir), plugin)?;
+            crate::language::registry::load_plugin(Path::new(plugin))?;
+        }
+
+        if let Some(dir) = config_dir {
+            config.artifact.repo_path = resolve_relative(&config.artifact.repo_path, dir);
+            config.telemetry.directory = resolve_relative(&config.telemetry.directory, dir);
         }
 
         validate_provider_model_identity(&config.provider)?;
 
         Ok(config)
-    }
-}
-
-/// Resolves a resource-directory config field (`adapters_dir`, `plugins_dir`).
-///
-/// An explicitly set (non-blank) value is resolved like any other config
-/// path: relative paths are taken relative to the config file's directory.
-/// An unset (blank) value defaults to a `subdir` directory next to the
-/// running executable, so built-in adapters/plugins ship alongside the
-/// binary without requiring a config entry.
-fn resolve_resource_dir(raw: &str, config_dir: Option<&Path>, subdir: &str) -> String {
-    if raw.trim().is_empty() {
-        return crate::services::binary_relative_dir(subdir)
-            .to_string_lossy()
-            .into_owned();
-    }
-    match config_dir {
-        Some(dir) => resolve_relative(raw, dir),
-        None => raw.to_string(),
     }
 }
 

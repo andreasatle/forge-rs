@@ -16,20 +16,20 @@ static SEED_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// Load the artifact at `config.repo_path`, creating a bare repo if it does not exist.
 ///
-/// When `plugin` is `Some((name, plugins_dir))` and the repo is newly
-/// created, the named language plugin's init commands are executed in a
-/// temporary workspace and committed as the sole initial artifact revision.
-/// Language init produces exactly one commit rather than an empty "Initial"
-/// followed by an integration commit.
+/// When `plugin` is `Some(path)` and the repo is newly created, the language
+/// plugin's init commands are executed in a temporary workspace and
+/// committed as the sole initial artifact revision. Language init produces
+/// exactly one commit rather than an empty "Initial" followed by an
+/// integration commit.
 pub fn load_or_create_artifact(
     config: &ArtifactConfig,
-    plugin: Option<(&str, &Path)>,
+    plugin: Option<&Path>,
 ) -> Result<Artifact, Box<dyn Error>> {
     let repo_path = PathBuf::from(&config.repo_path);
 
     if !repo_path.exists() {
-        if let Some((name, plugins_dir)) = plugin {
-            let spec = load_plugin(plugins_dir, name)
+        if let Some(plugin_path) = plugin {
+            let spec = load_plugin(plugin_path)
                 .expect("plugin already validated by ForgeConfig::from_file");
             if !spec.init.commands.is_empty() {
                 create_bare_repo_with_language_init(&repo_path, &config.branch, &spec.init)?;

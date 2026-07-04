@@ -14,6 +14,23 @@ fn unique_config_path() -> PathBuf {
     ))
 }
 
+/// Copies a built-in adapter/plugin YAML from this crate's `adapters/` or
+/// `plugins/` directory into `dir` (as `name`), so config fixtures that
+/// reference it by a bare relative filename (e.g. `adapter: coding.yaml`)
+/// resolve correctly against the temp directory holding the config file.
+/// A no-op if already staged, since every `TempYaml` shares the same
+/// process-wide temp directory.
+fn stage_fixture(dir: &std::path::Path, subdir: &str, name: &str) {
+    let dest = dir.join(name);
+    if dest.exists() {
+        return;
+    }
+    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join(subdir)
+        .join(name);
+    std::fs::copy(src, dest).unwrap();
+}
+
 struct TempYaml(PathBuf);
 
 impl TempYaml {
@@ -21,6 +38,13 @@ impl TempYaml {
         let path = unique_config_path();
         let mut f = std::fs::File::create(&path).unwrap();
         f.write_all(content.as_bytes()).unwrap();
+        let dir = path.parent().unwrap();
+        for name in ["coding.yaml", "coding_tdd.yaml"] {
+            stage_fixture(dir, "adapters", name);
+        }
+        for name in ["rust.yaml", "python.yaml"] {
+            stage_fixture(dir, "plugins", name);
+        }
         Self(path)
     }
 
@@ -655,44 +679,55 @@ adapter: coding_tdd.yaml
 fn config_parses_adapter() {
     let tmp = TempYaml::new(CODING_TDD_ADAPTER_YAML);
     let config = ForgeConfig::from_file(tmp.path()).unwrap();
-    assert_eq!(
-        config.adapter, "coding_tdd.yaml",
-        "adapter: coding_tdd.yaml must parse as \"coding_tdd.yaml\""
-    );
-}
-
-#[test]
-fn config_default_adapters_and_plugins_dirs_are_binary_relative() {
-    // Invariant: when adapters_dir/plugins_dir are omitted, they default to
-    // "adapters"/"plugins" directories next to the running executable (not
-    // the config file's directory), so built-ins ship alongside the binary
-    // without requiring a config entry.
-    let tmp = TempYaml::new(EXAMPLE_YAML);
-    let config = ForgeConfig::from_file(tmp.path()).unwrap();
-    assert_eq!(
-        config.adapters_dir,
-        crate::services::binary_relative_dir("adapters").to_string_lossy()
-    );
-    assert_eq!(
-        config.plugins_dir,
-        crate::services::binary_relative_dir("plugins").to_string_lossy()
-    );
-}
-
-#[test]
-fn config_explicit_adapters_dir_resolves_against_config_dir() {
-    // Invariant: an explicitly configured adapters_dir behaves like
-    // repo_path/telemetry.directory — a relative path resolves against the
-    // config file's directory rather than the binary's.
-    let yaml = format!("{EXAMPLE_YAML}\nadapters_dir: my-adapters\n");
-    let tmp = TempYaml::new(&yaml);
-    let config = ForgeConfig::from_file(tmp.path()).unwrap();
     let config_dir = std::path::Path::new(tmp.path()).parent().unwrap();
     let expected = config_dir
-        .join("my-adapters")
+        .join("coding_tdd.yaml")
         .to_string_lossy()
         .into_owned();
-    assert_eq!(config.adapters_dir, expected);
+    assert_eq!(
+        config.adapter, expected,
+        "a relative adapter path must resolve against the config file's directory"
+    );
+}
+
+#[test]
+fn config_adapter_nested_relative_path_resolves_against_config_dir() {
+    // Invariant: `adapter` is a full (possibly nested) path relative to the
+    // config file, not a bare filename resolved against some separate
+    // adapters directory.
+    let config_dir = std::env::temp_dir().join(format!(
+        "forge-rs-config-test-nested-adapter-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(config_dir.join("nested")).unwrap();
+    stage_fixture(&config_dir.join("nested"), "adapters", "coding.yaml");
+
+    let yaml = EXAMPLE_YAML.replace("adapter: coding.yaml", "adapter: nested/coding.yaml");
+    let config_path = config_dir.join("forge.yaml");
+    std::fs::write(&config_path, &yaml).unwrap();
+
+    let config = ForgeConfig::from_file(config_path.to_str().unwrap()).unwrap();
+    let expected = config_dir
+        .join("nested/coding.yaml")
+        .to_string_lossy()
+        .into_owned();
+    assert_eq!(config.adapter, expected);
+
+    let _ = std::fs::remove_dir_all(&config_dir);
+}
+
+#[test]
+fn config_absolute_adapter_path_remains_absolute() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("adapters")
+        .join("coding.yaml");
+    let yaml = EXAMPLE_YAML.replace(
+        "adapter: coding.yaml",
+        &format!("adapter: \"{}\"", path.display()),
+    );
+    let tmp = TempYaml::new(&yaml);
+    let config = ForgeConfig::from_file(tmp.path()).unwrap();
+    assert_eq!(config.adapter, path.to_string_lossy());
 }
 
 const UNKNOWN_ADAPTER_YAML: &str = r#"
@@ -713,14 +748,15 @@ adapter: bogus_adapter_that_does_not_exist.yaml
 
 #[test]
 fn unknown_adapter_filename_fails_at_config_load_time() {
-    // Invariant: an adapter name that isn't a built-in and doesn't exist in
-    // adapters_dir must fail from_file itself, not wait until the run
-    // actually starts, with a clear "adapter not found: <filename>" message.
+    // Invariant: an adapter path that does not exist on disk must fail
+    // from_file itself, not wait until the run actually starts, with a
+    // clear error naming the adapter path.
     let tmp = TempYaml::new(UNKNOWN_ADAPTER_YAML);
     let err = ForgeConfig::from_file(tmp.path()).unwrap_err();
-    assert_eq!(
-        err.to_string(),
-        "adapter not found: bogus_adapter_that_does_not_exist.yaml"
+    assert!(
+        err.to_string()
+            .contains("bogus_adapter_that_does_not_exist.yaml"),
+        "error must name the missing adapter path; got: {err}"
     );
 }
 
@@ -747,10 +783,12 @@ plugin: rust.yaml
 fn config_parses_plugin_rust() {
     let tmp = TempYaml::new(RUST_PLUGIN_YAML);
     let config = ForgeConfig::from_file(tmp.path()).unwrap();
+    let config_dir = std::path::Path::new(tmp.path()).parent().unwrap();
+    let expected = config_dir.join("rust.yaml").to_string_lossy().into_owned();
     assert_eq!(
         config.plugin.as_deref(),
-        Some("rust.yaml"),
-        "plugin: rust.yaml must parse as Some(\"rust.yaml\")"
+        Some(expected.as_str()),
+        "a relative plugin path must resolve against the config file's directory"
     );
 }
 
@@ -785,10 +823,15 @@ plugin: python.yaml
 fn config_parses_plugin_python() {
     let tmp = TempYaml::new(PYTHON_PLUGIN_YAML);
     let config = ForgeConfig::from_file(tmp.path()).unwrap();
+    let config_dir = std::path::Path::new(tmp.path()).parent().unwrap();
+    let expected = config_dir
+        .join("python.yaml")
+        .to_string_lossy()
+        .into_owned();
     assert_eq!(
         config.plugin.as_deref(),
-        Some("python.yaml"),
-        "plugin: python.yaml must parse as Some(\"python.yaml\")"
+        Some(expected.as_str()),
+        "a relative plugin path must resolve against the config file's directory"
     );
 }
 
@@ -813,7 +856,10 @@ plugin: cobol.yaml
 fn unknown_plugin_fails_loudly() {
     let tmp = TempYaml::new(UNKNOWN_PLUGIN_YAML);
     let err = ForgeConfig::from_file(tmp.path()).unwrap_err();
-    assert_eq!(err.to_string(), "plugin not found: cobol.yaml");
+    assert!(
+        err.to_string().contains("cobol.yaml"),
+        "error must name the missing plugin path; got: {err}"
+    );
 }
 
 const PLUGIN_AND_VALIDATION_YAML: &str = r#"

@@ -34,28 +34,16 @@ pub struct ProjectRuntimeSetup {
 }
 
 impl ProjectRuntimeSetup {
-    /// `adapter` names a project adapter YAML file (e.g. `"coding.yaml"`),
-    /// loaded from `adapters_dir`; `plugin` optionally names a language
-    /// plugin YAML file (e.g. `"python.yaml"`), loaded from `plugins_dir`.
-    /// Both are validated by [`crate::config::ForgeConfig::from_file`] in the
-    /// common case, but an unrecognised name is still a hard error here.
+    /// `adapter` is a path to a project adapter YAML file; `plugin`
+    /// optionally is a path to a language plugin YAML file. Both are
+    /// validated by [`crate::config::ForgeConfig::from_file`] in the common
+    /// case, but a missing/invalid path is still a hard error here.
     pub fn build(
-        adapter: &str,
-        adapters_dir: &Path,
-        plugin: Option<&str>,
-        plugins_dir: &Path,
+        adapter: &Path,
+        plugin: Option<&Path>,
         validation: Option<&ValidationConfig>,
     ) -> Result<Self, Box<dyn Error>> {
-        Ok(
-            ProjectRuntimeSetupBuilder::new(
-                adapter,
-                adapters_dir,
-                plugin,
-                plugins_dir,
-                validation,
-            )?
-            .build(),
-        )
+        Ok(ProjectRuntimeSetupBuilder::new(adapter, plugin, validation)?.build())
     }
 }
 
@@ -67,16 +55,14 @@ struct ProjectRuntimeSetupBuilder<'a> {
 
 impl<'a> ProjectRuntimeSetupBuilder<'a> {
     fn new(
-        adapter: &str,
-        adapters_dir: &Path,
-        plugin: Option<&str>,
-        plugins_dir: &Path,
+        adapter: &Path,
+        plugin: Option<&Path>,
         validation: Option<&'a ValidationConfig>,
     ) -> Result<Self, Box<dyn Error>> {
         Ok(Self {
             validation,
-            language_spec: Self::select_plugin(plugin, plugins_dir)?,
-            adapter: Self::select_adapter(adapter, adapters_dir)?,
+            language_spec: Self::select_plugin(plugin)?,
+            adapter: Self::select_adapter(adapter)?,
         })
     }
 
@@ -91,25 +77,17 @@ impl<'a> ProjectRuntimeSetupBuilder<'a> {
         }
     }
 
-    /// Loads the adapter named by `adapter` (e.g. `"coding.yaml"`) from
-    /// `adapters_dir`, bootstrapping built-in adapters on first use.
-    fn select_adapter(
-        adapter: &str,
-        adapters_dir: &Path,
-    ) -> Result<Box<dyn ProjectAdapter>, Box<dyn Error>> {
-        Ok(Box::new(load_adapter(adapters_dir, adapter)?))
+    /// Loads the adapter at `adapter`.
+    fn select_adapter(adapter: &Path) -> Result<Box<dyn ProjectAdapter>, Box<dyn Error>> {
+        Ok(Box::new(load_adapter(adapter)?))
     }
 
-    /// Loads the language plugin named by `plugin` (e.g. `"python.yaml"`)
-    /// from `plugins_dir`, bootstrapping built-in plugins on first use.
-    fn select_plugin(
-        plugin: Option<&str>,
-        plugins_dir: &Path,
-    ) -> Result<Option<LanguageSpec>, Box<dyn Error>> {
-        let Some(name) = plugin else {
+    /// Loads the language plugin at `plugin`, when given.
+    fn select_plugin(plugin: Option<&Path>) -> Result<Option<LanguageSpec>, Box<dyn Error>> {
+        let Some(path) = plugin else {
             return Ok(None);
         };
-        Ok(Some(load_language_plugin(plugins_dir, name)?))
+        Ok(Some(load_language_plugin(path)?))
     }
 
     fn role_policy(&self) -> RolePolicy {

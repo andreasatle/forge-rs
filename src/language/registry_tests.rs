@@ -1,23 +1,29 @@
 use super::*;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
-fn unique_dir() -> std::path::PathBuf {
+fn unique_path(name: &str) -> PathBuf {
     let id = COUNTER.fetch_add(1, Ordering::SeqCst);
-    std::env::temp_dir().join(format!("forge-rs-plugins-test-{}-{id}", std::process::id()))
+    std::env::temp_dir().join(format!(
+        "forge-rs-plugin-test-{}-{id}-{name}",
+        std::process::id()
+    ))
 }
 
-// ── built-in bootstrap ───────────────────────────────────────────────────
+/// Path to a built-in language plugin YAML shipped alongside the crate.
+fn repo_plugin(name: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("plugins")
+        .join(name)
+}
+
+// ── built-in plugins ─────────────────────────────────────────────────────
 
 #[test]
-fn rust_plugin_is_written_to_the_plugins_dir_on_first_use() {
-    let dir = unique_dir();
-    let spec = load_plugin(&dir, "rust.yaml").unwrap();
-    assert!(
-        dir.join("rust.yaml").is_file(),
-        "rust.yaml must be written to the plugins dir on first use"
-    );
+fn rust_plugin_loads_from_its_shipped_path() {
+    let spec = load_plugin(&repo_plugin("rust.yaml")).unwrap();
     assert!(!spec.prompt_guidance.is_empty());
     assert!(!spec.constraints.is_empty());
     assert!(!spec.init.commands.is_empty());
@@ -25,10 +31,8 @@ fn rust_plugin_is_written_to_the_plugins_dir_on_first_use() {
 }
 
 #[test]
-fn python_plugin_is_written_to_the_plugins_dir_on_first_use() {
-    let dir = unique_dir();
-    let spec = load_plugin(&dir, "python.yaml").unwrap();
-    assert!(dir.join("python.yaml").is_file());
+fn python_plugin_loads_from_its_shipped_path() {
+    let spec = load_plugin(&repo_plugin("python.yaml")).unwrap();
     assert!(!spec.prompt_guidance.is_empty());
     assert!(!spec.constraints.is_empty());
     assert!(!spec.init.commands.is_empty());
@@ -37,8 +41,7 @@ fn python_plugin_is_written_to_the_plugins_dir_on_first_use() {
 
 #[test]
 fn rust_init_contains_cargo_init_vcs_none() {
-    let dir = unique_dir();
-    let spec = load_plugin(&dir, "rust.yaml").unwrap();
+    let spec = load_plugin(&repo_plugin("rust.yaml")).unwrap();
     let cmd = &spec.init.commands[0];
     assert_eq!(cmd.program, "cargo", "init program must be cargo");
     assert!(
@@ -62,8 +65,7 @@ fn rust_init_contains_cargo_init_vcs_none() {
 
 #[test]
 fn rust_validation_contains_fmt_check_check_test() {
-    let dir = unique_dir();
-    let spec = load_plugin(&dir, "rust.yaml").unwrap();
+    let spec = load_plugin(&repo_plugin("rust.yaml")).unwrap();
     let cmds = &spec.validation.commands;
 
     assert!(
@@ -94,8 +96,7 @@ fn rust_validation_contains_fmt_check_check_test() {
 
 #[test]
 fn python_init_first_command_is_uv_init_vcs_none() {
-    let dir = unique_dir();
-    let spec = load_plugin(&dir, "python.yaml").unwrap();
+    let spec = load_plugin(&repo_plugin("python.yaml")).unwrap();
     assert!(
         spec.init.commands.len() >= 2,
         "python init must have at least two commands; got: {:?}",
@@ -113,8 +114,7 @@ fn python_init_first_command_is_uv_init_vcs_none() {
 
 #[test]
 fn python_init_second_command_adds_dev_dependencies() {
-    let dir = unique_dir();
-    let spec = load_plugin(&dir, "python.yaml").unwrap();
+    let spec = load_plugin(&repo_plugin("python.yaml")).unwrap();
     let cmd = &spec.init.commands[1];
     assert_eq!(cmd.program, "uv", "second init program must be uv");
     assert!(
@@ -138,8 +138,7 @@ fn python_init_second_command_adds_dev_dependencies() {
 
 #[test]
 fn python_validation_contains_ruff_pyright_pytest() {
-    let dir = unique_dir();
-    let spec = load_plugin(&dir, "python.yaml").unwrap();
+    let spec = load_plugin(&repo_plugin("python.yaml")).unwrap();
     let cmds = &spec.validation.commands;
 
     assert!(
@@ -168,29 +167,21 @@ fn python_validation_contains_ruff_pyright_pytest() {
 // ── user-defined plugins ─────────────────────────────────────────────────
 
 #[test]
-fn unknown_plugin_is_a_hard_error() {
-    let dir = unique_dir();
-    let err = load_plugin(&dir, "cobol.yaml").unwrap_err();
-    assert_eq!(err.to_string(), "plugin not found: cobol.yaml");
+fn missing_plugin_file_is_a_hard_error() {
+    let path = unique_path("cobol.yaml");
+    let err = load_plugin(&path).unwrap_err();
+    assert!(
+        err.to_string().contains("failed to read plugin"),
+        "missing plugin file must fail with a clear read error; got: {err}"
+    );
 }
 
 #[test]
-fn existing_plugin_file_is_not_overwritten_by_the_builtin_seed() {
-    let dir = unique_dir();
-    fs::create_dir_all(&dir).unwrap();
-    fs::write(dir.join("rust.yaml"), CUSTOM_PLUGIN_YAML).unwrap();
+fn user_defined_plugin_loads_from_any_path_with_no_rust_changes() {
+    let path = unique_path("cobol.yaml");
+    fs::write(&path, CUSTOM_PLUGIN_YAML).unwrap();
 
-    let spec = load_plugin(&dir, "rust.yaml").unwrap();
-    assert_eq!(spec.prompt_guidance, "custom guidance");
-}
-
-#[test]
-fn user_defined_plugin_loads_from_disk_with_no_rust_changes() {
-    let dir = unique_dir();
-    fs::create_dir_all(&dir).unwrap();
-    fs::write(dir.join("cobol.yaml"), CUSTOM_PLUGIN_YAML).unwrap();
-
-    let spec = load_plugin(&dir, "cobol.yaml").unwrap();
+    let spec = load_plugin(&path).unwrap();
     assert_eq!(spec.prompt_guidance, "custom guidance");
 }
 

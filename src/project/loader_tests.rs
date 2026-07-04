@@ -1,17 +1,24 @@
 use super::*;
 use crate::project::ProjectAdapter;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
-/// A fresh, never-before-used adapters directory path for one test. The
-/// directory itself is created lazily by whatever the test does with it.
-fn unique_dir() -> std::path::PathBuf {
+/// A fresh, never-before-used file path for one test.
+fn unique_path(name: &str) -> PathBuf {
     let id = COUNTER.fetch_add(1, Ordering::SeqCst);
     std::env::temp_dir().join(format!(
-        "forge-rs-adapters-test-{}-{id}",
+        "forge-rs-adapter-test-{}-{id}-{name}",
         std::process::id()
     ))
+}
+
+/// Path to a built-in adapter YAML shipped alongside the crate.
+fn repo_adapter(name: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("adapters")
+        .join(name)
 }
 
 const CUSTOM_ADAPTER_YAML: &str = r#"
@@ -36,49 +43,22 @@ role_prompts:
     constraints: "custom worker referee constraints"
 "#;
 
-// ── built-in bootstrap ───────────────────────────────────────────────────
+// ── built-in adapters ────────────────────────────────────────────────────
 
 #[test]
-fn coding_adapter_is_written_to_the_adapters_dir_on_first_use() {
-    // Invariant: requesting a built-in adapter that isn't yet on disk seeds
-    // the adapters directory with it, so it becomes visible/editable there.
-    let dir = unique_dir();
-    let adapter = load_adapter(&dir, "coding.yaml").unwrap();
-    assert!(
-        dir.join("coding.yaml").is_file(),
-        "coding.yaml must be written to the adapters dir on first use"
-    );
+fn coding_adapter_loads_from_its_shipped_path() {
+    let adapter = load_adapter(&repo_adapter("coding.yaml")).unwrap();
     assert!(!adapter.role_policy().planner_producer_system.is_empty());
-}
-
-#[test]
-fn existing_adapter_file_is_not_overwritten_by_the_builtin_seed() {
-    // Invariant: a user who has edited a built-in adapter's on-disk copy
-    // must have their edits loaded, not silently clobbered by the bundled
-    // seed content.
-    let dir = unique_dir();
-    fs::create_dir_all(&dir).unwrap();
-    fs::write(dir.join("coding.yaml"), CUSTOM_ADAPTER_YAML).unwrap();
-
-    let adapter = load_adapter(&dir, "coding.yaml").unwrap();
-    assert!(
-        adapter
-            .role_policy()
-            .planner_producer_system
-            .contains("custom planner instructions"),
-        "must load the on-disk content rather than the bundled seed"
-    );
 }
 
 // ── user-defined adapters ────────────────────────────────────────────────
 
 #[test]
-fn user_defined_adapter_loads_from_disk_with_no_rust_changes() {
-    let dir = unique_dir();
-    fs::create_dir_all(&dir).unwrap();
-    fs::write(dir.join("my_project.yaml"), CUSTOM_ADAPTER_YAML).unwrap();
+fn user_defined_adapter_loads_from_any_path_with_no_rust_changes() {
+    let path = unique_path("my_project.yaml");
+    fs::write(&path, CUSTOM_ADAPTER_YAML).unwrap();
 
-    let adapter = load_adapter(&dir, "my_project.yaml").unwrap();
+    let adapter = load_adapter(&path).unwrap();
     assert!(
         adapter
             .role_policy()
@@ -88,10 +68,24 @@ fn user_defined_adapter_loads_from_disk_with_no_rust_changes() {
 }
 
 #[test]
-fn unknown_adapter_is_a_hard_error() {
-    let dir = unique_dir();
-    let err = load_adapter(&dir, "bogus.yaml").unwrap_err();
-    assert_eq!(err.to_string(), "adapter not found: bogus.yaml");
+fn missing_adapter_file_is_a_hard_error() {
+    let path = unique_path("bogus.yaml");
+    let err = load_adapter(&path).unwrap_err();
+    assert!(
+        err.to_string().contains("failed to read adapter"),
+        "missing adapter file must fail with a clear read error; got: {err}"
+    );
+}
+
+#[test]
+fn invalid_adapter_content_is_a_hard_error() {
+    let path = unique_path("invalid.yaml");
+    fs::write(&path, "not: [valid, adapter").unwrap();
+    let err = load_adapter(&path).unwrap_err();
+    assert!(
+        err.to_string().contains("not a valid adapter config"),
+        "invalid adapter YAML must fail with a parse error; got: {err}"
+    );
 }
 
 // ── coding_tdd adapter content ───────────────────────────────────────────
@@ -102,8 +96,9 @@ fn unknown_adapter_is_a_hard_error() {
 
 #[test]
 fn coding_tdd_planner_producer_prompt_requires_test_nodes_before_implementation() {
-    let dir = unique_dir();
-    let policy = load_adapter(&dir, "coding_tdd.yaml").unwrap().role_policy();
+    let policy = load_adapter(&repo_adapter("coding_tdd.yaml"))
+        .unwrap()
+        .role_policy();
     let required_substrings = ["before the implementation nodes", "name the source module"];
     for substring in required_substrings {
         assert!(
@@ -116,8 +111,9 @@ fn coding_tdd_planner_producer_prompt_requires_test_nodes_before_implementation(
 
 #[test]
 fn coding_tdd_worker_producer_prompt_requires_importing_functions_under_test() {
-    let dir = unique_dir();
-    let policy = load_adapter(&dir, "coding_tdd.yaml").unwrap().role_policy();
+    let policy = load_adapter(&repo_adapter("coding_tdd.yaml"))
+        .unwrap()
+        .role_policy();
     assert!(
         policy
             .worker_producer_system
@@ -129,8 +125,7 @@ fn coding_tdd_worker_producer_prompt_requires_importing_functions_under_test() {
 
 #[test]
 fn coding_tdd_context_file_names_includes_readme() {
-    let dir = unique_dir();
-    let adapter = load_adapter(&dir, "coding_tdd.yaml").unwrap();
+    let adapter = load_adapter(&repo_adapter("coding_tdd.yaml")).unwrap();
     assert!(
         adapter
             .context_file_names()

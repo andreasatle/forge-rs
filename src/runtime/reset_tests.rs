@@ -56,9 +56,7 @@ fn make_forge_config(repo_path: &Path, telemetry_path: &Path) -> ForgeConfig {
         },
         validation: None,
         adapter: "coding.yaml".to_string(),
-        adapters_dir: "adapters".to_string(),
         plugin: None,
-        plugins_dir: "plugins".to_string(),
     }
 }
 
@@ -92,9 +90,7 @@ fn make_forge_config_with_language(
         },
         validation: None,
         adapter: "coding.yaml".to_string(),
-        adapters_dir: "adapters".to_string(),
         plugin: Some(language.to_string()),
-        plugins_dir: "plugins".to_string(),
     }
 }
 
@@ -331,9 +327,7 @@ fn reset_creates_configured_branch() {
             },
             validation: None,
             adapter: "coding.yaml".to_string(),
-            adapters_dir: "adapters".to_string(),
             plugin: None,
-            plugins_dir: "plugins".to_string(),
         }
     };
 

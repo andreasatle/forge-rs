@@ -14,5 +14,5 @@ provider:
         n_predict: 1024
 telemetry:
   directory: "runs"
-adapter: coding_tdd.yaml
-plugin: python.yaml
+adapter: adapters/coding_tdd.yaml
+plugin: plugins/python.yaml

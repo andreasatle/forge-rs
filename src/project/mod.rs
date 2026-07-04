@@ -185,11 +185,10 @@ mod tests {
 
     #[test]
     fn coding_adapter_context_file_names_includes_readme() {
-        let dir =
-            std::env::temp_dir().join(format!("forge-rs-project-mod-test-{}", std::process::id()));
-        let names = load_adapter(&dir, "coding.yaml")
-            .unwrap()
-            .context_file_names();
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("adapters")
+            .join("coding.yaml");
+        let names = load_adapter(&path).unwrap().context_file_names();
         assert!(
             names.contains(&"README.md".to_string()),
             "coding.yaml adapter must include README.md as a context file; got: {names:?}"

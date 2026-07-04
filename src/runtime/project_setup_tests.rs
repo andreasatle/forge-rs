@@ -1,24 +1,18 @@
 use super::*;
 use crate::config::ValidationConfig;
 use crate::language::registry::language_spec;
+use std::path::PathBuf;
 
-/// A shared adapters directory for this test module. Loading a built-in
-/// adapter bootstraps it here on first use; every test in this module reuses
-/// the same directory since none of them mutate adapter files.
-fn adapters_dir() -> std::path::PathBuf {
-    std::env::temp_dir().join(format!(
-        "forge-rs-project-setup-test-adapters-{}",
-        std::process::id()
-    ))
+fn adapter_path(name: &str) -> PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("adapters")
+        .join(name)
 }
 
-/// A shared plugins directory for this test module, analogous to
-/// [`adapters_dir`].
-fn plugins_dir() -> std::path::PathBuf {
-    std::env::temp_dir().join(format!(
-        "forge-rs-project-setup-test-plugins-{}",
-        std::process::id()
-    ))
+fn plugin_path(name: &str) -> PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("plugins")
+        .join(name)
 }
 
 fn builder<'a>(
@@ -26,8 +20,12 @@ fn builder<'a>(
     plugin: Option<&str>,
     validation: Option<&'a ValidationConfig>,
 ) -> ProjectRuntimeSetupBuilder<'a> {
-    ProjectRuntimeSetupBuilder::new(adapter, &adapters_dir(), plugin, &plugins_dir(), validation)
-        .unwrap()
+    ProjectRuntimeSetupBuilder::new(
+        &adapter_path(adapter),
+        plugin.map(plugin_path).as_deref(),
+        validation,
+    )
+    .unwrap()
 }
 
 // ── adapter selection ────────────────────────────────────────────────────
@@ -70,8 +68,7 @@ fn runtime_selects_coding_tdd_adapter() {
 
 #[test]
 fn unknown_adapter_fails_loudly() {
-    let result =
-        ProjectRuntimeSetupBuilder::new("bogus.yaml", &adapters_dir(), None, &plugins_dir(), None);
+    let result = ProjectRuntimeSetupBuilder::new(&adapter_path("bogus.yaml"), None, None);
     assert!(result.is_err(), "unrecognised adapter must be a hard error");
 }
 
@@ -122,10 +119,8 @@ fn runtime_role_policy_has_no_language_constraints_when_plugin_unset() {
 #[test]
 fn unknown_plugin_fails_loudly() {
     let result = ProjectRuntimeSetupBuilder::new(
-        "coding.yaml",
-        &adapters_dir(),
-        Some("bogus.yaml"),
-        &plugins_dir(),
+        &adapter_path("coding.yaml"),
+        Some(&plugin_path("bogus.yaml")),
         None,
     );
     assert!(result.is_err(), "unrecognised plugin must be a hard error");
@@ -256,10 +251,8 @@ fn project_requires_tests_false_when_no_validation() {
 #[test]
 fn build_derives_validator_and_validation_plan_from_language() {
     let setup = ProjectRuntimeSetup::build(
-        "coding.yaml",
-        &adapters_dir(),
-        Some("rust.yaml"),
-        &plugins_dir(),
+        &adapter_path("coding.yaml"),
+        Some(&plugin_path("rust.yaml")),
         None,
     )
     .unwrap();
@@ -283,10 +276,8 @@ fn validation_node_plan_uses_reduced_python_commands() {
     // pytest), so tester nodes aren't required to pass the full test
     // suite before their own test files exist.
     let setup = ProjectRuntimeSetup::build(
-        "coding.yaml",
-        &adapters_dir(),
-        Some("python.yaml"),
-        &plugins_dir(),
+        &adapter_path("coding.yaml"),
+        Some(&plugin_path("python.yaml")),
         None,
     )
     .unwrap();
@@ -316,10 +307,8 @@ fn validation_node_plan_falls_back_to_work_plan_when_unset() {
     // must not silently drop validation for tester nodes — it falls back
     // to the same full plan used for other Work nodes.
     let setup = ProjectRuntimeSetup::build(
-        "coding.yaml",
-        &adapters_dir(),
-        Some("rust.yaml"),
-        &plugins_dir(),
+        &adapter_path("coding.yaml"),
+        Some(&plugin_path("rust.yaml")),
         None,
     )
     .unwrap();
