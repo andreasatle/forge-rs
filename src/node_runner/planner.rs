@@ -94,15 +94,6 @@ pub enum PlannerValidationError {
         /// The unknown dependency id that was referenced.
         dep_id: String,
     },
-    /// A task's target list contains an existing project file that is not
-    /// mentioned in the top-level run objective, indicating the planner is
-    /// trying to recreate an infrastructure file it should leave alone.
-    TaskRecreatesExistingFile {
-        /// The task id whose targets contain the pre-existing filename.
-        task_id: String,
-        /// The filename that already exists and is not an objective target.
-        filename: String,
-    },
     /// The top-level coding objective explicitly named target files, but a
     /// non-test task targets a different file.
     ExplicitTargetViolation {
@@ -139,13 +130,6 @@ impl std::fmt::Display for PlannerValidationError {
             }
             PlannerValidationError::UnknownDependency { task_id, dep_id } => {
                 write!(f, "task {task_id} depends on unknown id: {dep_id}")
-            }
-            PlannerValidationError::TaskRecreatesExistingFile { task_id, filename } => {
-                write!(
-                    f,
-                    "task {task_id} targets existing file '{filename}' \
-                     which is not mentioned in the run objective"
-                )
             }
             PlannerValidationError::ExplicitTargetViolation {
                 filename,
@@ -240,30 +224,17 @@ impl ObjectiveTargetSet {
 }
 
 pub(crate) struct PlannerOutputProcessor<'a> {
-    top_objective: String,
-    existing_files: Vec<String>,
     required_test_targets_fn: &'a dyn Fn(&[String]) -> Vec<String>,
     explicit_objective_targets: ObjectiveTargetSet,
 }
 
 impl<'a> PlannerOutputProcessor<'a> {
-    pub(crate) fn new<I, S>(
+    pub(crate) fn new(
         top_objective: impl Into<String>,
-        existing_files: I,
         required_test_targets_fn: &'a dyn Fn(&[String]) -> Vec<String>,
-    ) -> Self
-    where
-        I: IntoIterator<Item = S>,
-        S: AsRef<str>,
-    {
-        let top_objective = top_objective.into();
-        let explicit_objective_targets = ObjectiveTargetSet::from_objective(&top_objective);
+    ) -> Self {
+        let explicit_objective_targets = ObjectiveTargetSet::from_objective(&top_objective.into());
         Self {
-            top_objective,
-            existing_files: existing_files
-                .into_iter()
-                .map(|file| file.as_ref().to_string())
-                .collect(),
             required_test_targets_fn,
             explicit_objective_targets,
         }
@@ -335,7 +306,6 @@ impl<'a> PlannerOutputProcessor<'a> {
         let objective_targets = self.explicit_objective_targets.clone().into_vec();
         let exempt_targets = (self.required_test_targets_fn)(&objective_targets);
         self.validate_explicit_targets(output, &exempt_targets)?;
-        self.validate_no_recreate(output)?;
         self.validate_tests_required(output)?;
         Ok(())
     }
@@ -363,25 +333,6 @@ impl<'a> PlannerOutputProcessor<'a> {
             }
         }
 
-        Ok(())
-    }
-
-    pub(crate) fn validate_no_recreate(
-        &self,
-        output: &PlannerOutput,
-    ) -> Result<(), PlannerValidationError> {
-        for task in &output.tasks {
-            for filename in &self.existing_files {
-                if task.targets.iter().any(|target| target == filename)
-                    && !self.top_objective.contains(filename)
-                {
-                    return Err(PlannerValidationError::TaskRecreatesExistingFile {
-                        task_id: task.id.clone(),
-                        filename: filename.clone(),
-                    });
-                }
-            }
-        }
         Ok(())
     }
 

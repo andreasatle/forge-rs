@@ -382,7 +382,6 @@ fn handler_with_validation(results: Vec<RoleResult>) -> DeliberationHandler<Scri
         work_requires_artifact_mutation: false,
         plan_validation_context: Some(PlanValidationContext {
             top_objective: "create foo.rs".to_string(),
-            existing_files: vec![],
             required_test_targets_fn: Arc::new(|_| vec![]),
         }),
     }

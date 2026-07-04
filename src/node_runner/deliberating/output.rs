@@ -47,8 +47,7 @@ pub(crate) fn map_output(
 ///
 /// - If parsing succeeds and the graph is structurally valid: emits
 ///   `PlannerOutputParsed` and returns `PlanAccepted` with one `NodeRequest`
-///   per task. No-recreate validation has already been enforced by the handler
-///   before the content reaches this function.
+///   per task.
 /// - If parsing succeeds but structural validation fails: emits
 ///   `PlannerOutputValidationFailed` and returns `Failed` with `Terminal`
 ///   recovery.
@@ -61,8 +60,7 @@ fn map_plan_output(
 ) -> NodeRunResult {
     use crate::node_runner::planner::PlannerOutputProcessor;
 
-    let processor =
-        PlannerOutputProcessor::new("", std::iter::empty::<&str>(), required_test_targets_fn);
+    let processor = PlannerOutputProcessor::new("", required_test_targets_fn);
 
     match processor.parse_content(&content) {
         Some(planner_out) => match processor.validate_structure(&planner_out) {

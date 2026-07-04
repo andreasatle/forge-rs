@@ -397,11 +397,8 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                 && matches!(request.role, DeliberationRole::Producer)
             {
                 let no_required_test_targets = |_: &[String]| Vec::new();
-                let processor = PlannerOutputProcessor::new(
-                    &request.objective,
-                    std::iter::empty::<&str>(),
-                    &no_required_test_targets,
-                );
+                let processor =
+                    PlannerOutputProcessor::new(&request.objective, &no_required_test_targets);
                 // Direct PlannerOutput path: no status/content wrapper.
                 match processor.parse_response(&response.content) {
                     Ok(planner_out) => match processor.validate_structure(&planner_out) {

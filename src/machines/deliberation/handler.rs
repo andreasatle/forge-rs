@@ -38,7 +38,6 @@ pub(crate) const TARGET_VIEW_BUDGET: usize = 16 * 1024;
 #[derive(Clone)]
 pub(crate) struct PlanValidationContext {
     pub(crate) top_objective: String,
-    pub(crate) existing_files: Vec<String>,
     /// Called with all targets in the plan; returns the test-file paths the
     /// project adapter requires for the source files found in that list.
     /// An empty return means no tests are required for this plan.
@@ -103,12 +102,6 @@ pub(super) fn planner_validation_feedback(error: &PlannerValidationError) -> Str
             format!(
                 "{error}. Project validation includes a test command, so code changes must include \
                  at least one test-related task and target such as a test file."
-            )
-        }
-        PlannerValidationError::TaskRecreatesExistingFile { .. } => {
-            format!(
-                "{error}. Remove tasks for existing project files not mentioned in the objective. \
-                 Only include tasks for files explicitly named in the run objective."
             )
         }
     }
@@ -410,7 +403,6 @@ impl<R: RoleRunner> DeliberationHandler<R> {
             .expect("plan_validation_context must be Some when this method is called");
         let processor = PlannerOutputProcessor::new(
             &context.top_objective,
-            &context.existing_files,
             context.required_test_targets_fn.as_ref(),
         );
 

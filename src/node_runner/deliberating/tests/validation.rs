@@ -132,56 +132,6 @@ fn producer_read_file_does_not_satisfy_critic_read_requirement() {
     );
 }
 
-// ── no-recreate validation recovery regression ────────────────────────────
-
-#[test]
-fn planner_no_recreate_violation_sends_revision_feedback_and_retries() {
-    // Regression: planner first outputs a task for '.gitignore' (existing project
-    // file not mentioned in the objective). Validation rejects it and sends structured
-    // feedback. Planner revises to only include the main.py task. Run continues to
-    // PlanAccepted — the run must NOT terminate with a terminal failure.
-    let temp = TempDir::new("no-recreate-retry");
-    let view = make_artifact_view(&temp, ".gitignore", "*.pyc\n__pycache__/\n");
-
-    // First planner response: includes .gitignore task (violates no-recreate).
-    let bad_plan = r#"{"tasks":[{"id":"task-1","objective":"Create .gitignore file for the project.","operation":"modify","targets":[".gitignore"],"depends_on":[]},{"id":"task-2","objective":"Write main.py with the haiku.","operation":"modify","targets":["main.py"],"depends_on":[]}]}"#;
-    // Second planner response (after revision feedback): only the main.py task.
-    let good_plan = r#"{"tasks":[{"id":"task-1","objective":"Write main.py with the haiku.","operation":"modify","targets":["main.py"],"depends_on":[]}]}"#;
-
-    let provider = ScriptedProvider::from_strs(&[
-        bad_plan,  // Plan+Producer attempt 1 — fails no-recreate, handler retries
-        good_plan, // Plan+Producer attempt 2 (with feedback) — passes
-        r#"{"status":"accepted","content":"plan looks good"}"#, // Plan+Critic
-        r#"{"status":"accepted","content":"plan approved"}"#, // Plan+Referee
-    ]);
-    let runner = DeliberatingNodeRunner::new(&provider, &provider);
-    let request = NodeRunRequest {
-        kind: NodeKind::Plan,
-        node_id: NodeId("test-node".to_string()),
-        // Objective does not name a specific file so the fast path does not apply
-        // and the LLM planner is called with the scripted responses.
-        objective: "Write a haiku about Python state machines.".to_string(),
-        target_files: vec![],
-        test_plan_context: TestPlanContext::default(),
-        model_tier: ModelTier::Cheap,
-        attempt: 0,
-        artifact_view: Some(view),
-        work_attempt: None,
-    };
-    let result = runner.run_node(request, &NoopTelemetry);
-
-    let NodeRunResult::PlanAccepted(plan) = result else {
-        panic!("expected PlanAccepted after planner revision");
-    };
-    assert_eq!(
-        plan.children.len(),
-        1,
-        "revised plan must contain only the main.py task"
-    );
-    assert_eq!(plan.children[0].objective, "Write main.py with the haiku.");
-    assert_eq!(plan.children[0].target_files, vec!["main.py".to_string()]);
-}
-
 #[test]
 fn planner_missing_test_target_sends_revision_feedback_and_retries() {
     let bad_plan = r#"{"tasks":[{"id":"task-1","objective":"Modify main.py to return the haiku.","operation":"modify","targets":["main.py"],"depends_on":[]}]}"#;
@@ -282,48 +232,4 @@ fn planner_explicit_target_violation_sends_revision_feedback_and_retries() {
                 && prompt.contains("utils.py")),
         "retry prompt must carry revision feedback naming the objective's allowed targets; got: {prompts:#?}"
     );
-}
-
-#[test]
-fn planner_no_recreate_violation_exhausts_retries_returns_failed() {
-    // When the planner keeps including tasks for existing files after MAX retries,
-    // the run must fail — not silently accept the bad plan.
-    let temp = TempDir::new("no-recreate-exhausted");
-    let view = make_artifact_view(&temp, ".gitignore", "*.pyc\n");
-
-    // All three producer responses include the .gitignore task.
-    let bad_plan = r#"{"tasks":[{"id":"task-1","objective":"Create .gitignore file.","operation":"modify","targets":[".gitignore"],"depends_on":[]}]}"#;
-
-    let provider = ScriptedProvider::from_strs(&[
-        bad_plan, // attempt 1
-        bad_plan, // attempt 2 (retry 1)
-        bad_plan, // attempt 3 (retry 2 — MAX_NO_RECREATE_RETRIES)
-    ]);
-    let runner = DeliberatingNodeRunner::new(&provider, &provider);
-    let request = NodeRunRequest {
-        kind: NodeKind::Plan,
-        node_id: NodeId("test-node".to_string()),
-        // Objective does not name a specific file so the fast path does not apply
-        // and the LLM planner is called until retries are exhausted.
-        objective: "Write a haiku about Python state machines.".to_string(),
-        target_files: vec![],
-        test_plan_context: TestPlanContext::default(),
-        model_tier: ModelTier::Cheap,
-        attempt: 0,
-        artifact_view: Some(view),
-        work_attempt: None,
-    };
-    let result = runner.run_node(request, &NoopTelemetry);
-
-    assert!(
-        matches!(result, NodeRunResult::Failed(_)),
-        "plan must fail when no-recreate retries are exhausted"
-    );
-    if let NodeRunResult::Failed(failure) = result {
-        assert!(
-            failure.message.contains(".gitignore") || failure.message.contains("no-recreate"),
-            "failure reason must mention the offending file or constraint; got: {}",
-            failure.message
-        );
-    }
 }

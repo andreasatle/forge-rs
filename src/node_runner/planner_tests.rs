@@ -2,22 +2,21 @@ use super::*;
 
 fn processor<'a>(
     top_objective: &str,
-    existing_files: &'a [&'a str],
     required_test_targets_fn: &'a dyn Fn(&[String]) -> Vec<String>,
 ) -> PlannerOutputProcessor<'a> {
-    PlannerOutputProcessor::new(top_objective, existing_files, required_test_targets_fn)
+    PlannerOutputProcessor::new(top_objective, required_test_targets_fn)
 }
 
 fn parse_planner_content(content: &str) -> Option<PlannerOutput> {
-    processor("", &[], &no_required_test_targets).parse_content(content)
+    processor("", &no_required_test_targets).parse_content(content)
 }
 
 fn try_parse_planner_response(raw: &str) -> Result<PlannerOutput, String> {
-    processor("", &[], &no_required_test_targets).parse_response(raw)
+    processor("", &no_required_test_targets).parse_response(raw)
 }
 
 fn validate_planner_output(output: &PlannerOutput) -> Result<(), PlannerValidationError> {
-    processor("", &[], &no_required_test_targets).validate(output)
+    processor("", &no_required_test_targets).validate(output)
 }
 
 fn validate_planner_explicit_targets(
@@ -25,27 +24,19 @@ fn validate_planner_explicit_targets(
     top_objective: &str,
     exempt_targets: &[String],
 ) -> Result<(), PlannerValidationError> {
-    processor(top_objective, &[], &no_required_test_targets)
+    processor(top_objective, &no_required_test_targets)
         .validate_explicit_targets(output, exempt_targets)
-}
-
-fn validate_planner_no_recreate(
-    output: &PlannerOutput,
-    top_objective: &str,
-    existing_files: &[&str],
-) -> Result<(), PlannerValidationError> {
-    processor(top_objective, existing_files, &no_required_test_targets).validate_no_recreate(output)
 }
 
 fn validate_planner_tests_required(
     output: &PlannerOutput,
     required_test_targets_fn: &dyn Fn(&[String]) -> Vec<String>,
 ) -> Result<(), PlannerValidationError> {
-    processor("", &[], required_test_targets_fn).validate_tests_required(output)
+    processor("", required_test_targets_fn).validate_tests_required(output)
 }
 
 fn planner_output_to_plan_output(output: PlannerOutput) -> PlanOutput {
-    processor("", &[], &no_required_test_targets).into_plan(output)
+    processor("", &no_required_test_targets).into_plan(output)
 }
 
 // ── Direct planner response parsing ─────────────────────────────────────────
@@ -272,13 +263,12 @@ fn plan_kind_task_still_requires_non_empty_objective() {
 }
 
 #[test]
-fn plan_kind_skips_explicit_target_no_recreate_and_tests_required_checks() {
+fn plan_kind_skips_explicit_target_and_tests_required_checks() {
     // Invariant: `kind: "plan"` tasks are exempt from target-based
-    // validation entirely (explicit targets, no-recreate, tests-required).
-    // This task's target shape — an existing infra file, not named by the
-    // objective, with no test target — would fail all three checks under
-    // `kind: "work"` (see other tests in this module); under `kind: "plan"`
-    // it must pass.
+    // validation entirely (explicit targets, tests-required). This task's
+    // target shape — a file not named by the objective, with no test target —
+    // would fail both checks under `kind: "work"` (see other tests in this
+    // module); under `kind: "plan"` it must pass.
     fn required_test_targets(_: &[String]) -> Vec<String> {
         vec!["tests/test_main.py".to_string()]
     }
@@ -293,76 +283,10 @@ fn plan_kind_skips_explicit_target_no_recreate_and_tests_required_checks() {
             &[],
         )],
     };
-    let processor =
-        PlannerOutputProcessor::new(top_objective, ["pyproject.toml"], &required_test_targets);
+    let processor = PlannerOutputProcessor::new(top_objective, &required_test_targets);
     assert!(
         processor.validate(&output).is_ok(),
-        "plan-kind output must skip explicit-target, no-recreate, and tests-required checks"
-    );
-}
-
-// ── No-recreate validation ───────────────────────────────────────────────────
-
-const PYTHON_INIT_FILES: &[&str] = &[
-    ".gitignore",
-    ".python-version",
-    "README.md",
-    "main.py",
-    "pyproject.toml",
-    "language.lock",
-];
-
-#[test]
-fn task_targeting_existing_file_not_in_objective_is_rejected() {
-    // Regression: planner created a task for an existing project file that
-    // the objective (which only mentions main.py) never names — originally
-    // ".python-version"; "README.md" is the same violation shape.
-    let top_objective = "Create a simple Python program in main.py that prints a short haiku about Python state machines.";
-    let cases: &[(&str, &str)] = &[("py-version", ".python-version"), ("readme", "README.md")];
-
-    for (task_id, filename) in cases {
-        let output = PlannerOutput {
-            kind: PlannerOutputKind::Work,
-            tasks: vec![PlannerTask {
-                id: task_id.to_string(),
-                objective: format!("Touch {filename}."),
-                operation: Some(PlannerOperation::Modify),
-                targets: vec![filename.to_string()],
-                depends_on: vec![],
-            }],
-        };
-        let err = validate_planner_no_recreate(&output, top_objective, PYTHON_INIT_FILES)
-            .expect_err(&format!(
-                "[{task_id}] must reject task targeting {filename} not in objective"
-            ));
-        assert_eq!(
-            err,
-            PlannerValidationError::TaskRecreatesExistingFile {
-                task_id: task_id.to_string(),
-                filename: filename.to_string(),
-            },
-            "[{task_id}]"
-        );
-    }
-}
-
-#[test]
-fn task_for_objective_target_only_passes_no_recreate_validation() {
-    // Only a main.py task — no infrastructure files touched.
-    let output = PlannerOutput {
-        kind: PlannerOutputKind::Work,
-        tasks: vec![PlannerTask {
-            id: "main".to_string(),
-            objective: "Write a haiku about Python state machines in main.py.".to_string(),
-            operation: Some(PlannerOperation::Modify),
-            targets: vec!["main.py".to_string()],
-            depends_on: vec![],
-        }],
-    };
-    let top_objective = "Create a simple Python program in main.py that prints a short haiku about Python state machines.";
-    assert!(
-        validate_planner_no_recreate(&output, top_objective, PYTHON_INIT_FILES).is_ok(),
-        "task targeting only main.py (which is in the objective) must pass"
+        "plan-kind output must skip explicit-target and tests-required checks"
     );
 }
 
@@ -546,44 +470,6 @@ fn explicit_objective_target_no_exemptions_rejects_test_target() {
     );
 }
 
-#[test]
-fn no_recreate_allows_existing_file_when_objective_names_it() {
-    // Objective explicitly targets pyproject.toml — planner task is allowed.
-    let output = PlannerOutput {
-        kind: PlannerOutputKind::Work,
-        tasks: vec![PlannerTask {
-            id: "config".to_string(),
-            objective: "Update pyproject.toml to add a new dependency.".to_string(),
-            operation: Some(PlannerOperation::Modify),
-            targets: vec!["pyproject.toml".to_string()],
-            depends_on: vec![],
-        }],
-    };
-    let top_objective = "Add ruff to pyproject.toml as a dev dependency.";
-    assert!(
-        validate_planner_no_recreate(&output, top_objective, PYTHON_INIT_FILES).is_ok(),
-        "task for pyproject.toml must pass when objective explicitly names it"
-    );
-}
-
-#[test]
-fn no_recreate_empty_existing_files_always_passes() {
-    let output = PlannerOutput {
-        kind: PlannerOutputKind::Work,
-        tasks: vec![PlannerTask {
-            id: "any".to_string(),
-            objective: "Create anything at all.".to_string(),
-            operation: Some(PlannerOperation::Modify),
-            targets: vec!["anything.txt".to_string()],
-            depends_on: vec![],
-        }],
-    };
-    assert!(
-        validate_planner_no_recreate(&output, "do something", &[] as &[&str]).is_ok(),
-        "empty existing_files must always pass"
-    );
-}
-
 // ── Mapping ─────────────────────────────────────────────────────────────────
 
 #[test]
@@ -686,7 +572,7 @@ fn task_targeting_only_derived_validation_targets_becomes_tester_role() {
             },
         ],
     };
-    let plan = processor("", &[], &required_test_targets).into_plan(output);
+    let plan = processor("", &required_test_targets).into_plan(output);
 
     let impl_child = plan
         .children
@@ -728,7 +614,7 @@ fn task_targeting_source_and_test_files_together_stays_untested_role() {
             depends_on: vec![],
         }],
     };
-    let plan = processor("", &[], &required_test_targets).into_plan(output);
+    let plan = processor("", &required_test_targets).into_plan(output);
 
     assert_eq!(plan.children[0].kind, NodeKind::Work);
     assert_eq!(plan.children[0].worker_role, None);

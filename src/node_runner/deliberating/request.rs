@@ -58,33 +58,18 @@ fn build_plan_validation_context(
     required_test_targets_fn: Arc<TestTargetsFn>,
 ) -> Option<PlanValidationContext> {
     let top_objective = request.objective.clone();
-    let existing_files: Vec<String> = request
-        .artifact_view
-        .as_ref()
-        .and_then(|v| v.list_files().ok())
-        .unwrap_or_default()
-        .into_iter()
-        .map(|p| p.to_string_lossy().into_owned())
-        .collect();
 
     // Check whether the adapter requires tests at all by probing a known code
     // extension. This avoids threading a separate boolean alongside the fn.
     let adapter_requires_tests = !required_test_targets_fn(&["_probe_.rs".to_string()]).is_empty();
 
-    if request.kind == NodeKind::Plan {
+    if request.kind == NodeKind::Plan || adapter_requires_tests {
         Some(PlanValidationContext {
             top_objective,
-            existing_files,
             required_test_targets_fn,
         })
-    } else if existing_files.is_empty() && !adapter_requires_tests {
-        None
     } else {
-        Some(PlanValidationContext {
-            top_objective,
-            existing_files,
-            required_test_targets_fn,
-        })
+        None
     }
 }
 
