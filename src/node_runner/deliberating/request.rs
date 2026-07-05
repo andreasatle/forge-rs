@@ -59,7 +59,10 @@ fn build_plan_validation_context(
     required_test_targets_fn: Arc<TestTargetsFn>,
     policy: &RolePolicy,
 ) -> Option<PlanValidationContext> {
-    if request.kind == NodeKind::OldPlan {
+    if matches!(
+        request.kind,
+        NodeKind::OldPlan | NodeKind::Decomposition | NodeKind::Plan
+    ) {
         Some(PlanValidationContext {
             required_test_targets_fn,
             available_worker_roles: policy.worker_role_descriptions.clone(),

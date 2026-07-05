@@ -212,7 +212,7 @@ fn select_grammar(
                     PRODUCER_GBNF
                 }
             }
-            NodeKind::OldPlan => {
+            NodeKind::OldPlan | NodeKind::Decomposition | NodeKind::Plan => {
                 if policy.planner_protocol_schema
                     == PLANNER_PROTOCOL_FOOTER_WITH_OPERATION_AND_ROLES
                 {
@@ -244,9 +244,18 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
             .and_then(|role| self.policy.worker_role_policies.get(role));
 
         let system = match (&request.node_kind, &request.role) {
-            (NodeKind::OldPlan, DeliberationRole::Producer) => &self.policy.planner_producer_system,
-            (NodeKind::OldPlan, DeliberationRole::Critic) => &self.policy.planner_critic_system,
-            (NodeKind::OldPlan, DeliberationRole::Referee) => &self.policy.planner_referee_system,
+            (
+                NodeKind::OldPlan | NodeKind::Decomposition | NodeKind::Plan,
+                DeliberationRole::Producer,
+            ) => &self.policy.planner_producer_system,
+            (
+                NodeKind::OldPlan | NodeKind::Decomposition | NodeKind::Plan,
+                DeliberationRole::Critic,
+            ) => &self.policy.planner_critic_system,
+            (
+                NodeKind::OldPlan | NodeKind::Decomposition | NodeKind::Plan,
+                DeliberationRole::Referee,
+            ) => &self.policy.planner_referee_system,
             (NodeKind::Work, DeliberationRole::Producer) => worker_role_policy
                 .map(|p| &p.producer_system)
                 .unwrap_or(&self.policy.worker_producer_system),
@@ -267,14 +276,16 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
         );
         // Only the Plan-node Producer sees the available worker roles — it is
         // the only role that assigns roles to tasks.
-        let worker_role_descriptions: &[(String, String)] = if request.node_kind
-            == NodeKind::OldPlan
-            && matches!(request.role, DeliberationRole::Producer)
-        {
-            &self.policy.worker_role_descriptions
-        } else {
-            &[]
-        };
+        let worker_role_descriptions: &[(String, String)] =
+            if matches!(
+                request.node_kind,
+                NodeKind::OldPlan | NodeKind::Decomposition | NodeKind::Plan
+            ) && matches!(request.role, DeliberationRole::Producer)
+            {
+                &self.policy.worker_role_descriptions
+            } else {
+                &[]
+            };
         let core_prompt = render_role_prompt_with_test_plan_context(RolePromptRender {
             system,
             role: &request.role,
@@ -426,8 +437,10 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
             }
 
             // Not a tool request — select parser based on role and node kind.
-            if request.node_kind == NodeKind::OldPlan
-                && matches!(request.role, DeliberationRole::Producer)
+            if matches!(
+                request.node_kind,
+                NodeKind::OldPlan | NodeKind::Decomposition | NodeKind::Plan
+            ) && matches!(request.role, DeliberationRole::Producer)
             {
                 let no_required_test_targets = |_: &[String]| Vec::new();
                 let processor = PlannerOutputProcessor::new(

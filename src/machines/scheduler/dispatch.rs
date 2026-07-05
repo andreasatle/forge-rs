@@ -73,7 +73,9 @@ pub(crate) fn dispatch_run_node<R: NodeRunner>(
 /// worker role when the node has one.
 fn progress_label(kind: &NodeKind, node_id: &NodeId, worker_role: &Option<String>) -> String {
     match kind {
-        NodeKind::OldPlan => format!("[planner {}]", node_id.short()),
+        NodeKind::OldPlan | NodeKind::Decomposition | NodeKind::Plan => {
+            format!("[planner {}]", node_id.short())
+        }
         NodeKind::Work => match worker_role {
             Some(role) => format!("[worker {}/{role}]", node_id.short()),
             None => format!("[worker {}]", node_id.short()),
