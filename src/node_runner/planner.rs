@@ -295,7 +295,7 @@ impl<'a> PlannerOutputProcessor<'a> {
                 }
             }
             (_, PlannerOutputKind::Work) => NodeKind::Work,
-            (_, PlannerOutputKind::Plan) => NodeKind::OldPlan,
+            (_, PlannerOutputKind::Plan) => NodeKind::Decomposition,
         };
 
         PlanOutput {

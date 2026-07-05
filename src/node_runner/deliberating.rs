@@ -158,8 +158,13 @@ impl<C: ProviderClient, S: ProviderClient> NodeRunner for DeliberatingNodeRunner
 
 impl<C, S> DeliberatingNodeRunner<C, S> {
     /// Stamp the plan-derived metadata and the correct validation plan onto
-    /// every non-`Plan` [`NodeRequest`] in `plan`, based on each child's
-    /// worker role.
+    /// every `Work` [`NodeRequest`] in `plan`, based on each child's worker
+    /// role.
+    ///
+    /// A `Decomposition` parent's children are themselves `Decomposition` or
+    /// `Plan` nodes, so this is a no-op for them — they carry no worker role
+    /// or concrete targets yet. A `Plan` parent's children are `Work` nodes
+    /// and get their validation plan stamped here.
     fn stamp_plan_metadata(
         &self,
         mut plan: crate::machines::scheduler::PlanOutput,
