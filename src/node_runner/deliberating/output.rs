@@ -16,9 +16,10 @@ pub(crate) fn map_output(
     telemetry: &dyn TelemetrySink,
 ) -> NodeRunResult {
     match output {
-        DeliberationTerminalOutput::Complete(out) => match kind {
+        DeliberationTerminalOutput::Complete(out) => match &kind {
             NodeKind::OldPlan | NodeKind::Decomposition | NodeKind::Plan => map_plan_output(
                 out.content,
+                kind,
                 required_test_targets_fn,
                 available_worker_roles,
                 telemetry,
@@ -61,6 +62,7 @@ pub(crate) fn map_output(
 ///   `PlannerOutputFallback` and returns `Failed` with `Terminal` recovery.
 fn map_plan_output(
     content: String,
+    parent_kind: NodeKind,
     required_test_targets_fn: &TestTargetsFn,
     available_worker_roles: &[(String, String)],
     telemetry: &dyn TelemetrySink,
@@ -82,7 +84,7 @@ fn map_plan_output(
                         dependency_count,
                     },
                 ));
-                NodeRunResult::PlanAccepted(processor.into_plan(planner_out))
+                NodeRunResult::PlanAccepted(processor.into_plan(planner_out, parent_kind))
             }
             Err(e) => {
                 let reason = e.to_string();

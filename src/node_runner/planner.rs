@@ -272,10 +272,17 @@ impl<'a> PlannerOutputProcessor<'a> {
         }
     }
 
-    pub(crate) fn into_plan(self, output: PlannerOutput) -> PlanOutput {
-        let child_kind = match output.kind {
-            PlannerOutputKind::Work => NodeKind::Work,
-            PlannerOutputKind::Plan => NodeKind::OldPlan,
+    pub(crate) fn into_plan(self, output: PlannerOutput, parent_kind: NodeKind) -> PlanOutput {
+        let child_kind = match (parent_kind, output.kind) {
+            (NodeKind::Decomposition, PlannerOutputKind::Plan) => {
+                if output.tasks.len() == 1 {
+                    NodeKind::Plan
+                } else {
+                    NodeKind::Decomposition
+                }
+            }
+            (_, PlannerOutputKind::Work) => NodeKind::Work,
+            (_, PlannerOutputKind::Plan) => NodeKind::OldPlan,
         };
 
         PlanOutput {

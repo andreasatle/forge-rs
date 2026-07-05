@@ -33,7 +33,14 @@ fn validate_planner_tests_required(
 }
 
 fn planner_output_to_plan_output(output: PlannerOutput) -> PlanOutput {
-    processor(&no_required_test_targets).into_plan(output)
+    processor(&no_required_test_targets).into_plan(output, NodeKind::OldPlan)
+}
+
+fn planner_output_to_plan_output_with_parent(
+    output: PlannerOutput,
+    parent_kind: NodeKind,
+) -> PlanOutput {
+    processor(&no_required_test_targets).into_plan(output, parent_kind)
 }
 
 // ── Direct planner response parsing ─────────────────────────────────────────
@@ -532,6 +539,80 @@ fn plan_kind_output_produces_plan_children_with_no_worker_role() {
         plan.children[1].dependencies,
         vec![NodeId("sub-a".to_string())]
     );
+}
+
+#[test]
+fn decomposition_parent_with_single_task_spawns_plan_child() {
+    // Invariant: a Decomposition node whose planner output contains exactly
+    // one task has reached a single bounded objective, so the child skips
+    // further decomposition and goes straight to `Plan`.
+    let output = PlannerOutput {
+        kind: PlannerOutputKind::Plan,
+        tasks: vec![PlannerTask {
+            id: "sub-a".to_string(),
+            objective: "decompose part a".to_string(),
+            operation: None,
+            role: None,
+            targets: vec![],
+            depends_on: vec![],
+        }],
+    };
+    let plan = planner_output_to_plan_output_with_parent(output, NodeKind::Decomposition);
+    assert_eq!(plan.children.len(), 1);
+    assert_eq!(plan.children[0].kind, NodeKind::Plan);
+}
+
+#[test]
+fn decomposition_parent_with_multiple_tasks_spawns_decomposition_children() {
+    // Invariant: a Decomposition node whose planner output contains more than
+    // one task has not yet reached a single bounded objective, so children
+    // continue as `Decomposition` for further breakdown.
+    let output = PlannerOutput {
+        kind: PlannerOutputKind::Plan,
+        tasks: vec![
+            PlannerTask {
+                id: "sub-a".to_string(),
+                objective: "decompose part a".to_string(),
+                operation: None,
+                role: None,
+                targets: vec![],
+                depends_on: vec![],
+            },
+            PlannerTask {
+                id: "sub-b".to_string(),
+                objective: "decompose part b".to_string(),
+                operation: None,
+                role: None,
+                targets: vec![],
+                depends_on: vec!["sub-a".to_string()],
+            },
+        ],
+    };
+    let plan = planner_output_to_plan_output_with_parent(output, NodeKind::Decomposition);
+    assert_eq!(plan.children.len(), 2);
+    for child in &plan.children {
+        assert_eq!(child.kind, NodeKind::Decomposition);
+    }
+}
+
+#[test]
+fn decomposition_parent_with_work_kind_output_spawns_work_children() {
+    // Invariant: the single-task rule only redirects `kind: "plan"` output —
+    // a Decomposition node whose planner emits `kind: "work"` still produces
+    // `Work` children regardless of task count.
+    let output = PlannerOutput {
+        kind: PlannerOutputKind::Work,
+        tasks: vec![PlannerTask {
+            id: "task".to_string(),
+            objective: "do the thing".to_string(),
+            operation: Some(PlannerOperation::Modify),
+            role: None,
+            targets: vec!["file.txt".to_string()],
+            depends_on: vec![],
+        }],
+    };
+    let plan = planner_output_to_plan_output_with_parent(output, NodeKind::Decomposition);
+    assert_eq!(plan.children[0].kind, NodeKind::Work);
 }
 
 #[test]
