@@ -330,18 +330,18 @@ fn planner_accepts_valid_planner_output() {
 fn planner_producer_grammar_and_footer_are_selected_by_node_kind() {
     // Invariant: Decomposition and Plan nodes use fixed schema variants
     // regardless of the adapter's configured `planner_protocol_schema` —
-    // Decomposition never assigns roles (no-operation, no-role grammar and
-    // footer), Plan always does (with-operation, with-roles grammar and
-    // footer).
-    use crate::roles::policy::{PLANNER_GBNF_WITH_ROLES, PLANNER_NO_OPERATION_GBNF};
+    // Decomposition only ever allows `kind: "decompose"` or `"plan"` (no
+    // operation, no role, no `"work"` option), Plan always uses the
+    // with-operation, with-roles grammar and footer.
+    use crate::roles::policy::{DECOMPOSITION_GBNF, PLANNER_GBNF_WITH_ROLES};
 
     let cases = [
         (
             "Decomposition",
             NodeKind::Decomposition,
-            r#"{"tasks":[{"id":"t1","objective":"do the thing","targets":["thing.txt"],"depends_on":[]}]}"#,
-            PLANNER_NO_OPERATION_GBNF,
-            "PlannerOutput: `tasks` must be a non-empty array.",
+            r#"{"kind":"decompose","tasks":[{"id":"t1","objective":"do the thing","depends_on":[]}]}"#,
+            DECOMPOSITION_GBNF,
+            "DecompositionOutput: top-level `kind` and `tasks` are both required",
         ),
         (
             "Plan",

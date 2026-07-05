@@ -15,7 +15,7 @@ use crate::node_runner::planner::PlannerOutputProcessor;
 use crate::providers::{ProviderClient, ProviderErrorKind, ProviderRequest, StructuredOutput};
 use crate::roles::TargetView;
 use crate::roles::policy::{
-    PLANNER_GBNF, PLANNER_GBNF_WITH_ROLES, PLANNER_NO_OPERATION_GBNF,
+    DECOMPOSITION_GBNF, PLANNER_GBNF, PLANNER_GBNF_WITH_ROLES, PLANNER_NO_OPERATION_GBNF,
     PLANNER_PROTOCOL_FOOTER_WITH_OPERATION, PLANNER_PROTOCOL_FOOTER_WITH_OPERATION_AND_ROLES,
     PRODUCER_GBNF, PRODUCER_TOOL_GBNF, REVIEWER_TOOL_GBNF, ROLE_GBNF, RolePolicy,
     planner_protocol_schema_for,
@@ -181,10 +181,10 @@ const MAX_RESPONSE_TOKENS: u32 = 1024;
 /// Select the GBNF grammar constraining a role's output to its exact
 /// response schema, rather than the generic JSON-object grammar.
 ///
-/// The Plan-family Producer schema is resolved by
-/// [`planner_protocol_schema_for`]: fixed for `Decomposition` and `Plan` —
-/// the same resolution the retry prompt uses to show the model the correct
-/// schema variant.
+/// `Decomposition` always uses [`DECOMPOSITION_GBNF`]. The `Plan` Producer
+/// schema is resolved by [`planner_protocol_schema_for`] — the same
+/// resolution the retry prompt uses to show the model the correct schema
+/// variant.
 ///
 /// `tools_active` selects between the union tool-call-or-final-response
 /// grammar and the final-response-only grammar. It is `true` only while the
@@ -213,7 +213,8 @@ fn select_grammar(
                     PRODUCER_GBNF
                 }
             }
-            NodeKind::Decomposition | NodeKind::Plan => {
+            NodeKind::Decomposition => DECOMPOSITION_GBNF,
+            NodeKind::Plan => {
                 let schema = planner_protocol_schema_for(node_kind, policy);
                 if schema == PLANNER_PROTOCOL_FOOTER_WITH_OPERATION_AND_ROLES {
                     PLANNER_GBNF_WITH_ROLES

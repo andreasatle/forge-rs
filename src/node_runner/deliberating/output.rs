@@ -11,6 +11,7 @@ use crate::node_runner::types::{NodeRunResult, NodeRunWorkResult};
 pub(crate) fn map_output(
     output: DeliberationTerminalOutput,
     kind: NodeKind,
+    objective: &str,
     required_test_targets_fn: &TestTargetsFn,
     available_worker_roles: &[(String, String)],
     telemetry: &dyn TelemetrySink,
@@ -20,6 +21,7 @@ pub(crate) fn map_output(
             NodeKind::Decomposition | NodeKind::Plan => map_plan_output(
                 out.content,
                 kind,
+                objective,
                 required_test_targets_fn,
                 available_worker_roles,
                 telemetry,
@@ -63,6 +65,7 @@ pub(crate) fn map_output(
 fn map_plan_output(
     content: String,
     parent_kind: NodeKind,
+    parent_objective: &str,
     required_test_targets_fn: &TestTargetsFn,
     available_worker_roles: &[(String, String)],
     telemetry: &dyn TelemetrySink,
@@ -84,7 +87,11 @@ fn map_plan_output(
                         dependency_count,
                     },
                 ));
-                NodeRunResult::PlanAccepted(processor.into_plan(planner_out, parent_kind))
+                NodeRunResult::PlanAccepted(processor.into_plan(
+                    planner_out,
+                    parent_kind,
+                    parent_objective,
+                ))
             }
             Err(e) => {
                 let reason = e.to_string();

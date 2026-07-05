@@ -41,6 +41,7 @@ pub(crate) fn run_with_provider<P: ProviderClient>(
     map_output(
         output,
         request.kind,
+        &request.objective,
         required_test_targets_fn.as_ref(),
         &policy.worker_role_descriptions,
         telemetry,

@@ -145,6 +145,27 @@ string ::=
 
 ws ::= ([ \t\n] ws)?"#;
 
+/// GBNF grammar constraining output to the `NodeKind::Decomposition` Producer
+/// schema: `{"kind":"decompose","tasks":[{"id":...,"objective":...,"depends_on":[...]}]}`
+/// or `{"kind":"plan","tasks":[]}`. Unlike [`PLANNER_GBNF`], `kind` is
+/// required (never omitted) and `"work"` is not a valid value; `decompose`
+/// tasks carry no `targets` or `role` field at all, and `plan` requires an
+/// explicit empty `tasks` array rather than omitting the field — `tasks`
+/// stays mandatory so parsing rejects unrelated JSON shapes.
+pub(crate) const DECOMPOSITION_GBNF: &str = r#"root ::= decompose | plan
+decompose ::= "{" ws "\"kind\"" ws ":" ws "\"decompose\"" ws "," ws "\"tasks\"" ws ":" ws "[" ws task (ws "," ws task)* ws "]" ws "}" ws
+plan ::= "{" ws "\"kind\"" ws ":" ws "\"plan\"" ws "," ws "\"tasks\"" ws ":" ws "[" ws "]" ws "}" ws
+task ::= "{" ws "\"id\"" ws ":" ws string ws "," ws "\"objective\"" ws ":" ws string ws "," ws "\"depends_on\"" ws ":" ws string-array ws "}" ws
+string-array ::= "[" ws (string (ws "," ws string)*)? ws "]" ws
+
+string ::=
+  "\"" (
+    [^\\"\x7F\x00-\x1F] |
+    "\\" (["\\/bfnrt] | "u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F])
+  )* "\"" ws
+
+ws ::= ([ \t\n] ws)?"#;
+
 /// Generic JSON-output-format constraints shared by every role's protocol
 /// footer: exactly one JSON object, no markdown or code fence, and no text
 /// before or after the JSON.
@@ -200,6 +221,16 @@ Execution failures are handled by the framework, not the model.";
 pub(crate) const PLANNER_PROTOCOL_FOOTER: &str = "PlannerOutput: `tasks` must be a non-empty array.\n\
 Each task requires `id`, `objective`, `targets`, and `depends_on`.\n\
 Each `targets` array must be non-empty and list exact files the task may create, modify, or delete.";
+
+/// JSON protocol instructions for the [`NodeKind::Decomposition`] Producer
+/// role: a required top-level `kind` field of exactly `"decompose"` or
+/// `"plan"`, with no `"work"` option.
+///
+/// Framework protocol, fixed by structural node kind rather than adapter
+/// configuration — see [`planner_protocol_schema_for`].
+pub(crate) const DECOMPOSITION_PROTOCOL_FOOTER: &str = "DecompositionOutput: top-level `kind` and `tasks` are both required; `kind` must be \"decompose\" or \"plan\".\n\
+\"decompose\": the objective spans multiple concerns and needs further breakdown. `tasks` must be non-empty; each task requires `id`, `objective`, and `depends_on` only — no `targets`, no `role`. Each task becomes a further Decomposition node.\n\
+\"plan\": the objective is already concrete and atomic, ready for a leaf planner to structure the work. `tasks` must be an empty array: return exactly `{\"kind\": \"plan\", \"tasks\": []}`. The objective becomes a single Plan node.";
 
 /// Generic role-identity and task-decomposition instruction for the Plan-node
 /// Producer role.
@@ -376,7 +407,7 @@ pub(crate) fn planner_protocol_schema_for<'a>(
     policy: &'a RolePolicy,
 ) -> &'a str {
     match node_kind {
-        NodeKind::Decomposition => PLANNER_PROTOCOL_FOOTER,
+        NodeKind::Decomposition => DECOMPOSITION_PROTOCOL_FOOTER,
         NodeKind::Plan => PLANNER_PROTOCOL_FOOTER_WITH_OPERATION_AND_ROLES,
         NodeKind::Work => &policy.planner_protocol_schema,
     }

@@ -33,6 +33,10 @@ pub struct PlannerTask {
     #[serde(default)]
     pub role: Option<String>,
     /// Explicit artifact files this task is allowed and expected to touch.
+    ///
+    /// Omitted (defaults empty) by [`NodeKind::Decomposition`]'s `decompose`
+    /// schema, whose tasks carry no file targets.
+    #[serde(default)]
     pub targets: Vec<String>,
     /// Ids of other tasks in the same output that must complete before this one.
     pub depends_on: Vec<String>,
@@ -60,11 +64,16 @@ pub enum PlannerOperation {
 #[serde(rename_all = "lowercase")]
 pub enum PlannerOutputKind {
     /// Tasks become `Work` children that perform concrete, bounded work.
+    /// Never produced by a [`NodeKind::Decomposition`] parent.
     #[default]
     Work,
-    /// Tasks become `Plan` children that will be decomposed further before
-    /// any work starts. Used when the objective is too complex to break down
-    /// into concrete file targets directly.
+    /// A [`NodeKind::Decomposition`] parent's objective still spans multiple
+    /// concerns: `tasks` become further `Decomposition` children.
+    Decompose,
+    /// The objective is atomic and ready for a leaf planner. Under a
+    /// [`NodeKind::Decomposition`] parent, `tasks` is an empty array — the
+    /// parent's own objective becomes a single `Plan` child. Under a `Plan`
+    /// parent, tasks become further `Decomposition` children instead.
     Plan,
 }
 
@@ -78,6 +87,12 @@ pub struct PlannerOutput {
     #[serde(default)]
     pub kind: PlannerOutputKind,
     /// The ordered list of tasks the planner wants the scheduler to execute.
+    ///
+    /// Always required in the JSON (never defaulted): a mandatory `tasks`
+    /// field is what lets parsing reject unrelated JSON shapes (e.g. the
+    /// Critic/Referee accept-or-reject wrapper) instead of silently matching
+    /// as an empty `PlannerOutput`. A [`NodeKind::Decomposition`] parent
+    /// reporting `kind: "plan"` sends an explicit empty array.
     pub tasks: Vec<PlannerTask>,
 }
 
@@ -192,11 +207,18 @@ impl<'a> PlannerOutputProcessor<'a> {
     /// not validated regardless of whether the adapter defines worker roles.
     /// A `Plan` parent validates role assignment as before, when the adapter
     /// defines worker roles.
+    ///
+    /// A `Decomposition` parent reporting `kind: "plan"` sends an empty
+    /// `tasks` array — the objective is atomic, so there is nothing to
+    /// validate; it maps to a single `Plan` child in [`Self::into_plan`].
     pub(crate) fn validate_structure(
         &self,
         output: &PlannerOutput,
         parent_kind: &NodeKind,
     ) -> Result<(), PlannerValidationError> {
+        if *parent_kind == NodeKind::Decomposition && output.kind == PlannerOutputKind::Plan {
+            return Ok(());
+        }
         if output.tasks.is_empty() {
             return Err(PlannerValidationError::EmptyTaskList);
         }
@@ -251,9 +273,13 @@ impl<'a> PlannerOutputProcessor<'a> {
         parent_kind: &NodeKind,
     ) -> Result<(), PlannerValidationError> {
         self.validate_structure(output, parent_kind)?;
-        if output.kind == PlannerOutputKind::Plan {
-            // Plan children have no concrete files yet, so target-based
-            // validation does not apply until they are decomposed further.
+        if matches!(
+            output.kind,
+            PlannerOutputKind::Plan | PlannerOutputKind::Decompose
+        ) {
+            // Plan and Decompose children have no concrete files yet,
+            // so target-based validation does not apply until they are
+            // decomposed further.
             return Ok(());
         }
         self.validate_tests_required(output)?;
@@ -285,17 +311,36 @@ impl<'a> PlannerOutputProcessor<'a> {
         }
     }
 
-    pub(crate) fn into_plan(self, output: PlannerOutput, parent_kind: NodeKind) -> PlanOutput {
-        let child_kind = match (parent_kind, output.kind) {
-            (NodeKind::Decomposition, PlannerOutputKind::Plan) => {
-                if output.tasks.len() == 1 {
-                    NodeKind::Plan
-                } else {
-                    NodeKind::Decomposition
-                }
-            }
-            (_, PlannerOutputKind::Work) => NodeKind::Work,
-            (_, PlannerOutputKind::Plan) => NodeKind::Decomposition,
+    /// Convert a validated [`PlannerOutput`] into a [`PlanOutput`] of child
+    /// [`NodeRequest`]s.
+    ///
+    /// `parent_objective` is the objective of the node that produced `output`
+    /// — used only when a `Decomposition` parent reports `kind: "plan"`,
+    /// since that response carries no task list of its own.
+    pub(crate) fn into_plan(
+        self,
+        output: PlannerOutput,
+        parent_kind: NodeKind,
+        parent_objective: &str,
+    ) -> PlanOutput {
+        if parent_kind == NodeKind::Decomposition && output.kind == PlannerOutputKind::Plan {
+            return PlanOutput {
+                children: vec![NodeRequest {
+                    id: NodeId("plan".to_string()),
+                    kind: NodeKind::Plan,
+                    worker_role: None,
+                    objective: parent_objective.to_string(),
+                    target_files: vec![],
+                    required_validation_targets: vec![],
+                    dependencies: vec![],
+                    validation_plan: None,
+                }],
+            };
+        }
+
+        let child_kind = match output.kind {
+            PlannerOutputKind::Work => NodeKind::Work,
+            PlannerOutputKind::Decompose | PlannerOutputKind::Plan => NodeKind::Decomposition,
         };
 
         PlanOutput {
