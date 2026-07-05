@@ -38,7 +38,7 @@ impl NodeRunner for StaticNodeRunner {
             });
         }
         match request.kind {
-            NodeKind::Plan => NodeRunResult::PlanAccepted(PlanOutput {
+            NodeKind::OldPlan => NodeRunResult::PlanAccepted(PlanOutput {
                 children: vec![NodeRequest {
                     id: NodeId("child-work".to_string()),
                     kind: NodeKind::Work,
@@ -67,7 +67,7 @@ mod tests {
 
     fn plan_request(objective: &str) -> NodeRunRequest {
         NodeRunRequest {
-            kind: NodeKind::Plan,
+            kind: NodeKind::OldPlan,
             node_id: NodeId("test-node".to_string()),
             objective: objective.to_string(),
             target_files: vec![],

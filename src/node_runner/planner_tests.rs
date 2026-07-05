@@ -498,7 +498,7 @@ fn planner_tasks_become_node_requests() {
 
 #[test]
 fn plan_kind_output_produces_plan_children_with_no_worker_role() {
-    // Invariant: `kind: "plan"` maps every task to a `NodeKind::Plan` child
+    // Invariant: `kind: "plan"` maps every task to a `NodeKind::OldPlan` child
     // (not the hardcoded `Work` of prior behavior), and such children never
     // get a "tester" worker role since they carry no concrete targets.
     let output = PlannerOutput {
@@ -525,7 +525,7 @@ fn plan_kind_output_produces_plan_children_with_no_worker_role() {
     let plan = planner_output_to_plan_output(output);
     assert_eq!(plan.children.len(), 2);
     for child in &plan.children {
-        assert_eq!(child.kind, NodeKind::Plan);
+        assert_eq!(child.kind, NodeKind::OldPlan);
         assert_eq!(child.worker_role, None);
     }
     assert_eq!(

@@ -17,7 +17,7 @@ fn plan_child_depth_limit_fails_scheduler() {
             plan: PlanOutput {
                 children: vec![NodeRequest {
                     id: NodeId("nested-plan".to_string()),
-                    kind: NodeKind::Plan,
+                    kind: NodeKind::OldPlan,
                     worker_role: None,
                     objective: "nested plan".to_string(),
                     target_files: vec![],

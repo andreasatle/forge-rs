@@ -56,7 +56,7 @@ impl NodeId {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum NodeKind {
     /// A planning node. Decomposes an objective into child nodes.
-    Plan,
+    OldPlan,
     /// An execution node. Carries out a concrete, bounded task.
     Work,
 }
@@ -671,7 +671,7 @@ pub(super) fn new_node_id() -> NodeId {
 
 pub(super) fn plan_child_depth(parent_depth: usize, kind: &NodeKind) -> usize {
     match kind {
-        NodeKind::Plan => parent_depth + 1,
+        NodeKind::OldPlan => parent_depth + 1,
         NodeKind::Work => parent_depth,
     }
 }
@@ -712,7 +712,7 @@ pub(super) fn invalid_node_event_reason(
             "node {} is Work but received PlanAccepted outcome",
             node_id.0
         )),
-        (NodeKind::Plan, SchedulerEvent::WorkAccepted { .. }) => Some(format!(
+        (NodeKind::OldPlan, SchedulerEvent::WorkAccepted { .. }) => Some(format!(
             "node {} is Plan but received WorkAccepted outcome",
             node_id.0
         )),

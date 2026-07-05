@@ -297,7 +297,7 @@ fn split_remaps_downstream_dependencies_and_chain_completes() {
         .find(|n| matches!(&n.origin, NodeOrigin::Split { source } if source.0 == "B"))
         .expect("split Plan node");
     let split_id = p.id.clone();
-    assert_eq!(p.kind, NodeKind::Plan);
+    assert_eq!(p.kind, NodeKind::OldPlan);
     assert_eq!(p.status, NodeStatus::Pending);
 
     // Verify: C's dependency was rewritten from B to P.
@@ -477,7 +477,7 @@ fn split_success_reports_recovery() {
             },
             Node {
                 id: split_id,
-                kind: NodeKind::Plan,
+                kind: NodeKind::OldPlan,
                 worker_role: None,
                 objective: "decompose complex task".to_string(),
                 target_files: vec![],

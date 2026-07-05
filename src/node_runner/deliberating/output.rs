@@ -17,7 +17,7 @@ pub(crate) fn map_output(
 ) -> NodeRunResult {
     match output {
         DeliberationTerminalOutput::Complete(out) => match kind {
-            NodeKind::Plan => map_plan_output(
+            NodeKind::OldPlan => map_plan_output(
                 out.content,
                 required_test_targets_fn,
                 available_worker_roles,

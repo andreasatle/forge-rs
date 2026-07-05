@@ -269,7 +269,7 @@ fn runtime_summary_uses_post_integration_artifact_commit() {
             _telemetry: &dyn crate::telemetry::TelemetrySink,
         ) -> NodeRunResult {
             match request.kind {
-                NodeKind::Plan => NodeRunResult::PlanAccepted(PlanOutput {
+                NodeKind::OldPlan => NodeRunResult::PlanAccepted(PlanOutput {
                     children: vec![NodeRequest {
                         id: NodeId("work".to_string()),
                         kind: NodeKind::Work,
@@ -456,7 +456,7 @@ fn successful_validated_run_sets_validation_passed_true() {
             _telemetry: &dyn crate::telemetry::TelemetrySink,
         ) -> NodeRunResult {
             match request.kind {
-                NodeKind::Plan => NodeRunResult::PlanAccepted(PlanOutput {
+                NodeKind::OldPlan => NodeRunResult::PlanAccepted(PlanOutput {
                     children: vec![NodeRequest {
                         id: NodeId("work".to_string()),
                         kind: NodeKind::Work,
@@ -540,7 +540,7 @@ fn validation_failure_sets_validation_passed_false_in_manifest() {
             _telemetry: &dyn crate::telemetry::TelemetrySink,
         ) -> NodeRunResult {
             match request.kind {
-                NodeKind::Plan => NodeRunResult::PlanAccepted(PlanOutput {
+                NodeKind::OldPlan => NodeRunResult::PlanAccepted(PlanOutput {
                     children: vec![NodeRequest {
                         id: NodeId("work".to_string()),
                         kind: NodeKind::Work,

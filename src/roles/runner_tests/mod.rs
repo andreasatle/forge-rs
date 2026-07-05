@@ -206,7 +206,7 @@ fn referee_request(objective: &str, producer_content: &str, critic_content: &str
 
 fn plan_request(objective: &str) -> RoleRequest {
     RoleRequest {
-        node_kind: NodeKind::Plan,
+        node_kind: NodeKind::OldPlan,
         ..producer_request(objective)
     }
 }

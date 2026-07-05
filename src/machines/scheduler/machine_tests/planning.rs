@@ -14,7 +14,7 @@ fn initial_state_creates_root_plan_node() {
     // Invariant: the root id is a freshly minted random UUID, not a
     // hardcoded "root" string.
     assert_ne!(root.id, NodeId("root".to_string()));
-    assert_eq!(root.kind, NodeKind::Plan);
+    assert_eq!(root.kind, NodeKind::OldPlan);
     assert_eq!(root.status, NodeStatus::Pending);
     assert_eq!(root.objective, "plan the project");
     assert!(root.dependencies.is_empty());

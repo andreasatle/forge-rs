@@ -121,7 +121,7 @@ impl ProviderClient for RecordingProvider {
 
 fn plan_request(objective: &str) -> NodeRunRequest {
     NodeRunRequest {
-        kind: NodeKind::Plan,
+        kind: NodeKind::OldPlan,
         node_id: NodeId("test-node".to_string()),
         objective: objective.to_string(),
         target_files: vec![],

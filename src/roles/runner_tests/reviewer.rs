@@ -102,7 +102,7 @@ fn plan_reviewer_can_accept_without_reading_files() {
 
     let output = runner.run_role(
         RoleRequest {
-            node_kind: NodeKind::Plan,
+            node_kind: NodeKind::OldPlan,
             ..critic_request("review the plan", "plan output")
         },
         &crate::telemetry::NoopTelemetry,

@@ -275,7 +275,7 @@ impl<'a> PlannerOutputProcessor<'a> {
     pub(crate) fn into_plan(self, output: PlannerOutput) -> PlanOutput {
         let child_kind = match output.kind {
             PlannerOutputKind::Work => NodeKind::Work,
-            PlannerOutputKind::Plan => NodeKind::Plan,
+            PlannerOutputKind::Plan => NodeKind::OldPlan,
         };
 
         PlanOutput {

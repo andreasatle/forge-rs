@@ -328,7 +328,7 @@ fn planner_handler_passes_no_tool_context_for_plan_nodes() {
 
         let effect = run_role_effect(
             DeliberationRole::Producer,
-            NodeKind::Plan,
+            NodeKind::OldPlan,
             "plan the work",
             None,
             None,
@@ -440,7 +440,7 @@ fn valid_single_task_plan_passes_semantic_validation() {
     }]);
     let effect = run_role_effect(
         DeliberationRole::Producer,
-        NodeKind::Plan,
+        NodeKind::OldPlan,
         "create foo.rs",
         None,
         None,
@@ -459,7 +459,7 @@ fn valid_single_task_plan_passes_semantic_validation() {
     let validation = handler.handle_effect(validate_producer_effect(
         VALID_SINGLE_TASK,
         false,
-        NodeKind::Plan,
+        NodeKind::OldPlan,
     ));
     assert!(
         matches!(
@@ -487,7 +487,7 @@ fn invalid_plan_triggers_revision_feedback() {
         ]);
         let effect = run_role_effect(
             DeliberationRole::Producer,
-            NodeKind::Plan,
+            NodeKind::OldPlan,
             "create foo.rs",
             None,
             None,
@@ -502,7 +502,7 @@ fn invalid_plan_triggers_revision_feedback() {
         );
         assert!(matches!(event, DeliberationEvent::ProducerAccepted { .. }));
         let validation =
-            handler.handle_effect(validate_producer_effect(content, false, NodeKind::Plan));
+            handler.handle_effect(validate_producer_effect(content, false, NodeKind::OldPlan));
         let DeliberationEvent::ProducerValidationRejected {
             retry:
                 ProducerValidationRetry {
@@ -546,7 +546,7 @@ fn repeated_invalid_plans_exhaust_retries_before_review() {
         };
         let (output, machine) = run_machine_with_telemetry(
             machine,
-            ready("create foo.rs", NodeKind::Plan, 1),
+            ready("create foo.rs", NodeKind::OldPlan, 1),
             &NoopTelemetry,
         );
 
@@ -600,7 +600,7 @@ fn empty_plan_revision_then_valid_plan_completes() {
             }, // Referee
         ]),
     };
-    let output = run_machine(machine, ready("create foo.rs", NodeKind::Plan, 1));
+    let output = run_machine(machine, ready("create foo.rs", NodeKind::OldPlan, 1));
     assert!(
         matches!(output, DeliberationTerminalOutput::Complete(_)),
         "run must complete after one revision; got {output:?}"
@@ -836,7 +836,7 @@ fn pooled_handler_builds_role_request_from_effect_not_construction_state() {
 
     handler.handle_effect(run_role_effect(
         DeliberationRole::Producer,
-        NodeKind::Plan,
+        NodeKind::OldPlan,
         "plan the work",
         None,
         None,
@@ -854,7 +854,7 @@ fn pooled_handler_builds_role_request_from_effect_not_construction_state() {
     let requests = handler.runner.requests.borrow();
     assert_eq!(
         requests[0].node_kind,
-        NodeKind::Plan,
+        NodeKind::OldPlan,
         "first RunRole effect declared Plan"
     );
     assert_eq!(
