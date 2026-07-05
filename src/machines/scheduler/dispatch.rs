@@ -73,7 +73,7 @@ pub(crate) fn dispatch_run_node<R: NodeRunner>(
 /// worker role when the node has one.
 fn progress_label(kind: &NodeKind, node_id: &NodeId, worker_role: &Option<String>) -> String {
     match kind {
-        NodeKind::OldPlan | NodeKind::Decomposition | NodeKind::Plan => {
+        NodeKind::Decomposition | NodeKind::Plan => {
             format!("[planner {}]", node_id.short())
         }
         NodeKind::Work => match worker_role {
@@ -129,7 +129,7 @@ mod tests {
         // Invariant: Plan nodes always render as "[planner <short id>]",
         // regardless of worker_role (which is always None for Plan nodes,
         // but the label must not depend on that being true).
-        let label = progress_label(&NodeKind::OldPlan, &NodeId("root".to_string()), &None);
+        let label = progress_label(&NodeKind::Plan, &NodeId("root".to_string()), &None);
         assert_eq!(
             label,
             format!("[planner {}]", NodeId("root".to_string()).short())

@@ -190,8 +190,8 @@ impl<'a> PlannerOutputProcessor<'a> {
     /// `parent_kind` gates the `MissingTaskRole` check: a `Decomposition`
     /// parent's tasks are never assigned worker roles, so role assignment is
     /// not validated regardless of whether the adapter defines worker roles.
-    /// Every other parent kind (`Plan`, `OldPlan`) validates role assignment
-    /// as before, when the adapter defines worker roles.
+    /// A `Plan` parent validates role assignment as before, when the adapter
+    /// defines worker roles.
     pub(crate) fn validate_structure(
         &self,
         output: &PlannerOutput,

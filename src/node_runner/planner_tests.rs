@@ -33,7 +33,7 @@ fn validate_planner_tests_required(
 }
 
 fn planner_output_to_plan_output(output: PlannerOutput) -> PlanOutput {
-    processor(&no_required_test_targets).into_plan(output, NodeKind::OldPlan)
+    processor(&no_required_test_targets).into_plan(output, NodeKind::Plan)
 }
 
 fn planner_output_to_plan_output_with_parent(
@@ -526,10 +526,8 @@ fn planner_tasks_become_node_requests() {
 #[test]
 fn plan_kind_output_produces_plan_children_with_no_worker_role() {
     // Invariant: `kind: "plan"` maps every task to a `NodeKind::Decomposition`
-    // child for a legacy `OldPlan` parent (not the hardcoded `Work` of prior
-    // behavior, and never `NodeKind::OldPlan` since that kind is never newly
-    // spawned), and such children never get a "tester" worker role since they
-    // carry no concrete targets.
+    // child (not the hardcoded `Work` of prior behavior), and such children
+    // never get a "tester" worker role since they carry no concrete targets.
     let output = PlannerOutput {
         kind: PlannerOutputKind::Plan,
         tasks: vec![

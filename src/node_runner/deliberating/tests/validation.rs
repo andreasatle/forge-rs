@@ -148,7 +148,7 @@ fn planner_missing_test_target_sends_revision_feedback_and_retries() {
     let runner = DeliberatingNodeRunner::new(&provider, &provider)
         .with_required_test_targets_fn(Arc::new(python_test_targets));
     let request = NodeRunRequest {
-        kind: NodeKind::OldPlan,
+        kind: NodeKind::Plan,
         node_id: NodeId("test-node".to_string()),
         // Objective does not name a specific file so the fast path does not apply
         // and the LLM planner is called with the scripted responses.

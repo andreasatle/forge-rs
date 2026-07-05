@@ -296,7 +296,7 @@ pub struct RolePolicy {
     /// re-show the exact schema variant the model was originally given
     /// (with or without the `operation` field) instead of guessing.
     ///
-    /// Applies to [`NodeKind::OldPlan`] only — [`NodeKind::Decomposition`]
+    /// Applies to [`NodeKind::Work`] only — [`NodeKind::Decomposition`]
     /// and [`NodeKind::Plan`] use the fixed schema variants selected by
     /// [`planner_protocol_schema_for`].
     pub planner_protocol_schema: String,
@@ -370,8 +370,7 @@ impl Default for RolePolicy {
 ///
 /// [`NodeKind::Decomposition`] nodes only ever decompose further, with no
 /// worker-role assignment; [`NodeKind::Plan`] nodes are the point where tasks
-/// are assigned worker roles and concrete file operations. [`NodeKind::OldPlan`]
-/// preserves the adapter-configured schema exactly as before this split.
+/// are assigned worker roles and concrete file operations.
 pub(crate) fn planner_protocol_schema_for<'a>(
     node_kind: &NodeKind,
     policy: &'a RolePolicy,
@@ -379,7 +378,7 @@ pub(crate) fn planner_protocol_schema_for<'a>(
     match node_kind {
         NodeKind::Decomposition => PLANNER_PROTOCOL_FOOTER,
         NodeKind::Plan => PLANNER_PROTOCOL_FOOTER_WITH_OPERATION_AND_ROLES,
-        NodeKind::OldPlan | NodeKind::Work => &policy.planner_protocol_schema,
+        NodeKind::Work => &policy.planner_protocol_schema,
     }
 }
 

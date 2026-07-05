@@ -117,10 +117,10 @@ fn review_contract_renders_for_reviewers_only() {
 }
 
 #[test]
-fn worker_role_descriptions_render_for_old_plan_and_plan_producer_only() {
+fn worker_role_descriptions_render_for_plan_producer_only() {
     // Invariant: the "Available worker roles" section is built from
     // RolePolicy::worker_role_descriptions and appears only in the
-    // OldPlan/Plan-node Producer's prompt — Critic, Referee, the Work-node
+    // Plan-node Producer's prompt — Critic, Referee, the Work-node
     // Producer, and the Decomposition-node Producer never assign roles, so
     // they must not see it.
     let policy = RolePolicy {
@@ -133,17 +133,8 @@ fn worker_role_descriptions_render_for_old_plan_and_plan_producer_only() {
 
     let cases = [
         (
-            "old plan producer",
-            plan_request("plan the work"),
-            PLAN_RESPONSE_WITH_ROLE,
-            true,
-        ),
-        (
             "plan producer",
-            RoleRequest {
-                node_kind: NodeKind::Plan,
-                ..plan_request("plan the work")
-            },
+            plan_request("plan the work"),
             PLAN_RESPONSE_WITH_ROLE,
             true,
         ),

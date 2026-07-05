@@ -477,7 +477,7 @@ fn split_success_reports_recovery() {
             },
             Node {
                 id: split_id,
-                kind: NodeKind::OldPlan,
+                kind: NodeKind::Plan,
                 worker_role: None,
                 objective: "decompose complex task".to_string(),
                 target_files: vec![],

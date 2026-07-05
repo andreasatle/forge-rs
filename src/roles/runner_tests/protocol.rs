@@ -332,7 +332,7 @@ fn planner_producer_grammar_and_footer_are_selected_by_node_kind() {
     // regardless of the adapter's configured `planner_protocol_schema` —
     // Decomposition never assigns roles (no-operation, no-role grammar and
     // footer), Plan always does (with-operation, with-roles grammar and
-    // footer). OldPlan keeps deferring to the adapter's configured schema.
+    // footer).
     use crate::roles::policy::{PLANNER_GBNF_WITH_ROLES, PLANNER_NO_OPERATION_GBNF};
 
     let cases = [

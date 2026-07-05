@@ -93,7 +93,7 @@ fn event_kind_or_status_mismatch_fails_with_protocol_violation() {
                     summary: "done".to_string(),
                 },
             },
-            expected_detail: "node P is OldPlan but IntegrationReturned requires a Work node",
+            expected_detail: "node P is Plan but IntegrationReturned requires a Work node",
         },
     ];
 
