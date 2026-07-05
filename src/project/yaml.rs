@@ -55,11 +55,12 @@ impl ProjectAdapter for YamlProjectAdapter {
         } else {
             PLANNER_PROTOCOL_FOOTER_WITH_OPERATION_AND_ROLES
         };
+        let planner_producer_base = format!(
+            "Role:\n{PLANNER_PRODUCER_IDENTITY}\n{}\nConstraints:\n{GENERIC_CONSTRAINTS}",
+            render_role_prompt(&planner.producer)
+        );
         RolePolicy {
-            planner_producer_system: format!(
-                "Role:\n{PLANNER_PRODUCER_IDENTITY}\n{}\nConstraints:\n{GENERIC_CONSTRAINTS}\n{planner_protocol_footer}",
-                render_role_prompt(&planner.producer)
-            ),
+            planner_producer_system: format!("{planner_producer_base}\n{planner_protocol_footer}"),
             worker_producer_system: format!(
                 "Role:\n{WORKER_PRODUCER_IDENTITY}\n{}\nConstraints:\n{GENERIC_CONSTRAINTS}\n{WORK_PRODUCER_SYSTEM}",
                 render_role_prompt(&worker.producer)
@@ -81,6 +82,7 @@ impl ProjectAdapter for YamlProjectAdapter {
                 render_role_prompt(&worker.referee)
             ),
             planner_protocol_schema: planner_protocol_footer.to_string(),
+            planner_producer_base,
             language_guidance: None,
             language_constraints: None,
             worker_role_descriptions: self

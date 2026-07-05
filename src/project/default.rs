@@ -48,6 +48,7 @@ mod tests {
             policy.planner_protocol_schema,
             expected.planner_protocol_schema
         );
+        assert_eq!(policy.planner_producer_base, expected.planner_producer_base);
         assert_eq!(policy.language_guidance, expected.language_guidance);
         assert_eq!(policy.language_constraints, expected.language_constraints);
         assert_eq!(

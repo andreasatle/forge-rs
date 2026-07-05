@@ -186,9 +186,16 @@ impl<'a> PlannerOutputProcessor<'a> {
     }
 
     /// Validate structural constraints that do not require run context.
+    ///
+    /// `parent_kind` gates the `MissingTaskRole` check: a `Decomposition`
+    /// parent's tasks are never assigned worker roles, so role assignment is
+    /// not validated regardless of whether the adapter defines worker roles.
+    /// Every other parent kind (`Plan`, `OldPlan`) validates role assignment
+    /// as before, when the adapter defines worker roles.
     pub(crate) fn validate_structure(
         &self,
         output: &PlannerOutput,
+        parent_kind: &NodeKind,
     ) -> Result<(), PlannerValidationError> {
         if output.tasks.is_empty() {
             return Err(PlannerValidationError::EmptyTaskList);
@@ -205,7 +212,9 @@ impl<'a> PlannerOutputProcessor<'a> {
                 if task.targets.is_empty() || task.targets.iter().any(|t| t.trim().is_empty()) {
                     return Err(PlannerValidationError::EmptyTargets(task.id.clone()));
                 }
-                if !self.available_worker_roles.is_empty() {
+                if *parent_kind != NodeKind::Decomposition
+                    && !self.available_worker_roles.is_empty()
+                {
                     let role_is_valid = task.role.as_deref().is_some_and(|role| {
                         self.available_worker_roles
                             .iter()
@@ -236,8 +245,12 @@ impl<'a> PlannerOutputProcessor<'a> {
         Ok(())
     }
 
-    pub(crate) fn validate(&self, output: &PlannerOutput) -> Result<(), PlannerValidationError> {
-        self.validate_structure(output)?;
+    pub(crate) fn validate(
+        &self,
+        output: &PlannerOutput,
+        parent_kind: &NodeKind,
+    ) -> Result<(), PlannerValidationError> {
+        self.validate_structure(output, parent_kind)?;
         if output.kind == PlannerOutputKind::Plan {
             // Plan children have no concrete files yet, so target-based
             // validation does not apply until they are decomposed further.

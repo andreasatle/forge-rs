@@ -117,11 +117,12 @@ fn review_contract_renders_for_reviewers_only() {
 }
 
 #[test]
-fn worker_role_descriptions_render_for_planner_producer_only() {
+fn worker_role_descriptions_render_for_old_plan_and_plan_producer_only() {
     // Invariant: the "Available worker roles" section is built from
     // RolePolicy::worker_role_descriptions and appears only in the
-    // Plan-node Producer's prompt — Critic, Referee, and the Work-node
-    // Producer never assign roles, so they must not see it.
+    // OldPlan/Plan-node Producer's prompt — Critic, Referee, the Work-node
+    // Producer, and the Decomposition-node Producer never assign roles, so
+    // they must not see it.
     let policy = RolePolicy {
         worker_role_descriptions: vec![
             ("tester".to_string(), "Writes test files.".to_string()),
@@ -132,33 +133,55 @@ fn worker_role_descriptions_render_for_planner_producer_only() {
 
     let cases = [
         (
-            "planner producer",
+            "old plan producer",
             plan_request("plan the work"),
             PLAN_RESPONSE_WITH_ROLE,
+            true,
+        ),
+        (
+            "plan producer",
+            RoleRequest {
+                node_kind: NodeKind::Plan,
+                ..plan_request("plan the work")
+            },
+            PLAN_RESPONSE_WITH_ROLE,
+            true,
+        ),
+        (
+            "decomposition producer",
+            RoleRequest {
+                node_kind: NodeKind::Decomposition,
+                ..plan_request("decompose the work")
+            },
+            PLAN_RESPONSE,
+            false,
         ),
         (
             "worker producer",
             producer_request("do the work"),
             r#"{"summary":"work done"}"#,
+            false,
         ),
         (
             "critic",
             critic_request("review the draft", "draft"),
             r#"{"status":"rejected","reason":"needs work"}"#,
+            false,
         ),
         (
             "referee",
             referee_request("approve the result", "draft", "review"),
             r#"{"status":"rejected","reason":"not ready"}"#,
+            false,
         ),
     ];
 
-    for (label, request, response) in cases {
+    for (label, request, response, expects_worker_roles) in cases {
         let provider = ScriptedProvider::from_strs(&[response]);
         let runner = ProviderRoleRunner::new_with_policy(&provider, policy.clone());
         runner.run_role(request, &crate::telemetry::NoopTelemetry);
         let prompt = provider.requests.borrow()[0].prompt.clone();
-        if label == "planner producer" {
+        if expects_worker_roles {
             assert!(
                 prompt.contains("Available worker roles:")
                     && prompt.contains("- tester: Writes test files.")

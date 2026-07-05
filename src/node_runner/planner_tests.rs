@@ -22,7 +22,7 @@ fn try_parse_planner_response(raw: &str) -> Result<PlannerOutput, String> {
 }
 
 fn validate_planner_output(output: &PlannerOutput) -> Result<(), PlannerValidationError> {
-    processor(&no_required_test_targets).validate(output)
+    processor(&no_required_test_targets).validate(output, &NodeKind::Plan)
 }
 
 fn validate_planner_tests_required(
@@ -247,7 +247,7 @@ fn work_task_missing_role_rejected_when_adapter_defines_worker_roles() {
         tasks: vec![planner_task("task", "do something", &["task.txt"], &[])],
     };
     let err = processor_with_roles(&no_required_test_targets, &roles)
-        .validate(&output)
+        .validate(&output, &NodeKind::Plan)
         .expect_err("task with no role must fail validation when roles are configured");
     assert_eq!(
         err,
@@ -268,7 +268,7 @@ fn work_task_with_unknown_role_rejected_when_adapter_defines_worker_roles() {
     };
     output.tasks[0].role = Some("nonexistent-role".to_string());
     let err = processor_with_roles(&no_required_test_targets, &roles)
-        .validate(&output)
+        .validate(&output, &NodeKind::Plan)
         .expect_err("task with unrecognized role must fail validation");
     assert_eq!(
         err,
@@ -290,9 +290,29 @@ fn work_task_with_valid_role_passes_when_adapter_defines_worker_roles() {
     output.tasks[0].role = Some("implementer".to_string());
     assert!(
         processor_with_roles(&no_required_test_targets, &roles)
-            .validate(&output)
+            .validate(&output, &NodeKind::Plan)
             .is_ok(),
         "task with a valid role must pass validation"
+    );
+}
+
+#[test]
+fn work_task_missing_role_not_enforced_under_decomposition_parent() {
+    // Invariant: Decomposition tasks are never assigned worker roles, so a
+    // Decomposition parent must skip role validation entirely even though
+    // the adapter defines worker roles and the task itself has none — unlike
+    // a Plan parent (see `work_task_missing_role_rejected_when_adapter_defines_worker_roles`),
+    // which enforces it.
+    let roles = [("implementer".to_string(), "Implements code.".to_string())];
+    let output = PlannerOutput {
+        kind: PlannerOutputKind::Work,
+        tasks: vec![planner_task("task", "do something", &["task.txt"], &[])],
+    };
+    assert!(
+        processor_with_roles(&no_required_test_targets, &roles)
+            .validate(&output, &NodeKind::Decomposition)
+            .is_ok(),
+        "task with no role must pass validation under a Decomposition parent"
     );
 }
 
@@ -323,7 +343,7 @@ fn plan_kind_task_missing_role_skips_role_validation() {
     };
     assert!(
         processor_with_roles(&no_required_test_targets, &roles)
-            .validate(&output)
+            .validate(&output, &NodeKind::Plan)
             .is_ok(),
         "plan-kind task must not require a role even when worker roles are configured"
     );
@@ -380,7 +400,7 @@ fn plan_kind_skips_tests_required_check() {
     };
     let processor = PlannerOutputProcessor::new(&required_test_targets, &[]);
     assert!(
-        processor.validate(&output).is_ok(),
+        processor.validate(&output, &NodeKind::Plan).is_ok(),
         "plan-kind output must skip the tests-required check"
     );
 }

@@ -11,6 +11,8 @@
 //! [`DeliberationRole::Producer`]: crate::machines::deliberation::DeliberationRole
 //! [`NodeKind`]: crate::machines::scheduler::NodeKind
 
+use crate::machines::scheduler::NodeKind;
+
 /// GBNF grammar constraining output to the Work-node Producer's
 /// `{"summary": "..."}` schema.
 pub(crate) const PRODUCER_GBNF: &str = r#"root ::= "{" ws "\"summary\"" ws ":" ws string ws "}" ws
@@ -293,7 +295,20 @@ pub struct RolePolicy {
     /// `planner_producer_system`, kept separately so retry prompts can
     /// re-show the exact schema variant the model was originally given
     /// (with or without the `operation` field) instead of guessing.
+    ///
+    /// Applies to [`NodeKind::OldPlan`] only — [`NodeKind::Decomposition`]
+    /// and [`NodeKind::Plan`] use the fixed schema variants selected by
+    /// [`planner_protocol_schema_for`].
     pub planner_protocol_schema: String,
+    /// `planner_producer_system` with the trailing protocol-schema footer
+    /// removed: role identity, adapter instructions/constraints, and the
+    /// generic JSON-format constraints, but no task-schema footer.
+    ///
+    /// Combined with a node-kind-specific footer to build the
+    /// [`NodeKind::Decomposition`] and [`NodeKind::Plan`] Producer system
+    /// prompts, which use fixed schema variants rather than the adapter's
+    /// configured `planner_protocol_schema`.
+    pub planner_producer_base: String,
     /// Language-specific guidance injected as its own section between the
     /// adapter system prompt and the tool section, when set.
     ///
@@ -331,14 +346,16 @@ pub struct RolePolicy {
 
 impl Default for RolePolicy {
     fn default() -> Self {
+        let planner_producer_base = GENERIC_CONSTRAINTS.to_string();
         Self {
-            planner_producer_system: format!("{GENERIC_CONSTRAINTS}\n{PLANNER_PROTOCOL_FOOTER}"),
+            planner_producer_system: format!("{planner_producer_base}\n{PLANNER_PROTOCOL_FOOTER}"),
             worker_producer_system: format!("{GENERIC_CONSTRAINTS}\n{WORK_PRODUCER_SYSTEM}"),
             planner_critic_system: format!("{GENERIC_CONSTRAINTS}\n{DEFAULT_SYSTEM}"),
             worker_critic_system: format!("{GENERIC_CONSTRAINTS}\n{DEFAULT_SYSTEM}"),
             planner_referee_system: format!("{GENERIC_CONSTRAINTS}\n{DEFAULT_SYSTEM}"),
             worker_referee_system: format!("{GENERIC_CONSTRAINTS}\n{DEFAULT_SYSTEM}"),
             planner_protocol_schema: PLANNER_PROTOCOL_FOOTER.to_string(),
+            planner_producer_base,
             language_guidance: None,
             language_constraints: None,
             worker_role_descriptions: Vec::new(),
@@ -347,74 +364,25 @@ impl Default for RolePolicy {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn default_system_prompts_have_expected_role_schemas() {
-        let policy = RolePolicy::default();
-
-        assert_schema(
-            &policy.planner_producer_system,
-            &["`tasks`"],
-            &["`status`", "`summary`"],
-        );
-        assert_schema(
-            &policy.worker_producer_system,
-            &["`summary`"],
-            &["`status`", "`tasks`"],
-        );
-
-        for system in [
-            &policy.planner_critic_system,
-            &policy.worker_critic_system,
-            &policy.planner_referee_system,
-            &policy.worker_referee_system,
-        ] {
-            assert_schema(
-                system,
-                &["`status`", "`content`", "`reason`"],
-                &["`summary`", "`tasks`"],
-            );
-        }
-    }
-
-    #[test]
-    fn default_system_prompts_have_no_placeholder_values() {
-        let policy = RolePolicy::default();
-        for system in [
-            &policy.planner_producer_system,
-            &policy.worker_producer_system,
-            &policy.planner_critic_system,
-            &policy.worker_critic_system,
-            &policy.planner_referee_system,
-            &policy.worker_referee_system,
-            &policy.planner_protocol_schema,
-        ] {
-            assert!(
-                !system.contains('$'),
-                "system prompt contains `$`: {system}"
-            );
-            assert!(
-                !system.contains("\"...\""),
-                "system prompt contains placeholder JSON value: {system}"
-            );
-        }
-    }
-
-    fn assert_schema(system: &str, required: &[&str], forbidden: &[&str]) {
-        for field in required {
-            assert!(
-                system.contains(field),
-                "schema is missing {field}: {system}"
-            );
-        }
-        for field in forbidden {
-            assert!(
-                !system.contains(field),
-                "schema includes unexpected {field}: {system}"
-            );
-        }
+/// Select the planner protocol footer — and therefore the task output schema
+/// — for a Plan-family Producer, based on structural node kind rather than
+/// adapter configuration.
+///
+/// [`NodeKind::Decomposition`] nodes only ever decompose further, with no
+/// worker-role assignment; [`NodeKind::Plan`] nodes are the point where tasks
+/// are assigned worker roles and concrete file operations. [`NodeKind::OldPlan`]
+/// preserves the adapter-configured schema exactly as before this split.
+pub(crate) fn planner_protocol_schema_for<'a>(
+    node_kind: &NodeKind,
+    policy: &'a RolePolicy,
+) -> &'a str {
+    match node_kind {
+        NodeKind::Decomposition => PLANNER_PROTOCOL_FOOTER,
+        NodeKind::Plan => PLANNER_PROTOCOL_FOOTER_WITH_OPERATION_AND_ROLES,
+        NodeKind::OldPlan | NodeKind::Work => &policy.planner_protocol_schema,
     }
 }
+
+#[cfg(test)]
+#[path = "policy_tests.rs"]
+mod tests;

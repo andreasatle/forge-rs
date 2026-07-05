@@ -72,7 +72,7 @@ fn map_plan_output(
     let processor = PlannerOutputProcessor::new(required_test_targets_fn, available_worker_roles);
 
     match processor.parse_content(&content) {
-        Some(planner_out) => match processor.validate_structure(&planner_out) {
+        Some(planner_out) => match processor.validate_structure(&planner_out, &parent_kind) {
             Ok(()) => {
                 let task_count = planner_out.tasks.len();
                 let dependency_count: usize =

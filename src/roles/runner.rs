@@ -18,6 +18,7 @@ use crate::roles::policy::{
     PLANNER_GBNF, PLANNER_GBNF_WITH_ROLES, PLANNER_NO_OPERATION_GBNF,
     PLANNER_PROTOCOL_FOOTER_WITH_OPERATION, PLANNER_PROTOCOL_FOOTER_WITH_OPERATION_AND_ROLES,
     PRODUCER_GBNF, PRODUCER_TOOL_GBNF, REVIEWER_TOOL_GBNF, ROLE_GBNF, RolePolicy,
+    planner_protocol_schema_for,
 };
 use crate::services::extract_json_object;
 use crate::telemetry::{TelemetryEvent, TelemetryRecord, TelemetrySink};
@@ -180,10 +181,11 @@ const MAX_RESPONSE_TOKENS: u32 = 1024;
 /// Select the GBNF grammar constraining a role's output to its exact
 /// response schema, rather than the generic JSON-object grammar.
 ///
-/// The Plan-node Producer schema depends on whether the active adapter's
-/// task schema carries an `operation` field — inferred from
-/// `planner_protocol_schema`, the same field the retry prompt already uses
-/// to show the model the correct schema variant.
+/// The Plan-family Producer schema is resolved by
+/// [`planner_protocol_schema_for`]: fixed for `Decomposition` and `Plan`,
+/// adapter-configured (`planner_protocol_schema`) for `OldPlan` — the same
+/// resolution the retry prompt uses to show the model the correct schema
+/// variant.
 ///
 /// `tools_active` selects between the union tool-call-or-final-response
 /// grammar and the final-response-only grammar. It is `true` only while the
@@ -213,11 +215,10 @@ fn select_grammar(
                 }
             }
             NodeKind::OldPlan | NodeKind::Decomposition | NodeKind::Plan => {
-                if policy.planner_protocol_schema
-                    == PLANNER_PROTOCOL_FOOTER_WITH_OPERATION_AND_ROLES
-                {
+                let schema = planner_protocol_schema_for(node_kind, policy);
+                if schema == PLANNER_PROTOCOL_FOOTER_WITH_OPERATION_AND_ROLES {
                     PLANNER_GBNF_WITH_ROLES
-                } else if policy.planner_protocol_schema == PLANNER_PROTOCOL_FOOTER_WITH_OPERATION {
+                } else if schema == PLANNER_PROTOCOL_FOOTER_WITH_OPERATION {
                     PLANNER_GBNF
                 } else {
                     PLANNER_NO_OPERATION_GBNF
@@ -243,28 +244,36 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
             .as_deref()
             .and_then(|role| self.policy.worker_role_policies.get(role));
 
-        let system = match (&request.node_kind, &request.role) {
-            (
-                NodeKind::OldPlan | NodeKind::Decomposition | NodeKind::Plan,
-                DeliberationRole::Producer,
-            ) => &self.policy.planner_producer_system,
+        // Decomposition and Plan Producer prompts use a fixed schema variant
+        // rebuilt from `planner_producer_base`, rather than the adapter's
+        // configured `planner_producer_system` (which OldPlan still uses
+        // unchanged) — see `planner_protocol_schema_for`.
+        let system: String = match (&request.node_kind, &request.role) {
+            (NodeKind::Decomposition | NodeKind::Plan, DeliberationRole::Producer) => format!(
+                "{}\n{}",
+                self.policy.planner_producer_base,
+                planner_protocol_schema_for(&request.node_kind, &self.policy)
+            ),
+            (NodeKind::OldPlan, DeliberationRole::Producer) => {
+                self.policy.planner_producer_system.clone()
+            }
             (
                 NodeKind::OldPlan | NodeKind::Decomposition | NodeKind::Plan,
                 DeliberationRole::Critic,
-            ) => &self.policy.planner_critic_system,
+            ) => self.policy.planner_critic_system.clone(),
             (
                 NodeKind::OldPlan | NodeKind::Decomposition | NodeKind::Plan,
                 DeliberationRole::Referee,
-            ) => &self.policy.planner_referee_system,
+            ) => self.policy.planner_referee_system.clone(),
             (NodeKind::Work, DeliberationRole::Producer) => worker_role_policy
-                .map(|p| &p.producer_system)
-                .unwrap_or(&self.policy.worker_producer_system),
+                .map(|p| p.producer_system.clone())
+                .unwrap_or_else(|| self.policy.worker_producer_system.clone()),
             (NodeKind::Work, DeliberationRole::Critic) => worker_role_policy
-                .map(|p| &p.critic_system)
-                .unwrap_or(&self.policy.worker_critic_system),
+                .map(|p| p.critic_system.clone())
+                .unwrap_or_else(|| self.policy.worker_critic_system.clone()),
             (NodeKind::Work, DeliberationRole::Referee) => worker_role_policy
-                .map(|p| &p.referee_system)
-                .unwrap_or(&self.policy.worker_referee_system),
+                .map(|p| p.referee_system.clone())
+                .unwrap_or_else(|| self.policy.worker_referee_system.clone()),
         };
 
         let review_contract = NodeReviewContract::for_role(
@@ -274,20 +283,20 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
             &request.test_plan_context,
             has_tools,
         );
-        // Only the Plan-node Producer sees the available worker roles — it is
-        // the only role that assigns roles to tasks.
+        // Only the OldPlan/Plan-node Producer sees the available worker
+        // roles — those are the only kinds that assign roles to tasks.
+        // Decomposition tasks have no roles, so the section is omitted from
+        // their prompt even when the adapter defines worker roles.
         let worker_role_descriptions: &[(String, String)] =
-            if matches!(
-                request.node_kind,
-                NodeKind::OldPlan | NodeKind::Decomposition | NodeKind::Plan
-            ) && matches!(request.role, DeliberationRole::Producer)
+            if matches!(request.node_kind, NodeKind::OldPlan | NodeKind::Plan)
+                && matches!(request.role, DeliberationRole::Producer)
             {
                 &self.policy.worker_role_descriptions
             } else {
                 &[]
             };
         let core_prompt = render_role_prompt_with_test_plan_context(RolePromptRender {
-            system,
+            system: &system,
             role: &request.role,
             objective: &request.objective,
             context: &request.context,
@@ -447,62 +456,65 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                     &no_required_test_targets,
                     &self.policy.worker_role_descriptions,
                 );
+                let planner_schema = planner_protocol_schema_for(&request.node_kind, &self.policy);
                 // Direct PlannerOutput path: no status/content wrapper.
                 match processor.parse_response(&response.content) {
-                    Ok(planner_out) => match processor.validate_structure(&planner_out) {
-                        Ok(()) => {
-                            telemetry.record(TelemetryRecord::new_with_subsource(
-                                "RoleMachine",
-                                subsource,
-                                TelemetryEvent::ParseSucceeded {
-                                    attempt_count: tools.current_attempt(),
-                                },
-                            ));
-                            let canonical = serde_json::to_string(&planner_out)
-                                .expect("validated PlannerOutput must serialize");
-                            let artifact_changed = tools.artifact_changed();
-                            return RoleRunOutput {
-                                result: RoleResult::Accepted { content: canonical },
-                                artifact_changed,
-                            };
-                        }
-                        Err(e) => {
-                            let err = format!("planner output validation failed: {e}");
-                            telemetry.record(TelemetryRecord::new_with_subsource(
-                                "RoleMachine",
-                                subsource,
-                                TelemetryEvent::ParseFailed {
-                                    raw_response: response.content.clone(),
-                                    parse_error: err.clone(),
-                                    attempt_count: tools.current_attempt(),
-                                },
-                            ));
-                            if !tools.allow_model_call() {
+                    Ok(planner_out) => {
+                        match processor.validate_structure(&planner_out, &request.node_kind) {
+                            Ok(()) => {
+                                telemetry.record(TelemetryRecord::new_with_subsource(
+                                    "RoleMachine",
+                                    subsource,
+                                    TelemetryEvent::ParseSucceeded {
+                                        attempt_count: tools.current_attempt(),
+                                    },
+                                ));
+                                let canonical = serde_json::to_string(&planner_out)
+                                    .expect("validated PlannerOutput must serialize");
                                 let artifact_changed = tools.artifact_changed();
                                 return RoleRunOutput {
-                                    result: RoleResult::Failed {
-                                        kind: FailureKind::PlannerValidationFailure,
-                                        reason: err,
-                                    },
+                                    result: RoleResult::Accepted { content: canonical },
                                     artifact_changed,
                                 };
                             }
-                            tools.record_protocol_failure();
-                            telemetry.record(TelemetryRecord::new_with_subsource(
-                                "RoleMachine",
-                                subsource,
-                                TelemetryEvent::ProtocolRetry {
-                                    parse_error: err.clone(),
-                                    attempt_count: tools.current_attempt(),
-                                },
-                            ));
-                            tools.render_planner_retry_prompt(
-                                &err,
-                                &response.content,
-                                &self.policy.planner_protocol_schema,
-                            );
+                            Err(e) => {
+                                let err = format!("planner output validation failed: {e}");
+                                telemetry.record(TelemetryRecord::new_with_subsource(
+                                    "RoleMachine",
+                                    subsource,
+                                    TelemetryEvent::ParseFailed {
+                                        raw_response: response.content.clone(),
+                                        parse_error: err.clone(),
+                                        attempt_count: tools.current_attempt(),
+                                    },
+                                ));
+                                if !tools.allow_model_call() {
+                                    let artifact_changed = tools.artifact_changed();
+                                    return RoleRunOutput {
+                                        result: RoleResult::Failed {
+                                            kind: FailureKind::PlannerValidationFailure,
+                                            reason: err,
+                                        },
+                                        artifact_changed,
+                                    };
+                                }
+                                tools.record_protocol_failure();
+                                telemetry.record(TelemetryRecord::new_with_subsource(
+                                    "RoleMachine",
+                                    subsource,
+                                    TelemetryEvent::ProtocolRetry {
+                                        parse_error: err.clone(),
+                                        attempt_count: tools.current_attempt(),
+                                    },
+                                ));
+                                tools.render_planner_retry_prompt(
+                                    &err,
+                                    &response.content,
+                                    planner_schema,
+                                );
+                            }
                         }
-                    },
+                    }
                     Err(parse_error) => {
                         let effective_error = match &tool_call_error {
                             Some(te) => format!("malformed tool call: {te}"),
@@ -539,7 +551,7 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                         tools.render_planner_retry_prompt(
                             &effective_error,
                             &response.content,
-                            &self.policy.planner_protocol_schema,
+                            planner_schema,
                         );
                     }
                 }

@@ -392,7 +392,7 @@ impl<R: RoleRunner> DeliberationHandler<R> {
             NodeKind::OldPlan | NodeKind::Decomposition | NodeKind::Plan
         ) && self.plan_validation_context.is_some()
         {
-            return self.validate_plan_producer_content(content);
+            return self.validate_plan_producer_content(content, node_kind);
         }
 
         if *node_kind == NodeKind::Work && self.work_requires_artifact_mutation {
@@ -405,6 +405,7 @@ impl<R: RoleRunner> DeliberationHandler<R> {
     pub(crate) fn validate_plan_producer_content(
         &self,
         content: &str,
+        node_kind: &NodeKind,
     ) -> Result<(), ProducerValidationRetry> {
         let context = self
             .plan_validation_context
@@ -425,7 +426,7 @@ impl<R: RoleRunner> DeliberationHandler<R> {
             });
         };
 
-        match processor.validate(&planner_out) {
+        match processor.validate(&planner_out, node_kind) {
             Ok(()) => Ok(()),
             Err(e) => Err(ProducerValidationRetry {
                 feedback_reason: planner_validation_feedback(&e),
