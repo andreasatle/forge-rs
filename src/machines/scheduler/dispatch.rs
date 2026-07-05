@@ -68,14 +68,13 @@ pub(crate) fn dispatch_run_node<R: NodeRunner>(
     }
 }
 
-/// Builds the `[planner ...]`/`[worker ...]` progress-line label for a
-/// dispatched node, appending the short node id and (for Work nodes) the
-/// worker role when the node has one.
+/// Builds the `[decomposition ...]`/`[planner ...]`/`[worker ...]` progress-line
+/// label for a dispatched node, appending the short node id and (for Work
+/// nodes) the worker role when the node has one.
 fn progress_label(kind: &NodeKind, node_id: &NodeId, worker_role: &Option<String>) -> String {
     match kind {
-        NodeKind::Decomposition | NodeKind::Plan => {
-            format!("[planner {}]", node_id.short())
-        }
+        NodeKind::Decomposition => format!("[decomposition {}]", node_id.short()),
+        NodeKind::Plan => format!("[planner {}]", node_id.short()),
         NodeKind::Work => match worker_role {
             Some(role) => format!("[worker {}/{role}]", node_id.short()),
             None => format!("[worker {}]", node_id.short()),
@@ -133,6 +132,17 @@ mod tests {
         assert_eq!(
             label,
             format!("[planner {}]", NodeId("root".to_string()).short())
+        );
+    }
+
+    #[test]
+    fn decomposition_node_label_is_distinct_from_plan() {
+        // Invariant: Decomposition and Plan are distinct node kinds and must
+        // render distinct progress labels, not both collapse to "planner".
+        let label = progress_label(&NodeKind::Decomposition, &NodeId("root".to_string()), &None);
+        assert_eq!(
+            label,
+            format!("[decomposition {}]", NodeId("root".to_string()).short())
         );
     }
 

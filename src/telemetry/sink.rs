@@ -64,7 +64,8 @@ impl TelemetrySink for VecTelemetry {
 /// delegates every record to an inner sink.
 ///
 /// Wrap around the shared sink for a single node run so that the correct
-/// `[planner <id>]` or `[worker <id>]` label appears on each progress line.
+/// `[decomposition <id>]`, `[planner <id>]`, or `[worker <id>]` label appears
+/// on each progress line.
 pub struct ConsoleTelemetry<'a> {
     inner: &'a dyn TelemetrySink,
     label: String,
@@ -73,7 +74,8 @@ pub struct ConsoleTelemetry<'a> {
 
 impl<'a> ConsoleTelemetry<'a> {
     /// Create a new `ConsoleTelemetry` that prefixes every progress line with
-    /// `label` (e.g. `"[planner a3f7c2b1]"` or `"[worker a3f7c2b1/tester]"`).
+    /// `label` (e.g. `"[decomposition a3f7c2b1]"`, `"[planner a3f7c2b1]"`, or
+    /// `"[worker a3f7c2b1/tester]"`).
     pub fn new(inner: &'a dyn TelemetrySink, label: impl Into<String>) -> Self {
         Self {
             inner,
