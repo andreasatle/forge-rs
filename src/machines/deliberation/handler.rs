@@ -12,7 +12,7 @@ use crate::artifacts::{ArtifactError, ArtifactRead, ArtifactView};
 use crate::machines::scheduler::{FailureKind, NodeKind};
 use crate::node_runner::TestTargetsFn;
 use crate::node_runner::WorkAttempt;
-use crate::node_runner::planner::{PlannerOutputProcessor, PlannerValidationError};
+use crate::node_runner::planner::PlannerOutputProcessor;
 use crate::roles::TargetView;
 use crate::roles::policy::RolePolicy;
 use crate::roles::runner::{ProviderRoleRunner, RoleRequest, RoleRunner, RoleToolContext};
@@ -20,6 +20,10 @@ use crate::telemetry::{NoopTelemetry, TelemetryEvent, TelemetryRecord, Telemetry
 
 use super::effect::DeliberationEffect;
 use super::event::DeliberationEvent;
+use super::feedback::{
+    planner_parse_failure_feedback, planner_validation_feedback, validate_work_output,
+    work_validation_feedback,
+};
 use super::types::{DeliberationRole, ProducerValidationRetry};
 use crate::roles::runner::RoleResult;
 
@@ -45,89 +49,6 @@ pub(crate) struct PlanValidationContext {
     /// when the adapter defines no worker roles, in which case task role
     /// assignment is not validated.
     pub(crate) available_worker_roles: Vec<(String, String)>,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub(super) enum WorkSemanticValidationError {
-    MissingArtifactMutation,
-}
-
-impl std::fmt::Display for WorkSemanticValidationError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            WorkSemanticValidationError::MissingArtifactMutation => {
-                write!(f, "accepted work did not mutate the WorkAttempt workspace")
-            }
-        }
-    }
-}
-
-pub(super) fn planner_validation_feedback(error: &PlannerValidationError) -> String {
-    match error {
-        PlannerValidationError::EmptyTaskList => error.to_string(),
-        PlannerValidationError::DuplicateId(id) => {
-            format!("{error}. Assign a unique id to every task; '{id}' appears more than once.")
-        }
-        PlannerValidationError::EmptyObjective(id) => {
-            format!(
-                "{error}. Every task must have a non-empty objective. \
-                 Add a clear objective to task '{id}'."
-            )
-        }
-        PlannerValidationError::EmptyTargets(id) => {
-            format!(
-                "{error}. Every task must declare at least one concrete target file. \
-                 Add a target to task '{id}'."
-            )
-        }
-        PlannerValidationError::SelfDependency(id) => {
-            format!(
-                "{error}. A task cannot depend on itself. \
-                 Remove '{id}' from its own depends_on list."
-            )
-        }
-        PlannerValidationError::UnknownDependency { task_id, dep_id } => {
-            format!(
-                "{error}. Task '{task_id}' depends on '{dep_id}', which does not exist in this \
-                 plan. Only reference task ids defined in the same plan."
-            )
-        }
-        PlannerValidationError::MissingTestsForCodeChange => {
-            format!(
-                "{error}. Project validation includes a test command, so code changes must include \
-                 at least one test-related task and target such as a test file."
-            )
-        }
-        PlannerValidationError::MissingTaskRole { task_id } => {
-            format!(
-                "{error}. Assign task '{task_id}' a `role` matching one of the available worker \
-                 roles listed in the prompt."
-            )
-        }
-    }
-}
-
-pub(super) fn planner_parse_failure_feedback() -> String {
-    "Planner output must be valid PlannerOutput JSON with a top-level tasks array. \
-     Return only the structured plan JSON, not prose or markdown."
-        .to_string()
-}
-
-pub(super) fn validate_work_output(
-    artifact_changed: bool,
-) -> Result<(), WorkSemanticValidationError> {
-    if artifact_changed {
-        return Ok(());
-    }
-    Err(WorkSemanticValidationError::MissingArtifactMutation)
-}
-
-pub(super) fn work_validation_feedback(error: &WorkSemanticValidationError) -> String {
-    match error {
-        WorkSemanticValidationError::MissingArtifactMutation => {
-            "Accepted Work results must modify the artifact. Use write_file by default when creating a file or replacing most or all of an existing file. Use replace_text only for small, localized edits after reading the file and providing an exact old string that occurs once; whitespace, indentation, or formatting differences will cause replace_text to fail. If a replace_text attempt could not be validated for a whole-file rewrite, switch to write_file instead of retrying another replace_text.".to_string()
-        }
-    }
 }
 
 /// Executes `DeliberationEffect` values by delegating role execution to a
@@ -384,23 +305,57 @@ impl<R: RoleRunner> DeliberationHandler<R> {
         artifact_changed: bool,
         node_kind: &NodeKind,
     ) -> Result<(), ProducerValidationRetry> {
-        if matches!(node_kind, NodeKind::Decomposition | NodeKind::Plan)
-            && self.plan_validation_context.is_some()
-        {
-            return self.validate_plan_producer_content(content, node_kind);
+        match node_kind {
+            NodeKind::Decomposition if self.plan_validation_context.is_some() => {
+                self.validate_decomposition_producer_content(content)
+            }
+            NodeKind::Plan if self.plan_validation_context.is_some() => {
+                self.validate_plan_producer_content(content)
+            }
+            NodeKind::Work if self.work_requires_artifact_mutation => {
+                self.validate_work_producer_output(artifact_changed)
+            }
+            _ => Ok(()),
         }
+    }
 
-        if *node_kind == NodeKind::Work && self.work_requires_artifact_mutation {
-            return self.validate_work_producer_output(artifact_changed);
+    pub(crate) fn validate_decomposition_producer_content(
+        &self,
+        content: &str,
+    ) -> Result<(), ProducerValidationRetry> {
+        let context = self
+            .plan_validation_context
+            .as_ref()
+            .expect("plan_validation_context must be Some when this method is called");
+        let processor = PlannerOutputProcessor::new(
+            context.required_test_targets_fn.as_ref(),
+            &context.available_worker_roles,
+        );
+
+        let Some(decomposition_out) = processor.parse_decomposition_content(content) else {
+            return Err(ProducerValidationRetry {
+                feedback_reason: planner_parse_failure_feedback(),
+                max_retries: MAX_PLAN_VALIDATION_RETRIES,
+                failure_kind: FailureKind::PlannerValidationFailure,
+                failure_reason:
+                    "planner validation failed: content is not valid PlannerOutput JSON".to_string(),
+            });
+        };
+
+        match processor.validate_decomposition_structure(&decomposition_out) {
+            Ok(()) => Ok(()),
+            Err(e) => Err(ProducerValidationRetry {
+                feedback_reason: planner_validation_feedback(&e),
+                max_retries: MAX_PLAN_VALIDATION_RETRIES,
+                failure_kind: FailureKind::PlannerValidationFailure,
+                failure_reason: format!("planner validation failed: {e}"),
+            }),
         }
-
-        Ok(())
     }
 
     pub(crate) fn validate_plan_producer_content(
         &self,
         content: &str,
-        node_kind: &NodeKind,
     ) -> Result<(), ProducerValidationRetry> {
         let context = self
             .plan_validation_context
@@ -421,7 +376,7 @@ impl<R: RoleRunner> DeliberationHandler<R> {
             });
         };
 
-        match processor.validate(&planner_out, node_kind) {
+        match processor.validate(&planner_out) {
             Ok(()) => Ok(()),
             Err(e) => Err(ProducerValidationRetry {
                 feedback_reason: planner_validation_feedback(&e),

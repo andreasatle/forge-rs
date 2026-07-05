@@ -3,6 +3,7 @@
 use crate::machines::deliberation::DeliberationTerminalOutput;
 use crate::machines::scheduler::{FailureKind, NodeFailure, NodeKind, RecoveryAction, WorkOutput};
 use crate::node_runner::TestTargetsFn;
+use crate::node_runner::planner::{PlannerOutputProcessor, PlannerValidationError};
 use crate::telemetry::{TelemetryEvent, TelemetryRecord, TelemetrySink};
 
 use crate::node_runner::classify::{classify_deliberation_failure, recovery_label};
@@ -18,10 +19,15 @@ pub(crate) fn map_output(
 ) -> NodeRunResult {
     match output {
         DeliberationTerminalOutput::Complete(out) => match &kind {
-            NodeKind::Decomposition | NodeKind::Plan => map_plan_output(
+            NodeKind::Decomposition => map_decomposition_output(
                 out.content,
-                kind,
                 objective,
+                required_test_targets_fn,
+                available_worker_roles,
+                telemetry,
+            ),
+            NodeKind::Plan => map_plan_output(
+                out.content,
                 required_test_targets_fn,
                 available_worker_roles,
                 telemetry,
@@ -50,9 +56,61 @@ pub(crate) fn map_output(
     }
 }
 
-/// Map a plan node's raw content to a [`NodeRunResult`].
+/// Map a Decomposition node's raw content to a [`NodeRunResult`].
 ///
-/// Attempts to parse `content` as a structured [`PlannerOutput`] JSON object.
+/// Attempts to parse `content` as a structured
+/// [`DecompositionOutput`](crate::node_runner::planner::DecompositionOutput)
+/// JSON object.
+///
+/// - If parsing succeeds and the graph is structurally valid: emits
+///   `PlannerOutputParsed` and returns `PlanAccepted` with one `NodeRequest`
+///   per task.
+/// - If parsing succeeds but structural validation fails: emits
+///   `PlannerOutputValidationFailed` and returns `Failed` with `Terminal`
+///   recovery.
+/// - If parsing fails (prose or unexpected schema): emits
+///   `PlannerOutputFallback` and returns `Failed` with `Terminal` recovery.
+fn map_decomposition_output(
+    content: String,
+    parent_objective: &str,
+    required_test_targets_fn: &TestTargetsFn,
+    available_worker_roles: &[(String, String)],
+    telemetry: &dyn TelemetrySink,
+) -> NodeRunResult {
+    let processor = PlannerOutputProcessor::new(required_test_targets_fn, available_worker_roles);
+
+    match processor.parse_decomposition_content(&content) {
+        Some(decomposition_out) => {
+            match processor.validate_decomposition_structure(&decomposition_out) {
+                Ok(()) => {
+                    let task_count = decomposition_out.tasks.len();
+                    let dependency_count: usize = decomposition_out
+                        .tasks
+                        .iter()
+                        .map(|t| t.depends_on.len())
+                        .sum();
+                    telemetry.record(TelemetryRecord::new(
+                        "DeliberatingNodeRunner",
+                        TelemetryEvent::PlannerOutputParsed {
+                            task_count,
+                            dependency_count,
+                        },
+                    ));
+                    NodeRunResult::PlanAccepted(
+                        processor.into_decomposition_plan(decomposition_out, parent_objective),
+                    )
+                }
+                Err(e) => plan_validation_failed(e, telemetry),
+            }
+        }
+        None => plan_parse_failed(telemetry),
+    }
+}
+
+/// Map a Plan node's raw content to a [`NodeRunResult`].
+///
+/// Attempts to parse `content` as a structured
+/// [`PlannerOutput`](crate::node_runner::planner::PlannerOutput) JSON object.
 ///
 /// - If parsing succeeds and the graph is structurally valid: emits
 ///   `PlannerOutputParsed` and returns `PlanAccepted` with one `NodeRequest`
@@ -64,18 +122,14 @@ pub(crate) fn map_output(
 ///   `PlannerOutputFallback` and returns `Failed` with `Terminal` recovery.
 fn map_plan_output(
     content: String,
-    parent_kind: NodeKind,
-    parent_objective: &str,
     required_test_targets_fn: &TestTargetsFn,
     available_worker_roles: &[(String, String)],
     telemetry: &dyn TelemetrySink,
 ) -> NodeRunResult {
-    use crate::node_runner::planner::PlannerOutputProcessor;
-
     let processor = PlannerOutputProcessor::new(required_test_targets_fn, available_worker_roles);
 
     match processor.parse_content(&content) {
-        Some(planner_out) => match processor.validate_structure(&planner_out, &parent_kind) {
+        Some(planner_out) => match processor.validate_structure(&planner_out) {
             Ok(()) => {
                 let task_count = planner_out.tasks.len();
                 let dependency_count: usize =
@@ -87,46 +141,49 @@ fn map_plan_output(
                         dependency_count,
                     },
                 ));
-                NodeRunResult::PlanAccepted(processor.into_plan(
-                    planner_out,
-                    parent_kind,
-                    parent_objective,
-                ))
+                NodeRunResult::PlanAccepted(processor.into_plan(planner_out))
             }
-            Err(e) => {
-                let reason = e.to_string();
-                telemetry.record(TelemetryRecord::new(
-                    "DeliberatingNodeRunner",
-                    TelemetryEvent::PlannerOutputValidationFailed {
-                        reason: reason.clone(),
-                    },
-                ));
-                NodeRunResult::Failed(NodeFailure {
-                    kind: FailureKind::PlannerValidationFailure,
-                    message: reason.clone(),
-                    recovery: RecoveryAction::Terminal {
-                        message: format!("planner output validation failed: {reason}"),
-                    },
-                })
-            }
+            Err(e) => plan_validation_failed(e, telemetry),
         },
-        None => {
-            // Planner content was not valid PlannerOutput JSON.
-            // This path should be unreachable when runner validation is active,
-            // but if reached it must fail loudly rather than silently substituting
-            // a single work node.
-            let reason = "planner content is not valid PlannerOutput JSON".to_string();
-            telemetry.record(TelemetryRecord::new(
-                "DeliberatingNodeRunner",
-                TelemetryEvent::PlannerOutputFallback,
-            ));
-            NodeRunResult::Failed(NodeFailure {
-                kind: FailureKind::PlannerValidationFailure,
-                message: reason.clone(),
-                recovery: RecoveryAction::Terminal {
-                    message: format!("planner output invalid: {reason}"),
-                },
-            })
-        }
+        None => plan_parse_failed(telemetry),
     }
+}
+
+fn plan_validation_failed(
+    error: PlannerValidationError,
+    telemetry: &dyn TelemetrySink,
+) -> NodeRunResult {
+    let reason = error.to_string();
+    telemetry.record(TelemetryRecord::new(
+        "DeliberatingNodeRunner",
+        TelemetryEvent::PlannerOutputValidationFailed {
+            reason: reason.clone(),
+        },
+    ));
+    NodeRunResult::Failed(NodeFailure {
+        kind: FailureKind::PlannerValidationFailure,
+        message: reason.clone(),
+        recovery: RecoveryAction::Terminal {
+            message: format!("planner output validation failed: {reason}"),
+        },
+    })
+}
+
+/// The content was not valid JSON at all (prose or unexpected schema). This
+/// path should be unreachable when runner validation is active, but if
+/// reached it must fail loudly rather than silently substituting a single
+/// work node.
+fn plan_parse_failed(telemetry: &dyn TelemetrySink) -> NodeRunResult {
+    let reason = "planner content is not valid PlannerOutput JSON".to_string();
+    telemetry.record(TelemetryRecord::new(
+        "DeliberatingNodeRunner",
+        TelemetryEvent::PlannerOutputFallback,
+    ));
+    NodeRunResult::Failed(NodeFailure {
+        kind: FailureKind::PlannerValidationFailure,
+        message: reason.clone(),
+        recovery: RecoveryAction::Terminal {
+            message: format!("planner output invalid: {reason}"),
+        },
+    })
 }

@@ -228,6 +228,23 @@ fn select_grammar(
     }
 }
 
+/// Result of parsing and structurally validating a Decomposition/Plan
+/// Producer response, before the surrounding retry/telemetry handling in
+/// [`ProviderRoleRunner::run_role`] decides what to do with it.
+///
+/// `ValidationFailed` and `ParseFailed` are kept distinct (rather than a
+/// single failure string) because they map to different [`FailureKind`]s —
+/// `PlannerValidationFailure` vs `ProtocolFailure` — when retries are
+/// exhausted.
+enum PlanParseOutcome {
+    /// Canonical re-serialized JSON of the validated output.
+    Success(String),
+    /// The response parsed as JSON but failed structural validation.
+    ValidationFailed(String),
+    /// The response did not parse as the expected JSON shape at all.
+    ParseFailed(String),
+}
+
 impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
     fn run_role(&self, request: RoleRequest, telemetry: &dyn TelemetrySink) -> RoleRunOutput {
         let subsource = role_subsource(&request.role);
@@ -448,65 +465,85 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                     &self.policy.worker_role_descriptions,
                 );
                 let planner_schema = planner_protocol_schema_for(&request.node_kind, &self.policy);
-                // Direct PlannerOutput path: no status/content wrapper.
-                match processor.parse_response(&response.content) {
-                    Ok(planner_out) => {
-                        match processor.validate_structure(&planner_out, &request.node_kind) {
-                            Ok(()) => {
-                                telemetry.record(TelemetryRecord::new_with_subsource(
-                                    "RoleMachine",
-                                    subsource,
-                                    TelemetryEvent::ParseSucceeded {
-                                        attempt_count: tools.current_attempt(),
-                                    },
-                                ));
-                                let canonical = serde_json::to_string(&planner_out)
-                                    .expect("validated PlannerOutput must serialize");
-                                let artifact_changed = tools.artifact_changed();
-                                return RoleRunOutput {
-                                    result: RoleResult::Accepted { content: canonical },
-                                    artifact_changed,
-                                };
-                            }
-                            Err(e) => {
-                                let err = format!("planner output validation failed: {e}");
-                                telemetry.record(TelemetryRecord::new_with_subsource(
-                                    "RoleMachine",
-                                    subsource,
-                                    TelemetryEvent::ParseFailed {
-                                        raw_response: response.content.clone(),
-                                        parse_error: err.clone(),
-                                        attempt_count: tools.current_attempt(),
-                                    },
-                                ));
-                                if !tools.allow_model_call() {
-                                    let artifact_changed = tools.artifact_changed();
-                                    return RoleRunOutput {
-                                        result: RoleResult::Failed {
-                                            kind: FailureKind::PlannerValidationFailure,
-                                            reason: err,
-                                        },
-                                        artifact_changed,
-                                    };
-                                }
-                                tools.record_protocol_failure();
-                                telemetry.record(TelemetryRecord::new_with_subsource(
-                                    "RoleMachine",
-                                    subsource,
-                                    TelemetryEvent::ProtocolRetry {
-                                        parse_error: err.clone(),
-                                        attempt_count: tools.current_attempt(),
-                                    },
-                                ));
-                                tools.render_planner_retry_prompt(
-                                    &err,
-                                    &response.content,
-                                    planner_schema,
-                                );
-                            }
+                // Direct PlannerOutput/DecompositionOutput path: no status/content wrapper.
+                let outcome = match request.node_kind {
+                    NodeKind::Decomposition => {
+                        match processor.parse_decomposition_response(&response.content) {
+                            Ok(out) => match processor.validate_decomposition_structure(&out) {
+                                Ok(()) => PlanParseOutcome::Success(
+                                    serde_json::to_string(&out)
+                                        .expect("validated DecompositionOutput must serialize"),
+                                ),
+                                Err(e) => PlanParseOutcome::ValidationFailed(format!(
+                                    "planner output validation failed: {e}"
+                                )),
+                            },
+                            Err(e) => PlanParseOutcome::ParseFailed(e),
                         }
                     }
-                    Err(parse_error) => {
+                    NodeKind::Plan => match processor.parse_response(&response.content) {
+                        Ok(out) => match processor.validate(&out) {
+                            Ok(()) => PlanParseOutcome::Success(
+                                serde_json::to_string(&out)
+                                    .expect("validated PlannerOutput must serialize"),
+                            ),
+                            Err(e) => PlanParseOutcome::ValidationFailed(format!(
+                                "planner output validation failed: {e}"
+                            )),
+                        },
+                        Err(e) => PlanParseOutcome::ParseFailed(e),
+                    },
+                    NodeKind::Work => unreachable!(
+                        "planner output parsing only runs for Decomposition/Plan producers"
+                    ),
+                };
+                match outcome {
+                    PlanParseOutcome::Success(canonical) => {
+                        telemetry.record(TelemetryRecord::new_with_subsource(
+                            "RoleMachine",
+                            subsource,
+                            TelemetryEvent::ParseSucceeded {
+                                attempt_count: tools.current_attempt(),
+                            },
+                        ));
+                        let artifact_changed = tools.artifact_changed();
+                        return RoleRunOutput {
+                            result: RoleResult::Accepted { content: canonical },
+                            artifact_changed,
+                        };
+                    }
+                    PlanParseOutcome::ValidationFailed(err) => {
+                        telemetry.record(TelemetryRecord::new_with_subsource(
+                            "RoleMachine",
+                            subsource,
+                            TelemetryEvent::ParseFailed {
+                                raw_response: response.content.clone(),
+                                parse_error: err.clone(),
+                                attempt_count: tools.current_attempt(),
+                            },
+                        ));
+                        if !tools.allow_model_call() {
+                            let artifact_changed = tools.artifact_changed();
+                            return RoleRunOutput {
+                                result: RoleResult::Failed {
+                                    kind: FailureKind::PlannerValidationFailure,
+                                    reason: err,
+                                },
+                                artifact_changed,
+                            };
+                        }
+                        tools.record_protocol_failure();
+                        telemetry.record(TelemetryRecord::new_with_subsource(
+                            "RoleMachine",
+                            subsource,
+                            TelemetryEvent::ProtocolRetry {
+                                parse_error: err.clone(),
+                                attempt_count: tools.current_attempt(),
+                            },
+                        ));
+                        tools.render_planner_retry_prompt(&err, &response.content, planner_schema);
+                    }
+                    PlanParseOutcome::ParseFailed(parse_error) => {
                         let effective_error = match &tool_call_error {
                             Some(te) => format!("malformed tool call: {te}"),
                             None => parse_error,
