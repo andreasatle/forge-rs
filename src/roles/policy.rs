@@ -146,16 +146,16 @@ string ::=
 ws ::= ([ \t\n] ws)?"#;
 
 /// GBNF grammar constraining output to the `NodeKind::Decomposition` Producer
-/// schema: `{"kind":"decomposition","tasks":[{"id":...,"objective":...,"depends_on":[...]}]}`
-/// or `{"kind":"plan","tasks":[]}`. Unlike [`PLANNER_GBNF`], `kind` is
-/// required (never omitted) and `"work"` is not a valid value; `decomposition`
-/// tasks carry no `targets` or `role` field at all, and `plan` requires an
-/// explicit empty `tasks` array rather than omitting the field — `tasks`
-/// stays mandatory so parsing rejects unrelated JSON shapes.
+/// schema: `{"kind":"decomposition","objectives":[{"id":...,"objective":...,"depends_on":[...]}]}`
+/// or `{"kind":"plan"}`. Unlike [`PLANNER_GBNF`], `kind` is required (never
+/// omitted) and `"work"` is not a valid value; `decomposition` objectives
+/// carry no `targets` or `role` field at all, and `plan` carries no
+/// `objectives` field or any other field — the bare `kind` tag is the entire
+/// signal that the objective is atomic.
 pub(crate) const DECOMPOSITION_GBNF: &str = r#"root ::= decomposition | plan
-decomposition ::= "{" ws "\"kind\"" ws ":" ws "\"decomposition\"" ws "," ws "\"tasks\"" ws ":" ws "[" ws task (ws "," ws task)* ws "]" ws "}" ws
-plan ::= "{" ws "\"kind\"" ws ":" ws "\"plan\"" ws "," ws "\"tasks\"" ws ":" ws "[" ws "]" ws "}" ws
-task ::= "{" ws "\"id\"" ws ":" ws string ws "," ws "\"objective\"" ws ":" ws string ws "," ws "\"depends_on\"" ws ":" ws string-array ws "}" ws
+decomposition ::= "{" ws "\"kind\"" ws ":" ws "\"decomposition\"" ws "," ws "\"objectives\"" ws ":" ws "[" ws objective (ws "," ws objective)* ws "]" ws "}" ws
+plan ::= "{" ws "\"kind\"" ws ":" ws "\"plan\"" ws "}" ws
+objective ::= "{" ws "\"id\"" ws ":" ws string ws "," ws "\"objective\"" ws ":" ws string ws "," ws "\"depends_on\"" ws ":" ws string-array ws "}" ws
 string-array ::= "[" ws (string (ws "," ws string)*)? ws "]" ws
 
 string ::=
@@ -228,9 +228,9 @@ Each `targets` array must be non-empty and list exact files the task may create,
 ///
 /// Framework protocol, fixed by structural node kind rather than adapter
 /// configuration — see [`planner_protocol_schema_for`].
-pub(crate) const DECOMPOSITION_PROTOCOL_FOOTER: &str = "DecompositionOutput: top-level `kind` and `tasks` are both required; `kind` must be \"decomposition\" or \"plan\".\n\
-\"decomposition\": the objective spans multiple concerns and needs further breakdown. `tasks` must be non-empty; each task requires `id`, `objective`, and `depends_on` only — no `targets`, no `role`. Each task becomes a further Decomposition node.\n\
-\"plan\": the objective is already concrete and atomic, ready for a leaf planner to structure the work. `tasks` must be an empty array: return exactly `{\"kind\": \"plan\", \"tasks\": []}`. The objective becomes a single Plan node.";
+pub(crate) const DECOMPOSITION_PROTOCOL_FOOTER: &str = "DecompositionOutput: top-level `kind` is required; must be \"decomposition\" or \"plan\".\n\
+\"decomposition\": the objective spans multiple concerns and needs further breakdown. `objectives` is required and must be non-empty; each objective requires `id`, `objective`, and `depends_on` only — no `targets`, no `role`. Each objective becomes a further Decomposition node.\n\
+\"plan\": the objective is already concrete and atomic, ready for a leaf planner to structure the work. No `objectives` field or any other field is permitted: return exactly `{\"kind\": \"plan\"}`. This is a complete, valid, and immediately acceptable response on its own. The objective becomes a single Plan node.";
 
 /// Generic role-identity and task-decomposition instruction for the Plan-node
 /// Producer role.

@@ -204,7 +204,7 @@ fn scheduler_and_deliberation_share_one_trace() {
     // node + work node, each requiring 3 provider calls (producer, critic,
     // referee).
     let provider = ScriptedProvider::from_strs(&[
-        r#"{"kind":"plan","tasks":[]}"#,
+        r#"{"kind":"plan"}"#,
         r#"{"status":"accepted","content":"looks good"}"#,
         r#"{"status":"accepted","content":"approved"}"#,
         r#"{"tasks":[{"id":"implement","objective":"implement it","operation":"create","targets":["output.txt"],"depends_on":[]}]}"#,
@@ -257,7 +257,7 @@ fn nested_machine_events_preserve_order() {
     // node + work node, each requiring 3 provider calls (producer, critic,
     // referee).
     let provider = ScriptedProvider::from_strs(&[
-        r#"{"kind":"plan","tasks":[]}"#,
+        r#"{"kind":"plan"}"#,
         r#"{"status":"accepted","content":"looks good"}"#,
         r#"{"status":"accepted","content":"approved"}"#,
         r#"{"tasks":[{"id":"implement","objective":"implement it","operation":"create","targets":["output.txt"],"depends_on":[]}]}"#,
@@ -347,7 +347,7 @@ fn scheduler_effect_emitted_carries_node_context_for_run_node() {
     // node + work node, each requiring 3 provider calls (producer, critic,
     // referee).
     let provider = ScriptedProvider::from_strs(&[
-        r#"{"kind":"plan","tasks":[]}"#,
+        r#"{"kind":"plan"}"#,
         r#"{"status":"accepted","content":"looks good"}"#,
         r#"{"status":"accepted","content":"approved"}"#,
         r#"{"tasks":[{"id":"implement","objective":"implement it","operation":"create","targets":["output.txt"],"depends_on":[]}]}"#,

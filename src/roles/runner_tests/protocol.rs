@@ -339,9 +339,9 @@ fn planner_producer_grammar_and_footer_are_selected_by_node_kind() {
         (
             "Decomposition",
             NodeKind::Decomposition,
-            r#"{"kind":"decomposition","tasks":[{"id":"t1","objective":"do the thing","depends_on":[]}]}"#,
+            r#"{"kind":"decomposition","objectives":[{"id":"t1","objective":"do the thing","depends_on":[]}]}"#,
             DECOMPOSITION_GBNF,
-            "DecompositionOutput: top-level `kind` and `tasks` are both required",
+            "DecompositionOutput: top-level `kind` is required",
         ),
         (
             "Plan",

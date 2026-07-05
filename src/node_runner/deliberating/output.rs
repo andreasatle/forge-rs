@@ -83,11 +83,11 @@ fn map_decomposition_output(
         Some(decomposition_out) => {
             match processor.validate_decomposition_structure(&decomposition_out) {
                 Ok(()) => {
-                    let task_count = decomposition_out.tasks.len();
+                    let task_count = decomposition_out.objectives.len();
                     let dependency_count: usize = decomposition_out
-                        .tasks
+                        .objectives
                         .iter()
-                        .map(|t| t.depends_on.len())
+                        .map(|o| o.depends_on.len())
                         .sum();
                     telemetry.record(TelemetryRecord::new(
                         "DeliberatingNodeRunner",

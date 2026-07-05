@@ -2,6 +2,7 @@ use super::*;
 
 const PLAN_RESPONSE: &str = r#"{"tasks":[{"id":"t1","objective":"do the work","operation":"modify","targets":["work.txt"],"depends_on":[]}]}"#;
 const PLAN_RESPONSE_WITH_ROLE: &str = r#"{"tasks":[{"id":"t1","objective":"do the work","operation":"modify","role":"implementer","targets":["work.txt"],"depends_on":[]}]}"#;
+const DECOMPOSITION_RESPONSE: &str = r#"{"kind":"decomposition","objectives":[{"id":"t1","objective":"do the work","depends_on":[]}]}"#;
 
 #[test]
 fn rendered_prompts_use_expected_role_schemas() {
@@ -144,7 +145,7 @@ fn worker_role_descriptions_render_for_plan_producer_only() {
                 node_kind: NodeKind::Decomposition,
                 ..plan_request("decompose the work")
             },
-            PLAN_RESPONSE,
+            DECOMPOSITION_RESPONSE,
             false,
         ),
         (

@@ -56,41 +56,56 @@ pub enum PlannerOperation {
 
 /// Whether a [`NodeKind::Decomposition`] parent's output still spans multiple
 /// concerns or has reached an atomic objective.
-///
-/// All tasks in a single [`DecompositionOutput`] share one kind. Absent from
-/// the JSON, this defaults to `Decomposition`.
-#[derive(Clone, Copy, Deserialize, Serialize, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Deserialize, Serialize, Debug, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum DecompositionOutputKind {
-    /// The objective still spans multiple concerns: `tasks` become further
-    /// `Decomposition` children.
-    #[default]
+    /// The objective still spans multiple concerns: `objectives` become
+    /// further `Decomposition` children.
     Decomposition,
-    /// The objective is atomic and ready for a leaf planner: `tasks` is an
-    /// empty array, and the parent's own objective becomes a single `Plan`
-    /// child.
+    /// The objective is atomic and ready for a leaf planner: the response
+    /// carries no `objectives`, and the parent's own objective becomes a
+    /// single `Plan` child.
     Plan,
+}
+
+/// A single objective in a [`NodeKind::Decomposition`] parent's structured
+/// response.
+///
+/// Leaner than [`PlannerTask`]: Decomposition objectives carry no concrete
+/// file assignment, so there is no `operation`, `role`, or `targets`.
+#[derive(Deserialize, Serialize, Debug)]
+pub struct DecompositionObjective {
+    /// Planner-assigned identifier, unique within the output.
+    pub id: String,
+    /// Natural-language description of what this objective should accomplish.
+    pub objective: String,
+    /// Ids of other objectives in the same output that must complete before
+    /// this one.
+    pub depends_on: Vec<String>,
 }
 
 /// The structured JSON output a [`NodeKind::Decomposition`] parent's planner
 /// is expected to produce.
 ///
-/// Each task becomes a scheduler [`NodeRequest`]. The `depends_on` entries
-/// reference other tasks by id within the same output batch.
+/// Each objective becomes a scheduler [`NodeRequest`]. The `depends_on`
+/// entries reference other objectives by id within the same output batch.
 #[derive(Deserialize, Serialize, Debug)]
 pub struct DecompositionOutput {
-    /// Whether `tasks` become further `Decomposition` children, or the
-    /// objective is atomic. Defaults to `Decomposition`.
-    #[serde(default)]
-    pub kind: DecompositionOutputKind,
-    /// The ordered list of tasks the planner wants the scheduler to execute.
+    /// Whether `objectives` become further `Decomposition` children, or the
+    /// objective is atomic.
     ///
-    /// Always required in the JSON (never defaulted): a mandatory `tasks`
-    /// field is what lets parsing reject unrelated JSON shapes (e.g. the
-    /// Critic/Referee accept-or-reject wrapper) instead of silently matching
-    /// as an empty `DecompositionOutput`. A `kind: "plan"` response sends an
-    /// explicit empty array.
-    pub tasks: Vec<PlannerTask>,
+    /// Mandatory in the JSON (no default): this is what lets parsing reject
+    /// unrelated JSON shapes (e.g. the Critic/Referee accept-or-reject
+    /// wrapper) instead of silently matching as an empty `DecompositionOutput`.
+    pub kind: DecompositionOutputKind,
+    /// The ordered list of objectives the planner wants the scheduler to
+    /// execute.
+    ///
+    /// Required (non-empty) when `kind` is `Decomposition`. Omitted (defaults
+    /// empty) when `kind` is `Plan`, whose response carries no objective list
+    /// at all — just `{"kind": "plan"}`.
+    #[serde(default)]
+    pub objectives: Vec<DecompositionObjective>,
 }
 
 /// Whether a [`NodeKind::Plan`] parent's output's tasks become `Work`
@@ -241,11 +256,11 @@ impl<'a> PlannerOutputProcessor<'a> {
     /// Validate structural constraints for a [`NodeKind::Decomposition`]
     /// parent's output.
     ///
-    /// A `kind: "plan"` response sends an empty `tasks` array — the
+    /// A `kind: "plan"` response carries no `objectives` at all — the
     /// objective is atomic, so there is nothing to validate; it maps to a
     /// single `Plan` child in [`Self::into_decomposition_plan`]. Decomposition
-    /// tasks are never assigned worker roles or concrete targets, so this
-    /// never validates either.
+    /// objectives are never assigned worker roles or concrete targets, so
+    /// this never validates either.
     pub(crate) fn validate_decomposition_structure(
         &self,
         output: &DecompositionOutput,
@@ -253,27 +268,27 @@ impl<'a> PlannerOutputProcessor<'a> {
         if output.kind == DecompositionOutputKind::Plan {
             return Ok(());
         }
-        if output.tasks.is_empty() {
+        if output.objectives.is_empty() {
             return Err(PlannerValidationError::EmptyTaskList);
         }
         let mut seen: HashSet<&str> = HashSet::new();
-        for task in &output.tasks {
-            if !seen.insert(task.id.as_str()) {
-                return Err(PlannerValidationError::DuplicateId(task.id.clone()));
+        for objective in &output.objectives {
+            if !seen.insert(objective.id.as_str()) {
+                return Err(PlannerValidationError::DuplicateId(objective.id.clone()));
             }
-            if task.objective.trim().is_empty() {
-                return Err(PlannerValidationError::EmptyObjective(task.id.clone()));
+            if objective.objective.trim().is_empty() {
+                return Err(PlannerValidationError::EmptyObjective(objective.id.clone()));
             }
-            if task.depends_on.iter().any(|d| d == &task.id) {
-                return Err(PlannerValidationError::SelfDependency(task.id.clone()));
+            if objective.depends_on.iter().any(|d| d == &objective.id) {
+                return Err(PlannerValidationError::SelfDependency(objective.id.clone()));
             }
         }
-        let all_ids: HashSet<&str> = output.tasks.iter().map(|t| t.id.as_str()).collect();
-        for task in &output.tasks {
-            for dep in &task.depends_on {
+        let all_ids: HashSet<&str> = output.objectives.iter().map(|o| o.id.as_str()).collect();
+        for objective in &output.objectives {
+            for dep in &objective.depends_on {
                 if !all_ids.contains(dep.as_str()) {
                     return Err(PlannerValidationError::UnknownDependency {
-                        task_id: task.id.clone(),
+                        task_id: objective.id.clone(),
                         dep_id: dep.clone(),
                     });
                 }
@@ -310,16 +325,16 @@ impl<'a> PlannerOutputProcessor<'a> {
 
         PlanOutput {
             children: output
-                .tasks
+                .objectives
                 .into_iter()
-                .map(|task| NodeRequest {
-                    id: NodeId(task.id),
+                .map(|objective| NodeRequest {
+                    id: NodeId(objective.id),
                     kind: NodeKind::Decomposition,
-                    worker_role: task.role,
-                    objective: task.objective,
-                    target_files: task.targets,
+                    worker_role: None,
+                    objective: objective.objective,
+                    target_files: vec![],
                     required_validation_targets: vec![],
-                    dependencies: task.depends_on.into_iter().map(NodeId).collect(),
+                    dependencies: objective.depends_on.into_iter().map(NodeId).collect(),
                     validation_plan: None,
                 })
                 .collect(),
