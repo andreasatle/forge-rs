@@ -7,6 +7,7 @@
 use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use crate::machines::scheduler::{NodeId, NodeKind, NodeRequest, PlanOutput};
 
@@ -311,7 +312,7 @@ impl<'a> PlannerOutputProcessor<'a> {
         if output.kind == DecompositionOutputKind::Plan {
             return PlanOutput {
                 children: vec![NodeRequest {
-                    id: NodeId("plan".to_string()),
+                    id: NodeId(Uuid::new_v4().to_string()),
                     kind: NodeKind::Plan,
                     worker_role: None,
                     objective: parent_objective.to_string(),
