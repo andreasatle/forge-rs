@@ -13,7 +13,7 @@ use crate::roles::RolePolicy;
 
 use crate::node_runner::types::NodeRunRequest;
 
-use super::context::build_deliberation_context;
+use super::context::{DeliberationContextConfig, build_deliberation_context};
 
 pub(crate) struct PreparedDeliberation<'a, P: ProviderClient> {
     pub(crate) initial_state: DeliberationState,
@@ -25,12 +25,14 @@ pub(crate) fn prepare_deliberation<'a, P: ProviderClient>(
     request: &NodeRunRequest,
     max_tokens: u32,
     policy: &RolePolicy,
-    required_test_targets_fn: &Arc<TestTargetsFn>,
-    context_file_names: &[String],
+    context_config: &DeliberationContextConfig,
 ) -> PreparedDeliberation<'a, P> {
-    let plan_validation_context =
-        build_plan_validation_context(request, Arc::clone(required_test_targets_fn), policy);
-    let context = build_deliberation_context(request, required_test_targets_fn, context_file_names);
+    let plan_validation_context = build_plan_validation_context(
+        request,
+        Arc::clone(context_config.required_test_targets_fn),
+        policy,
+    );
+    let context = build_deliberation_context(request, context_config);
     let initial_state = DeliberationState::Ready {
         request: DeliberationRequest {
             objective: request.objective.clone(),

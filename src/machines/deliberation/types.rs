@@ -54,6 +54,11 @@ pub struct ArtifactContext {
     pub files: Vec<String>,
     /// Selected file contents included as prompt context.
     pub selected_files: Vec<SelectedFileContent>,
+    /// Per-file API summaries extracted by the language plugin's
+    /// `api_summary` command, rendered as "Current artifact state". Present
+    /// only for planning nodes ([`NodeKind::Decomposition`]/[`NodeKind::Plan`])
+    /// when the language plugin configures `api_summary`.
+    pub api_summary: Option<String>,
 }
 
 /// Content for a selected artifact file.

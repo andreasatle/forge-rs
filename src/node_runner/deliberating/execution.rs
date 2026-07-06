@@ -1,15 +1,13 @@
 //! Provider execution for one deliberation-backed node run.
 
-use std::sync::Arc;
-
 use crate::engine::run_machine_with_telemetry;
-use crate::node_runner::TestTargetsFn;
 use crate::providers::ProviderClient;
 use crate::roles::RolePolicy;
 use crate::telemetry::{TelemetryEvent, TelemetryRecord, TelemetrySink};
 
 use crate::node_runner::types::{NodeRunRequest, NodeRunResult};
 
+use super::context::DeliberationContextConfig;
 use super::machine::DeliberatingMachine;
 use super::output::map_output;
 use super::request::prepare_deliberation;
@@ -19,18 +17,10 @@ pub(crate) fn run_with_provider<P: ProviderClient>(
     request: NodeRunRequest,
     max_tokens: u32,
     policy: &RolePolicy,
-    required_test_targets_fn: &Arc<TestTargetsFn>,
-    context_file_names: &[String],
+    context_config: &DeliberationContextConfig,
     telemetry: &dyn TelemetrySink,
 ) -> NodeRunResult {
-    let prepared = prepare_deliberation(
-        provider,
-        &request,
-        max_tokens,
-        policy,
-        required_test_targets_fn,
-        context_file_names,
-    );
+    let prepared = prepare_deliberation(provider, &request, max_tokens, policy, context_config);
     let node_context =
         NodeContextTelemetry::new(telemetry, request.node_id.0.clone(), request.attempt);
     let machine = DeliberatingMachine {
@@ -42,7 +32,7 @@ pub(crate) fn run_with_provider<P: ProviderClient>(
         output,
         request.kind,
         &request.objective,
-        required_test_targets_fn.as_ref(),
+        context_config.required_test_targets_fn.as_ref(),
         &policy.worker_role_descriptions,
         telemetry,
     )

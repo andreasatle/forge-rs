@@ -158,6 +158,7 @@ fn adapter_role_missing_from_plugin_roles_fails_loudly() {
                     validation_targets: vec![],
                 },
             }],
+            api_summary: None,
         },
     );
 

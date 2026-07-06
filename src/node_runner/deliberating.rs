@@ -1,5 +1,6 @@
 //! NodeRunner backed by DeliberationMachine.
 
+mod api_summary;
 mod context;
 mod execution;
 mod machine;
@@ -13,10 +14,12 @@ use crate::node_runner::{TestTargetsFn, ValidationPlanForRoleFn};
 use crate::providers::ProviderClient;
 use crate::roles::RolePolicy;
 use crate::telemetry::TelemetrySink;
+use crate::validation::CommandSpec;
 
 use super::runner::NodeRunner;
 use super::types::{NodeRunRequest, NodeRunResult};
 
+use self::context::DeliberationContextConfig;
 use self::execution::run_with_provider;
 
 /// Runs a node by driving a
@@ -45,6 +48,7 @@ pub struct DeliberatingNodeRunner<C, S> {
     role_policy: RolePolicy,
     required_test_targets_fn: Arc<TestTargetsFn>,
     context_file_names: Vec<String>,
+    api_summary_command: Option<CommandSpec>,
     /// Looks up the validation plan stamped onto a `Work` node request based
     /// on its assigned worker role, produced by this runner.
     ///
@@ -68,6 +72,7 @@ impl<C, S> DeliberatingNodeRunner<C, S> {
             role_policy: RolePolicy::default(),
             required_test_targets_fn: Arc::new(|_| vec![]),
             context_file_names: vec![],
+            api_summary_command: None,
             validation_plan_for_role_fn: Arc::new(|_| None),
         }
     }
@@ -111,6 +116,14 @@ impl<C, S> DeliberatingNodeRunner<C, S> {
         self
     }
 
+    /// Supply the language plugin's `api_summary` command, run per file
+    /// against `Decomposition` and `Plan` node artifacts to surface existing
+    /// API shape to the planner. Absent by default, which omits the section.
+    pub fn with_api_summary_command(mut self, command: Option<CommandSpec>) -> Self {
+        self.api_summary_command = command;
+        self
+    }
+
     /// Supply the per-role validation plan lookup stamped onto every `Work`
     /// node this runner produces.
     ///
@@ -127,14 +140,18 @@ impl<C, S> DeliberatingNodeRunner<C, S> {
 
 impl<C: ProviderClient, S: ProviderClient> NodeRunner for DeliberatingNodeRunner<C, S> {
     fn run_node(&self, request: NodeRunRequest, telemetry: &dyn TelemetrySink) -> NodeRunResult {
+        let context_config = DeliberationContextConfig {
+            required_test_targets_fn: &self.required_test_targets_fn,
+            context_file_names: &self.context_file_names,
+            api_summary_command: self.api_summary_command.as_ref(),
+        };
         let result = match request.model_tier {
             ModelTier::Cheap => run_with_provider(
                 &self.cheap_provider,
                 request,
                 self.cheap_max_tokens,
                 &self.role_policy,
-                &self.required_test_targets_fn,
-                &self.context_file_names,
+                &context_config,
                 telemetry,
             ),
             ModelTier::Strong => run_with_provider(
@@ -142,8 +159,7 @@ impl<C: ProviderClient, S: ProviderClient> NodeRunner for DeliberatingNodeRunner
                 request,
                 self.strong_max_tokens,
                 &self.role_policy,
-                &self.required_test_targets_fn,
-                &self.context_file_names,
+                &context_config,
                 telemetry,
             ),
         };

@@ -70,3 +70,70 @@ roles:
       validation_targets:
         - pattern: "{stem}.py"
           target: "tests/test_{stem}.py"
+api_summary:
+  program: uv
+  args:
+    - run
+    - python
+    - -c
+    - |
+      import ast
+      import sys
+
+
+      def format_arg(arg):
+          annotation = f": {ast.unparse(arg.annotation)}" if arg.annotation is not None else ""
+          return f"{arg.arg}{annotation}"
+
+
+      def format_signature(node):
+          parts = [format_arg(a) for a in node.args.args]
+          signature = ", ".join(parts)
+          returns = f" -> {ast.unparse(node.returns)}" if node.returns is not None else ""
+          prefix = "async def" if isinstance(node, ast.AsyncFunctionDef) else "def"
+          return f"{prefix} {node.name}({signature}){returns}:"
+
+
+      def format_decorators(node, indent):
+          return [f"{indent}@{ast.unparse(d)}" for d in node.decorator_list]
+
+
+      def format_docstring(node, indent):
+          doc = ast.get_docstring(node)
+          if not doc:
+              return []
+          first_line = doc.strip().splitlines()[0]
+          return [f'{indent}"""{first_line}"""']
+
+
+      def format_function(node, indent=""):
+          lines = format_decorators(node, indent)
+          lines.append(f"{indent}{format_signature(node)}")
+          lines.extend(format_docstring(node, indent + "    "))
+          return lines
+
+
+      def format_class(node):
+          lines = format_decorators(node, "")
+          bases = ", ".join(ast.unparse(b) for b in node.bases)
+          header = f"class {node.name}({bases}):" if bases else f"class {node.name}:"
+          lines.append(header)
+          lines.extend(format_docstring(node, "    "))
+          for child in node.body:
+              if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                  lines.extend(format_function(child, indent="    "))
+          return lines
+
+
+      path = sys.argv[1]
+      with open(path, encoding="utf-8") as f:
+          source = f.read()
+      tree = ast.parse(source)
+
+      lines = []
+      for node in tree.body:
+          if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+              lines.extend(format_function(node))
+          elif isinstance(node, ast.ClassDef):
+              lines.extend(format_class(node))
+      print("\n".join(lines))

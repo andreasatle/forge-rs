@@ -1,7 +1,18 @@
 use super::*;
 use crate::machines::deliberation::DeliberationState;
+use crate::node_runner::deliberating::context::DeliberationContextConfig;
 use crate::node_runner::deliberating::request::prepare_deliberation;
+use crate::validation::{CommandSpec, ValidationScope};
 use std::sync::Arc;
+
+fn cat_command() -> CommandSpec {
+    CommandSpec {
+        program: "cat".to_string(),
+        args: vec![],
+        when_files_present: vec![],
+        scope: ValidationScope::Workspace,
+    }
+}
 
 #[test]
 fn prepared_deliberation_keeps_canonical_objective_and_structured_context_separate() {
@@ -22,13 +33,17 @@ fn prepared_deliberation_keeps_canonical_objective_and_structured_context_separa
         work_attempt: None,
     };
 
+    let context_config = DeliberationContextConfig {
+        required_test_targets_fn: &required_tests,
+        context_file_names: &["README.md".to_string()],
+        api_summary_command: None,
+    };
     let prepared = prepare_deliberation(
         &provider,
         &request,
         1024,
         &RolePolicy::default(),
-        &required_tests,
-        &["README.md".to_string()],
+        &context_config,
     );
 
     let DeliberationState::Ready { request } = prepared.initial_state else {
@@ -206,5 +221,87 @@ fn no_context_file_names_produces_no_extra_content() {
     assert!(
         !first.contains("README.md"),
         "first prompt must not mention README.md when no context files configured; got:\n{first}"
+    );
+}
+
+#[test]
+fn api_summary_section_appears_in_plan_node_prompt_when_configured() {
+    // Invariant: when the language plugin configures api_summary, Decomposition
+    // and Plan node prompts must include a "Current artifact state" section
+    // built from that command's per-file output.
+    let temp = TempDir::new("api-summary-plan");
+    let view = make_artifact_view(&temp, "main.py", "def f():\n    pass\n");
+
+    let plan = r#"{"tasks":[{"id":"task-1","objective":"Add a function.","operation":"modify","targets":["main.py"],"depends_on":[]}]}"#;
+    let provider = RecordingProvider::from_strs(&[
+        plan,
+        r#"{"status":"accepted","content":"plan looks good"}"#,
+        r#"{"status":"accepted","content":"plan approved"}"#,
+    ]);
+    let runner = DeliberatingNodeRunner::new(&provider, &provider)
+        .with_api_summary_command(Some(cat_command()));
+    let request = NodeRunRequest {
+        kind: NodeKind::Plan,
+        node_id: NodeId("test-node".to_string()),
+        objective: "Add a function to main.py".to_string(),
+        target_files: vec![],
+        test_plan_context: TestPlanContext::default(),
+        model_tier: ModelTier::Cheap,
+        attempt: 0,
+        artifact_view: Some(view),
+        worker_role: None,
+        work_attempt: None,
+    };
+    runner.run_node(request, &NoopTelemetry);
+
+    let prompts = provider.recorded_prompts();
+    assert!(!prompts.is_empty(), "provider must have received prompts");
+    let first = &prompts[0];
+    assert!(
+        first.contains("Current artifact state:"),
+        "plan prompt must include the artifact state section; got:\n{first}"
+    );
+    assert!(
+        first.contains("# main.py\ndef f():\n    pass"),
+        "plan prompt must include the per-file api summary output; got:\n{first}"
+    );
+}
+
+#[test]
+fn api_summary_section_is_absent_for_work_nodes_even_when_configured() {
+    // Invariant: api_summary is a planning-time aid — Work node prompts must
+    // never include it, even when the language plugin configures the command.
+    let temp = TempDir::new("api-summary-work");
+    let view = make_artifact_view(&temp, "main.py", "def f():\n    pass\n");
+
+    let provider = RecordingProvider::from_strs(&[
+        r#"{"summary":"draft output"}"#,
+        r#"{"tool":"read_file","path":"main.py"}"#,
+        r#"{"summary":"review ok"}"#,
+        r#"{"tool":"read_file","path":"main.py"}"#,
+        r#"{"summary":"approved"}"#,
+    ]);
+    let runner = DeliberatingNodeRunner::new(&provider, &provider)
+        .with_api_summary_command(Some(cat_command()));
+    let request = NodeRunRequest {
+        kind: NodeKind::Work,
+        node_id: NodeId("test-node".to_string()),
+        objective: "do the thing".to_string(),
+        target_files: vec![],
+        test_plan_context: TestPlanContext::default(),
+        model_tier: ModelTier::Cheap,
+        attempt: 0,
+        artifact_view: Some(view),
+        worker_role: None,
+        work_attempt: None,
+    };
+    runner.run_node(request, &NoopTelemetry);
+
+    let prompts = provider.recorded_prompts();
+    assert!(!prompts.is_empty(), "provider must have received prompts");
+    let first = &prompts[0];
+    assert!(
+        !first.contains("Current artifact state:"),
+        "work node prompt must not include the artifact state section; got:\n{first}"
     );
 }

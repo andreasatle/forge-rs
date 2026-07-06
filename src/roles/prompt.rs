@@ -425,6 +425,9 @@ fn render_artifact_context(context: &ArtifactContext) -> String {
          or reinitialize these files unless the objective explicitly names them as targets):\n{}",
         listing.join("\n")
     ));
+    if let Some(api_summary) = &context.api_summary {
+        parts.push(format!("Current artifact state:\n{api_summary}"));
+    }
     for file in &context.selected_files {
         parts.push(format!("{}:\n{}", file.path, file.content));
     }

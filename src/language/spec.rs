@@ -26,6 +26,11 @@ pub struct LanguageSpec {
     /// adapter. A role without an entry here falls back to `validation`.
     #[serde(default)]
     pub roles: Vec<LanguageRoleConfig>,
+    /// Command that extracts a readable API summary (signatures, docstrings)
+    /// from a single file. Run per file in the artifact workspace with the
+    /// file path as the last argument; its stdout is the file's summary.
+    #[serde(default)]
+    pub api_summary: Option<CommandSpec>,
 }
 
 impl LanguageSpec {
@@ -99,6 +104,7 @@ mod tests {
                 validation_targets: vec![],
             },
             roles: vec![],
+            api_summary: None,
         };
         assert!(
             spec.validation_includes_test_command(),
@@ -126,6 +132,7 @@ mod tests {
                 validation_targets: vec![],
             },
             roles: vec![],
+            api_summary: None,
         };
         assert!(
             !spec.validation_includes_test_command(),
@@ -143,6 +150,62 @@ mod tests {
                 "{language} validation spec must declare runs_tests: true"
             );
         }
+    }
+
+    #[test]
+    fn bundled_language_specs_declare_api_summary() {
+        for language in ["rust", "python"] {
+            let spec =
+                language_spec(language).unwrap_or_else(|| panic!("{language} spec must load"));
+            assert!(
+                spec.api_summary.is_some(),
+                "{language} plugin must configure api_summary"
+            );
+        }
+    }
+
+    #[test]
+    fn rust_api_summary_command_extracts_pub_signatures_from_a_real_file() {
+        // Invariant: the shipped rust.yaml api_summary command must actually
+        // extract pub fn/struct/enum/trait signatures when run against a real
+        // file, not just parse as valid YAML.
+        let spec = language_spec("rust").expect("rust spec must load");
+        let command = spec
+            .api_summary
+            .expect("rust spec must configure api_summary");
+
+        let dir = std::env::temp_dir().join(format!(
+            "forge-rust-api-summary-test-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).expect("failed to create scratch dir");
+        std::fs::write(
+            dir.join("sample.rs"),
+            "pub struct Foo;\n\nfn private() {}\n\npub fn add(a: i32, b: i32) -> i32 {\n    a + b\n}\n",
+        )
+        .expect("failed to write sample file");
+
+        let output = std::process::Command::new(&command.program)
+            .args(&command.args)
+            .arg("sample.rs")
+            .current_dir(&dir)
+            .output()
+            .expect("api_summary command must run");
+        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+
+        std::fs::remove_dir_all(&dir).ok();
+
+        assert!(
+            output.status.success(),
+            "api_summary command must succeed; stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(stdout.contains("pub struct Foo"), "got: {stdout}");
+        assert!(
+            stdout.contains("pub fn add(a: i32, b: i32) -> i32"),
+            "got: {stdout}"
+        );
+        assert!(!stdout.contains("private"), "got: {stdout}");
     }
 
     #[test]

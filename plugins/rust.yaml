@@ -56,3 +56,11 @@ roles:
       validation_targets:
         - pattern: "{stem}.rs"
           target: "{stem}_test.rs"
+api_summary:
+  program: sh
+  args:
+    - -c
+    - |
+      grep -nE '^[[:space:]]*pub (fn|struct|enum|trait)[[:space:]]' "$0" \
+        | sed -E 's/^[0-9]+:[[:space:]]*//' \
+        | sed -E 's/[[:space:]]*\{[[:space:]]*$//'

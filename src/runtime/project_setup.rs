@@ -31,6 +31,7 @@ pub struct ProjectRuntimeSetup {
     pub required_test_targets_fn: Arc<TestTargetsFn>,
     pub validation_plan_for_role_fn: Arc<ValidationPlanForRoleFn>,
     pub validator: Rc<dyn Validator>,
+    pub api_summary_command: Option<CommandSpec>,
 }
 
 impl ProjectRuntimeSetup {
@@ -101,6 +102,10 @@ impl<'a> ProjectRuntimeSetupBuilder<'a> {
             required_test_targets_fn: self.required_test_targets_fn(),
             validation_plan_for_role_fn: self.validation_plan_for_role_fn(),
             validator: self.validator(),
+            api_summary_command: self
+                .language_spec
+                .as_ref()
+                .and_then(|spec| spec.api_summary.clone()),
         }
     }
 

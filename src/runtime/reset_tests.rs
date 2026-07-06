@@ -164,6 +164,7 @@ fn register_fake_language(label: &str) -> String {
                 validation_targets: vec![],
             },
             roles: vec![],
+            api_summary: None,
         },
     );
     id
