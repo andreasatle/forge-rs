@@ -48,7 +48,7 @@ workers:
       Implements the source changes that satisfy the tests the tester role already wrote.
     producer:
       instructions: |-
-        Code changes require corresponding tests; create or update test files that verify the changed behavior. When writing test files, import the functions under test from the source module rather than reimplementing them.
+        Use read_file to read the existing test file(s) for this module before writing any implementation. The existing tests are the specification: implement the source so that they pass as written, and do not change test files to fit the implementation. If an implementation choice would contradict what an existing test asserts, the test wins — change the implementation, not the test.
       constraints: |-
         Produce concrete, complete artifact changes — do not leave placeholders or stubs. Report completion with a `summary` field describing what you did; there is no accepted/rejected status to set — a valid summary means the work is done.
     critic:
