@@ -49,6 +49,7 @@ pub struct DeliberatingNodeRunner<C, S> {
     required_test_targets_fn: Arc<TestTargetsFn>,
     context_file_names: Vec<String>,
     api_summary_command: Option<CommandSpec>,
+    northstar: Option<String>,
     /// Looks up the validation plan stamped onto a `Work` node request based
     /// on its assigned worker role, produced by this runner.
     ///
@@ -73,6 +74,7 @@ impl<C, S> DeliberatingNodeRunner<C, S> {
             required_test_targets_fn: Arc::new(|_| vec![]),
             context_file_names: vec![],
             api_summary_command: None,
+            northstar: None,
             validation_plan_for_role_fn: Arc::new(|_| None),
         }
     }
@@ -124,6 +126,14 @@ impl<C, S> DeliberatingNodeRunner<C, S> {
         self
     }
 
+    /// Supply the configured northstar text (desired end state), surfaced to
+    /// `Decomposition` node prompts alongside the API summary. Absent by
+    /// default, which omits the section.
+    pub fn with_northstar(mut self, northstar: Option<String>) -> Self {
+        self.northstar = northstar;
+        self
+    }
+
     /// Supply the per-role validation plan lookup stamped onto every `Work`
     /// node this runner produces.
     ///
@@ -144,6 +154,7 @@ impl<C: ProviderClient, S: ProviderClient> NodeRunner for DeliberatingNodeRunner
             required_test_targets_fn: &self.required_test_targets_fn,
             context_file_names: &self.context_file_names,
             api_summary_command: self.api_summary_command.as_ref(),
+            northstar: self.northstar.as_deref(),
         };
         let result = match request.model_tier {
             ModelTier::Cheap => run_with_provider(

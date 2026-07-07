@@ -36,7 +36,9 @@ fn make_forge_config(repo_path: &Path, telemetry_path: &Path) -> ForgeConfig {
         UnmanagedProviderConfig,
     };
     ForgeConfig {
-        objective: "test".to_string(),
+        objective: Some("test".to_string()),
+        northstar: None,
+        northstar_text: None,
         artifact: ArtifactConfig {
             repo_path: repo_path.to_str().unwrap().to_string(),
             branch: "main".to_string(),
@@ -70,7 +72,9 @@ fn make_forge_config_with_language(
         UnmanagedProviderConfig,
     };
     ForgeConfig {
-        objective: "test".to_string(),
+        objective: Some("test".to_string()),
+        northstar: None,
+        northstar_text: None,
         artifact: ArtifactConfig {
             repo_path: repo_path.to_str().unwrap().to_string(),
             branch: "main".to_string(),
@@ -308,7 +312,9 @@ fn reset_creates_configured_branch() {
             UnmanagedProviderConfig,
         };
         ForgeConfig {
-            objective: "test".to_string(),
+            objective: Some("test".to_string()),
+            northstar: None,
+            northstar_text: None,
             artifact: ArtifactConfig {
                 repo_path: repo_path.to_str().unwrap().to_string(),
                 branch: "artifact".to_string(),

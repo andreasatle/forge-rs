@@ -7,8 +7,20 @@ use serde::{Deserialize, Deserializer};
 /// Top-level configuration for a forge run.
 #[derive(Debug, Deserialize)]
 pub struct ForgeConfig {
-    /// The objective the run will work toward.
-    pub objective: String,
+    /// The objective the run will work toward. Mutually exclusive with
+    /// `northstar`; exactly one of the two is required.
+    #[serde(default)]
+    pub objective: Option<String>,
+    /// Path to a plain text file describing the desired end state, resolved
+    /// relative to the config file. Mutually exclusive with `objective`;
+    /// exactly one of the two is required. When set, the gap between this
+    /// text and the current artifact state becomes the run's objective.
+    #[serde(default)]
+    pub northstar: Option<String>,
+    /// The loaded contents of the file at `northstar`, populated by
+    /// [`Self::from_file`]. Not part of the YAML schema.
+    #[serde(skip)]
+    pub northstar_text: Option<String>,
     /// Artifact repository settings.
     pub artifact: ArtifactConfig,
     /// Provider settings.
@@ -242,6 +254,22 @@ impl ForgeConfig {
         // `forge start path/to/forge.yaml` works correctly from any cwd.
         let config_dir = config_path.parent().filter(|p| !p.as_os_str().is_empty());
 
+        match (&config.objective, &config.northstar) {
+            (Some(_), Some(_)) => {
+                return Err("set either northstar or objective, not both".into());
+            }
+            (None, None) => {
+                return Err("either northstar or objective is required".into());
+            }
+            _ => {}
+        }
+        if let Some(northstar_path) = &mut config.northstar {
+            if let Some(dir) = config_dir {
+                *northstar_path = resolve_relative(northstar_path, dir);
+            }
+            config.northstar_text = Some(std::fs::read_to_string(&*northstar_path)?);
+        }
+
         if config.adapter.trim().is_empty() {
             return Err("adapter is required".into());
         }
@@ -272,6 +300,16 @@ impl ForgeConfig {
         validate_provider_model_identity(&config.provider)?;
 
         Ok(config)
+    }
+
+    /// The run's root objective text: the explicit `objective` when set, or
+    /// the loaded `northstar` file contents otherwise. `from_file` guarantees
+    /// exactly one of the two is present.
+    pub fn root_objective(&self) -> &str {
+        self.objective
+            .as_deref()
+            .or(self.northstar_text.as_deref())
+            .expect("from_file guarantees objective or northstar_text is set")
     }
 }
 

@@ -24,6 +24,9 @@ pub(crate) struct DeliberationContextConfig<'a> {
     /// for `Decomposition` and `Plan` nodes to surface existing API shape to
     /// the planner.
     pub(crate) api_summary_command: Option<&'a CommandSpec>,
+    /// The configured northstar text, when present. Surfaced only to
+    /// `Decomposition` nodes alongside the API summary.
+    pub(crate) northstar: Option<&'a str>,
 }
 
 /// Returns structured context for a deliberation run.
@@ -38,6 +41,11 @@ pub(crate) fn build_deliberation_context(
         None
     };
 
+    let northstar = matches!(request.kind, NodeKind::Decomposition)
+        .then(|| config.northstar)
+        .flatten()
+        .map(str::to_string);
+
     DeliberationContext {
         target_files: request.target_files.clone(),
         testing_requirement,
@@ -49,6 +57,7 @@ pub(crate) fn build_deliberation_context(
                 config.api_summary_command,
             )
         }),
+        northstar,
     }
 }
 

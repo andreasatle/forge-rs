@@ -45,6 +45,10 @@ pub struct DeliberationContext {
     pub testing_requirement: Option<String>,
     /// Read-only artifact context made visible to roles.
     pub artifact: Option<ArtifactContext>,
+    /// The configured northstar text (desired end state), surfaced to
+    /// [`NodeKind::Decomposition`] nodes alongside the API summary so the
+    /// producer can plan only the gap between the two.
+    pub northstar: Option<String>,
 }
 
 /// Read-only artifact context captured before the deliberation run.

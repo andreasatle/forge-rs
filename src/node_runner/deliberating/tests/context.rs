@@ -37,6 +37,7 @@ fn prepared_deliberation_keeps_canonical_objective_and_structured_context_separa
         required_test_targets_fn: &required_tests,
         context_file_names: &["README.md".to_string()],
         api_summary_command: None,
+        northstar: None,
     };
     let prepared = prepare_deliberation(
         &provider,
@@ -264,6 +265,84 @@ fn api_summary_section_appears_in_plan_node_prompt_when_configured() {
     assert!(
         first.contains("# main.py\ndef f():\n    pass"),
         "plan prompt must include the per-file api summary output; got:\n{first}"
+    );
+}
+
+#[test]
+fn northstar_section_appears_in_decomposition_node_prompt_when_configured() {
+    // Invariant: when a northstar is configured, Decomposition node prompts
+    // must surface it as a "Northstar:" section alongside the API summary so
+    // the producer can plan the gap between the two.
+    let temp = TempDir::new("northstar-decomposition");
+    let view = make_artifact_view(&temp, "main.py", "def f():\n    pass\n");
+
+    let decomposition = r#"{"kind":"plan"}"#;
+    let provider = RecordingProvider::from_strs(&[
+        decomposition,
+        r#"{"status":"accepted","content":"decomposition looks good"}"#,
+        r#"{"status":"accepted","content":"decomposition approved"}"#,
+    ]);
+    let runner = DeliberatingNodeRunner::new(&provider, &provider)
+        .with_api_summary_command(Some(cat_command()))
+        .with_northstar(Some("Ship a fibonacci CLI.".to_string()));
+    let request = NodeRunRequest {
+        kind: NodeKind::Decomposition,
+        node_id: NodeId("test-node".to_string()),
+        objective: "Ship a fibonacci CLI.".to_string(),
+        target_files: vec![],
+        test_plan_context: TestPlanContext::default(),
+        model_tier: ModelTier::Cheap,
+        attempt: 0,
+        artifact_view: Some(view),
+        worker_role: None,
+        work_attempt: None,
+    };
+    runner.run_node(request, &NoopTelemetry);
+
+    let prompts = provider.recorded_prompts();
+    assert!(!prompts.is_empty(), "provider must have received prompts");
+    let first = &prompts[0];
+    assert!(
+        first.contains("Northstar:\nShip a fibonacci CLI."),
+        "decomposition prompt must include the northstar section; got:\n{first}"
+    );
+}
+
+#[test]
+fn northstar_section_is_absent_for_plan_nodes_even_when_configured() {
+    // Invariant: the northstar section is a Decomposition-only gap-analysis
+    // aid; Plan node prompts must never include it.
+    let temp = TempDir::new("northstar-plan");
+    let view = make_artifact_view(&temp, "main.py", "def f():\n    pass\n");
+
+    let plan = r#"{"tasks":[{"id":"task-1","objective":"Add a function.","operation":"modify","targets":["main.py"],"depends_on":[]}]}"#;
+    let provider = RecordingProvider::from_strs(&[
+        plan,
+        r#"{"status":"accepted","content":"plan looks good"}"#,
+        r#"{"status":"accepted","content":"plan approved"}"#,
+    ]);
+    let runner = DeliberatingNodeRunner::new(&provider, &provider)
+        .with_northstar(Some("Ship a fibonacci CLI.".to_string()));
+    let request = NodeRunRequest {
+        kind: NodeKind::Plan,
+        node_id: NodeId("test-node".to_string()),
+        objective: "Add a function to main.py".to_string(),
+        target_files: vec![],
+        test_plan_context: TestPlanContext::default(),
+        model_tier: ModelTier::Cheap,
+        attempt: 0,
+        artifact_view: Some(view),
+        worker_role: None,
+        work_attempt: None,
+    };
+    runner.run_node(request, &NoopTelemetry);
+
+    let prompts = provider.recorded_prompts();
+    assert!(!prompts.is_empty(), "provider must have received prompts");
+    let first = &prompts[0];
+    assert!(
+        !first.contains("Northstar:"),
+        "plan node prompt must not include the northstar section; got:\n{first}"
     );
 }
 

@@ -35,7 +35,7 @@ impl ForgeRuntime {
         let provider_stack = ResolvedProviderStack::build(&config.provider)?;
         let run_info = create_run(
             &runs_root,
-            &config.objective,
+            config.root_objective(),
             &config.artifact.repo_path,
             &provider_stack.metadata,
         )?;
@@ -45,7 +45,7 @@ impl ForgeRuntime {
 
         let initial_state = SchedulerMachine::initial_state(
             RunRequest {
-                objective: config.objective.clone(),
+                objective: config.root_objective().to_string(),
             },
             RunConfig {
                 has_strong_tier: config.provider.strong.is_some(),

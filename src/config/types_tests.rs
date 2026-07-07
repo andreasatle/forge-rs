@@ -80,8 +80,128 @@ fn parses_objective() {
     let tmp = TempYaml::new(EXAMPLE_YAML);
     let config = ForgeConfig::from_file(tmp.path()).unwrap();
     assert_eq!(
-        config.objective,
+        config.objective.as_deref(),
+        Some("Write a short haiku about Rust state machines.")
+    );
+    assert_eq!(
+        config.root_objective(),
         "Write a short haiku about Rust state machines."
+    );
+}
+
+// ── northstar config tests ───────────────────────────────────────────────
+
+const NORTHSTAR_YAML: &str = r#"
+northstar: "northstar.md"
+artifact:
+  repo_path: ".forge/artifacts/main.git"
+  branch: "main"
+provider:
+  cheap:
+    unmanaged:
+      base_url: "http://localhost:8080"
+      model: "llama-test"
+      n_predict: 512
+telemetry:
+  directory: "runs"
+adapter: coding.yaml
+"#;
+
+#[test]
+fn northstar_loads_file_contents_and_becomes_root_objective() {
+    let tmp = TempYaml::new(NORTHSTAR_YAML);
+    let dir = std::path::Path::new(tmp.path()).parent().unwrap();
+    std::fs::write(dir.join("northstar.md"), "Desired end state text.\n").unwrap();
+
+    let config = ForgeConfig::from_file(tmp.path()).unwrap();
+    assert!(
+        config.objective.is_none(),
+        "objective must remain unset when northstar is configured"
+    );
+    assert_eq!(
+        config.northstar_text.as_deref(),
+        Some("Desired end state text.\n")
+    );
+    assert_eq!(config.root_objective(), "Desired end state text.\n");
+
+    let _ = std::fs::remove_file(dir.join("northstar.md"));
+}
+
+#[test]
+fn northstar_path_resolves_against_config_dir() {
+    let tmp = TempYaml::new(NORTHSTAR_YAML);
+    let dir = std::path::Path::new(tmp.path()).parent().unwrap();
+    std::fs::write(dir.join("northstar.md"), "Desired end state text.\n").unwrap();
+
+    let config = ForgeConfig::from_file(tmp.path()).unwrap();
+    let expected = dir.join("northstar.md").to_string_lossy().into_owned();
+    assert_eq!(config.northstar.as_deref(), Some(expected.as_str()));
+
+    let _ = std::fs::remove_file(dir.join("northstar.md"));
+}
+
+const OBJECTIVE_AND_NORTHSTAR_YAML: &str = r#"
+objective: "test"
+northstar: "northstar.md"
+artifact:
+  repo_path: ".forge/artifacts/main.git"
+  branch: "main"
+provider:
+  cheap:
+    unmanaged:
+      base_url: "http://localhost:8080"
+      model: "llama-test"
+      n_predict: 512
+telemetry:
+  directory: "runs"
+adapter: coding.yaml
+"#;
+
+#[test]
+fn objective_and_northstar_are_mutually_exclusive() {
+    let tmp = TempYaml::new(OBJECTIVE_AND_NORTHSTAR_YAML);
+    let err = ForgeConfig::from_file(tmp.path()).unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("set either northstar or objective, not both"),
+        "error must explain the mutual exclusivity; got: {err}"
+    );
+}
+
+const NEITHER_OBJECTIVE_NOR_NORTHSTAR_YAML: &str = r#"
+artifact:
+  repo_path: ".forge/artifacts/main.git"
+  branch: "main"
+provider:
+  cheap:
+    unmanaged:
+      base_url: "http://localhost:8080"
+      model: "llama-test"
+      n_predict: 512
+telemetry:
+  directory: "runs"
+adapter: coding.yaml
+"#;
+
+#[test]
+fn objective_or_northstar_is_required() {
+    let tmp = TempYaml::new(NEITHER_OBJECTIVE_NOR_NORTHSTAR_YAML);
+    let err = ForgeConfig::from_file(tmp.path()).unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("either northstar or objective is required"),
+        "error must explain that one of the two is required; got: {err}"
+    );
+}
+
+#[test]
+fn missing_northstar_file_fails_at_config_load_time() {
+    let tmp = TempYaml::new(NORTHSTAR_YAML);
+    // Deliberately do not write northstar.md.
+    let result = ForgeConfig::from_file(tmp.path());
+    assert!(
+        result.is_err(),
+        "a northstar path that does not resolve to a file must fail from_file"
     );
 }
 

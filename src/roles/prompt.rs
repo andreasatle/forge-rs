@@ -397,6 +397,9 @@ fn render_deliberation_context(
     include_target_files: bool,
 ) -> Option<String> {
     let mut parts = Vec::new();
+    if let Some(northstar) = &context.northstar {
+        parts.push(format!("Northstar:\n{northstar}"));
+    }
     if let Some(artifact) = &context.artifact {
         parts.push(render_artifact_context(artifact));
     }

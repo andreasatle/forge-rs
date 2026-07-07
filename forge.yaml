@@ -1,4 +1,4 @@
-objective: "Create a simple Python program in main.py that implements a Fibonacci number generator. The program should expose a reusable fibonacci(n: int) function and include corresponding unit tests."
+northstar: northstar.md
 artifact:
   repo_path: ".forge/artifacts/main.git"
   branch: "main"
