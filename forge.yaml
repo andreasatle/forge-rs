@@ -4,15 +4,11 @@ artifact:
   branch: "main"
 provider:
   cheap:
-    managed:
-      llama_cpp:
-        startup_timeout_seconds: 120
-        command: llama-server
-        model:
-          hf: ggml-org/gemma-4-26B-A4B-it-GGUF
-        host: 127.0.0.1
-        port: 8080
-        n_predict: 1024
+    unmanaged:
+      base_url: http://127.0.0.1:11434
+      model: gemma4:26b
+      n_predict: 1024
+      backend: ollama
 telemetry:
   directory: "runs"
 adapter: adapters/coding_tdd.yaml

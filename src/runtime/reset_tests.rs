@@ -32,7 +32,7 @@ fn commit_count(repo_path: &PathBuf, branch: &str) -> usize {
 
 fn make_forge_config(repo_path: &Path, telemetry_path: &Path) -> ForgeConfig {
     use crate::config::{
-        ArtifactConfig, ProviderConfig, ProviderTierConfig, TelemetryConfig,
+        ArtifactConfig, ProviderBackend, ProviderConfig, ProviderTierConfig, TelemetryConfig,
         UnmanagedProviderConfig,
     };
     ForgeConfig {
@@ -48,6 +48,7 @@ fn make_forge_config(repo_path: &Path, telemetry_path: &Path) -> ForgeConfig {
                 base_url: "http://localhost:8080".to_string(),
                 model: "llama-test".to_string(),
                 n_predict: 512,
+                backend: ProviderBackend::LlamaCpp,
             }),
             strong: None,
             timeout_seconds: 120,
@@ -68,7 +69,7 @@ fn make_forge_config_with_language(
     language: &str,
 ) -> ForgeConfig {
     use crate::config::{
-        ArtifactConfig, ProviderConfig, ProviderTierConfig, TelemetryConfig,
+        ArtifactConfig, ProviderBackend, ProviderConfig, ProviderTierConfig, TelemetryConfig,
         UnmanagedProviderConfig,
     };
     ForgeConfig {
@@ -84,6 +85,7 @@ fn make_forge_config_with_language(
                 base_url: "http://localhost:8080".to_string(),
                 model: "llama-test".to_string(),
                 n_predict: 512,
+                backend: ProviderBackend::LlamaCpp,
             }),
             strong: None,
             timeout_seconds: 120,
@@ -308,7 +310,7 @@ fn reset_creates_configured_branch() {
     // Use a non-default branch name to prove reset uses the config, not "main".
     let config = {
         use crate::config::{
-            ArtifactConfig, ProviderConfig, ProviderTierConfig, TelemetryConfig,
+            ArtifactConfig, ProviderBackend, ProviderConfig, ProviderTierConfig, TelemetryConfig,
             UnmanagedProviderConfig,
         };
         ForgeConfig {
@@ -324,6 +326,7 @@ fn reset_creates_configured_branch() {
                     base_url: "http://localhost:8080".to_string(),
                     model: "llama-test".to_string(),
                     n_predict: 512,
+                    backend: ProviderBackend::LlamaCpp,
                 }),
                 strong: None,
                 timeout_seconds: 120,

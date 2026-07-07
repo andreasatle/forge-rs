@@ -13,3 +13,9 @@ impl<P: ProviderClient> ProviderClient for &P {
         P::call(self, request)
     }
 }
+
+impl<P: ProviderClient + ?Sized> ProviderClient for Box<P> {
+    fn call(&self, request: ProviderRequest) -> Result<ProviderResponse, ProviderError> {
+        P::call(self, request)
+    }
+}

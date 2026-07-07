@@ -7,9 +7,10 @@
 use std::error::Error;
 
 use crate::config::{
-    ManagedLlamaCppModelConfig, ManagedProviderConfig, ProviderConfig, ProviderTierConfig,
+    ManagedLlamaCppModelConfig, ManagedProviderConfig, ProviderBackend, ProviderConfig,
+    ProviderTierConfig,
 };
-use crate::providers::{LlamaCppProvider, RetryingProvider};
+use crate::providers::{LlamaCppProvider, OllamaProvider, ProviderClient, RetryingProvider};
 use crate::runtime::managed_provider::{
     ManagedLlamaCppRuntimeConfig, ManagedProviderServer, resolve_llama_cpp_config,
 };
@@ -20,11 +21,27 @@ use crate::runtime::{ManagedProviderServerMetadata, ProviderRunMetadata, Provide
 /// processes kept alive for the lifetime of the stack.
 pub struct ResolvedProviderStack {
     pub metadata: ProviderRunMetadata,
-    pub cheap: RetryingProvider<LlamaCppProvider>,
-    pub strong: RetryingProvider<LlamaCppProvider>,
+    pub cheap: RetryingProvider<Box<dyn ProviderClient>>,
+    pub strong: RetryingProvider<Box<dyn ProviderClient>>,
     pub cheap_tokens: u32,
     pub strong_tokens: u32,
     _servers: Vec<ManagedProviderServer>,
+}
+
+/// Build the [`ProviderClient`] a tier's metadata dictates, dispatching on
+/// [`ProviderTierMetadata::backend`] since llama.cpp and Ollama speak
+/// different HTTP APIs against the same `base_url`/`model` shape.
+fn build_tier_client(tier: &ProviderTierMetadata) -> Box<dyn ProviderClient> {
+    match tier.backend {
+        ProviderBackend::LlamaCpp => {
+            Box::new(LlamaCppProvider::new(&tier.base_url, tier.timeout_seconds))
+        }
+        ProviderBackend::Ollama => Box::new(OllamaProvider::new(
+            &tier.base_url,
+            &tier.model,
+            tier.timeout_seconds,
+        )),
+    }
 }
 
 impl ResolvedProviderStack {
@@ -48,13 +65,8 @@ impl<'a> ProviderStackBuilder<'a> {
         let metadata = self.run_metadata();
         let servers = self.start_managed_servers()?;
 
-        let cheap_llama =
-            LlamaCppProvider::new(&metadata.cheap.base_url, metadata.cheap.timeout_seconds);
-        let cheap = RetryingProvider::new(cheap_llama, 3);
-
-        let strong_llama =
-            LlamaCppProvider::new(&metadata.strong.base_url, metadata.strong.timeout_seconds);
-        let strong = RetryingProvider::new(strong_llama, 3);
+        let cheap = RetryingProvider::new(build_tier_client(&metadata.cheap), 3);
+        let strong = RetryingProvider::new(build_tier_client(&metadata.strong), 3);
 
         let cheap_tokens = metadata.cheap.n_predict as u32;
         let strong_tokens = metadata.strong.n_predict as u32;
@@ -101,6 +113,7 @@ impl<'a> ProviderStackBuilder<'a> {
                 model: config.model.clone(),
                 n_predict: config.n_predict,
                 timeout_seconds,
+                backend: config.backend,
                 managed: false,
                 managed_server: None,
             },
@@ -111,6 +124,7 @@ impl<'a> ProviderStackBuilder<'a> {
                     model: config.model.identity().to_string(),
                     n_predict: managed.llama_cpp.n_predict,
                     timeout_seconds,
+                    backend: ProviderBackend::LlamaCpp,
                     managed: true,
                     managed_server: Some(self.managed_server_metadata(&config)),
                 }
@@ -184,6 +198,7 @@ mod tests {
                 base_url: base_url.to_string(),
                 model: model.to_string(),
                 n_predict,
+                backend: ProviderBackend::LlamaCpp,
             }),
             strong: None,
             timeout_seconds: 120,
@@ -231,11 +246,13 @@ mod tests {
                 base_url: "http://localhost:8080".to_string(),
                 model: "cheap-model".to_string(),
                 n_predict: 512,
+                backend: ProviderBackend::LlamaCpp,
             }),
             strong: Some(ProviderTierConfig::Unmanaged(UnmanagedProviderConfig {
                 base_url: "http://localhost:8081".to_string(),
                 model: "strong-model".to_string(),
                 n_predict: 1024,
+                backend: ProviderBackend::LlamaCpp,
             })),
             timeout_seconds: 120,
             strong_timeout_seconds: Some(180),
@@ -251,6 +268,7 @@ mod tests {
                     model: "cheap-model".to_string(),
                     n_predict: 512,
                     timeout_seconds: 120,
+                    backend: ProviderBackend::LlamaCpp,
                     managed: false,
                     managed_server: None,
                 },
@@ -259,6 +277,7 @@ mod tests {
                     model: "strong-model".to_string(),
                     n_predict: 1024,
                     timeout_seconds: 180,
+                    backend: ProviderBackend::LlamaCpp,
                     managed: false,
                     managed_server: None,
                 },
@@ -290,6 +309,7 @@ mod tests {
             model: "models/cheap.gguf".to_string(),
             n_predict: 512,
             timeout_seconds: 120,
+            backend: ProviderBackend::LlamaCpp,
             managed: true,
             managed_server: Some(ManagedProviderServerMetadata {
                 kind: "llama_cpp".to_string(),
@@ -316,6 +336,7 @@ mod tests {
                 base_url: "http://localhost:8080".to_string(),
                 model: "models/cheap.gguf".to_string(),
                 n_predict: 512,
+                backend: ProviderBackend::LlamaCpp,
             }),
             strong: Some(managed_tier(
                 "/opt/llama-server",
@@ -340,6 +361,7 @@ mod tests {
                     model: "models/cheap.gguf".to_string(),
                     n_predict: 512,
                     timeout_seconds: 120,
+                    backend: ProviderBackend::LlamaCpp,
                     managed: false,
                     managed_server: None,
                 },
@@ -348,6 +370,7 @@ mod tests {
                     model: "models/strong.gguf".to_string(),
                     n_predict: 1024,
                     timeout_seconds: 180,
+                    backend: ProviderBackend::LlamaCpp,
                     managed: true,
                     managed_server: Some(ManagedProviderServerMetadata {
                         kind: "llama_cpp".to_string(),
