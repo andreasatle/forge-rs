@@ -6,9 +6,10 @@ provider:
   cheap:
     managed:
       llama_cpp:
+        startup_timeout_seconds: 120
         command: llama-server
         model:
-          hf: lm-kit/qwen-3-14b-instruct-gguf:Q4_K_M
+          hf: ggml-org/gemma-4-26B-A4B-it-GGUF
         host: 127.0.0.1
         port: 8080
         n_predict: 1024
