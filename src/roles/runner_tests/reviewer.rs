@@ -24,6 +24,47 @@ fn work_reviewer_prompt_guides_read_file_to_declared_target() {
     );
 }
 
+#[test]
+fn work_reviewer_can_read_required_validation_target_outside_target_files() {
+    // The Critic's target_files is just "main.py", but the adapter's required
+    // validation target for it is "test_main.py". The Critic must be able to
+    // read that test file even though it is not one of its own target_files,
+    // and the prompt must surface it as an additional read-only path.
+    let (_temp, view) = make_view_with_entries(
+        "reviewer-reads-validation-target",
+        &[
+            ("main.py", b"print('hi')\n".as_slice()),
+            ("test_main.py", b"def test_hi(): pass\n".as_slice()),
+        ],
+    );
+    let provider = ScriptedProvider::from_strs(&[
+        r#"{"tool":"read_file","path":"test_main.py"}"#,
+        r#"{"status":"accepted","content":"test coverage confirmed"}"#,
+    ]);
+    let runner = ProviderRoleRunner::new(&provider);
+
+    let mut request = with_target_files(
+        critic_request("Review the update.", "updated main.py"),
+        &["main.py"],
+    );
+    request.test_plan_context.required_validation_targets = vec!["test_main.py".to_string()];
+    let request = with_tool_context(request, view);
+
+    let output = runner.run_role(request, &crate::telemetry::NoopTelemetry);
+
+    assert!(
+        matches!(output.result, RoleResult::Accepted { .. }),
+        "Critic must accept after reading the required validation target; got {:?}",
+        output.result
+    );
+
+    let prompt = &provider.requests.borrow()[0].prompt;
+    assert!(
+        prompt.contains("Additional read-only test files") && prompt.contains("test_main.py"),
+        "prompt must surface required validation targets as additional read-only paths; got:\n{prompt}"
+    );
+}
+
 // ── RolePolicy tests ─────────────────────────────────────────────────────
 
 #[test]

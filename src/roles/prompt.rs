@@ -78,6 +78,12 @@ pub(super) fn render_tool_section(policy: &FileToolPolicy) -> String {
     if let Some(allowed) = &policy.allowed_paths {
         s.push_str(&format!("Allowed target files: {}\n", allowed.join(", ")));
     }
+    if let Some(extra) = &policy.additional_read_only_paths {
+        s.push_str(&format!(
+            "Additional read-only test files (readable, not writable): {}\n",
+            extra.join(", ")
+        ));
+    }
     s.push_str(
         "ToolRequest variants:\n\
          - list_files: `tool` must be \"list_files\".\n\
@@ -486,6 +492,12 @@ pub(super) fn render_node_review_contract(contract: &NodeReviewContract) -> Stri
             "Inspection requirement: before accepting, inspect the current node target files with read_file."
                 .to_string(),
         );
+        if !contract.required_validation_targets.is_empty() {
+            lines.push(format!(
+                "Required validation target files are also available for read-only inspection via read_file, even when they are not part of this node's own target files: {}",
+                contract.required_validation_targets.join(", ")
+            ));
+        }
     }
 
     lines.push(

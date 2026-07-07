@@ -19,6 +19,13 @@ pub struct FileToolPolicy {
     /// relative paths. Path containment validation still runs before this
     /// allow-list check.
     pub allowed_paths: Option<Vec<String>>,
+    /// Optional additional paths that may be read, but never written, even
+    /// when `allowed_paths` restricts primary access.
+    ///
+    /// Used to expose required validation target files (e.g. tests) to
+    /// read-only reviewer roles without granting them write access or
+    /// widening the Producer's own target files.
+    pub additional_read_only_paths: Option<Vec<String>>,
     /// Maximum bytes returned by a single `ReadFile` call before content is truncated.
     pub max_read_bytes: usize,
     /// Maximum bytes accepted by a single `WriteFile` or `ReplaceText` call.
@@ -33,6 +40,7 @@ impl Default for FileToolPolicy {
         Self {
             allow_writes: true,
             allowed_paths: None,
+            additional_read_only_paths: None,
             max_read_bytes: 64 * 1024,
             max_write_bytes: 256 * 1024,
             max_observation_bytes: 16 * 1024,
@@ -169,7 +177,7 @@ impl FileToolExecutor {
         &self.policy
     }
 
-    fn validate_path_allowed(&self, path: &str) -> Result<(), String> {
+    fn validate_path_allowed(&self, path: &str, read_only: bool) -> Result<(), String> {
         validate_relative_path(path).map_err(|e| match (&self.policy.allowed_paths, e) {
             (Some(allowed), ArtifactError::PathOutsideWorkspace) => {
                 allowed_target_guidance(allowed)
@@ -179,7 +187,15 @@ impl FileToolExecutor {
         if let Some(allowed) = &self.policy.allowed_paths
             && !allowed.iter().any(|target| target == path)
         {
-            return Err(allowed_target_guidance(allowed));
+            let extra_allowed = read_only
+                && self
+                    .policy
+                    .additional_read_only_paths
+                    .as_ref()
+                    .is_some_and(|paths| paths.iter().any(|target| target == path));
+            if !extra_allowed {
+                return Err(allowed_target_guidance(allowed));
+            }
         }
         Ok(())
     }
@@ -196,7 +212,7 @@ impl FileToolExecutor {
             },
 
             FileToolRequest::ReadFile { path } => {
-                if let Err(reason) = self.validate_path_allowed(&path) {
+                if let Err(reason) = self.validate_path_allowed(&path, true) {
                     return FileToolResponse::Failed { reason };
                 }
                 match self.read_content(&path) {
@@ -239,7 +255,7 @@ impl FileToolExecutor {
                         ),
                     };
                 }
-                if let Err(reason) = self.validate_path_allowed(&path) {
+                if let Err(reason) = self.validate_path_allowed(&path, false) {
                     return FileToolResponse::Failed { reason };
                 }
                 let description = format!("write {path}");
@@ -275,7 +291,7 @@ impl FileToolExecutor {
                         ),
                     };
                 }
-                if let Err(reason) = self.validate_path_allowed(&path) {
+                if let Err(reason) = self.validate_path_allowed(&path, false) {
                     return FileToolResponse::Failed { reason };
                 }
                 let content = match self.read_content(&path) {
@@ -330,7 +346,7 @@ impl FileToolExecutor {
                         reason: "write operations are not permitted for this role".to_string(),
                     };
                 }
-                if let Err(reason) = self.validate_path_allowed(&path) {
+                if let Err(reason) = self.validate_path_allowed(&path, false) {
                     return FileToolResponse::Failed { reason };
                 }
                 let description = format!("delete {path}");

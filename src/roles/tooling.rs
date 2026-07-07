@@ -297,10 +297,21 @@ pub(super) fn file_tool_policy_for_request(
     role: &DeliberationRole,
     node_kind: &NodeKind,
     target_files: &[String],
+    required_validation_targets: &[String],
 ) -> FileToolPolicy {
     let mut policy = file_tool_policy_for_role(role);
     if *node_kind == NodeKind::Work && !target_files.is_empty() {
         policy.allowed_paths = Some(target_files.to_vec());
+        if matches!(role, DeliberationRole::Critic | DeliberationRole::Referee) {
+            let extra: Vec<String> = required_validation_targets
+                .iter()
+                .filter(|target| !target_files.contains(target))
+                .cloned()
+                .collect();
+            if !extra.is_empty() {
+                policy.additional_read_only_paths = Some(extra);
+            }
+        }
     }
     policy
 }

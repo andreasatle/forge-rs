@@ -254,6 +254,7 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
             &request.role,
             &request.node_kind,
             &request.context.target_files,
+            &request.test_plan_context.required_validation_targets,
         );
 
         let worker_role_policy = request

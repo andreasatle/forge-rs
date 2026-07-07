@@ -277,6 +277,56 @@ fn read_only_policy_allows_read_file() {
     );
 }
 
+// ── policy: additional_read_only_paths ───────────────────────────────────
+
+#[test]
+fn additional_read_only_paths_allows_read_outside_allowed_paths() {
+    let (_temp, view) = make_view("additional-read-only-allows-read");
+    let policy = FileToolPolicy {
+        allow_writes: false,
+        allowed_paths: Some(vec!["main.py".to_string()]),
+        additional_read_only_paths: Some(vec!["hello.txt".to_string()]),
+        ..FileToolPolicy::default()
+    };
+    let mut executor = FileToolExecutor::with_policy(view, policy);
+
+    let response = executor.execute(FileToolRequest::ReadFile {
+        path: "hello.txt".to_owned(),
+    });
+
+    assert!(
+        matches!(response, FileToolResponse::FileContents { .. }),
+        "a path in additional_read_only_paths must be readable even when absent from allowed_paths; got {response:?}"
+    );
+}
+
+#[test]
+fn additional_read_only_paths_does_not_permit_writes() {
+    let (_temp, view) = make_view("additional-read-only-rejects-write");
+    let policy = FileToolPolicy {
+        allow_writes: true,
+        allowed_paths: Some(vec!["main.py".to_string()]),
+        additional_read_only_paths: Some(vec!["hello.txt".to_string()]),
+        ..FileToolPolicy::default()
+    };
+    let mut executor = FileToolExecutor::with_policy(view, policy);
+
+    let response = executor.execute(FileToolRequest::WriteFile {
+        path: "hello.txt".to_owned(),
+        content: "overwritten\n".to_owned(),
+    });
+
+    let FileToolResponse::Failed { reason } = response else {
+        panic!(
+            "a path in additional_read_only_paths must remain unwritable even when allow_writes is true; got {response:?}"
+        );
+    };
+    assert!(
+        reason.contains("main.py"),
+        "failure reason must name the allowed target path; got {reason:?}"
+    );
+}
+
 // ── read limit: large content is truncated ───────────────────────────────
 
 #[test]
