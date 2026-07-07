@@ -44,6 +44,7 @@ struct GenerateRequest {
     options: GenerateOptions,
     #[serde(skip_serializing_if = "Option::is_none")]
     format: Option<String>,
+    think: bool,
 }
 
 #[derive(Deserialize)]
@@ -86,6 +87,7 @@ impl ProviderClient for OllamaProvider {
                 num_predict: request.max_tokens,
             },
             format: resolve_format(request.output_schema),
+            think: false,
         };
 
         let http_response = self
@@ -186,6 +188,7 @@ mod tests {
                 stream: false,
                 options: GenerateOptions { num_predict: 512 },
                 format,
+                think: false,
             };
             let json = serde_json::to_string(&req).unwrap();
             assert_eq!(
@@ -194,6 +197,22 @@ mod tests {
                 "got: {json}"
             );
         }
+    }
+
+    #[test]
+    fn ollama_provider_disables_thinking() {
+        // Thinking tokens interfere with structured JSON parsing, so every
+        // request must explicitly disable thinking mode.
+        let req = GenerateRequest {
+            model: "test".to_string(),
+            prompt: "hello".to_string(),
+            stream: false,
+            options: GenerateOptions { num_predict: 512 },
+            format: None,
+            think: false,
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("\"think\":false"), "got: {json}");
     }
 
     #[test]
