@@ -9,6 +9,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 const BASE_URL: &str = "https://console.vast.ai/api/v0";
+const BASE_URL_V1: &str = "https://console.vast.ai/api/v1";
 const DEFAULT_IMAGE: &str = "nvidia/cuda:12.1.0-base-ubuntu22.04";
 
 /// A rentable GPU offer returned by a search.
@@ -122,7 +123,7 @@ impl VastClient {
 
     /// List all instances owned by the account.
     pub fn list_instances(&self) -> Result<Vec<VastInstance>, VastError> {
-        let request = self.authed(self.agent.get(&format!("{BASE_URL}/instances/")));
+        let request = self.authed(self.agent.get(&format!("{BASE_URL_V1}/instances/")));
         let response: ListInstancesResponse = request
             .call()
             .map_err(map_ureq_error)?
@@ -140,7 +141,7 @@ impl VastClient {
     pub fn destroy_instance(&self, instance_id: u64) -> Result<(), VastError> {
         let request = self.authed(
             self.agent
-                .delete(&format!("{BASE_URL}/instances/{instance_id}/")),
+                .delete(&format!("{BASE_URL_V1}/instances/{instance_id}/")),
         );
         request.call().map_err(map_ureq_error)?;
         Ok(())
