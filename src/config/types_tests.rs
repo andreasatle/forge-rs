@@ -5,21 +5,24 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 static TEMP_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
-fn unique_config_path() -> PathBuf {
+/// Creates a fresh, uniquely named directory, so each `TempYaml` gets its
+/// own isolated config directory instead of sharing one process-wide temp
+/// directory (tests that write companion files, like `northstar.md`, next
+/// to the config would otherwise race with each other under parallel test
+/// execution).
+fn unique_config_dir() -> PathBuf {
     let id = TEMP_COUNTER.fetch_add(1, Ordering::SeqCst);
-    std::env::temp_dir().join(format!(
-        "forge-config-test-{}-{}.yaml",
-        std::process::id(),
-        id,
-    ))
+    let dir =
+        std::env::temp_dir().join(format!("forge-config-test-{}-{}", std::process::id(), id,));
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
 }
 
 /// Copies a built-in adapter/plugin YAML from this crate's `adapters/` or
 /// `plugins/` directory into `dir` (as `name`), so config fixtures that
 /// reference it by a bare relative filename (e.g. `adapter: coding.yaml`)
 /// resolve correctly against the temp directory holding the config file.
-/// A no-op if already staged, since every `TempYaml` shares the same
-/// process-wide temp directory.
+/// A no-op if already staged.
 fn stage_fixture(dir: &std::path::Path, subdir: &str, name: &str) {
     let dest = dir.join(name);
     if dest.exists() {
@@ -35,15 +38,15 @@ struct TempYaml(PathBuf);
 
 impl TempYaml {
     fn new(content: &str) -> Self {
-        let path = unique_config_path();
+        let dir = unique_config_dir();
+        let path = dir.join("config.yaml");
         let mut f = std::fs::File::create(&path).unwrap();
         f.write_all(content.as_bytes()).unwrap();
-        let dir = path.parent().unwrap();
         for name in ["coding.yaml", "coding_tdd.yaml"] {
-            stage_fixture(dir, "adapters", name);
+            stage_fixture(&dir, "adapters", name);
         }
         for name in ["rust.yaml", "python.yaml"] {
-            stage_fixture(dir, "plugins", name);
+            stage_fixture(&dir, "plugins", name);
         }
         Self(path)
     }
@@ -55,7 +58,9 @@ impl TempYaml {
 
 impl Drop for TempYaml {
     fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.0);
+        if let Some(dir) = self.0.parent() {
+            let _ = std::fs::remove_dir_all(dir);
+        }
     }
 }
 
@@ -123,8 +128,6 @@ fn northstar_loads_file_contents_and_becomes_root_objective() {
         Some("Desired end state text.\n")
     );
     assert_eq!(config.root_objective(), "Desired end state text.\n");
-
-    let _ = std::fs::remove_file(dir.join("northstar.md"));
 }
 
 #[test]
@@ -136,8 +139,6 @@ fn northstar_path_resolves_against_config_dir() {
     let config = ForgeConfig::from_file(tmp.path()).unwrap();
     let expected = dir.join("northstar.md").to_string_lossy().into_owned();
     assert_eq!(config.northstar.as_deref(), Some(expected.as_str()));
-
-    let _ = std::fs::remove_file(dir.join("northstar.md"));
 }
 
 const OBJECTIVE_AND_NORTHSTAR_YAML: &str = r#"
