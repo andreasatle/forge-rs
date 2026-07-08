@@ -12,6 +12,11 @@
 //!   forge trace   <config.yaml> --prompts       — print full role-prompt-rendered events
 //!   forge trace   <config.yaml> --failures      — print full failure-related events
 //!
+//!   forge vast search --min-ram <gb> --max-price <usd/hr>  — list GPU offers
+//!   forge vast rent <offer_id> [--disk <gb>]                — rent an instance
+//!   forge vast list                                         — list current instances
+//!   forge vast destroy <instance_id>                        — destroy an instance
+//!
 //! For smoke-test scenarios, use the examples:
 //!   cargo run --example scheduler_deliberation_demo
 //!   cargo run --example deliberation_demo
@@ -20,6 +25,7 @@ use clap::{Parser, Subcommand};
 
 use forge_rs::config::ForgeConfig;
 use forge_rs::runtime::{ForgeRuntime, TraceFilter, run_history, run_reset, run_show, run_trace};
+use forge_rs::vast::VastClient;
 
 #[derive(Parser)]
 #[command(name = "forge", about = "Drive forge runs from a config file")]
@@ -72,6 +78,39 @@ enum Command {
         #[arg(long, conflicts_with = "summary")]
         failures: bool,
     },
+    /// Manage Vast.ai GPU rental instances.
+    Vast {
+        #[command(subcommand)]
+        action: VastCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum VastCommand {
+    /// List available GPU offers, sorted by price.
+    Search {
+        /// Minimum GPU memory in GB.
+        #[arg(long)]
+        min_ram: f64,
+        /// Maximum price per hour in USD.
+        #[arg(long)]
+        max_price: f64,
+    },
+    /// Rent an instance from an offer.
+    Rent {
+        /// Offer id to rent.
+        offer_id: u64,
+        /// Local disk size in GB.
+        #[arg(long, default_value_t = 16.0)]
+        disk: f64,
+    },
+    /// List current instances with SSH connection info.
+    List,
+    /// Destroy an instance.
+    Destroy {
+        /// Instance id to destroy.
+        instance_id: u64,
+    },
 }
 
 fn main() {
@@ -108,7 +147,53 @@ fn main() {
                 run_trace(&config.telemetry.directory, run.as_deref(), filter)
             });
         }
+        Command::Vast { action } => handle_result(run_vast_command(action)),
     }
+}
+
+/// Run a `vast` subcommand against the Vast.ai API.
+fn run_vast_command(action: VastCommand) -> Result<(), Box<dyn std::error::Error>> {
+    let client = VastClient::new()?;
+    match action {
+        VastCommand::Search { min_ram, max_price } => {
+            let mut offers = client.search_offers(min_ram, max_price)?;
+            offers.sort_by(|a, b| a.price_per_hour.total_cmp(&b.price_per_hour));
+            for offer in offers {
+                println!(
+                    "{:<10} {:<20} {:>6.1} GB  ${:.3}/hr  x{}",
+                    offer.id,
+                    offer.gpu_name,
+                    offer.gpu_ram_gb,
+                    offer.price_per_hour,
+                    offer.num_gpus
+                );
+            }
+        }
+        VastCommand::Rent { offer_id, disk } => {
+            let instance = client.create_instance(offer_id, disk)?;
+            println!(
+                "Rented instance {} ({}), status: {}",
+                instance.id, instance.gpu_name, instance.status
+            );
+        }
+        VastCommand::List => {
+            for instance in client.list_instances()? {
+                let ssh = match (&instance.ssh_host, instance.ssh_port) {
+                    (Some(host), Some(port)) => format!("{host}:{port}"),
+                    _ => "not ready".to_string(),
+                };
+                println!(
+                    "{:<10} {:<10} {:<20} {}",
+                    instance.id, instance.status, instance.gpu_name, ssh
+                );
+            }
+        }
+        VastCommand::Destroy { instance_id } => {
+            client.destroy_instance(instance_id)?;
+            println!("Destroyed instance {instance_id}");
+        }
+    }
+    Ok(())
 }
 
 /// Load the config at `path`, then run `f` with it, exiting on either failure.

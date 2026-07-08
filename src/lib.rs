@@ -35,3 +35,4 @@ pub mod services;
 pub mod telemetry;
 pub mod tools;
 pub mod validation;
+pub mod vast;
