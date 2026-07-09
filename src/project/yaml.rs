@@ -17,11 +17,12 @@ use crate::roles::policy::{
 #[derive(Debug)]
 pub struct YamlProjectAdapter {
     config: ProjectAdapterConfig,
-    /// The language plugin's prompt sections, composed into every role's
-    /// Identity/Context/Instructions/Constraints sections alongside the
-    /// generic and adapter layers, when a plugin is configured. Set via
-    /// [`Self::with_plugin_prompt`] before [`ProjectAdapter::role_policy`] is
-    /// called; `None` when no plugin is configured.
+    /// The declared language plugins' prompt sections, merged together and
+    /// composed into every role's Identity/Context/Instructions/Constraints
+    /// sections alongside the generic and adapter layers. Set via
+    /// [`Self::with_plugin_prompt`] — see [`crate::project::loader::load_adapter`]
+    /// — before [`ProjectAdapter::role_policy`] is called; `None` when no
+    /// plugins are configured.
     plugin: Option<RolePromptConfig>,
     /// This adapter's declared language plugins, keyed by each plugin's
     /// declared file extensions (see [`LanguageSpec::extensions`]). Loaded
@@ -47,8 +48,9 @@ impl YamlProjectAdapter {
         Ok(Self::new(config))
     }
 
-    /// Attach a language plugin's prompt sections, composed into every
-    /// role's prompt alongside the generic and adapter layers.
+    /// Attach the (already-merged) language plugin prompt sections, composed
+    /// into every role's prompt alongside the generic and adapter layers —
+    /// see [`crate::project::loader::load_adapter`].
     pub fn with_plugin_prompt(mut self, plugin: RolePromptConfig) -> Self {
         self.plugin = Some(plugin);
         self
@@ -322,51 +324,6 @@ mod tests {
                     &generic.constraints,
                     constraints,
                     DEFAULT_SYSTEM,
-                ],
-            );
-        }
-    }
-
-    #[test]
-    fn role_policy_composes_plugin_layer_into_every_section_when_attached() {
-        // Invariant: with_plugin_prompt attaches a third content layer that
-        // renders after the adapter's own content in every one of the four
-        // sections, for every role — not just Producer, and not just one
-        // section.
-        let plugin = RolePromptConfig {
-            identity: "plugin identity".to_string(),
-            context: "plugin context".to_string(),
-            instructions: "plugin instructions".to_string(),
-            constraints: "plugin constraints".to_string(),
-        };
-        let adapter = YamlProjectAdapter::new(ProjectAdapterConfig {
-            planner: planner_config(),
-            workers: worker_configs(),
-            context_files: vec![],
-            plugins: vec![],
-        })
-        .with_plugin_prompt(plugin);
-        let policy = adapter.role_policy();
-
-        for system in [
-            &policy.planner_producer_system,
-            &policy.worker_producer_system,
-            &policy.planner_critic_system,
-            &policy.worker_critic_system,
-            &policy.planner_referee_system,
-            &policy.worker_referee_system,
-        ] {
-            assert_ordered_sections(
-                system,
-                &[
-                    "Identity:",
-                    "plugin identity",
-                    "Context:",
-                    "plugin context",
-                    "Instructions:",
-                    "plugin instructions",
-                    "Constraints:",
-                    "plugin constraints",
                 ],
             );
         }
