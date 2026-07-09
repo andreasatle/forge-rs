@@ -2,26 +2,12 @@
 
 use serde::Deserialize;
 
-/// A role prompt split into four explicit sections.
+/// A role prompt split into four explicit sections: identity, context,
+/// instructions, constraints.
 ///
-/// `identity` frames who the role is; `context` supplies ambient background
-/// the role needs; `instructions` describes what the role must do;
-/// `constraints` bounds how it may do it (prohibitions, rejection-grounding
-/// rules, scope limits). [`super::YamlProjectAdapter::role_policy`] renders
-/// all four as separate labeled sections rather than concatenating them into
-/// one paragraph.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RolePromptConfig {
-    /// Who the role is.
-    pub identity: String,
-    /// Ambient background the role needs.
-    pub context: String,
-    /// What the role must do.
-    pub instructions: String,
-    /// Prohibitions and boundaries on how the role may do it.
-    pub constraints: String,
-}
+/// [`super::YamlProjectAdapter::role_policy`] renders all four as separate
+/// labeled sections rather than concatenating them into one paragraph.
+pub use crate::roles::policy::RolePromptConfig;
 
 /// Producer/Critic/Referee prompts for the planner deliberation, which
 /// operates on the task graph itself rather than any single worker role.
@@ -76,6 +62,12 @@ pub struct ProjectAdapterConfig {
     /// Artifact file names included as ambient context in prompts.
     #[serde(default)]
     pub context_files: Vec<String>,
+    /// Paths to language plugin YAML files this adapter supports, resolved
+    /// relative to this adapter file's own directory. The framework selects
+    /// which one applies to a given node from the file extensions of its
+    /// target files — see [`crate::project::loader::load_adapter`].
+    #[serde(default)]
+    pub plugins: Vec<String>,
 }
 
 #[cfg(test)]

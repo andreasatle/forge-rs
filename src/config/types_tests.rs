@@ -23,6 +23,11 @@ fn unique_config_dir() -> PathBuf {
 /// reference it by a bare relative filename (e.g. `adapter: coding.yaml`)
 /// resolve correctly against the temp directory holding the config file.
 /// A no-op if already staged.
+///
+/// Adapter content is staged flat alongside its plugins (not nested under
+/// `adapters/`/`plugins/` subdirectories), so the shipped adapters'
+/// `../plugins/...` plugin paths are rewritten to bare filenames to match —
+/// otherwise they'd resolve outside the isolated temp dir.
 fn stage_fixture(dir: &std::path::Path, subdir: &str, name: &str) {
     let dest = dir.join(name);
     if dest.exists() {
@@ -31,7 +36,9 @@ fn stage_fixture(dir: &std::path::Path, subdir: &str, name: &str) {
     let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join(subdir)
         .join(name);
-    std::fs::copy(src, dest).unwrap();
+    let content = std::fs::read_to_string(src).unwrap();
+    let content = content.replace("../plugins/", "");
+    std::fs::write(dest, content).unwrap();
 }
 
 struct TempYaml(PathBuf);
@@ -821,7 +828,31 @@ fn config_adapter_nested_relative_path_resolves_against_config_dir() {
         std::process::id()
     ));
     std::fs::create_dir_all(config_dir.join("nested")).unwrap();
-    stage_fixture(&config_dir.join("nested"), "adapters", "coding.yaml");
+    // coding.yaml declares its plugins as `../plugins/...`, relative to its
+    // own (nested) directory — so the plugins must be staged as siblings of
+    // `nested/`, not flattened alongside it like `stage_fixture` normally
+    // does for the top-level fixture layout.
+    let nested_coding_yaml = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("adapters")
+            .join("coding.yaml"),
+    )
+    .unwrap();
+    std::fs::write(
+        config_dir.join("nested").join("coding.yaml"),
+        nested_coding_yaml,
+    )
+    .unwrap();
+    std::fs::create_dir_all(config_dir.join("plugins")).unwrap();
+    for name in ["python.yaml", "rust.yaml"] {
+        std::fs::copy(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("plugins")
+                .join(name),
+            config_dir.join("plugins").join(name),
+        )
+        .unwrap();
+    }
 
     let yaml = EXAMPLE_YAML.replace("adapter: coding.yaml", "adapter: nested/coding.yaml");
     let config_path = config_dir.join("forge.yaml");
@@ -882,133 +913,9 @@ fn unknown_adapter_filename_fails_at_config_load_time() {
 }
 
 // ── plugin config tests ──────────────────────────────────────────────────
-
-const RUST_PLUGIN_YAML: &str = r#"
-objective: "implement a CLI tool"
-artifact:
-  repo_path: ".forge/artifacts/main.git"
-  branch: "main"
-provider:
-  cheap:
-    unmanaged:
-      base_url: "http://localhost:8080"
-      model: "llama-test"
-      n_predict: 512
-telemetry:
-  directory: "runs"
-adapter: coding.yaml
-plugin: rust.yaml
-"#;
-
-#[test]
-fn config_parses_plugin_rust() {
-    let tmp = TempYaml::new(RUST_PLUGIN_YAML);
-    let config = ForgeConfig::from_file(tmp.path()).unwrap();
-    let config_dir = std::path::Path::new(tmp.path()).parent().unwrap();
-    let expected = config_dir.join("rust.yaml").to_string_lossy().into_owned();
-    assert_eq!(
-        config.plugin.as_deref(),
-        Some(expected.as_str()),
-        "a relative plugin path must resolve against the config file's directory"
-    );
-}
-
-#[test]
-fn config_plugin_defaults_to_none() {
-    let tmp = TempYaml::new(CODING_TDD_ADAPTER_YAML);
-    let config = ForgeConfig::from_file(tmp.path()).unwrap();
-    assert!(
-        config.plugin.is_none(),
-        "absent plugin must default to None"
-    );
-}
-
-const PYTHON_PLUGIN_YAML: &str = r#"
-objective: "implement a CLI tool"
-artifact:
-  repo_path: ".forge/artifacts/main.git"
-  branch: "main"
-provider:
-  cheap:
-    unmanaged:
-      base_url: "http://localhost:8080"
-      model: "llama-test"
-      n_predict: 512
-telemetry:
-  directory: "runs"
-adapter: coding.yaml
-plugin: python.yaml
-"#;
-
-#[test]
-fn config_parses_plugin_python() {
-    let tmp = TempYaml::new(PYTHON_PLUGIN_YAML);
-    let config = ForgeConfig::from_file(tmp.path()).unwrap();
-    let config_dir = std::path::Path::new(tmp.path()).parent().unwrap();
-    let expected = config_dir
-        .join("python.yaml")
-        .to_string_lossy()
-        .into_owned();
-    assert_eq!(
-        config.plugin.as_deref(),
-        Some(expected.as_str()),
-        "a relative plugin path must resolve against the config file's directory"
-    );
-}
-
-const UNKNOWN_PLUGIN_YAML: &str = r#"
-objective: "test"
-artifact:
-  repo_path: ".forge/artifacts/main.git"
-  branch: "main"
-provider:
-  cheap:
-    unmanaged:
-      base_url: "http://localhost:8080"
-      model: "llama-test"
-      n_predict: 512
-telemetry:
-  directory: "runs"
-adapter: coding.yaml
-plugin: cobol.yaml
-"#;
-
-#[test]
-fn unknown_plugin_fails_loudly() {
-    let tmp = TempYaml::new(UNKNOWN_PLUGIN_YAML);
-    let err = ForgeConfig::from_file(tmp.path()).unwrap_err();
-    assert!(
-        err.to_string().contains("cobol.yaml"),
-        "error must name the missing plugin path; got: {err}"
-    );
-}
-
-const PLUGIN_AND_VALIDATION_YAML: &str = r#"
-objective: "test"
-artifact:
-  repo_path: ".forge/artifacts/main.git"
-  branch: "main"
-provider:
-  cheap:
-    unmanaged:
-      base_url: "http://localhost:8080"
-      model: "llama-test"
-      n_predict: 512
-telemetry:
-  directory: "runs"
-adapter: coding.yaml
-plugin: rust.yaml
-validation:
-  commands:
-    - cargo test
-"#;
-
-#[test]
-fn plugin_and_validation_commands_are_mutually_exclusive() {
-    let tmp = TempYaml::new(PLUGIN_AND_VALIDATION_YAML);
-    let result = ForgeConfig::from_file(tmp.path());
-    assert!(
-        result.is_err(),
-        "specifying both plugin and validation must be an error"
-    );
-}
+//
+// Language plugins are now declared in the adapter YAML's `plugins:` list,
+// not in `ForgeConfig` — see `src/project/loader_tests.rs` for plugin
+// loading/resolution coverage. `ForgeConfig::from_file` still fails loudly
+// when the adapter (or any plugin it declares) fails to load, exercised by
+// `unknown_adapter_fails_loudly` below.

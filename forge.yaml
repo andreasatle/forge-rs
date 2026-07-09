@@ -5,11 +5,10 @@ artifact:
 provider:
   cheap:
     unmanaged:
-      base_url: http://127.0.0.1:11434
-      model: gemma4:26b
-      n_predict: 1024
-      backend: ollama
+      base_url: http://127.0.0.1:8080
+      model: Qwen2.5-Coder-7B-Instruct
+      backend: llama_cpp
+      n_predict: 4096
 telemetry:
   directory: "runs"
 adapter: adapters/coding_tdd.yaml
-plugin: plugins/python.yaml

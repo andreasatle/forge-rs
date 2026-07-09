@@ -24,7 +24,7 @@ fn repo_plugin(name: &str) -> PathBuf {
 #[test]
 fn rust_plugin_loads_from_its_shipped_path() {
     let spec = load_plugin(&repo_plugin("rust.yaml")).unwrap();
-    assert!(!spec.prompt_guidance.is_empty());
+    assert!(!spec.identity.is_empty());
     assert!(!spec.constraints.is_empty());
     assert!(!spec.init.commands.is_empty());
     assert!(!spec.validation.commands.is_empty());
@@ -33,7 +33,7 @@ fn rust_plugin_loads_from_its_shipped_path() {
 #[test]
 fn python_plugin_loads_from_its_shipped_path() {
     let spec = load_plugin(&repo_plugin("python.yaml")).unwrap();
-    assert!(!spec.prompt_guidance.is_empty());
+    assert!(!spec.identity.is_empty());
     assert!(!spec.constraints.is_empty());
     assert!(!spec.init.commands.is_empty());
     assert!(!spec.validation.commands.is_empty());
@@ -182,11 +182,11 @@ fn user_defined_plugin_loads_from_any_path_with_no_rust_changes() {
     fs::write(&path, CUSTOM_PLUGIN_YAML).unwrap();
 
     let spec = load_plugin(&path).unwrap();
-    assert_eq!(spec.prompt_guidance, "custom guidance");
+    assert_eq!(spec.identity, "custom guidance");
 }
 
 const CUSTOM_PLUGIN_YAML: &str = r#"
-prompt_guidance: "custom guidance"
+identity: "custom guidance"
 constraints: "custom constraints"
 init:
   commands:
@@ -208,7 +208,7 @@ validation:
 fn bare_id_language_spec_loads_correctly() {
     for language in ["rust", "python"] {
         let spec = language_spec(language).unwrap_or_else(|| panic!("{language} spec must load"));
-        assert!(!spec.prompt_guidance.is_empty());
+        assert!(!spec.identity.is_empty());
         assert!(!spec.constraints.is_empty());
     }
 }

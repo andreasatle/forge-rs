@@ -83,9 +83,11 @@ config, run identity, telemetry sink, and provider stack. It:
 
 `ProjectRuntimeSetup` centralizes project-derived wiring: role policy,
 context-file names, required test-target derivation, validation plan, and the
-validator. It loads a project adapter from the `adapter` YAML path and
-augments it with language-specific prompt guidance and validation rules when
-a `plugin` YAML path is configured.
+validator. It loads a project adapter from the `adapter` YAML path, along with
+every language plugin that adapter declares in its own `plugins:` list. A
+node's target files pick the plugin that applies to it by file extension —
+different worker nodes in the same run can be validated by different
+language plugins.
 
 `ResolvedProviderStack` resolves `ProviderConfig` into:
 
@@ -119,7 +121,6 @@ provider:
 telemetry:
   directory: "runs"
 adapter: adapters/coding_tdd.yaml  # required; path to a project adapter YAML file
-plugin: plugins/python.yaml        # optional; path to a language plugin YAML file
 validation:                     # optional
   commands:
     - cargo fmt --check
@@ -127,20 +128,34 @@ validation:                     # optional
   timeout_seconds: 120          # optional; default 120 per command
 ```
 
-Relative paths in `adapter`, `plugin`, `artifact.repo_path`, and
-`telemetry.directory` are resolved against the directory containing
-`forge.yaml`, not the working directory.
+Relative paths in `adapter`, `artifact.repo_path`, and `telemetry.directory`
+are resolved against the directory containing `forge.yaml`, not the working
+directory.
 
 `adapter` is a path to the project adapter YAML file governing role prompt
-policy. It is required; there is no default. A missing or invalid file fails
-`forge.yaml` loading immediately. Built-in adapters (`coding.yaml`,
-`coding_tdd.yaml`) ship in this repo's `adapters/` directory; copy and modify
-them freely, or point at your own file.
+policy. It is required; there is no default. A missing or invalid file — or
+any language plugin it declares — fails `forge.yaml` loading immediately.
+Built-in adapters (`coding.yaml`, `coding_tdd.yaml`) ship in this repo's
+`adapters/` directory; copy and modify them freely, or point at your own
+file.
 
-`plugin` can be used instead of an explicit `validation` block to load
-language initialization, prompt guidance, and validation commands. Built-in
+An adapter declares which language plugins it supports in its own
+`plugins:` list, e.g.:
+
+```yaml
+plugins:
+  - ../plugins/python.yaml
+  - ../plugins/rust.yaml
+```
+
+paths resolved relative to the adapter file's own directory. Each plugin
+declares the file extensions it applies to (`extensions: [py]`); the
+framework picks the plugin matching a node's target files to derive its
+init commands, validation commands, and required test targets. Built-in
 plugins (`python.yaml`, `rust.yaml`) ship in this repo's `plugins/`
-directory. The two validation sources are mutually exclusive.
+directory. Declaring `plugins:` and an explicit `validation:` block are
+mutually usable together — `validation:` acts as the fallback validator for
+nodes whose target files match no configured plugin.
 
 By default Forge connects to already-running provider servers. For llama.cpp,
 Forge can instead own a local `llama-server` process:

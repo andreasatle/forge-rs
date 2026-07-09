@@ -2,15 +2,29 @@
 
 use serde::Deserialize;
 
+use crate::roles::policy::RolePromptConfig;
 use crate::validation::{CommandSpec, ValidationTargetRule};
 
 /// Complete specification for a language plugin.
 #[derive(Debug, Clone, Deserialize)]
 pub struct LanguageSpec {
-    /// Short guidance injected into coding prompts for this language.
-    pub prompt_guidance: String,
+    /// File extensions (without the leading dot, e.g. `"py"`, `"rs"`) this
+    /// plugin applies to. Used by the project adapter to pick the right
+    /// plugin for a node from the extensions of its target files.
+    #[serde(default)]
+    pub extensions: Vec<String>,
+    /// Who the language plugin frames the model as when writing this
+    /// language.
+    #[serde(default)]
+    pub identity: String,
+    /// Ambient background about this language's tooling and conventions.
+    #[serde(default)]
+    pub context: String,
+    /// Guidance injected into coding prompts for this language: what to do.
+    #[serde(default)]
+    pub instructions: String,
     /// Language-specific constraints injected into coding prompts, alongside
-    /// but distinct from `prompt_guidance`: prohibitions and conventions
+    /// but distinct from `instructions`: prohibitions and conventions
     /// (e.g. import style, test naming, inline vs. separate test files)
     /// rather than general guidance.
     #[serde(default)]
@@ -40,6 +54,18 @@ impl LanguageSpec {
     /// rather than by inspecting command tokens.
     pub fn validation_includes_test_command(&self) -> bool {
         self.validation.runs_tests
+    }
+
+    /// This plugin's prompt sections, for composition into a role prompt
+    /// alongside the generic and adapter layers — see
+    /// [`crate::project::YamlProjectAdapter::with_plugin_prompt`].
+    pub fn prompt_sections(&self) -> RolePromptConfig {
+        RolePromptConfig {
+            identity: self.identity.clone(),
+            context: self.context.clone(),
+            instructions: self.instructions.clone(),
+            constraints: self.constraints.clone(),
+        }
     }
 }
 
@@ -92,7 +118,10 @@ mod tests {
     #[test]
     fn validation_includes_test_command_is_true_when_runs_tests_set() {
         let spec = LanguageSpec {
-            prompt_guidance: String::new(),
+            extensions: vec![],
+            identity: String::new(),
+            context: String::new(),
+            instructions: String::new(),
             constraints: String::new(),
             init: LanguageInitSpec {
                 gitignore: vec![],
@@ -115,7 +144,10 @@ mod tests {
     #[test]
     fn validation_includes_test_command_is_false_without_runs_tests() {
         let spec = LanguageSpec {
-            prompt_guidance: String::new(),
+            extensions: vec![],
+            identity: String::new(),
+            context: String::new(),
+            instructions: String::new(),
             constraints: String::new(),
             init: LanguageInitSpec {
                 gitignore: vec![],
@@ -214,7 +246,7 @@ mod tests {
         // omits it still parses, with constraints defaulting to empty rather
         // than failing to parse.
         let yaml = r#"
-prompt_guidance: "guidance"
+identity: "guidance"
 init:
   commands: []
 validation:
@@ -230,7 +262,7 @@ validation:
         // Invariant: roles is optional — a language spec with no per-role
         // validation overrides still parses, with roles defaulting to empty.
         let yaml = r#"
-prompt_guidance: "guidance"
+identity: "guidance"
 init:
   commands: []
 validation:
@@ -246,7 +278,7 @@ validation:
         // full LanguageValidationSpec, independent of the default validation
         // spec.
         let yaml = r#"
-prompt_guidance: "guidance"
+identity: "guidance"
 init:
   commands: []
 validation:

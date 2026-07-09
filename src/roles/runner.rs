@@ -319,16 +319,6 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
             review_contract: review_contract.as_ref(),
             worker_role_descriptions,
         });
-        let core_prompt = match &self.policy.language_guidance {
-            Some(guidance) => format!("{core_prompt}\n\nLanguage guidance:\n{guidance}"),
-            None => core_prompt,
-        };
-        let core_prompt = match &self.policy.language_constraints {
-            Some(constraints) => {
-                format!("{core_prompt}\n\nLanguage constraints:\n{constraints}")
-            }
-            None => core_prompt,
-        };
         let base_prompt = if has_tools {
             format!("{core_prompt}\n\n{}", render_tool_section(&policy))
         } else {

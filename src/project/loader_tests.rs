@@ -103,6 +103,65 @@ fn invalid_adapter_content_is_a_hard_error() {
     );
 }
 
+// ── language plugins ─────────────────────────────────────────────────────
+
+const CUSTOM_PLUGIN_YAML: &str = r#"
+extensions: [ping]
+identity: "custom plugin guidance"
+init:
+  commands: []
+validation:
+  commands: []
+"#;
+
+#[test]
+fn adapter_without_plugins_field_has_no_language_plugins() {
+    let path = unique_path("no_plugins.yaml");
+    fs::write(&path, CUSTOM_ADAPTER_YAML).unwrap();
+
+    let adapter = load_adapter(&path).unwrap();
+    assert!(
+        adapter.language_plugins().is_empty(),
+        "an adapter with no plugins: field must have no language plugins"
+    );
+}
+
+#[test]
+fn adapter_loads_declared_plugins_keyed_by_extension() {
+    let plugin_path = unique_path("plugin.yaml");
+    fs::write(&plugin_path, CUSTOM_PLUGIN_YAML).unwrap();
+
+    let adapter_path = unique_path("with_plugin.yaml");
+    let yaml = format!(
+        "{CUSTOM_ADAPTER_YAML}plugins:\n  - {}\n",
+        plugin_path.file_name().unwrap().to_string_lossy()
+    );
+    fs::write(&adapter_path, yaml).unwrap();
+
+    let adapter = load_adapter(&adapter_path).unwrap();
+    assert_eq!(
+        adapter
+            .language_plugins()
+            .get("ping")
+            .map(|spec| spec.identity.as_str()),
+        Some("custom plugin guidance"),
+        "plugin path must be resolved relative to the adapter file's own directory"
+    );
+}
+
+#[test]
+fn adapter_with_unknown_plugin_path_fails_loudly() {
+    let adapter_path = unique_path("bogus_plugin.yaml");
+    let yaml = format!("{CUSTOM_ADAPTER_YAML}plugins:\n  - does_not_exist.yaml\n");
+    fs::write(&adapter_path, yaml).unwrap();
+
+    let err = load_adapter(&adapter_path).unwrap_err();
+    assert!(
+        err.to_string().contains("does_not_exist.yaml"),
+        "error must name the missing plugin path; got: {err}"
+    );
+}
+
 // ── coding_tdd adapter content ───────────────────────────────────────────
 //
 // These protect the bundled coding_tdd.yaml's intent: test nodes scheduled

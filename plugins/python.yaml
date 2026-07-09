@@ -1,12 +1,17 @@
-prompt_guidance: |
-  Write idiomatic Python. Keep code simple, typed where useful, and covered
-  by tests. Add type hints on function signatures and prefer explicit types
-  over Any. Use standard import order: standard library, then third-party,
-  then local imports, each group separated by a blank line; avoid wildcard
-  imports. Place test files under the tests/ subdirectory, named
-  tests/test_<module>.py, and name test functions
-  test_<behavior_under_test> so failures read as a description of what
-  broke.
+extensions: [py]
+identity: |
+  You are writing idiomatic Python for this project.
+context: |
+  This project uses uv for dependency management, pytest for tests, ruff
+  for linting, and pyright for type checking.
+instructions: |
+  Keep code simple, typed where useful, and covered by tests. Add type
+  hints on function signatures and prefer explicit types over Any. Use
+  standard import order: standard library, then third-party, then local
+  imports, each group separated by a blank line. Place test files under
+  the tests/ subdirectory, named tests/test_<module>.py, and name test
+  functions test_<behavior_under_test> so failures read as a description
+  of what broke.
 constraints: |
   Do not use wildcard imports (from module import *). Import the functions
   or classes under test directly from the source module — do not reimplement

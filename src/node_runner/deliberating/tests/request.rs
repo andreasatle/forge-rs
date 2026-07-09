@@ -42,7 +42,7 @@ fn plan_stamps_work_and_validation_children_with_distinct_plans() {
     ]);
     let runner = DeliberatingNodeRunner::new(&provider, &provider)
         .with_required_test_targets_fn(Arc::new(python_test_targets))
-        .with_validation_plan_for_role_fn(Arc::new(|role: Option<&str>| {
+        .with_validation_plan_for_role_fn(Arc::new(|role: Option<&str>, _: &[String]| {
             Some(match role {
                 Some("tester") => marker_plan("validation-marker"),
                 _ => marker_plan("work-marker"),

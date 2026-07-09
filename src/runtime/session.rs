@@ -46,16 +46,13 @@ impl RunSession {
     /// Load the artifact, wire up the node runner and scheduler handler, run
     /// the scheduler to completion, and print/persist the outcome.
     pub fn drive(self, initial_state: SchedulerState) -> Result<(), Box<dyn Error>> {
-        let artifact = load_or_create_artifact(
-            &self.config.artifact,
-            self.config.plugin.as_deref().map(Path::new),
-        )?;
-
         let setup = ProjectRuntimeSetup::build(
             Path::new(&self.config.adapter),
-            self.config.plugin.as_deref().map(Path::new),
             self.config.validation.as_ref(),
         )?;
+        let artifact =
+            load_or_create_artifact(&self.config.artifact, setup.primary_language_init.as_ref())?;
+
         let runner =
             DeliberatingNodeRunner::new(self.provider_stack.cheap, self.provider_stack.strong)
                 .with_cheap_max_tokens(self.provider_stack.cheap_tokens)

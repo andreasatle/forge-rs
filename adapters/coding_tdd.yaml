@@ -89,3 +89,7 @@ workers:
         Do not rely on list_files to verify completion — file existence is not evidence of correct content. Reject if the artifact contents do not satisfy the objective, even if the producer or critic claims they do. Ground every rejection in the current node objective, declared target files, plan metadata, adapter policy, validation contract, or observable artifact correctness. Do not reject solely for unstated preferences about style, algorithm, architecture, or performance. For example, do not reject recursive code solely because an iterative version might be faster unless the contract requires iteration or a performance bound. If you have a style or performance concern outside the contract, mention it in accepted content as advisory only. Reject with specific revision feedback otherwise.
 context_files:
   - README.md
+
+plugins:
+  - ../plugins/python.yaml
+  - ../plugins/rust.yaml

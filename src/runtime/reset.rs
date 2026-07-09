@@ -2,6 +2,7 @@ use std::error::Error;
 use std::path::{Path, PathBuf};
 
 use crate::config::ForgeConfig;
+use crate::runtime::project_setup::ProjectRuntimeSetup;
 
 fn validate_reset_path(repo_path: &Path) -> Result<(), Box<dyn Error>> {
     // Canonicalize for comparisons when the path already exists.
@@ -55,8 +56,9 @@ pub fn run_reset(config: ForgeConfig) -> Result<(), Box<dyn Error>> {
         std::fs::remove_dir_all(&repo_path)?;
     }
 
+    let setup = ProjectRuntimeSetup::build(Path::new(&config.adapter), config.validation.as_ref())?;
     let artifact =
-        super::load_or_create_artifact(&config.artifact, config.plugin.as_deref().map(Path::new))?;
+        super::load_or_create_artifact(&config.artifact, setup.primary_language_init.as_ref())?;
 
     let short_sha = &artifact.commit_sha[..artifact.commit_sha.len().min(7)];
     println!("Reset complete. Initial commit: {short_sha}");

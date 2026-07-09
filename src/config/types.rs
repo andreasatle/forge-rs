@@ -36,12 +36,6 @@ pub struct ForgeConfig {
     /// config file, like `artifact.repo_path`.
     #[serde(default)]
     pub adapter: String,
-    /// Path to the language plugin YAML file providing init and validation
-    /// specs (e.g. `"plugins/python.yaml"`). Omitting means no language
-    /// plugin. Mutually exclusive with an explicit `validation` block.
-    /// Resolved the same way as `adapter`.
-    #[serde(default)]
-    pub plugin: Option<String>,
 }
 
 /// Artifact repository configuration.
@@ -251,18 +245,17 @@ pub struct ValidationConfig {
 impl ForgeConfig {
     /// Load a `ForgeConfig` from a YAML file at `path`.
     ///
-    /// `adapter` and `plugin` are resolved and loaded first, before any
-    /// other config field is validated or any provider/artifact setup
-    /// happens — a missing or invalid adapter/plugin fails immediately.
-    /// Relative paths (in `adapter`, `plugin`, `artifact.repo_path`, and
+    /// `adapter` is resolved and loaded first, before any other config field
+    /// is validated or any provider/artifact setup happens — a missing or
+    /// invalid adapter (or any language plugin it declares) fails
+    /// immediately. Relative paths (in `adapter`, `artifact.repo_path`, and
     /// `telemetry.directory`) are resolved against the directory containing
     /// the config file, not the process working directory.
     ///
     /// Returns an error if:
     /// - `adapter` is absent or blank.
-    /// - `adapter` does not resolve to a loadable adapter YAML file.
-    /// - Both `plugin` and `validation` are specified (mutually exclusive).
-    /// - `plugin` does not resolve to a loadable plugin YAML file.
+    /// - `adapter` does not resolve to a loadable adapter YAML file, or any
+    ///   plugin it declares fails to load.
     pub fn from_file(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
         let config_path = Path::new(path);
         let content = std::fs::read_to_string(config_path)?;
@@ -295,20 +288,6 @@ impl ForgeConfig {
             config.adapter = resolve_relative(&config.adapter, dir);
         }
         crate::project::load_adapter(Path::new(&config.adapter))?;
-
-        if config.plugin.is_some() && config.validation.is_some() {
-            return Err("plugin and validation.commands are mutually exclusive; \
-                 remove one or the other"
-                .into());
-        }
-        if let Some(dir) = config_dir
-            && let Some(plugin) = &mut config.plugin
-        {
-            *plugin = resolve_relative(plugin, dir);
-        }
-        if let Some(plugin) = &config.plugin {
-            crate::language::registry::load_plugin(Path::new(plugin))?;
-        }
 
         if let Some(dir) = config_dir {
             config.artifact.repo_path = resolve_relative(&config.artifact.repo_path, dir);

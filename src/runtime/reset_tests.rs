@@ -58,20 +58,78 @@ fn make_forge_config(repo_path: &Path, telemetry_path: &Path) -> ForgeConfig {
             directory: telemetry_path.to_str().unwrap().to_string(),
         },
         validation: None,
-        adapter: "coding.yaml".to_string(),
-        plugin: None,
+        adapter: std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("adapters")
+            .join("coding.yaml")
+            .to_str()
+            .unwrap()
+            .to_string(),
     }
 }
 
+/// A minimal adapter config with one "implementer" worker role and a
+/// `plugins:` list naming `plugin_id`, written to `dir/adapter.yaml`.
+fn write_adapter_with_plugin(dir: &Path, plugin_id: &str) -> PathBuf {
+    let yaml = format!(
+        r#"
+planner:
+  producer:
+    identity: "identity"
+    context: "context"
+    instructions: "instructions"
+    constraints: "constraints"
+  critic:
+    identity: "identity"
+    context: "context"
+    instructions: "instructions"
+    constraints: "constraints"
+  referee:
+    identity: "identity"
+    context: "context"
+    instructions: "instructions"
+    constraints: "constraints"
+workers:
+  - role: implementer
+    description: "Implements code."
+    producer:
+      identity: "identity"
+      context: "context"
+      instructions: "instructions"
+      constraints: "constraints"
+    critic:
+      identity: "identity"
+      context: "context"
+      instructions: "instructions"
+      constraints: "constraints"
+    referee:
+      identity: "identity"
+      context: "context"
+      instructions: "instructions"
+      constraints: "constraints"
+plugins:
+  - {plugin_id}
+"#
+    );
+    let path = dir.join("adapter.yaml");
+    std::fs::write(&path, yaml).unwrap();
+    path
+}
+
+/// Builds a `ForgeConfig` whose adapter (written into `dir`) declares
+/// `language` as its sole plugin, so `run_reset` bootstraps the artifact
+/// repo using that language's init commands.
 fn make_forge_config_with_language(
     repo_path: &Path,
     telemetry_path: &Path,
+    dir: &Path,
     language: &str,
 ) -> ForgeConfig {
     use crate::config::{
         ArtifactConfig, ProviderBackend, ProviderConfig, ProviderTierConfig, TelemetryConfig,
         UnmanagedProviderConfig,
     };
+    std::fs::create_dir_all(dir).unwrap();
+    let adapter_path = write_adapter_with_plugin(dir, language);
     ForgeConfig {
         objective: Some("test".to_string()),
         northstar: None,
@@ -95,8 +153,7 @@ fn make_forge_config_with_language(
             directory: telemetry_path.to_str().unwrap().to_string(),
         },
         validation: None,
-        adapter: "coding.yaml".to_string(),
-        plugin: Some(language.to_string()),
+        adapter: adapter_path.to_str().unwrap().to_string(),
     }
 }
 
@@ -124,15 +181,22 @@ fn git_show_file(repo_path: &PathBuf, commit: &str, file: &str) -> String {
     String::from_utf8(out.stdout).unwrap()
 }
 
-fn register_fake_language(label: &str) -> String {
+/// Registers a fake language spec under the path `dir/<id>` would resolve to
+/// (`dir` being the plugin-declaring adapter's own directory) and returns the
+/// bare `id` to write into that adapter's `plugins:` list.
+fn register_fake_language(dir: &Path, label: &str) -> String {
     let id = format!(
         "fake-reset-{label}-{}",
         NEXT_ID.fetch_add(1, Ordering::Relaxed)
     );
+    let resolved = dir.join(&id).to_string_lossy().into_owned();
     crate::language::registry::register_test_language_spec(
-        id.clone(),
+        resolved,
         LanguageSpec {
-            prompt_guidance: "fake language guidance".to_string(),
+            extensions: vec!["fake".to_string()],
+            identity: "fake language guidance".to_string(),
+            context: String::new(),
+            instructions: String::new(),
             constraints: String::new(),
             init: LanguageInitSpec {
                 gitignore: vec!["ignored-build/".to_string()],
@@ -169,7 +233,14 @@ fn register_fake_language(label: &str) -> String {
                 commands: vec![],
                 validation_targets: vec![],
             },
-            roles: vec![],
+            roles: vec![crate::language::spec::LanguageRoleConfig {
+                role: "implementer".to_string(),
+                validation: LanguageValidationSpec {
+                    runs_tests: false,
+                    commands: vec![],
+                    validation_targets: vec![],
+                },
+            }],
             api_summary: None,
         },
     );
@@ -336,8 +407,12 @@ fn reset_creates_configured_branch() {
                 directory: telemetry.to_str().unwrap().to_string(),
             },
             validation: None,
-            adapter: "coding.yaml".to_string(),
-            plugin: None,
+            adapter: std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("adapters")
+                .join("coding.yaml")
+                .to_str()
+                .unwrap()
+                .to_string(),
         }
     };
 
@@ -383,14 +458,14 @@ fn reset_recreates_bare_artifact_repo() {
 
 #[test]
 fn language_reset_runs_init_before_initial_commit() {
-    let language = register_fake_language("init-order");
     let base = temp_path("language-init-order");
     let repo_path = base.join("artifact.git");
     let telemetry = base.join("telemetry");
     let _ = std::fs::remove_dir_all(&base);
+    let language = register_fake_language(&base, "init-order");
 
     run_reset(make_forge_config_with_language(
-        &repo_path, &telemetry, &language,
+        &repo_path, &telemetry, &base, &language,
     ))
     .unwrap();
 
@@ -413,14 +488,14 @@ fn language_reset_runs_init_before_initial_commit() {
 
 #[test]
 fn language_reset_commits_configured_init_outputs() {
-    let language = register_fake_language("init-outputs");
     let base = temp_path("language-init-outputs");
     let repo_path = base.join("artifact.git");
     let telemetry = base.join("telemetry");
     let _ = std::fs::remove_dir_all(&base);
+    let language = register_fake_language(&base, "init-outputs");
 
     run_reset(make_forge_config_with_language(
-        &repo_path, &telemetry, &language,
+        &repo_path, &telemetry, &base, &language,
     ))
     .unwrap();
 
@@ -441,14 +516,14 @@ fn language_reset_commits_configured_init_outputs() {
 
 #[test]
 fn language_reset_workspace_contains_configured_tool_outputs() {
-    let language = register_fake_language("tool-output");
     let base = temp_path("language-tool-output");
     let repo_path = base.join("artifact.git");
     let telemetry = base.join("telemetry");
     let _ = std::fs::remove_dir_all(&base);
+    let language = register_fake_language(&base, "tool-output");
 
     run_reset(make_forge_config_with_language(
-        &repo_path, &telemetry, &language,
+        &repo_path, &telemetry, &base, &language,
     ))
     .unwrap();
 

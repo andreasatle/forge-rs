@@ -75,7 +75,7 @@ impl<C, S> DeliberatingNodeRunner<C, S> {
             context_file_names: vec![],
             api_summary_command: None,
             northstar: None,
-            validation_plan_for_role_fn: Arc::new(|_| None),
+            validation_plan_for_role_fn: Arc::new(|_, _| None),
         }
     }
 
@@ -202,8 +202,10 @@ impl<C, S> DeliberatingNodeRunner<C, S> {
             }
             child.required_validation_targets =
                 (self.required_test_targets_fn)(&child.target_files);
-            child.validation_plan =
-                (self.validation_plan_for_role_fn)(child.worker_role.as_deref());
+            child.validation_plan = (self.validation_plan_for_role_fn)(
+                child.worker_role.as_deref(),
+                &child.target_files,
+            );
         }
         plan
     }

@@ -1,12 +1,15 @@
 //! Project adapter driven entirely by a YAML-loaded [`ProjectAdapterConfig`].
 
+use std::collections::BTreeMap;
+
 use super::ProjectAdapter;
 use super::yaml_config::{ProjectAdapterConfig, RolePromptConfig, WorkerRoleConfig};
+use crate::language::LanguageSpec;
 use crate::roles::RolePolicy;
 use crate::roles::policy::{
-    DEFAULT_SYSTEM, GENERIC_CONSTRAINTS, PLANNER_PRODUCER_IDENTITY,
-    PLANNER_PROTOCOL_FOOTER_WITH_OPERATION, PLANNER_PROTOCOL_FOOTER_WITH_OPERATION_AND_ROLES,
-    WORK_PRODUCER_SYSTEM, WORKER_PRODUCER_IDENTITY, WorkerRolePolicy,
+    DEFAULT_SYSTEM, PLANNER_PRODUCER_IDENTITY, PLANNER_PROTOCOL_FOOTER_WITH_OPERATION,
+    PLANNER_PROTOCOL_FOOTER_WITH_OPERATION_AND_ROLES, WORK_PRODUCER_SYSTEM,
+    WORKER_PRODUCER_IDENTITY, WorkerRolePolicy, generic_prompt, render_role_prompt,
 };
 
 /// A [`ProjectAdapter`] whose role prompts and context files come from a
@@ -14,12 +17,28 @@ use crate::roles::policy::{
 #[derive(Debug)]
 pub struct YamlProjectAdapter {
     config: ProjectAdapterConfig,
+    /// The language plugin's prompt sections, composed into every role's
+    /// Identity/Context/Instructions/Constraints sections alongside the
+    /// generic and adapter layers, when a plugin is configured. Set via
+    /// [`Self::with_plugin_prompt`] before [`ProjectAdapter::role_policy`] is
+    /// called; `None` when no plugin is configured.
+    plugin: Option<RolePromptConfig>,
+    /// This adapter's declared language plugins, keyed by each plugin's
+    /// declared file extensions (see [`LanguageSpec::extensions`]). Loaded
+    /// from `config.plugins` and attached via [`Self::with_language_plugins`]
+    /// — see [`crate::project::loader::load_adapter`].
+    language_plugins: BTreeMap<String, LanguageSpec>,
 }
 
 impl YamlProjectAdapter {
-    /// Build an adapter from an already-parsed configuration.
+    /// Build an adapter from an already-parsed configuration, with no
+    /// language plugin.
     pub fn new(config: ProjectAdapterConfig) -> Self {
-        Self { config }
+        Self {
+            config,
+            plugin: None,
+            language_plugins: BTreeMap::new(),
+        }
     }
 
     /// Parse a [`ProjectAdapterConfig`] from a YAML string and build an adapter.
@@ -27,17 +46,45 @@ impl YamlProjectAdapter {
         let config: ProjectAdapterConfig = serde_yaml::from_str(yaml)?;
         Ok(Self::new(config))
     }
+
+    /// Attach a language plugin's prompt sections, composed into every
+    /// role's prompt alongside the generic and adapter layers.
+    pub fn with_plugin_prompt(mut self, plugin: RolePromptConfig) -> Self {
+        self.plugin = Some(plugin);
+        self
+    }
+
+    /// Attach this adapter's loaded language plugins, keyed by extension.
+    pub fn with_language_plugins(
+        mut self,
+        language_plugins: BTreeMap<String, LanguageSpec>,
+    ) -> Self {
+        self.language_plugins = language_plugins;
+        self
+    }
+
+    /// This adapter's loaded language plugins, keyed by extension.
+    pub fn language_plugins(&self) -> &BTreeMap<String, LanguageSpec> {
+        &self.language_plugins
+    }
+
+    /// Paths to this adapter's declared language plugin YAML files, as
+    /// written in its `plugins:` list — resolved relative to the adapter
+    /// file's own directory by [`crate::project::loader::load_adapter`].
+    pub fn plugin_paths(&self) -> &[String] {
+        &self.config.plugins
+    }
 }
 
 impl ProjectAdapter for YamlProjectAdapter {
     fn role_policy(&self) -> RolePolicy {
-        // Each YAML-configured prompt supplies only the project-specific
-        // portion of the role's system prompt. The generic role-identity and
-        // JSON-protocol portions are framework constants, composed here so
-        // every adapter gets them uniformly without restating them in YAML.
-        // GENERIC_CONSTRAINTS renders as its own Constraints: section, after
-        // the adapter's own Instructions:/Constraints: sections and before
-        // the role's protocol-specific footer.
+        // Every role's system prompt composes three layers per section
+        // (Identity/Context/Instructions/Constraints): the generic layer
+        // (always present, see `generic_prompt`), the adapter's own
+        // per-role layer, and the language plugin's layer when configured —
+        // see `render_role_prompt`.
+        let generic = generic_prompt();
+        let plugin = self.plugin.as_ref();
         let planner = &self.config.planner;
         // The shared worker_*_system fields below fall back to the first
         // configured worker role; node_runner dispatch selects a Work node's
@@ -56,35 +103,33 @@ impl ProjectAdapter for YamlProjectAdapter {
             PLANNER_PROTOCOL_FOOTER_WITH_OPERATION_AND_ROLES
         };
         let planner_producer_base = format!(
-            "Role:\n{PLANNER_PRODUCER_IDENTITY}\n{}\nConstraints:\n{GENERIC_CONSTRAINTS}",
-            render_role_prompt(&planner.producer)
+            "Role:\n{PLANNER_PRODUCER_IDENTITY}\n{}",
+            render_role_prompt(generic, &planner.producer, plugin)
         );
         RolePolicy {
             planner_producer_system: format!("{planner_producer_base}\n{planner_protocol_footer}"),
             worker_producer_system: format!(
-                "Role:\n{WORKER_PRODUCER_IDENTITY}\n{}\nConstraints:\n{GENERIC_CONSTRAINTS}\n{WORK_PRODUCER_SYSTEM}",
-                render_role_prompt(&worker.producer)
+                "Role:\n{WORKER_PRODUCER_IDENTITY}\n{}\n{WORK_PRODUCER_SYSTEM}",
+                render_role_prompt(generic, &worker.producer, plugin)
             ),
             planner_critic_system: format!(
-                "{}\nConstraints:\n{GENERIC_CONSTRAINTS}\n{DEFAULT_SYSTEM}",
-                render_role_prompt(&planner.critic)
+                "{}\n{DEFAULT_SYSTEM}",
+                render_role_prompt(generic, &planner.critic, plugin)
             ),
             worker_critic_system: format!(
-                "{}\nConstraints:\n{GENERIC_CONSTRAINTS}\n{DEFAULT_SYSTEM}",
-                render_role_prompt(&worker.critic)
+                "{}\n{DEFAULT_SYSTEM}",
+                render_role_prompt(generic, &worker.critic, plugin)
             ),
             planner_referee_system: format!(
-                "{}\nConstraints:\n{GENERIC_CONSTRAINTS}\n{DEFAULT_SYSTEM}",
-                render_role_prompt(&planner.referee)
+                "{}\n{DEFAULT_SYSTEM}",
+                render_role_prompt(generic, &planner.referee, plugin)
             ),
             worker_referee_system: format!(
-                "{}\nConstraints:\n{GENERIC_CONSTRAINTS}\n{DEFAULT_SYSTEM}",
-                render_role_prompt(&worker.referee)
+                "{}\n{DEFAULT_SYSTEM}",
+                render_role_prompt(generic, &worker.referee, plugin)
             ),
             planner_protocol_schema: planner_protocol_footer.to_string(),
             planner_producer_base,
-            language_guidance: None,
-            language_constraints: None,
             worker_role_descriptions: self
                 .config
                 .workers
@@ -95,7 +140,7 @@ impl ProjectAdapter for YamlProjectAdapter {
                 .config
                 .workers
                 .iter()
-                .map(|w| (w.role.clone(), worker_role_policy(w)))
+                .map(|w| (w.role.clone(), worker_role_policy(generic, w, plugin)))
                 .collect(),
         }
     }
@@ -105,31 +150,25 @@ impl ProjectAdapter for YamlProjectAdapter {
     }
 }
 
-/// Render a role prompt's identity, context, instructions, and constraints
-/// as separate labeled sections, rather than concatenating them into one
-/// undifferentiated paragraph.
-fn render_role_prompt(prompt: &RolePromptConfig) -> String {
-    format!(
-        "Identity:\n{}\n\nContext:\n{}\n\nInstructions:\n{}\n\nConstraints:\n{}",
-        prompt.identity, prompt.context, prompt.instructions, prompt.constraints
-    )
-}
-
 /// Build one worker role's Producer/Critic/Referee prompts, composed the
 /// same way as the shared `worker_*_system` fields in [`YamlProjectAdapter::role_policy`].
-fn worker_role_policy(worker: &WorkerRoleConfig) -> WorkerRolePolicy {
+fn worker_role_policy(
+    generic: &RolePromptConfig,
+    worker: &WorkerRoleConfig,
+    plugin: Option<&RolePromptConfig>,
+) -> WorkerRolePolicy {
     WorkerRolePolicy {
         producer_system: format!(
-            "Role:\n{WORKER_PRODUCER_IDENTITY}\n{}\nConstraints:\n{GENERIC_CONSTRAINTS}\n{WORK_PRODUCER_SYSTEM}",
-            render_role_prompt(&worker.producer)
+            "Role:\n{WORKER_PRODUCER_IDENTITY}\n{}\n{WORK_PRODUCER_SYSTEM}",
+            render_role_prompt(generic, &worker.producer, plugin)
         ),
         critic_system: format!(
-            "{}\nConstraints:\n{GENERIC_CONSTRAINTS}\n{DEFAULT_SYSTEM}",
-            render_role_prompt(&worker.critic)
+            "{}\n{DEFAULT_SYSTEM}",
+            render_role_prompt(generic, &worker.critic, plugin)
         ),
         referee_system: format!(
-            "{}\nConstraints:\n{GENERIC_CONSTRAINTS}\n{DEFAULT_SYSTEM}",
-            render_role_prompt(&worker.referee)
+            "{}\n{DEFAULT_SYSTEM}",
+            render_role_prompt(generic, &worker.referee, plugin)
         ),
     }
 }
@@ -172,6 +211,7 @@ mod tests {
             planner: planner_config(),
             workers: worker_configs(),
             context_files: vec!["README.md".to_string()],
+            plugins: vec![],
         })
     }
 
@@ -195,13 +235,14 @@ mod tests {
 
     #[test]
     fn role_policy_maps_each_field_from_config() {
-        // Invariant: every RolePolicy field is composed from the matching
-        // config field's identity, context, instructions, and constraints,
-        // rendered as separate labeled sections, followed by the generic
-        // Constraints: section and the shared framework protocol constants,
-        // in that order — with no field left hardcoded or swapped. Worker
-        // fields come from the first configured worker role.
+        // Invariant: every RolePolicy field composes the generic prompt
+        // layer, then the matching config field's identity, context,
+        // instructions, and constraints, as one section per label, followed
+        // by the shared framework protocol constants — with no field left
+        // hardcoded or swapped. Worker fields come from the first configured
+        // worker role.
         let policy = adapter().role_policy();
+        let generic = generic_prompt();
 
         assert_ordered_sections(
             &policy.planner_producer_system,
@@ -209,15 +250,17 @@ mod tests {
                 "Role:",
                 PLANNER_PRODUCER_IDENTITY,
                 "Identity:",
+                &generic.identity,
                 "plan it identity",
                 "Context:",
+                &generic.context,
                 "plan it context",
                 "Instructions:",
+                &generic.instructions,
                 "plan it",
                 "Constraints:",
+                &generic.constraints,
                 "plan bounds",
-                "Constraints:",
-                GENERIC_CONSTRAINTS,
                 PLANNER_PROTOCOL_FOOTER_WITH_OPERATION_AND_ROLES,
             ],
         );
@@ -227,15 +270,17 @@ mod tests {
                 "Role:",
                 WORKER_PRODUCER_IDENTITY,
                 "Identity:",
+                &generic.identity,
                 "build it identity",
                 "Context:",
+                &generic.context,
                 "build it context",
                 "Instructions:",
+                &generic.instructions,
                 "build it",
                 "Constraints:",
+                &generic.constraints,
                 "build bounds",
-                "Constraints:",
-                GENERIC_CONSTRAINTS,
                 WORK_PRODUCER_SYSTEM,
             ],
         );
@@ -265,16 +310,63 @@ mod tests {
                 system,
                 &[
                     "Identity:",
+                    &generic.identity,
                     &format!("{instructions} identity"),
                     "Context:",
+                    &generic.context,
                     &format!("{instructions} context"),
                     "Instructions:",
+                    &generic.instructions,
                     instructions,
                     "Constraints:",
+                    &generic.constraints,
                     constraints,
-                    "Constraints:",
-                    GENERIC_CONSTRAINTS,
                     DEFAULT_SYSTEM,
+                ],
+            );
+        }
+    }
+
+    #[test]
+    fn role_policy_composes_plugin_layer_into_every_section_when_attached() {
+        // Invariant: with_plugin_prompt attaches a third content layer that
+        // renders after the adapter's own content in every one of the four
+        // sections, for every role — not just Producer, and not just one
+        // section.
+        let plugin = RolePromptConfig {
+            identity: "plugin identity".to_string(),
+            context: "plugin context".to_string(),
+            instructions: "plugin instructions".to_string(),
+            constraints: "plugin constraints".to_string(),
+        };
+        let adapter = YamlProjectAdapter::new(ProjectAdapterConfig {
+            planner: planner_config(),
+            workers: worker_configs(),
+            context_files: vec![],
+            plugins: vec![],
+        })
+        .with_plugin_prompt(plugin);
+        let policy = adapter.role_policy();
+
+        for system in [
+            &policy.planner_producer_system,
+            &policy.worker_producer_system,
+            &policy.planner_critic_system,
+            &policy.worker_critic_system,
+            &policy.planner_referee_system,
+            &policy.worker_referee_system,
+        ] {
+            assert_ordered_sections(
+                system,
+                &[
+                    "Identity:",
+                    "plugin identity",
+                    "Context:",
+                    "plugin context",
+                    "Instructions:",
+                    "plugin instructions",
+                    "Constraints:",
+                    "plugin constraints",
                 ],
             );
         }
@@ -297,6 +389,7 @@ mod tests {
             planner: planner_config(),
             workers,
             context_files: vec![],
+            plugins: vec![],
         });
         assert!(
             adapter
@@ -326,6 +419,7 @@ mod tests {
             planner: planner_config(),
             workers,
             context_files: vec![],
+            plugins: vec![],
         });
         let policy = adapter.role_policy();
 
@@ -353,6 +447,7 @@ mod tests {
                 planner: planner_config(),
                 workers: worker_configs(),
                 context_files,
+                plugins: vec![],
             });
             assert_eq!(adapter.context_file_names(), expected);
         }

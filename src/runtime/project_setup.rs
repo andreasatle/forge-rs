@@ -1,11 +1,12 @@
-//! Wires an adapter name, an optional plugin name, and a [`ValidationConfig`]
-//! into the pieces the scheduler runner needs: role policy, context files,
-//! required test targets, validation plan, and validator.
+//! Wires an adapter (and the language plugins it declares) plus a
+//! [`ValidationConfig`] into the pieces the scheduler runner needs: role
+//! policy, context files, required test targets, validation plan, and
+//! validator.
 //!
 //! [`ProjectRuntimeSetup::build`] is the single entry point so `run` and
 //! `resume` derive identical wiring from identical config.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::error::Error;
 use std::path::Path;
 use std::rc::Rc;
@@ -13,8 +14,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::config::ValidationConfig;
-use crate::language::registry::load_plugin as load_language_plugin;
-use crate::language::spec::LanguageSpec;
+use crate::language::spec::{LanguageInitSpec, LanguageSpec};
 use crate::node_runner::{TestTargetsFn, ValidationPlanForRoleFn};
 use crate::project::{ProjectAdapter, load_adapter};
 use crate::roles::RolePolicy;
@@ -32,64 +32,80 @@ pub struct ProjectRuntimeSetup {
     pub validation_plan_for_role_fn: Arc<ValidationPlanForRoleFn>,
     pub validator: Rc<dyn Validator>,
     pub api_summary_command: Option<CommandSpec>,
+    /// Init commands for the adapter's first declared language plugin
+    /// (ordered by extension), used to bootstrap a brand-new artifact
+    /// repository. `None` when the adapter declares no language plugins.
+    pub primary_language_init: Option<LanguageInitSpec>,
 }
 
 impl ProjectRuntimeSetup {
-    /// `adapter` is a path to a project adapter YAML file; `plugin`
-    /// optionally is a path to a language plugin YAML file. Both are
-    /// validated by [`crate::config::ForgeConfig::from_file`] in the common
-    /// case, but a missing/invalid path is still a hard error here.
+    /// `adapter` is a path to a project adapter YAML file, which declares
+    /// its own language plugins (`plugins:`). Validated by
+    /// [`crate::config::ForgeConfig::from_file`] in the common case, but a
+    /// missing/invalid adapter or plugin is still a hard error here.
     pub fn build(
         adapter: &Path,
-        plugin: Option<&Path>,
         validation: Option<&ValidationConfig>,
     ) -> Result<Self, Box<dyn Error>> {
-        Ok(ProjectRuntimeSetupBuilder::new(adapter, plugin, validation)?.build())
+        Ok(ProjectRuntimeSetupBuilder::new(adapter, validation)?.build())
     }
+}
+
+/// Picks the language plugin that applies to a node from the extensions of
+/// its target files: the first target file (in order) whose extension has a
+/// registered plugin wins. Returns `None` when no target file's extension
+/// matches any configured plugin.
+fn select_plugin<'a>(
+    plugins: &'a BTreeMap<String, LanguageSpec>,
+    target_files: &[String],
+) -> Option<&'a LanguageSpec> {
+    target_files.iter().find_map(|file| {
+        let extension = Path::new(file).extension()?.to_str()?;
+        plugins.get(extension)
+    })
 }
 
 struct ProjectRuntimeSetupBuilder<'a> {
     validation: Option<&'a ValidationConfig>,
-    language_spec: Option<LanguageSpec>,
+    language_plugins: BTreeMap<String, LanguageSpec>,
     adapter: Box<dyn ProjectAdapter>,
 }
 
 impl<'a> ProjectRuntimeSetupBuilder<'a> {
     fn new(
         adapter: &Path,
-        plugin: Option<&Path>,
         validation: Option<&'a ValidationConfig>,
     ) -> Result<Self, Box<dyn Error>> {
-        let adapter = Self::select_adapter(adapter)?;
-        let language_spec = Self::select_plugin(plugin)?;
-        if let (Some(plugin_path), Some(spec)) = (plugin, &language_spec) {
-            Self::validate_worker_roles(adapter.as_ref(), spec, plugin_path)?;
-        }
+        let adapter = load_adapter(adapter)?;
+        let language_plugins = adapter.language_plugins().clone();
+        Self::validate_worker_roles(&adapter, &language_plugins)?;
         Ok(Self {
             validation,
-            language_spec,
-            adapter,
+            language_plugins,
+            adapter: Box::new(adapter),
         })
     }
 
     /// Every worker role the adapter defines must have a matching entry in
-    /// the plugin's `roles` list, so a missing per-role validation override
-    /// is a hard error at config load time rather than a silent fallback to
-    /// the plugin's default validation at run time.
+    /// each configured plugin's `roles` list, so a missing per-role
+    /// validation override is a hard error at config load time rather than a
+    /// silent fallback to that plugin's default validation at run time —
+    /// regardless of which plugin ends up selected for a given node.
     fn validate_worker_roles(
         adapter: &dyn ProjectAdapter,
-        spec: &LanguageSpec,
-        plugin_path: &Path,
+        plugins: &BTreeMap<String, LanguageSpec>,
     ) -> Result<(), Box<dyn Error>> {
-        let plugin_roles: std::collections::HashSet<&str> =
-            spec.roles.iter().map(|role| role.role.as_str()).collect();
-        for (role, _) in &adapter.role_policy().worker_role_descriptions {
-            if !plugin_roles.contains(role.as_str()) {
-                return Err(format!(
-                    "adapter role '{role}' is not defined in plugin '{}'",
-                    plugin_path.display()
-                )
-                .into());
+        let worker_roles = adapter.role_policy().worker_role_descriptions;
+        for (extension, spec) in plugins {
+            let plugin_roles: std::collections::HashSet<&str> =
+                spec.roles.iter().map(|role| role.role.as_str()).collect();
+            for (role, _) in &worker_roles {
+                if !plugin_roles.contains(role.as_str()) {
+                    return Err(format!(
+                        "adapter role '{role}' is not defined in the plugin for extension '{extension}'"
+                    )
+                    .into());
+                }
             }
         }
         Ok(())
@@ -103,118 +119,66 @@ impl<'a> ProjectRuntimeSetupBuilder<'a> {
             validation_plan_for_role_fn: self.validation_plan_for_role_fn(),
             validator: self.validator(),
             api_summary_command: self
-                .language_spec
-                .as_ref()
+                .first_plugin()
                 .and_then(|spec| spec.api_summary.clone()),
+            primary_language_init: self.first_plugin().map(|spec| spec.init.clone()),
         }
     }
 
-    /// Loads the adapter at `adapter`.
-    fn select_adapter(adapter: &Path) -> Result<Box<dyn ProjectAdapter>, Box<dyn Error>> {
-        Ok(Box::new(load_adapter(adapter)?))
-    }
-
-    /// Loads the language plugin at `plugin`, when given.
-    fn select_plugin(plugin: Option<&Path>) -> Result<Option<LanguageSpec>, Box<dyn Error>> {
-        let Some(path) = plugin else {
-            return Ok(None);
-        };
-        Ok(Some(load_language_plugin(path)?))
+    /// The adapter's first declared language plugin in extension order —
+    /// used as a deterministic fallback for concerns that must pick a single
+    /// plugin without a node's target files to select by (repo bootstrap,
+    /// API summaries, the handler-level fallback validator).
+    fn first_plugin(&self) -> Option<&LanguageSpec> {
+        self.language_plugins.values().next()
     }
 
     fn role_policy(&self) -> RolePolicy {
-        let mut policy = self.adapter.role_policy();
-        if let Some(spec) = &self.language_spec {
-            policy.language_guidance = Some(spec.prompt_guidance.clone());
-            policy.language_constraints =
-                (!spec.constraints.is_empty()).then(|| spec.constraints.clone());
-        }
-        policy
+        self.adapter.role_policy()
     }
 
     fn context_file_names(&self) -> Vec<String> {
         self.adapter.context_file_names()
     }
 
+    /// Builds the adapter-provided test-target derivation function: for a
+    /// node's target files, selects the matching plugin by extension and, if
+    /// that plugin requires tests, derives the validation targets its rules
+    /// imply.
     fn required_test_targets_fn(&self) -> Arc<TestTargetsFn> {
-        if !self.project_requires_tests() {
-            return Arc::new(|_| vec![]);
-        }
-        let rules = self
-            .language_spec
-            .as_ref()
-            .map(|spec| spec.validation.validation_targets.clone())
-            .unwrap_or_default();
-        Arc::new(move |targets| crate::validation::derive_validation_targets(&rules, targets))
-    }
-
-    fn project_requires_tests(&self) -> bool {
-        if let Some(spec) = &self.language_spec {
-            return spec.validation_includes_test_command();
-        }
-
-        // For user-supplied validation commands there is no YAML spec with an
-        // explicit `runs_tests` flag, so we fall back to a heuristic: any token
-        // in any command that equals "test" or ends with "test"/"tests" implies a
-        // test runner is configured.
-        self.validation
-            .map(|config| {
-                config
-                    .commands
-                    .iter()
-                    .any(|cmd| Self::validation_command_is_test_like(cmd))
-            })
-            .unwrap_or(false)
-    }
-
-    fn validation_command_is_test_like(cmd: &str) -> bool {
-        cmd.split_whitespace().any(|token| {
-            let lower = token.to_ascii_lowercase();
-            lower == "test" || lower.ends_with("test") || lower.ends_with("tests")
+        let plugins = self.language_plugins.clone();
+        Arc::new(move |targets| match select_plugin(&plugins, targets) {
+            Some(spec) if spec.validation_includes_test_command() => {
+                crate::validation::derive_validation_targets(
+                    &spec.validation.validation_targets,
+                    targets,
+                )
+            }
+            _ => vec![],
         })
     }
 
-    /// Build the default [`ValidationPlan`] from the language spec or explicit
-    /// config, used for nodes with no worker role or whose role has no
-    /// override in the language spec's `roles` list.
+    /// Builds the per-role validation plan lookup stamped onto every `Work`
+    /// node at plan-expansion time, keyed by the node's target files (to
+    /// select the matching plugin) and its assigned worker role.
     ///
-    /// The plan is stamped onto every `Work` node at plan-expansion time.  This
-    /// captures the validation contract at node-creation time so it survives
-    /// checkpoint/resume unchanged, regardless of any later config edits.
-    fn default_validation_plan(&self) -> Option<ValidationPlan> {
-        if let Some(spec) = &self.language_spec {
-            Some(Self::plan_from_commands(&spec.validation.commands))
-        } else {
-            self.validation_config_plan()
-        }
-    }
-
-    /// Build the per-role validation plan lookup stamped onto every `Work`
-    /// node at plan-expansion time, keyed by the node's assigned worker role.
-    ///
-    /// A role present in the language spec's `roles` list gets that role's
+    /// A role present in the selected plugin's `roles` list gets that role's
     /// own `validation.commands`; every other role (including no role at
-    /// all) falls back to [`Self::default_validation_plan`].
+    /// all) falls back to the plugin's default `validation.commands`. When no
+    /// plugin matches the node's target files, falls back to the explicit
+    /// `validation:` config, when present.
     fn validation_plan_for_role_fn(&self) -> Arc<ValidationPlanForRoleFn> {
-        let default_plan = self.default_validation_plan();
-        let role_plans: HashMap<String, ValidationPlan> = self
-            .language_spec
-            .as_ref()
-            .map(|spec| {
-                spec.roles
-                    .iter()
-                    .map(|role| {
-                        (
-                            role.role.clone(),
-                            Self::plan_from_commands(&role.validation.commands),
-                        )
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-        Arc::new(move |role: Option<&str>| {
-            role.and_then(|name| role_plans.get(name).cloned())
-                .or_else(|| default_plan.clone())
+        let plugins = self.language_plugins.clone();
+        let fallback_plan = self.validation_config_plan();
+        Arc::new(move |role, target_files| {
+            let Some(spec) = select_plugin(&plugins, target_files) else {
+                return fallback_plan.clone();
+            };
+            let commands = role
+                .and_then(|name| spec.roles.iter().find(|r| r.role == name))
+                .map(|r| &r.validation.commands)
+                .unwrap_or(&spec.validation.commands);
+            Some(Self::plan_from_commands(commands))
         })
     }
 
@@ -261,31 +225,37 @@ impl<'a> ProjectRuntimeSetupBuilder<'a> {
         }
     }
 
+    /// Handler-level fallback validator, used only for nodes that carry no
+    /// per-node `validation_plan` (e.g. no plugin matched their target files
+    /// at plan-expansion time). Prefers the explicit `validation:` config
+    /// when present, otherwise the first configured plugin's commands.
     fn validator(&self) -> Rc<dyn Validator> {
-        if let Some(spec) = &self.language_spec {
-            let timeout = Duration::from_secs(120);
-            return Rc::new(CommandValidator::new(
-                spec.validation.commands.clone(),
-                timeout,
-            ));
+        if let Some(v) = self.validation
+            && !v.commands.is_empty()
+        {
+            let timeout = Duration::from_secs(v.timeout_seconds.unwrap_or(120));
+            let specs = v
+                .commands
+                .iter()
+                .map(|cmd| CommandSpec {
+                    program: "sh".to_string(),
+                    args: vec!["-c".to_string(), cmd.clone()],
+                    when_files_present: vec![],
+                    scope: ValidationScope::Workspace,
+                })
+                .collect();
+            return Rc::new(CommandValidator::new(specs, timeout));
         }
 
-        match self.validation {
-            Some(v) if !v.commands.is_empty() => {
-                let timeout = Duration::from_secs(v.timeout_seconds.unwrap_or(120));
-                let specs = v
-                    .commands
-                    .iter()
-                    .map(|cmd| CommandSpec {
-                        program: "sh".to_string(),
-                        args: vec!["-c".to_string(), cmd.clone()],
-                        when_files_present: vec![],
-                        scope: ValidationScope::Workspace,
-                    })
-                    .collect();
-                Rc::new(CommandValidator::new(specs, timeout))
+        match self.first_plugin() {
+            Some(spec) => {
+                let timeout = Duration::from_secs(120);
+                Rc::new(CommandValidator::new(
+                    spec.validation.commands.clone(),
+                    timeout,
+                ))
             }
-            _ => Rc::new(AlwaysPassValidator),
+            None => Rc::new(AlwaysPassValidator),
         }
     }
 }

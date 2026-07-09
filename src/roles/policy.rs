@@ -166,18 +166,6 @@ string ::=
 
 ws ::= ([ \t\n] ws)?"#;
 
-/// Generic JSON-output-format constraints shared by every role's protocol
-/// footer: exactly one JSON object, no markdown or code fence, and no text
-/// before or after the JSON.
-///
-/// Framework protocol, identical across every role and adapter. Extracted so
-/// it renders as its own labeled `Constraints:` section, distinct from the
-/// role-specific and adapter-specific constraints it is composed with —
-/// rather than being restated inline in [`DEFAULT_SYSTEM`],
-/// [`WORK_PRODUCER_SYSTEM`], and [`PLANNER_PROTOCOL_FOOTER_WITH_OPERATION`].
-pub(crate) const GENERIC_CONSTRAINTS: &str = "Return exactly one JSON object. No markdown. No code fence. \
-No explanation. No text before or after the JSON.";
-
 /// JSON protocol instructions for Worker, Critic, and Referee roles.
 ///
 /// This is framework protocol, not project-specific content: it is identical
@@ -186,15 +174,15 @@ No explanation. No text before or after the JSON.";
 /// compose their project-specific text with this constant rather than
 /// re-stating it.
 ///
-/// Callers compose this after [`GENERIC_CONSTRAINTS`] — the JSON-format
-/// constraint it used to restate inline has been extracted there.
+/// The JSON-format constraint and the "execution failures are handled by the
+/// framework" note this used to restate inline now live in the generic
+/// prompt layer — see [`generic_prompt`].
 pub(crate) const DEFAULT_SYSTEM: &str = "Allowed final responses:\n\
 Accepted: `status` must be \"accepted\"; `content` must be a non-empty task-specific string.\n\
 Rejected: `status` must be \"rejected\"; `reason` must be a non-empty task-specific string.\n\
 Producer returns accepted content. \
 Critic accepts with a review or rejects with a reason. \
-Referee accepts approval or rejects with revision feedback. \
-Execution failures are handled by the framework, not the model.";
+Referee accepts approval or rejects with revision feedback.";
 
 /// JSON protocol instructions for the Work-node Producer role.
 ///
@@ -205,19 +193,19 @@ Execution failures are handled by the framework, not the model.";
 /// appear anywhere in a prompt the Work-node Producer can receive.
 ///
 /// Framework protocol, shared across adapters — see [`DEFAULT_SYSTEM`].
-/// Callers compose this after [`GENERIC_CONSTRAINTS`], see [`DEFAULT_SYSTEM`].
+/// The "execution failures are handled by the framework" note this used to
+/// restate inline now lives in the generic prompt layer — see
+/// [`generic_prompt`].
 pub(crate) const WORK_PRODUCER_SYSTEM: &str = "Allowed final response:\n\
 `summary` must be a non-empty task-specific string describing what you did.\n\
 Implement the requested change and return a summary describing what you did. \
-There is no rejected response — a valid summary means the work is done. \
-Execution failures are handled by the framework, not the model.";
+There is no rejected response — a valid summary means the work is done.";
 
 /// JSON protocol instructions for planner-style roles whose task schema has
 /// no `operation` field — targets alone describe the task.
 ///
 /// Framework protocol, shared by every adapter that models tasks without
 /// concrete create/modify/delete operations — see [`PLANNER_PROTOCOL_FOOTER_WITH_OPERATION`].
-/// Callers compose this after [`GENERIC_CONSTRAINTS`], see [`DEFAULT_SYSTEM`].
 pub(crate) const PLANNER_PROTOCOL_FOOTER: &str = "PlannerOutput: `tasks` must be a non-empty array.\n\
 Each task requires `id`, `objective`, `targets`, and `depends_on`.\n\
 Each `targets` array must be non-empty and list exact files the task may create, modify, or delete.";
@@ -262,7 +250,6 @@ editing them.";
 ///
 /// Framework protocol, shared by every adapter that models tasks as
 /// concrete artifact operations — see [`DEFAULT_SYSTEM`].
-/// Callers compose this after [`GENERIC_CONSTRAINTS`], see [`DEFAULT_SYSTEM`].
 pub(crate) const PLANNER_PROTOCOL_FOOTER_WITH_OPERATION: &str = "PlannerOutput: `tasks` must be a non-empty array.\n\
 Each task requires `id`, `objective`, `operation`, `targets`, and `depends_on`.\n\
 `operation` must be \"create\", \"modify\", or \"delete\".\n\
@@ -287,6 +274,93 @@ Every task must be assigned to one of those roles.\n\
 Optional top-level `kind` field: \"work\" (default when omitted) or \"decomposition\". \
 When `kind` is \"decomposition\", every task becomes a further planning node instead of a work node, and `targets` may be empty. \
 All tasks in one PlannerOutput share the same kind — never mix work and decomposition tasks in one response.";
+
+/// A role prompt split into four explicit sections.
+///
+/// `identity` frames who the role is; `context` supplies ambient background
+/// the role needs; `instructions` describes what the role must do;
+/// `constraints` bounds how it may do it (prohibitions, rejection-grounding
+/// rules, scope limits).
+///
+/// This shape is shared by three prompt layers, composed together by
+/// [`render_role_prompt`] for every role in every adapter: the generic layer
+/// (see [`generic_prompt`]), the adapter's own per-role layer (see
+/// [`crate::project::yaml_config::RolePromptConfig`], re-exported as this
+/// same type), and the language plugin's layer (see
+/// [`crate::language::LanguageSpec`]).
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RolePromptConfig {
+    /// Who the role is.
+    pub identity: String,
+    /// Ambient background the role needs.
+    pub context: String,
+    /// What the role must do.
+    pub instructions: String,
+    /// Prohibitions and boundaries on how the role may do it.
+    pub constraints: String,
+}
+
+/// The framework's generic prompt layer, embedded from `adapters/generic.yaml`
+/// at compile time.
+///
+/// Content here applies to every role in every adapter, regardless of project
+/// or language: it is always loaded, never optional, and requires no
+/// per-adapter or per-plugin opt-in. Parsed once and cached for the life of
+/// the process.
+pub(crate) fn generic_prompt() -> &'static RolePromptConfig {
+    static GENERIC: std::sync::LazyLock<RolePromptConfig> = std::sync::LazyLock::new(|| {
+        const GENERIC_YAML: &str = include_str!("../../adapters/generic.yaml");
+        serde_yaml::from_str(GENERIC_YAML).expect("adapters/generic.yaml must parse")
+    });
+    &GENERIC
+}
+
+/// Compose one rendered prompt section from its generic, adapter, and
+/// (optional) plugin layers, in that order, joined by newlines. Empty layers
+/// are omitted rather than leaving a blank line.
+fn compose_section(generic: &str, adapter: &str, plugin: Option<&str>) -> String {
+    [Some(generic), Some(adapter), plugin]
+        .into_iter()
+        .flatten()
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Render a role prompt's identity, context, instructions, and constraints as
+/// separate labeled sections, composing the generic prompt layer, the
+/// adapter's role-specific layer, and the language plugin's layer (when
+/// present) for each section — see [`compose_section`].
+pub(crate) fn render_role_prompt(
+    generic: &RolePromptConfig,
+    adapter: &RolePromptConfig,
+    plugin: Option<&RolePromptConfig>,
+) -> String {
+    let identity = compose_section(
+        &generic.identity,
+        &adapter.identity,
+        plugin.map(|p| p.identity.as_str()),
+    );
+    let context = compose_section(
+        &generic.context,
+        &adapter.context,
+        plugin.map(|p| p.context.as_str()),
+    );
+    let instructions = compose_section(
+        &generic.instructions,
+        &adapter.instructions,
+        plugin.map(|p| p.instructions.as_str()),
+    );
+    let constraints = compose_section(
+        &generic.constraints,
+        &adapter.constraints,
+        plugin.map(|p| p.constraints.as_str()),
+    );
+    format!(
+        "Identity:\n{identity}\n\nContext:\n{context}\n\nInstructions:\n{instructions}\n\nConstraints:\n{constraints}"
+    )
+}
 
 /// Producer/Critic/Referee system prompts for one named worker role.
 ///
@@ -340,24 +414,6 @@ pub struct RolePolicy {
     /// prompts, which use fixed schema variants rather than the adapter's
     /// configured `planner_protocol_schema`.
     pub planner_producer_base: String,
-    /// Language-specific guidance injected as its own section between the
-    /// adapter system prompt and the tool section, when set.
-    ///
-    /// Sourced from [`LanguageSpec::prompt_guidance`], not from the project
-    /// adapter — adapters describe project-specific behavior, languages
-    /// describe language-specific conventions.
-    ///
-    /// [`LanguageSpec::prompt_guidance`]: crate::language::LanguageSpec::prompt_guidance
-    pub language_guidance: Option<String>,
-    /// Language-specific constraints injected as their own section
-    /// immediately after `language_guidance`, when set.
-    ///
-    /// Sourced from [`LanguageSpec::constraints`] — prohibitions and
-    /// conventions distinct from the general guidance in
-    /// `language_guidance`.
-    ///
-    /// [`LanguageSpec::constraints`]: crate::language::LanguageSpec::constraints
-    pub language_constraints: Option<String>,
     /// Worker role name/description pairs, surfaced to the Plan-node
     /// Producer so it can assign roles explicitly to each task.
     ///
@@ -377,18 +433,36 @@ pub struct RolePolicy {
 
 impl Default for RolePolicy {
     fn default() -> Self {
-        let planner_producer_base = GENERIC_CONSTRAINTS.to_string();
+        // No adapter or plugin configured: every role prompt is the generic
+        // layer alone, composed the same way [`crate::project::yaml::YamlProjectAdapter`]
+        // composes it, just with empty adapter/plugin layers.
+        let generic = generic_prompt();
+        let empty = RolePromptConfig::default();
+        let planner_producer_base = render_role_prompt(generic, &empty, None);
         Self {
             planner_producer_system: format!("{planner_producer_base}\n{PLANNER_PROTOCOL_FOOTER}"),
-            worker_producer_system: format!("{GENERIC_CONSTRAINTS}\n{WORK_PRODUCER_SYSTEM}"),
-            planner_critic_system: format!("{GENERIC_CONSTRAINTS}\n{DEFAULT_SYSTEM}"),
-            worker_critic_system: format!("{GENERIC_CONSTRAINTS}\n{DEFAULT_SYSTEM}"),
-            planner_referee_system: format!("{GENERIC_CONSTRAINTS}\n{DEFAULT_SYSTEM}"),
-            worker_referee_system: format!("{GENERIC_CONSTRAINTS}\n{DEFAULT_SYSTEM}"),
+            worker_producer_system: format!(
+                "{}\n{WORK_PRODUCER_SYSTEM}",
+                render_role_prompt(generic, &empty, None)
+            ),
+            planner_critic_system: format!(
+                "{}\n{DEFAULT_SYSTEM}",
+                render_role_prompt(generic, &empty, None)
+            ),
+            worker_critic_system: format!(
+                "{}\n{DEFAULT_SYSTEM}",
+                render_role_prompt(generic, &empty, None)
+            ),
+            planner_referee_system: format!(
+                "{}\n{DEFAULT_SYSTEM}",
+                render_role_prompt(generic, &empty, None)
+            ),
+            worker_referee_system: format!(
+                "{}\n{DEFAULT_SYSTEM}",
+                render_role_prompt(generic, &empty, None)
+            ),
             planner_protocol_schema: PLANNER_PROTOCOL_FOOTER.to_string(),
             planner_producer_base,
-            language_guidance: None,
-            language_constraints: None,
             worker_role_descriptions: Vec::new(),
             worker_role_policies: std::collections::HashMap::new(),
         }
