@@ -457,6 +457,51 @@ fn language_plugin_matching_node_target_extension_appears_in_prompt() {
 }
 
 #[test]
+fn language_plugin_is_absent_from_decomposition_node_prompt_even_with_target_files() {
+    // Invariant: a split node re-decomposes a failed node and inherits its
+    // `target_files` for objective-rendering context (see
+    // `recovery::apply_split`), but a Decomposition node never produces
+    // language-specific code itself — that inherited list must not select a
+    // language plugin into its prompt.
+    let temp = TempDir::new("plugin-prompt-decomposition");
+    let view = make_artifact_view(&temp, "main.py", "def f():\n    pass\n");
+
+    let decomposition = r#"{"kind":"plan"}"#;
+    let provider = RecordingProvider::from_strs(&[
+        decomposition,
+        r#"{"status":"accepted","content":"decomposition looks good"}"#,
+        r#"{"status":"accepted","content":"decomposition approved"}"#,
+    ]);
+    let mut plugins = BTreeMap::new();
+    plugins.insert(
+        "py".to_string(),
+        plugin_spec("py", "Follow PEP 8 conventions."),
+    );
+    let runner = DeliberatingNodeRunner::new(&provider, &provider).with_language_plugins(plugins);
+    let request = NodeRunRequest {
+        kind: NodeKind::Decomposition,
+        node_id: NodeId("test-node".to_string()),
+        objective: "Fix main.py".to_string(),
+        target_files: vec!["main.py".to_string()],
+        test_plan_context: TestPlanContext::default(),
+        model_tier: ModelTier::Cheap,
+        attempt: 0,
+        artifact_view: Some(view),
+        worker_role: None,
+        work_attempt: None,
+    };
+    runner.run_node(request, &NoopTelemetry);
+
+    let prompts = provider.recorded_prompts();
+    assert!(!prompts.is_empty(), "provider must have received prompts");
+    let first = &prompts[0];
+    assert!(
+        !first.contains("Follow PEP 8 conventions."),
+        "decomposition prompt must not include plugin guidance even when target_files is non-empty; got:\n{first}"
+    );
+}
+
+#[test]
 fn language_plugin_not_matching_node_target_extension_is_absent_from_prompt() {
     // Invariant: a declared plugin whose extension does not match this
     // node's target files must not leak into its prompt — each node only

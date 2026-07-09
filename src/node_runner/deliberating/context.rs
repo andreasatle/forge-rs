@@ -52,7 +52,14 @@ pub(crate) fn build_deliberation_context(
         .flatten()
         .map(str::to_string);
 
-    let plugin_prompt = select_plugin(config.language_plugins, &request.target_files)
+    // Decomposition nodes have no target files of their own — `target_files`
+    // may still be non-empty here (a split node inherits it from the failed
+    // node it replaces, for objective-rendering context), but that inherited
+    // list must never drive language-plugin selection for a node that isn't
+    // producing code itself.
+    let plugin_prompt = (!matches!(request.kind, NodeKind::Decomposition))
+        .then(|| select_plugin(config.language_plugins, &request.target_files))
+        .flatten()
         .map(LanguageSpec::prompt_sections);
 
     DeliberationContext {
