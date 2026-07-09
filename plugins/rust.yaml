@@ -13,8 +13,7 @@ instructions: |
   file under tests/.
 constraints: |
   Put unit tests inline in the same file under a #[cfg(test)] mod tests
-  block, using `use super::*;` to bring the module under test into scope —
-  do not reimplement or copy the functions under test into the test module.
+  block, using `use super::*;` to bring the module under test into scope.
   Do not use unwrap() or expect() to handle expected failure paths in
   non-test code; propagate errors with Result and the ? operator instead.
   Reserve panics for genuine invariant violations.

@@ -13,13 +13,12 @@ instructions: |
   functions test_<behavior_under_test> so failures read as a description
   of what broke.
 constraints: |
-  Do not use wildcard imports (from module import *). Import the functions
-  or classes under test directly from the source module — do not reimplement
-  or copy their logic into the test file. Test files must be placed in the
-  tests/ subdirectory, not alongside the source file, and named
-  tests/test_<module>.py, following pytest convention. Name test functions
-  test_<behavior_under_test>; do not use unittest.TestCase method names like
-  test1 or testFoo.
+  Do not use wildcard imports (from module import *) to bring the module
+  under test into scope — import the specific functions or classes by name.
+  Test files must be placed in the tests/ subdirectory, not alongside the
+  source file, and named tests/test_<module>.py, following pytest convention.
+  Name test functions test_<behavior_under_test>; do not use unittest.TestCase
+  method names like test1 or testFoo.
 init:
   gitignore:
     - .venv
