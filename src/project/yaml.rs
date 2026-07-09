@@ -14,16 +14,16 @@ use crate::roles::policy::{
 
 /// A [`ProjectAdapter`] whose role prompts and context files come from a
 /// [`ProjectAdapterConfig`], rather than being hardcoded in Rust.
+///
+/// Role prompts never carry any language plugin's guidance — an adapter's
+/// declared plugins vary by node (selected from each node's own target
+/// files, see [`crate::language::select_plugin`]), not by adapter, so
+/// [`ProjectAdapter::role_policy`] composes only the generic and adapter
+/// layers here. The node runner injects the per-node plugin layer at prompt
+/// render time instead.
 #[derive(Debug)]
 pub struct YamlProjectAdapter {
     config: ProjectAdapterConfig,
-    /// The declared language plugins' prompt sections, merged together and
-    /// composed into every role's Identity/Context/Instructions/Constraints
-    /// sections alongside the generic and adapter layers. Set via
-    /// [`Self::with_plugin_prompt`] — see [`crate::project::loader::load_adapter`]
-    /// — before [`ProjectAdapter::role_policy`] is called; `None` when no
-    /// plugins are configured.
-    plugin: Option<RolePromptConfig>,
     /// This adapter's declared language plugins, keyed by each plugin's
     /// declared file extensions (see [`LanguageSpec::extensions`]). Loaded
     /// from `config.plugins` and attached via [`Self::with_language_plugins`]
@@ -37,7 +37,6 @@ impl YamlProjectAdapter {
     pub fn new(config: ProjectAdapterConfig) -> Self {
         Self {
             config,
-            plugin: None,
             language_plugins: BTreeMap::new(),
         }
     }
@@ -46,14 +45,6 @@ impl YamlProjectAdapter {
     pub fn from_yaml_str(yaml: &str) -> Result<Self, serde_yaml::Error> {
         let config: ProjectAdapterConfig = serde_yaml::from_str(yaml)?;
         Ok(Self::new(config))
-    }
-
-    /// Attach the (already-merged) language plugin prompt sections, composed
-    /// into every role's prompt alongside the generic and adapter layers —
-    /// see [`crate::project::loader::load_adapter`].
-    pub fn with_plugin_prompt(mut self, plugin: RolePromptConfig) -> Self {
-        self.plugin = Some(plugin);
-        self
     }
 
     /// Attach this adapter's loaded language plugins, keyed by extension.
@@ -82,11 +73,12 @@ impl ProjectAdapter for YamlProjectAdapter {
     fn role_policy(&self) -> RolePolicy {
         // Every role's system prompt composes three layers per section
         // (Identity/Context/Instructions/Constraints): the generic layer
-        // (always present, see `generic_prompt`), the adapter's own
-        // per-role layer, and the language plugin's layer when configured —
-        // see `render_role_prompt`.
+        // (always present, see `generic_prompt`) and the adapter's own
+        // per-role layer. The language plugin's layer is never baked in
+        // here — the node runner selects and injects it per node from each
+        // node's own target files (see `crate::language::select_plugin`),
+        // since an adapter's declared plugins vary by node, not by adapter.
         let generic = generic_prompt();
-        let plugin = self.plugin.as_ref();
         let planner = &self.config.planner;
         // The shared worker_*_system fields below fall back to the first
         // configured worker role; node_runner dispatch selects a Work node's
@@ -104,31 +96,37 @@ impl ProjectAdapter for YamlProjectAdapter {
         } else {
             PLANNER_PROTOCOL_FOOTER_WITH_OPERATION_AND_ROLES
         };
-        let planner_producer_base = format!(
-            "Role:\n{PLANNER_PRODUCER_IDENTITY}\n{}",
-            render_role_prompt(generic, &planner.producer, plugin)
-        );
+        let planner_producer_generic = RolePromptConfig {
+            identity: format!("{PLANNER_PRODUCER_IDENTITY}\n{}", generic.identity),
+            ..generic.clone()
+        };
+        let worker_producer_generic = RolePromptConfig {
+            identity: format!("{WORKER_PRODUCER_IDENTITY}\n{}", generic.identity),
+            ..generic.clone()
+        };
+        let planner_producer_base =
+            render_role_prompt(&planner_producer_generic, &planner.producer, None);
         RolePolicy {
             planner_producer_system: format!("{planner_producer_base}\n{planner_protocol_footer}"),
             worker_producer_system: format!(
-                "Role:\n{WORKER_PRODUCER_IDENTITY}\n{}\n{WORK_PRODUCER_SYSTEM}",
-                render_role_prompt(generic, &worker.producer, plugin)
+                "{}\n{WORK_PRODUCER_SYSTEM}",
+                render_role_prompt(&worker_producer_generic, &worker.producer, None)
             ),
             planner_critic_system: format!(
                 "{}\n{DEFAULT_SYSTEM}",
-                render_role_prompt(generic, &planner.critic, plugin)
+                render_role_prompt(generic, &planner.critic, None)
             ),
             worker_critic_system: format!(
                 "{}\n{DEFAULT_SYSTEM}",
-                render_role_prompt(generic, &worker.critic, plugin)
+                render_role_prompt(generic, &worker.critic, None)
             ),
             planner_referee_system: format!(
                 "{}\n{DEFAULT_SYSTEM}",
-                render_role_prompt(generic, &planner.referee, plugin)
+                render_role_prompt(generic, &planner.referee, None)
             ),
             worker_referee_system: format!(
                 "{}\n{DEFAULT_SYSTEM}",
-                render_role_prompt(generic, &worker.referee, plugin)
+                render_role_prompt(generic, &worker.referee, None)
             ),
             planner_protocol_schema: planner_protocol_footer.to_string(),
             planner_producer_base,
@@ -142,7 +140,7 @@ impl ProjectAdapter for YamlProjectAdapter {
                 .config
                 .workers
                 .iter()
-                .map(|w| (w.role.clone(), worker_role_policy(generic, w, plugin)))
+                .map(|w| (w.role.clone(), worker_role_policy(generic, w)))
                 .collect(),
         }
     }
@@ -154,23 +152,23 @@ impl ProjectAdapter for YamlProjectAdapter {
 
 /// Build one worker role's Producer/Critic/Referee prompts, composed the
 /// same way as the shared `worker_*_system` fields in [`YamlProjectAdapter::role_policy`].
-fn worker_role_policy(
-    generic: &RolePromptConfig,
-    worker: &WorkerRoleConfig,
-    plugin: Option<&RolePromptConfig>,
-) -> WorkerRolePolicy {
+fn worker_role_policy(generic: &RolePromptConfig, worker: &WorkerRoleConfig) -> WorkerRolePolicy {
+    let producer_generic = RolePromptConfig {
+        identity: format!("{WORKER_PRODUCER_IDENTITY}\n{}", generic.identity),
+        ..generic.clone()
+    };
     WorkerRolePolicy {
         producer_system: format!(
-            "Role:\n{WORKER_PRODUCER_IDENTITY}\n{}\n{WORK_PRODUCER_SYSTEM}",
-            render_role_prompt(generic, &worker.producer, plugin)
+            "{}\n{WORK_PRODUCER_SYSTEM}",
+            render_role_prompt(&producer_generic, &worker.producer, None)
         ),
         critic_system: format!(
             "{}\n{DEFAULT_SYSTEM}",
-            render_role_prompt(generic, &worker.critic, plugin)
+            render_role_prompt(generic, &worker.critic, None)
         ),
         referee_system: format!(
             "{}\n{DEFAULT_SYSTEM}",
-            render_role_prompt(generic, &worker.referee, plugin)
+            render_role_prompt(generic, &worker.referee, None)
         ),
     }
 }
@@ -249,9 +247,8 @@ mod tests {
         assert_ordered_sections(
             &policy.planner_producer_system,
             &[
-                "Role:",
-                PLANNER_PRODUCER_IDENTITY,
                 "Identity:",
+                PLANNER_PRODUCER_IDENTITY,
                 &generic.identity,
                 "plan it identity",
                 "Context:",
@@ -269,9 +266,8 @@ mod tests {
         assert_ordered_sections(
             &policy.worker_producer_system,
             &[
-                "Role:",
-                WORKER_PRODUCER_IDENTITY,
                 "Identity:",
+                WORKER_PRODUCER_IDENTITY,
                 &generic.identity,
                 "build it identity",
                 "Context:",

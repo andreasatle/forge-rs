@@ -351,7 +351,7 @@ pub(super) fn render_role_prompt_with_test_plan_context(input: RolePromptRender<
             DeliberationRole::Critic | DeliberationRole::Referee
         );
     if let Some(context) = render_deliberation_context(input.context, !renders_review_contract) {
-        parts.push(format!("Context:\n{context}"));
+        parts.push(format!("Project State:\n{context}"));
     }
     parts.push(format!("Objective: {}", input.objective));
     parts.push(format!("Role: {:?}", input.role));
