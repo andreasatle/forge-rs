@@ -48,7 +48,7 @@ pub struct ArtifactConfig {
 }
 
 fn default_provider_timeout_seconds() -> u64 {
-    120
+    300
 }
 
 fn default_managed_startup_timeout_seconds() -> u64 {
@@ -64,7 +64,7 @@ pub struct ProviderConfig {
     /// Optional strong provider tier. When absent, strong falls back to cheap.
     #[serde(default)]
     pub strong: Option<ProviderTierConfig>,
-    /// HTTP request timeout in seconds. Absent configs default to 120.
+    /// HTTP request timeout in seconds. Absent configs default to 300.
     #[serde(default = "default_provider_timeout_seconds")]
     pub timeout_seconds: u64,
     /// Timeout for strong-tier completions in seconds. Falls back to

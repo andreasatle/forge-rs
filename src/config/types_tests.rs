@@ -243,8 +243,8 @@ fn provider_timeout_defaults_reasonably() {
     let tmp = TempYaml::new(EXAMPLE_YAML);
     let config = ForgeConfig::from_file(tmp.path()).unwrap();
     assert_eq!(
-        config.provider.timeout_seconds, 120,
-        "absent timeout_seconds must default to 120"
+        config.provider.timeout_seconds, 300,
+        "absent timeout_seconds must default to 300"
     );
 }
 
