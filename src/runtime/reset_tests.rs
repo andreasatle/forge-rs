@@ -18,7 +18,7 @@ fn temp_path(label: &str) -> PathBuf {
 
 fn commit_count(repo_path: &PathBuf, branch: &str) -> usize {
     let branch_ref = format!("refs/heads/{branch}");
-    let out = Command::new("git")
+    let out = crate::git::command()
         .args(["rev-list", "--count", &branch_ref])
         .current_dir(repo_path)
         .output()
@@ -158,7 +158,7 @@ fn make_forge_config_with_language(
 }
 
 fn git_ls_tree_names(repo_path: &PathBuf, commit: &str) -> Vec<String> {
-    let out = Command::new("git")
+    let out = crate::git::command()
         .args(["ls-tree", "--name-only", "-r", commit])
         .current_dir(repo_path)
         .output()
@@ -173,7 +173,7 @@ fn git_ls_tree_names(repo_path: &PathBuf, commit: &str) -> Vec<String> {
 
 fn git_show_file(repo_path: &PathBuf, commit: &str, file: &str) -> String {
     let object = format!("{commit}:{file}");
-    let out = Command::new("git")
+    let out = crate::git::command()
         .args(["show", &object])
         .current_dir(repo_path)
         .output()
@@ -441,7 +441,7 @@ fn reset_recreates_bare_artifact_repo() {
     run_reset(config).unwrap();
 
     // Verify it is a valid bare git repository.
-    let out = Command::new("git")
+    let out = crate::git::command()
         .args(["rev-parse", "--is-bare-repository"])
         .current_dir(&repo_path)
         .output()

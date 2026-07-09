@@ -1,7 +1,6 @@
 use std::cell::RefCell;
 use std::fs;
 use std::path::PathBuf;
-use std::process::Command;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -32,7 +31,7 @@ impl Drop for TempDir {
 }
 
 fn git(dir: &PathBuf, args: &[&str]) {
-    let status = Command::new("git")
+    let status = crate::git::command()
         .args(args)
         .current_dir(dir)
         .status()
@@ -41,7 +40,7 @@ fn git(dir: &PathBuf, args: &[&str]) {
 }
 
 fn git_output(dir: &PathBuf, args: &[&str]) -> String {
-    let out = Command::new("git")
+    let out = crate::git::command()
         .args(args)
         .current_dir(dir)
         .output()
@@ -68,7 +67,7 @@ fn make_view(label: &str) -> (TempDir, ArtifactView) {
     git(&seed, &["commit", "--quiet", "-m", "init"]);
 
     let bare = temp.0.join("bare.git");
-    let status = Command::new("git")
+    let status = crate::git::command()
         .args(["clone", "--quiet", "--bare"])
         .arg(&seed)
         .arg(&bare)
@@ -102,7 +101,7 @@ fn make_view_with_binary(label: &str) -> (TempDir, ArtifactView) {
     git(&seed, &["commit", "--quiet", "-m", "add binary"]);
 
     let bare = temp.0.join("bare.git");
-    Command::new("git")
+    crate::git::command()
         .args(["clone", "--quiet", "--bare"])
         .arg(&seed)
         .arg(&bare)

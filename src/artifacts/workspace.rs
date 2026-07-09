@@ -1,10 +1,10 @@
 use std::error::Error;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use tempfile::TempDir;
 
 use super::Artifact;
+use crate::git;
 
 /// A temporary mutable, non-bare checkout derived from an artifact version.
 ///
@@ -32,7 +32,7 @@ impl Drop for WorkspaceCleanup {
         let WorkspaceCleanup::GitWorktree {
             repo_path, path, ..
         } = self;
-        let _ = WorkspaceFactory::git_command()
+        let _ = git::command()
             .args(["worktree", "remove", "--force"])
             .arg(path)
             .current_dir(repo_path)
@@ -99,7 +99,7 @@ impl<'a> WorkspaceFactory<'a> {
     }
 
     fn add_worktree(&self, workspace_path: &Path) -> Result<(), Box<dyn Error>> {
-        let add = Self::git_command()
+        let add = git::command()
             .args(["worktree", "add", "--quiet", "--detach"])
             .arg(workspace_path)
             .arg(&self.artifact.commit_sha)
@@ -117,7 +117,7 @@ impl<'a> WorkspaceFactory<'a> {
     }
 
     fn clone_artifact(&self, workspace_path: &Path) -> Result<(), Box<dyn Error>> {
-        let clone = Self::git_command()
+        let clone = git::command()
             .args(["clone", "--quiet", "--no-checkout"])
             .arg(&self.artifact.repo_path)
             .arg(workspace_path)
@@ -131,7 +131,7 @@ impl<'a> WorkspaceFactory<'a> {
             .into());
         }
 
-        let checkout = Self::git_command()
+        let checkout = git::command()
             .args(["checkout", "--quiet", "--detach"])
             .arg(&self.artifact.commit_sha)
             .current_dir(workspace_path)
@@ -147,23 +147,12 @@ impl<'a> WorkspaceFactory<'a> {
 
         Ok(())
     }
-
-    pub(crate) fn git_command() -> Command {
-        let mut command = Command::new("git");
-        command
-            .env_remove("GIT_DIR")
-            .env_remove("GIT_WORK_TREE")
-            .env_remove("GIT_INDEX_FILE")
-            .env_remove("GIT_PREFIX");
-        command
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use std::fs;
     use std::path::{Path, PathBuf};
-    use std::process::Command;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     use super::*;
@@ -223,7 +212,7 @@ mod tests {
     }
 
     fn git_clone_bare(source: &Path, destination: &Path) {
-        let status = Command::new("git")
+        let status = crate::git::command()
             .args(["clone", "--quiet", "--bare"])
             .arg(source)
             .arg(destination)
@@ -233,7 +222,7 @@ mod tests {
     }
 
     fn git(path: &Path, args: &[&str]) {
-        let status = Command::new("git")
+        let status = crate::git::command()
             .args(args)
             .current_dir(path)
             .status()
@@ -242,7 +231,7 @@ mod tests {
     }
 
     fn git_output(path: &Path, args: &[&str]) -> String {
-        let output = Command::new("git")
+        let output = crate::git::command()
             .args(args)
             .current_dir(path)
             .output()

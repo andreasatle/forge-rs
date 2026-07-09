@@ -24,6 +24,7 @@
 pub mod artifacts;
 pub mod config;
 pub mod engine;
+mod git;
 pub mod language;
 pub mod machines;
 pub mod node_runner;

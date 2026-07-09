@@ -6,8 +6,6 @@ use std::rc::Rc;
 
 #[cfg(test)]
 use std::path::Path;
-#[cfg(test)]
-use std::process::Command;
 
 use crate::config::ForgeConfig;
 

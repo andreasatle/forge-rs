@@ -279,7 +279,7 @@ impl IntegrationService {
 }
 
 fn changed_paths(workspace: &Workspace) -> Vec<String> {
-    let output = WorkspaceFactory::git_command()
+    let output = crate::git::command()
         .args(["status", "--porcelain", "--untracked-files=all"])
         .current_dir(workspace.path())
         .output();
@@ -312,7 +312,7 @@ fn workspace_diff(workspace: &Workspace, changed_files: &[String]) -> String {
 }
 
 fn git_diff(workspace: &Workspace) -> String {
-    let output = WorkspaceFactory::git_command()
+    let output = crate::git::command()
         .args(["diff", "--binary", "HEAD", "--"])
         .current_dir(workspace.path())
         .output();
@@ -329,7 +329,7 @@ fn git_diff(workspace: &Workspace) -> String {
 }
 
 fn is_untracked(workspace: &Workspace, path: &str) -> bool {
-    let output = WorkspaceFactory::git_command()
+    let output = crate::git::command()
         .args(["ls-files", "--error-unmatch", "--"])
         .arg(path)
         .current_dir(workspace.path())
@@ -339,7 +339,7 @@ fn is_untracked(workspace: &Workspace, path: &str) -> bool {
 
 fn untracked_file_diff(workspace: &Workspace, path: &str) -> String {
     let full_path = workspace.path().join(path);
-    let output = WorkspaceFactory::git_command()
+    let output = crate::git::command()
         .args(["diff", "--no-index", "--binary", "--"])
         .arg("/dev/null")
         .arg(&full_path)

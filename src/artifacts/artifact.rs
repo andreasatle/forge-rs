@@ -1,7 +1,7 @@
 use std::path::PathBuf;
-use std::process::Command;
 
 use super::file_ops::{ArtifactError, validate_relative_path};
+use crate::git;
 
 /// A committed version stored in a bare Git repository.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -29,7 +29,7 @@ impl ArtifactView {
     /// Paths are sorted deterministically. The `.git` entry never appears
     /// because bare repositories hold no working tree.
     pub fn list_files(&self) -> Result<Vec<PathBuf>, ArtifactError> {
-        let output = Command::new("git")
+        let output = git::command()
             .args(["ls-tree", "-r", "--name-only", &self.commit_sha])
             .current_dir(&self.repo_path)
             .output()
@@ -62,7 +62,7 @@ impl ArtifactView {
         validate_relative_path(path)?;
 
         let object = format!("{}:{}", self.commit_sha, path);
-        let output = Command::new("git")
+        let output = git::command()
             .args(["show", &object])
             .current_dir(&self.repo_path)
             .output()

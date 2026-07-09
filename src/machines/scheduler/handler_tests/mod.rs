@@ -1,7 +1,6 @@
 use std::cell::RefCell;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -54,7 +53,7 @@ impl Drop for TempDirectory {
 }
 
 fn git(path: &Path, args: &[&str]) {
-    let status = Command::new("git")
+    let status = crate::git::command()
         .args(args)
         .current_dir(path)
         .status()
@@ -63,7 +62,7 @@ fn git(path: &Path, args: &[&str]) {
 }
 
 fn git_output(path: &Path, args: &[&str]) -> String {
-    let out = Command::new("git")
+    let out = crate::git::command()
         .args(args)
         .current_dir(path)
         .output()
@@ -76,7 +75,7 @@ fn git_output(path: &Path, args: &[&str]) -> String {
 }
 
 fn git_clone_bare(source: &Path, destination: &Path) {
-    let status = Command::new("git")
+    let status = crate::git::command()
         .args(["clone", "--quiet", "--bare"])
         .arg(source)
         .arg(destination)
@@ -183,7 +182,7 @@ impl NodeRunner for FileWritingRunner {
 
 /// Advance the branch in a bare repo to a new commit without a separate clone.
 fn advance_branch_in_bare(bare_repo: &Path, branch: &str) -> String {
-    let new_sha_out = Command::new("git")
+    let new_sha_out = crate::git::command()
         .args([
             "-c",
             "user.name=External Advancer",
@@ -206,7 +205,7 @@ fn advance_branch_in_bare(bare_repo: &Path, branch: &str) -> String {
         .to_owned();
 
     let refname = format!("refs/heads/{branch}");
-    let status = Command::new("git")
+    let status = crate::git::command()
         .args(["update-ref", &refname, &new_sha])
         .current_dir(bare_repo)
         .status()

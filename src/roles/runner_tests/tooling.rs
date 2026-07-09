@@ -304,7 +304,7 @@ fn tool_observation_is_bounded_in_role_prompt() {
         git(&seed, &["add", "large.txt"]);
         git(&seed, &["commit", "--quiet", "-m", "add large file"]);
         let bare = temp.0.join("bare.git");
-        Command::new("git")
+        crate::git::command()
             .args(["clone", "--quiet", "--bare"])
             .arg(&seed)
             .arg(&bare)

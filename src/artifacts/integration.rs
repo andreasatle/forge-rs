@@ -1,6 +1,6 @@
 use std::fmt;
 
-use super::{Artifact, Workspace, WorkspaceFactory};
+use super::{Artifact, Workspace};
 
 /// Errors that can occur while committing and pushing a workspace to the artifact repository.
 #[derive(Debug)]
@@ -149,7 +149,7 @@ impl<'a, PrePushHook: FnOnce()> ArtifactIntegrator<'a, PrePushHook> {
             "--force-with-lease=refs/heads/{}:{}",
             self.artifact.branch, self.workspace.base_commit
         );
-        let push = WorkspaceFactory::git_command()
+        let push = crate::git::command()
             .args(["push", "--quiet", &lease_arg])
             .arg(&self.artifact.repo_path)
             .arg(&branch_ref)
@@ -185,7 +185,7 @@ impl<'a, PrePushHook: FnOnce()> ArtifactIntegrator<'a, PrePushHook> {
     fn read_branch_tip(&self) -> Result<String, IntegrationError> {
         let refname = format!("refs/heads/{}", self.artifact.branch);
         let op = format!("rev-parse {refname}");
-        let output = WorkspaceFactory::git_command()
+        let output = crate::git::command()
             .args(["rev-parse", &refname])
             .current_dir(&self.artifact.repo_path)
             .output()
@@ -209,7 +209,7 @@ impl<'a, PrePushHook: FnOnce()> ArtifactIntegrator<'a, PrePushHook> {
 
     fn check_bare_repository(&self) -> Result<(), IntegrationError> {
         let op = "rev-parse --is-bare-repository".to_owned();
-        let output = WorkspaceFactory::git_command()
+        let output = crate::git::command()
             .args(["rev-parse", "--is-bare-repository"])
             .current_dir(&self.artifact.repo_path)
             .output()
@@ -239,7 +239,7 @@ impl<'a, PrePushHook: FnOnce()> ArtifactIntegrator<'a, PrePushHook> {
 
     fn run_git(&self, args: &[&str]) -> Result<(), IntegrationError> {
         let op = args.join(" ");
-        let output = WorkspaceFactory::git_command()
+        let output = crate::git::command()
             .args(args)
             .current_dir(self.workspace.path())
             .output()
@@ -258,7 +258,7 @@ impl<'a, PrePushHook: FnOnce()> ArtifactIntegrator<'a, PrePushHook> {
 
     fn git_stdout(&self, args: &[&str]) -> Result<String, IntegrationError> {
         let op = args.join(" ");
-        let output = WorkspaceFactory::git_command()
+        let output = crate::git::command()
             .args(args)
             .current_dir(self.workspace.path())
             .output()
@@ -285,7 +285,6 @@ impl<'a, PrePushHook: FnOnce()> ArtifactIntegrator<'a, PrePushHook> {
 mod tests {
     use std::fs;
     use std::path::{Path, PathBuf};
-    use std::process::Command;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     use super::*;
@@ -317,7 +316,7 @@ mod tests {
     }
 
     fn git(path: &Path, args: &[&str]) {
-        let status = Command::new("git")
+        let status = crate::git::command()
             .args(args)
             .current_dir(path)
             .status()
@@ -326,7 +325,7 @@ mod tests {
     }
 
     fn git_rev(path: &Path, refname: &str) -> String {
-        let out = Command::new("git")
+        let out = crate::git::command()
             .args(["rev-parse", refname])
             .current_dir(path)
             .output()
@@ -346,7 +345,7 @@ mod tests {
         git(&seed, &["add", "file.txt"]);
         git(&seed, &["commit", "--quiet", "-m", "init"]);
         let bare = temp.join("artifact.git");
-        let status = Command::new("git")
+        let status = crate::git::command()
             .args(["clone", "--quiet", "--bare"])
             .arg(&seed)
             .arg(&bare)
@@ -363,7 +362,7 @@ mod tests {
     }
 
     fn advance_branch(bare: &Path, branch: &str) -> String {
-        let out = Command::new("git")
+        let out = crate::git::command()
             .args([
                 "-c",
                 "user.name=Advancer",
@@ -382,7 +381,7 @@ mod tests {
         assert!(out.status.success());
         let new_sha = String::from_utf8(out.stdout).unwrap().trim().to_owned();
         let refname = format!("refs/heads/{branch}");
-        let s = Command::new("git")
+        let s = crate::git::command()
             .args(["update-ref", &refname, &new_sha])
             .current_dir(bare)
             .status()

@@ -2,7 +2,6 @@
 
 use std::error::Error;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
@@ -105,7 +104,7 @@ fn init_workspace_and_clone_bare(
         ],
     )?;
 
-    let clone = Command::new("git")
+    let clone = crate::git::command()
         .args(["clone", "--quiet", "--bare"])
         .arg(workspace)
         .arg(bare_path)
@@ -138,7 +137,7 @@ fn create_bare_repo(path: &Path, branch: &str) -> Result<(), Box<dyn Error>> {
         &["commit", "--allow-empty", "--quiet", "-m", "Initial"],
     )?;
 
-    let status = Command::new("git")
+    let status = crate::git::command()
         .args(["clone", "--quiet", "--bare"])
         .arg(&seed)
         .arg(path)
@@ -154,7 +153,10 @@ fn create_bare_repo(path: &Path, branch: &str) -> Result<(), Box<dyn Error>> {
 }
 
 fn run_git(path: &Path, args: &[&str]) -> Result<(), Box<dyn Error>> {
-    let status = Command::new("git").args(args).current_dir(path).status()?;
+    let status = crate::git::command()
+        .args(args)
+        .current_dir(path)
+        .status()?;
     if !status.success() {
         return Err(format!("git {} failed", args.join(" ")).into());
     }
@@ -166,7 +168,7 @@ pub(super) fn git_rev_parse_branch(
     branch: &str,
 ) -> Result<String, Box<dyn Error>> {
     let refspec = format!("refs/heads/{branch}");
-    let output = Command::new("git")
+    let output = crate::git::command()
         .args(["rev-parse", &refspec])
         .current_dir(repo_path)
         .output()?;

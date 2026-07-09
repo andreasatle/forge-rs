@@ -1,6 +1,5 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::*;
@@ -33,7 +32,7 @@ impl Drop for TempDir {
 }
 
 fn git(path: &Path, args: &[&str]) {
-    let status = Command::new("git")
+    let status = crate::git::command()
         .args(args)
         .current_dir(path)
         .status()
@@ -42,7 +41,7 @@ fn git(path: &Path, args: &[&str]) {
 }
 
 fn git_output(path: &Path, args: &[&str]) -> String {
-    let out = Command::new("git")
+    let out = crate::git::command()
         .args(args)
         .current_dir(path)
         .output()
@@ -63,7 +62,7 @@ fn make_artifact_view(temp: &TempDir, files: &[(&str, &str)]) -> ArtifactView {
     git(&seed, &["add", "."]);
     git(&seed, &["commit", "--quiet", "-m", "init"]);
     let bare = temp.join("artifact.git");
-    let status = Command::new("git")
+    let status = crate::git::command()
         .args(["clone", "--quiet", "--bare"])
         .arg(&seed)
         .arg(&bare)

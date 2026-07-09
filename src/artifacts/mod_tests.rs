@@ -1,6 +1,5 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::*;
@@ -60,7 +59,7 @@ fn fixture(label: &str) -> (TempDirectory, Artifact) {
 }
 
 fn git_clone_bare(source: &Path, destination: &Path) {
-    let status = Command::new("git")
+    let status = crate::git::command()
         .args(["clone", "--quiet", "--bare"])
         .arg(source)
         .arg(destination)
@@ -70,7 +69,7 @@ fn git_clone_bare(source: &Path, destination: &Path) {
 }
 
 fn git(path: &Path, args: &[&str]) {
-    let status = Command::new("git")
+    let status = crate::git::command()
         .args(args)
         .current_dir(path)
         .status()
@@ -79,7 +78,7 @@ fn git(path: &Path, args: &[&str]) {
 }
 
 fn git_output(path: &Path, args: &[&str]) -> String {
-    let output = Command::new("git")
+    let output = crate::git::command()
         .args(args)
         .current_dir(path)
         .output()
@@ -360,7 +359,7 @@ fn integrate_returns_error_for_invalid_artifact_repo() {
 /// external clone. Uses `git commit-tree` + `git update-ref` so the test
 /// does not need a second checkout.
 fn advance_branch_in_bare(bare_repo: &std::path::Path, branch: &str) -> String {
-    let new_sha_out = Command::new("git")
+    let new_sha_out = crate::git::command()
         .args([
             "-c",
             "user.name=External Advancer",
@@ -386,7 +385,7 @@ fn advance_branch_in_bare(bare_repo: &std::path::Path, branch: &str) -> String {
         .to_owned();
 
     let refname = format!("refs/heads/{branch}");
-    let status = Command::new("git")
+    let status = crate::git::command()
         .args(["update-ref", &refname, &new_sha])
         .current_dir(bare_repo)
         .status()

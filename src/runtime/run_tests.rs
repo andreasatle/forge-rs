@@ -141,7 +141,7 @@ fn make_two_branch_bare_repo(base: &Path) -> (PathBuf, String, String) {
 
     let git = |args: &[&str]| {
         assert!(
-            Command::new("git")
+            crate::git::command()
                 .args(args)
                 .current_dir(&seed)
                 .status()
@@ -153,7 +153,7 @@ fn make_two_branch_bare_repo(base: &Path) -> (PathBuf, String, String) {
     };
     let sha = |args: &[&str]| -> String {
         String::from_utf8(
-            Command::new("git")
+            crate::git::command()
                 .args(args)
                 .current_dir(&seed)
                 .output()
@@ -182,7 +182,7 @@ fn make_two_branch_bare_repo(base: &Path) -> (PathBuf, String, String) {
     // Clone bare with HEAD -> other (whatever the seed is currently on).
     let bare = base.join("artifact.git");
     assert!(
-        Command::new("git")
+        crate::git::command()
             .args(["clone", "--quiet", "--bare"])
             .arg(&seed)
             .arg(&bare)
@@ -259,7 +259,6 @@ fn runtime_summary_uses_post_integration_artifact_commit() {
     use crate::node_runner::{NodeRunRequest, NodeRunResult, NodeRunWorkResult, NodeRunner};
     use crate::telemetry::NoopTelemetry;
     use std::fs;
-    use std::process::Command;
 
     // Returns PlanAccepted for Plan nodes and mutates the WorkAttempt
     // workspace for Work nodes, so the full RunNode → IntegrateWork path
@@ -311,7 +310,7 @@ fn runtime_summary_uses_post_integration_artifact_commit() {
 
     let git = |args: &[&str]| {
         assert!(
-            Command::new("git")
+            crate::git::command()
                 .args(args)
                 .current_dir(&seed)
                 .status()
@@ -330,7 +329,7 @@ fn runtime_summary_uses_post_integration_artifact_commit() {
 
     let repo_path = base.join("artifact.git");
     assert!(
-        Command::new("git")
+        crate::git::command()
             .args(["clone", "--quiet", "--bare"])
             .arg(&seed)
             .arg(&repo_path)
@@ -341,7 +340,7 @@ fn runtime_summary_uses_post_integration_artifact_commit() {
     );
 
     let initial_sha = String::from_utf8(
-        Command::new("git")
+        crate::git::command()
             .args(["rev-parse", "HEAD"])
             .current_dir(&repo_path)
             .output()
@@ -383,7 +382,6 @@ fn runtime_summary_uses_post_integration_artifact_commit() {
 /// Build a bare-repo artifact and return (base_dir, artifact, initial_sha).
 fn make_bare_artifact(label: &str) -> (PathBuf, Artifact, String) {
     use std::fs;
-    use std::process::Command;
 
     let base = temp_path(label);
     let _ = fs::remove_dir_all(&base);
@@ -392,7 +390,7 @@ fn make_bare_artifact(label: &str) -> (PathBuf, Artifact, String) {
 
     let git = |args: &[&str]| {
         assert!(
-            Command::new("git")
+            crate::git::command()
                 .args(args)
                 .current_dir(&seed)
                 .status()
@@ -411,7 +409,7 @@ fn make_bare_artifact(label: &str) -> (PathBuf, Artifact, String) {
 
     let repo_path = base.join("artifact.git");
     assert!(
-        Command::new("git")
+        crate::git::command()
             .args(["clone", "--quiet", "--bare"])
             .arg(&seed)
             .arg(&repo_path)
@@ -422,7 +420,7 @@ fn make_bare_artifact(label: &str) -> (PathBuf, Artifact, String) {
     );
 
     let initial_sha = String::from_utf8(
-        Command::new("git")
+        crate::git::command()
             .args(["rev-parse", "HEAD"])
             .current_dir(&repo_path)
             .output()

@@ -57,7 +57,6 @@ mod tests {
     use crate::artifacts::{WorkspaceFactory, WorkspaceFileOps, integrate};
     use crate::config::ArtifactConfig;
     use std::path::{Path, PathBuf};
-    use std::process::Command;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static NEXT_ID: AtomicU64 = AtomicU64::new(0);
@@ -78,7 +77,7 @@ mod tests {
 
         let git = |args: &[&str]| {
             assert!(
-                Command::new("git")
+                crate::git::command()
                     .args(args)
                     .current_dir(&seed)
                     .status()
@@ -90,7 +89,7 @@ mod tests {
         };
         let sha = |args: &[&str]| -> String {
             String::from_utf8(
-                Command::new("git")
+                crate::git::command()
                     .args(args)
                     .current_dir(&seed)
                     .output()
@@ -118,7 +117,7 @@ mod tests {
 
         let bare = base.join("artifact.git");
         assert!(
-            Command::new("git")
+            crate::git::command()
                 .args(["clone", "--quiet", "--bare"])
                 .arg(&seed)
                 .arg(&bare)

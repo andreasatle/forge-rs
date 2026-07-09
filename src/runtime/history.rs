@@ -1,5 +1,4 @@
 use std::error::Error;
-use std::process::Command;
 
 use crate::artifacts::Artifact;
 use crate::config::ForgeConfig;
@@ -14,7 +13,7 @@ pub fn run_history(config: ForgeConfig) -> Result<(), Box<dyn Error>> {
 
 fn artifact_log(artifact: &Artifact) -> Result<String, Box<dyn Error>> {
     let branch_ref = format!("refs/heads/{}", artifact.branch);
-    let output = Command::new("git")
+    let output = crate::git::command()
         .args(["log", "--oneline", &branch_ref])
         .current_dir(&artifact.repo_path)
         .output()?;
@@ -52,7 +51,7 @@ mod tests {
 
         let git = |args: &[&str]| {
             assert!(
-                Command::new("git")
+                crate::git::command()
                     .args(args)
                     .current_dir(&seed)
                     .status()
@@ -64,7 +63,7 @@ mod tests {
         };
         let sha = |args: &[&str]| -> String {
             String::from_utf8(
-                Command::new("git")
+                crate::git::command()
                     .args(args)
                     .current_dir(&seed)
                     .output()
@@ -92,7 +91,7 @@ mod tests {
 
         let bare = base.join("artifact.git");
         assert!(
-            Command::new("git")
+            crate::git::command()
                 .args(["clone", "--quiet", "--bare"])
                 .arg(&seed)
                 .arg(&bare)

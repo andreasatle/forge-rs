@@ -1,7 +1,6 @@
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::path::PathBuf;
-use std::process::Command;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -87,7 +86,7 @@ impl Drop for TempDir {
 }
 
 fn git(dir: &PathBuf, args: &[&str]) {
-    Command::new("git")
+    crate::git::command()
         .args(args)
         .current_dir(dir)
         .status()
@@ -95,7 +94,7 @@ fn git(dir: &PathBuf, args: &[&str]) {
 }
 
 fn git_rev(dir: &PathBuf) -> String {
-    let out = Command::new("git")
+    let out = crate::git::command()
         .args(["rev-parse", "HEAD"])
         .current_dir(dir)
         .output()
@@ -124,7 +123,7 @@ fn make_view_with_entries(label: &str, entries: &[(&str, &[u8])]) -> (TempDir, A
     git(&seed, &["add", "."]);
     git(&seed, &["commit", "--quiet", "-m", "init"]);
     let bare = temp.0.join("bare.git");
-    Command::new("git")
+    crate::git::command()
         .args(["clone", "--quiet", "--bare"])
         .arg(&seed)
         .arg(&bare)
@@ -153,7 +152,7 @@ fn make_view_with_n_files(label: &str, n: usize) -> (TempDir, ArtifactView) {
     git(&seed, &["add", "."]);
     git(&seed, &["commit", "--quiet", "-m", "init"]);
     let bare = temp.0.join("bare.git");
-    Command::new("git")
+    crate::git::command()
         .args(["clone", "--quiet", "--bare"])
         .arg(&seed)
         .arg(&bare)
