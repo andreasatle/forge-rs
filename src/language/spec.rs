@@ -57,8 +57,8 @@ impl LanguageSpec {
     }
 
     /// This plugin's prompt sections, for composition into a role prompt
-    /// alongside the generic and adapter layers — see
-    /// [`crate::project::YamlProjectAdapter::with_plugin_prompt`].
+    /// alongside the generic and adapter layers — selected per node from the
+    /// node's own target files, see [`crate::language::select_plugin`].
     pub fn prompt_sections(&self) -> RolePromptConfig {
         RolePromptConfig {
             identity: self.identity.clone(),

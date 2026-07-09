@@ -18,7 +18,7 @@ use crate::roles::policy::{
     DECOMPOSITION_GBNF, PLANNER_GBNF, PLANNER_GBNF_WITH_ROLES, PLANNER_NO_OPERATION_GBNF,
     PLANNER_PROTOCOL_FOOTER_WITH_OPERATION, PLANNER_PROTOCOL_FOOTER_WITH_OPERATION_AND_ROLES,
     PRODUCER_GBNF, PRODUCER_TOOL_GBNF, REVIEWER_TOOL_GBNF, ROLE_GBNF, RolePolicy,
-    planner_protocol_schema_for,
+    planner_protocol_schema_for, render_plugin_prompt,
 };
 use crate::services::extract_json_object;
 use crate::telemetry::{TelemetryEvent, TelemetryRecord, TelemetrySink};
@@ -285,6 +285,15 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
             (NodeKind::Work, DeliberationRole::Referee) => worker_role_policy
                 .map(|p| p.referee_system.clone())
                 .unwrap_or_else(|| self.policy.worker_referee_system.clone()),
+        };
+        // The language plugin selected for this node's own target files
+        // (see `select_plugin`) is composed here, per node, rather than
+        // baked into `self.policy` — an adapter's declared plugins vary by
+        // node, not by adapter, so a Rust node's prompt must not carry
+        // Python guidance and vice versa.
+        let system = match &request.context.plugin_prompt {
+            Some(plugin) => format!("{system}\n\n{}", render_plugin_prompt(plugin)),
+            None => system,
         };
 
         let review_contract = NodeReviewContract::for_role(

@@ -150,11 +150,17 @@ fn adapter_loads_declared_plugins_keyed_by_extension() {
 }
 
 #[test]
-fn adapter_composes_declared_plugin_sections_into_role_prompts() {
+fn adapter_role_policy_never_carries_plugin_prompt_content() {
+    // Invariant: load_adapter composes only the generic and adapter prompt
+    // layers into role_policy(), regardless of declared plugins — plugin
+    // guidance is selected and injected per node from that node's own
+    // target files (see the node_runner deliberation context tests), not
+    // baked into the adapter-wide policy where every node would see every
+    // declared plugin's content.
     let plugin_path = unique_path("plugin.yaml");
     fs::write(&plugin_path, CUSTOM_PLUGIN_YAML).unwrap();
 
-    let adapter_path = unique_path("with_plugin_prompt.yaml");
+    let adapter_path = unique_path("with_plugin.yaml");
     let yaml = format!(
         "{CUSTOM_ADAPTER_YAML}plugins:\n  - {}\n",
         plugin_path.file_name().unwrap().to_string_lossy()
@@ -163,64 +169,10 @@ fn adapter_composes_declared_plugin_sections_into_role_prompts() {
 
     let policy = load_adapter(&adapter_path).unwrap().role_policy();
     assert!(
-        policy
+        !policy
             .planner_producer_system
             .contains("custom plugin guidance"),
-        "adapter's declared plugin sections must be composed into role prompts via load_adapter; got:\n{}",
-        policy.planner_producer_system
-    );
-}
-
-#[test]
-fn adapter_with_two_plugins_composes_both_into_role_prompts() {
-    let python_path = unique_path("python_plugin.yaml");
-    fs::write(
-        &python_path,
-        r#"
-extensions: [py]
-identity: "python plugin guidance"
-init:
-  commands: []
-validation:
-  commands: []
-"#,
-    )
-    .unwrap();
-    let rust_path = unique_path("rust_plugin.yaml");
-    fs::write(
-        &rust_path,
-        r#"
-extensions: [rs]
-identity: "rust plugin guidance"
-init:
-  commands: []
-validation:
-  commands: []
-"#,
-    )
-    .unwrap();
-
-    let adapter_path = unique_path("with_two_plugins.yaml");
-    let yaml = format!(
-        "{CUSTOM_ADAPTER_YAML}plugins:\n  - {}\n  - {}\n",
-        python_path.file_name().unwrap().to_string_lossy(),
-        rust_path.file_name().unwrap().to_string_lossy()
-    );
-    fs::write(&adapter_path, yaml).unwrap();
-
-    let policy = load_adapter(&adapter_path).unwrap().role_policy();
-    assert!(
-        policy
-            .planner_producer_system
-            .contains("python plugin guidance"),
-        "got:\n{}",
-        policy.planner_producer_system
-    );
-    assert!(
-        policy
-            .planner_producer_system
-            .contains("rust plugin guidance"),
-        "an adapter with several plugins must compose all of their prompt sections, not just one; got:\n{}",
+        "role_policy() must not carry any plugin's prompt content; got:\n{}",
         policy.planner_producer_system
     );
 }

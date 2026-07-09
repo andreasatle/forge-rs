@@ -1,8 +1,10 @@
 use super::*;
+use crate::language::{LanguageInitSpec, LanguageSpec, LanguageValidationSpec};
 use crate::machines::deliberation::DeliberationState;
 use crate::node_runner::deliberating::context::DeliberationContextConfig;
 use crate::node_runner::deliberating::request::prepare_deliberation;
 use crate::validation::{CommandSpec, ValidationScope};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 fn cat_command() -> CommandSpec {
@@ -11,6 +13,29 @@ fn cat_command() -> CommandSpec {
         args: vec![],
         when_files_present: vec![],
         scope: ValidationScope::Workspace,
+    }
+}
+
+/// A minimal language plugin with distinctive prompt guidance, for one
+/// extension.
+fn plugin_spec(extension: &str, instructions: &str) -> LanguageSpec {
+    LanguageSpec {
+        extensions: vec![extension.to_string()],
+        identity: String::new(),
+        context: String::new(),
+        instructions: instructions.to_string(),
+        constraints: String::new(),
+        init: LanguageInitSpec {
+            gitignore: vec![],
+            commands: vec![],
+        },
+        validation: LanguageValidationSpec {
+            runs_tests: false,
+            commands: vec![],
+            validation_targets: vec![],
+        },
+        roles: vec![],
+        api_summary: None,
     }
 }
 
@@ -33,11 +58,13 @@ fn prepared_deliberation_keeps_canonical_objective_and_structured_context_separa
         work_attempt: None,
     };
 
+    let language_plugins = BTreeMap::new();
     let context_config = DeliberationContextConfig {
         required_test_targets_fn: &required_tests,
         context_file_names: &["README.md".to_string()],
         api_summary_command: None,
         northstar: None,
+        language_plugins: &language_plugins,
     };
     let prepared = prepare_deliberation(
         &provider,
@@ -382,5 +409,94 @@ fn api_summary_section_is_absent_for_work_nodes_even_when_configured() {
     assert!(
         !first.contains("Current artifact state:"),
         "work node prompt must not include the artifact state section; got:\n{first}"
+    );
+}
+
+#[test]
+fn language_plugin_matching_node_target_extension_appears_in_prompt() {
+    // Invariant: the language plugin whose extension matches this node's own
+    // target files is selected per node and its prompt sections appear in
+    // the rendered prompt — not baked into every node regardless of language.
+    let temp = TempDir::new("plugin-prompt-match");
+    let view = make_artifact_view(&temp, "main.py", "def f():\n    pass\n");
+
+    let provider = RecordingProvider::from_strs(&[
+        r#"{"summary":"draft output"}"#,
+        r#"{"tool":"read_file","path":"main.py"}"#,
+        r#"{"summary":"review ok"}"#,
+        r#"{"tool":"read_file","path":"main.py"}"#,
+        r#"{"summary":"approved"}"#,
+    ]);
+    let mut plugins = BTreeMap::new();
+    plugins.insert(
+        "py".to_string(),
+        plugin_spec("py", "Follow PEP 8 conventions."),
+    );
+    let runner = DeliberatingNodeRunner::new(&provider, &provider).with_language_plugins(plugins);
+    let request = NodeRunRequest {
+        kind: NodeKind::Work,
+        node_id: NodeId("test-node".to_string()),
+        objective: "do the thing".to_string(),
+        target_files: vec!["main.py".to_string()],
+        test_plan_context: TestPlanContext::default(),
+        model_tier: ModelTier::Cheap,
+        attempt: 0,
+        artifact_view: Some(view),
+        worker_role: None,
+        work_attempt: None,
+    };
+    runner.run_node(request, &NoopTelemetry);
+
+    let prompts = provider.recorded_prompts();
+    assert!(!prompts.is_empty(), "provider must have received prompts");
+    let first = &prompts[0];
+    assert!(
+        first.contains("Follow PEP 8 conventions."),
+        "prompt for a .py target must include the matching plugin's guidance; got:\n{first}"
+    );
+}
+
+#[test]
+fn language_plugin_not_matching_node_target_extension_is_absent_from_prompt() {
+    // Invariant: a declared plugin whose extension does not match this
+    // node's target files must not leak into its prompt — each node only
+    // ever sees the plugin selected for its own language, never every
+    // declared plugin.
+    let temp = TempDir::new("plugin-prompt-mismatch");
+    let view = make_artifact_view(&temp, "main.rs", "fn f() {}\n");
+
+    let provider = RecordingProvider::from_strs(&[
+        r#"{"summary":"draft output"}"#,
+        r#"{"tool":"read_file","path":"main.rs"}"#,
+        r#"{"summary":"review ok"}"#,
+        r#"{"tool":"read_file","path":"main.rs"}"#,
+        r#"{"summary":"approved"}"#,
+    ]);
+    let mut plugins = BTreeMap::new();
+    plugins.insert(
+        "py".to_string(),
+        plugin_spec("py", "Follow PEP 8 conventions."),
+    );
+    let runner = DeliberatingNodeRunner::new(&provider, &provider).with_language_plugins(plugins);
+    let request = NodeRunRequest {
+        kind: NodeKind::Work,
+        node_id: NodeId("test-node".to_string()),
+        objective: "do the thing".to_string(),
+        target_files: vec!["main.rs".to_string()],
+        test_plan_context: TestPlanContext::default(),
+        model_tier: ModelTier::Cheap,
+        attempt: 0,
+        artifact_view: Some(view),
+        worker_role: None,
+        work_attempt: None,
+    };
+    runner.run_node(request, &NoopTelemetry);
+
+    let prompts = provider.recorded_prompts();
+    assert!(!prompts.is_empty(), "provider must have received prompts");
+    let first = &prompts[0];
+    assert!(
+        !first.contains("Follow PEP 8 conventions."),
+        "prompt for a .rs target must not include the python plugin's guidance; got:\n{first}"
     );
 }

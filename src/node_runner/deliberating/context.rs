@@ -1,8 +1,10 @@
 //! Structured context capture for deliberation runs.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::artifacts::ArtifactView;
+use crate::language::{LanguageSpec, select_plugin};
 use crate::machines::deliberation::{ArtifactContext, DeliberationContext, SelectedFileContent};
 use crate::machines::scheduler::NodeKind;
 use crate::node_runner::TestTargetsFn;
@@ -27,6 +29,10 @@ pub(crate) struct DeliberationContextConfig<'a> {
     /// The configured northstar text, when present. Surfaced only to
     /// `Decomposition` nodes alongside the API summary.
     pub(crate) northstar: Option<&'a str>,
+    /// The adapter's declared language plugins, keyed by extension. Used to
+    /// select the plugin whose prompt sections apply to this node's own
+    /// target files — see [`crate::language::select_plugin`].
+    pub(crate) language_plugins: &'a BTreeMap<String, LanguageSpec>,
 }
 
 /// Returns structured context for a deliberation run.
@@ -46,6 +52,9 @@ pub(crate) fn build_deliberation_context(
         .flatten()
         .map(str::to_string);
 
+    let plugin_prompt = select_plugin(config.language_plugins, &request.target_files)
+        .map(LanguageSpec::prompt_sections);
+
     DeliberationContext {
         target_files: request.target_files.clone(),
         testing_requirement,
@@ -58,6 +67,7 @@ pub(crate) fn build_deliberation_context(
             )
         }),
         northstar,
+        plugin_prompt,
     }
 }
 

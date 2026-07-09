@@ -1,6 +1,7 @@
 //! Shared vocabulary types for the deliberation pipeline.
 
 use crate::machines::scheduler::{FailureKind, NodeKind, TestPlanContext};
+use crate::roles::policy::RolePromptConfig;
 
 /// Retry metadata returned when accepted Producer output fails semantic validation.
 #[derive(Clone, Debug, PartialEq)]
@@ -49,6 +50,11 @@ pub struct DeliberationContext {
     /// [`NodeKind::Decomposition`] nodes alongside the API summary so the
     /// producer can plan only the gap between the two.
     pub northstar: Option<String>,
+    /// The language plugin's prompt sections selected for this node's own
+    /// target files (see [`crate::language::select_plugin`]), when a
+    /// declared plugin's extension matches. `None` when no plugin is
+    /// configured or no target file's extension matches one.
+    pub plugin_prompt: Option<RolePromptConfig>,
 }
 
 /// Read-only artifact context captured before the deliberation run.

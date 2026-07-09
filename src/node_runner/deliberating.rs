@@ -7,8 +7,10 @@ mod machine;
 mod output;
 mod request;
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use crate::language::LanguageSpec;
 use crate::machines::scheduler::{ModelTier, NodeKind};
 use crate::node_runner::{TestTargetsFn, ValidationPlanForRoleFn};
 use crate::providers::ProviderClient;
@@ -50,6 +52,11 @@ pub struct DeliberatingNodeRunner<C, S> {
     context_file_names: Vec<String>,
     api_summary_command: Option<CommandSpec>,
     northstar: Option<String>,
+    /// The adapter's declared language plugins, keyed by extension — used to
+    /// select the plugin whose prompt sections apply to each node by its own
+    /// target files, rather than every declared plugin applying to every
+    /// node regardless of language.
+    language_plugins: BTreeMap<String, LanguageSpec>,
     /// Looks up the validation plan stamped onto a `Work` node request based
     /// on its assigned worker role, produced by this runner.
     ///
@@ -75,6 +82,7 @@ impl<C, S> DeliberatingNodeRunner<C, S> {
             context_file_names: vec![],
             api_summary_command: None,
             northstar: None,
+            language_plugins: BTreeMap::new(),
             validation_plan_for_role_fn: Arc::new(|_, _| None),
         }
     }
@@ -134,6 +142,16 @@ impl<C, S> DeliberatingNodeRunner<C, S> {
         self
     }
 
+    /// Supply the project adapter's declared language plugins, keyed by
+    /// extension. Empty by default, which selects no plugin for any node.
+    pub fn with_language_plugins(
+        mut self,
+        language_plugins: BTreeMap<String, LanguageSpec>,
+    ) -> Self {
+        self.language_plugins = language_plugins;
+        self
+    }
+
     /// Supply the per-role validation plan lookup stamped onto every `Work`
     /// node this runner produces.
     ///
@@ -155,6 +173,7 @@ impl<C: ProviderClient, S: ProviderClient> NodeRunner for DeliberatingNodeRunner
             context_file_names: &self.context_file_names,
             api_summary_command: self.api_summary_command.as_ref(),
             northstar: self.northstar.as_deref(),
+            language_plugins: &self.language_plugins,
         };
         let result = match request.model_tier {
             ModelTier::Cheap => run_with_provider(

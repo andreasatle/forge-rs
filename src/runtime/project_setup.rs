@@ -14,6 +14,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::config::ValidationConfig;
+use crate::language::select_plugin;
 use crate::language::spec::{LanguageInitSpec, LanguageSpec};
 use crate::node_runner::{TestTargetsFn, ValidationPlanForRoleFn};
 use crate::project::{ProjectAdapter, load_adapter};
@@ -36,6 +37,12 @@ pub struct ProjectRuntimeSetup {
     /// (ordered by extension), used to bootstrap a brand-new artifact
     /// repository. `None` when the adapter declares no language plugins.
     pub primary_language_init: Option<LanguageInitSpec>,
+    /// This adapter's declared language plugins, keyed by extension —
+    /// forwarded to the node runner so it can select the plugin whose
+    /// prompt sections apply to each node's own target files, rather than
+    /// baking every plugin's guidance into every prompt regardless of
+    /// language.
+    pub language_plugins: BTreeMap<String, LanguageSpec>,
 }
 
 impl ProjectRuntimeSetup {
@@ -49,20 +56,6 @@ impl ProjectRuntimeSetup {
     ) -> Result<Self, Box<dyn Error>> {
         Ok(ProjectRuntimeSetupBuilder::new(adapter, validation)?.build())
     }
-}
-
-/// Picks the language plugin that applies to a node from the extensions of
-/// its target files: the first target file (in order) whose extension has a
-/// registered plugin wins. Returns `None` when no target file's extension
-/// matches any configured plugin.
-fn select_plugin<'a>(
-    plugins: &'a BTreeMap<String, LanguageSpec>,
-    target_files: &[String],
-) -> Option<&'a LanguageSpec> {
-    target_files.iter().find_map(|file| {
-        let extension = Path::new(file).extension()?.to_str()?;
-        plugins.get(extension)
-    })
 }
 
 struct ProjectRuntimeSetupBuilder<'a> {
@@ -122,6 +115,7 @@ impl<'a> ProjectRuntimeSetupBuilder<'a> {
                 .first_plugin()
                 .and_then(|spec| spec.api_summary.clone()),
             primary_language_init: self.first_plugin().map(|spec| spec.init.clone()),
+            language_plugins: self.language_plugins.clone(),
         }
     }
 

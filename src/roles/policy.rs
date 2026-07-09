@@ -288,7 +288,7 @@ All tasks in one PlannerOutput share the same kind — never mix work and decomp
 /// [`crate::project::yaml_config::RolePromptConfig`], re-exported as this
 /// same type), and the language plugin's layer (see
 /// [`crate::language::LanguageSpec`]).
-#[derive(Debug, Clone, Default, serde::Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RolePromptConfig {
     /// Who the role is.
@@ -360,6 +360,16 @@ pub(crate) fn render_role_prompt(
     format!(
         "Identity:\n{identity}\n\nContext:\n{context}\n\nInstructions:\n{instructions}\n\nConstraints:\n{constraints}"
     )
+}
+
+/// Render a language plugin's prompt sections as their own
+/// Identity/Context/Instructions/Constraints block, in the same shape as
+/// [`render_role_prompt`] — used when a plugin is selected per node by
+/// [`crate::language::select_plugin`] rather than composed once at
+/// adapter-load time, since the adapter has no target files to select by.
+pub(crate) fn render_plugin_prompt(plugin: &RolePromptConfig) -> String {
+    let empty = RolePromptConfig::default();
+    render_role_prompt(&empty, &empty, Some(plugin))
 }
 
 /// Producer/Critic/Referee system prompts for one named worker role.
