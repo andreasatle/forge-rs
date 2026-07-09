@@ -24,24 +24,36 @@ fn repo_adapter(name: &str) -> PathBuf {
 const CUSTOM_ADAPTER_YAML: &str = r#"
 planner:
   producer:
+    identity: "custom planner identity"
+    context: "custom planner context"
     instructions: "custom planner instructions"
     constraints: "custom planner constraints"
   critic:
+    identity: "custom critic identity"
+    context: "custom critic context"
     instructions: "custom critic instructions"
     constraints: "custom critic constraints"
   referee:
+    identity: "custom referee identity"
+    context: "custom referee context"
     instructions: "custom referee instructions"
     constraints: "custom referee constraints"
 workers:
   - role: implementer
     description: "Implements code changes."
     producer:
+      identity: "custom worker identity"
+      context: "custom worker context"
       instructions: "custom worker instructions"
       constraints: "custom worker constraints"
     critic:
+      identity: "custom worker critic identity"
+      context: "custom worker critic context"
       instructions: "custom worker critic instructions"
       constraints: "custom worker critic constraints"
     referee:
+      identity: "custom worker referee identity"
+      context: "custom worker referee context"
       instructions: "custom worker referee instructions"
       constraints: "custom worker referee constraints"
 "#;

@@ -105,13 +105,13 @@ impl ProjectAdapter for YamlProjectAdapter {
     }
 }
 
-/// Render a role prompt's instructions and constraints as separate labeled
-/// sections, rather than concatenating them into one undifferentiated
-/// paragraph.
+/// Render a role prompt's identity, context, instructions, and constraints
+/// as separate labeled sections, rather than concatenating them into one
+/// undifferentiated paragraph.
 fn render_role_prompt(prompt: &RolePromptConfig) -> String {
     format!(
-        "Instructions:\n{}\nConstraints:\n{}",
-        prompt.instructions, prompt.constraints
+        "Identity:\n{}\n\nContext:\n{}\n\nInstructions:\n{}\n\nConstraints:\n{}",
+        prompt.identity, prompt.context, prompt.instructions, prompt.constraints
     )
 }
 
@@ -142,6 +142,8 @@ mod tests {
 
     fn prompt(instructions: &str, constraints: &str) -> RolePromptConfig {
         RolePromptConfig {
+            identity: format!("{instructions} identity"),
+            context: format!("{instructions} context"),
             instructions: instructions.to_string(),
             constraints: constraints.to_string(),
         }
@@ -194,11 +196,11 @@ mod tests {
     #[test]
     fn role_policy_maps_each_field_from_config() {
         // Invariant: every RolePolicy field is composed from the matching
-        // config field's instructions and constraints, rendered as separate
-        // labeled sections, followed by the generic Constraints: section and
-        // the shared framework protocol constants, in that order — with no
-        // field left hardcoded or swapped. Worker fields come from the first
-        // configured worker role.
+        // config field's identity, context, instructions, and constraints,
+        // rendered as separate labeled sections, followed by the generic
+        // Constraints: section and the shared framework protocol constants,
+        // in that order — with no field left hardcoded or swapped. Worker
+        // fields come from the first configured worker role.
         let policy = adapter().role_policy();
 
         assert_ordered_sections(
@@ -206,6 +208,10 @@ mod tests {
             &[
                 "Role:",
                 PLANNER_PRODUCER_IDENTITY,
+                "Identity:",
+                "plan it identity",
+                "Context:",
+                "plan it context",
                 "Instructions:",
                 "plan it",
                 "Constraints:",
@@ -220,6 +226,10 @@ mod tests {
             &[
                 "Role:",
                 WORKER_PRODUCER_IDENTITY,
+                "Identity:",
+                "build it identity",
+                "Context:",
+                "build it context",
                 "Instructions:",
                 "build it",
                 "Constraints:",
@@ -254,6 +264,10 @@ mod tests {
             assert_ordered_sections(
                 system,
                 &[
+                    "Identity:",
+                    &format!("{instructions} identity"),
+                    "Context:",
+                    &format!("{instructions} context"),
                     "Instructions:",
                     instructions,
                     "Constraints:",
@@ -351,24 +365,36 @@ mod tests {
         let yaml = r#"
 planner:
   producer:
+    identity: "plan identity"
+    context: "plan context"
     instructions: "plan it"
     constraints: "plan bounds"
   critic:
+    identity: "plan critic identity"
+    context: "plan critic context"
     instructions: "review the plan"
     constraints: "review plan bounds"
   referee:
+    identity: "plan referee identity"
+    context: "plan referee context"
     instructions: "decide the plan"
     constraints: "decide plan bounds"
 workers:
   - role: implementer
     description: "Implements code changes."
     producer:
+      identity: "build identity"
+      context: "build context"
       instructions: "build it"
       constraints: "build bounds"
     critic:
+      identity: "build critic identity"
+      context: "build critic context"
       instructions: "review the work"
       constraints: "review work bounds"
     referee:
+      identity: "build referee identity"
+      context: "build referee context"
       instructions: "decide the work"
       constraints: "decide work bounds"
 context_files:

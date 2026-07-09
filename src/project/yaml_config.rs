@@ -2,15 +2,21 @@
 
 use serde::Deserialize;
 
-/// A role prompt split into its instructive and constraining halves.
+/// A role prompt split into four explicit sections.
 ///
-/// `instructions` describes what the role must do; `constraints` bounds how
-/// it may do it (prohibitions, rejection-grounding rules, scope limits).
-/// [`super::YamlProjectAdapter::role_policy`] renders both as separate
-/// labeled sections rather than concatenating them into one paragraph.
+/// `identity` frames who the role is; `context` supplies ambient background
+/// the role needs; `instructions` describes what the role must do;
+/// `constraints` bounds how it may do it (prohibitions, rejection-grounding
+/// rules, scope limits). [`super::YamlProjectAdapter::role_policy`] renders
+/// all four as separate labeled sections rather than concatenating them into
+/// one paragraph.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RolePromptConfig {
+    /// Who the role is.
+    pub identity: String,
+    /// Ambient background the role needs.
+    pub context: String,
     /// What the role must do.
     pub instructions: String,
     /// Prohibitions and boundaries on how the role may do it.
@@ -79,24 +85,36 @@ mod tests {
     const MINIMAL_YAML: &str = r#"
 planner:
   producer:
+    identity: "plan identity"
+    context: "plan context"
     instructions: "plan it"
     constraints: "plan bounds"
   critic:
+    identity: "plan critic identity"
+    context: "plan critic context"
     instructions: "review the plan"
     constraints: "review plan bounds"
   referee:
+    identity: "plan referee identity"
+    context: "plan referee context"
     instructions: "decide the plan"
     constraints: "decide plan bounds"
 workers:
   - role: implementer
     description: "Implements code changes."
     producer:
+      identity: "build identity"
+      context: "build context"
       instructions: "build it"
       constraints: "build bounds"
     critic:
+      identity: "build critic identity"
+      context: "build critic context"
       instructions: "review the work"
       constraints: "review work bounds"
     referee:
+      identity: "build referee identity"
+      context: "build referee context"
       instructions: "decide the work"
       constraints: "decide work bounds"
 "#;
@@ -105,9 +123,11 @@ workers:
 
     #[test]
     fn parses_planner_prompts() {
-        // Invariant: each planner prompt's instructions/constraints round-trip
-        // from YAML unchanged.
+        // Invariant: each planner prompt's identity/context/instructions/
+        // constraints round-trip from YAML unchanged.
         let config: ProjectAdapterConfig = serde_yaml::from_str(MINIMAL_YAML).unwrap();
+        assert_eq!(config.planner.producer.identity, "plan identity");
+        assert_eq!(config.planner.producer.context, "plan context");
         assert_eq!(config.planner.producer.instructions, "plan it");
         assert_eq!(config.planner.producer.constraints, "plan bounds");
         assert_eq!(config.planner.critic.instructions, "review the plan");
@@ -119,12 +139,15 @@ workers:
     #[test]
     fn parses_worker_roles() {
         // Invariant: each worker role's name, description, and
-        // instructions/constraints round-trip from YAML unchanged.
+        // identity/context/instructions/constraints round-trip from YAML
+        // unchanged.
         let config: ProjectAdapterConfig = serde_yaml::from_str(MINIMAL_YAML).unwrap();
         assert_eq!(config.workers.len(), 1);
         let implementer = &config.workers[0];
         assert_eq!(implementer.role, "implementer");
         assert_eq!(implementer.description, "Implements code changes.");
+        assert_eq!(implementer.producer.identity, "build identity");
+        assert_eq!(implementer.producer.context, "build context");
         assert_eq!(implementer.producer.instructions, "build it");
         assert_eq!(implementer.producer.constraints, "build bounds");
         assert_eq!(implementer.critic.instructions, "review the work");
@@ -136,7 +159,7 @@ workers:
     #[test]
     fn multiple_worker_roles_all_parse() {
         let yaml = format!(
-            "{MINIMAL_YAML}\n  - role: tester\n    description: \"Writes tests.\"\n    producer:\n      instructions: \"test it\"\n      constraints: \"test bounds\"\n    critic:\n      instructions: \"review the tests\"\n      constraints: \"review test bounds\"\n    referee:\n      instructions: \"decide the tests\"\n      constraints: \"decide test bounds\"\n"
+            "{MINIMAL_YAML}\n  - role: tester\n    description: \"Writes tests.\"\n    producer:\n      identity: \"test identity\"\n      context: \"test context\"\n      instructions: \"test it\"\n      constraints: \"test bounds\"\n    critic:\n      identity: \"test critic identity\"\n      context: \"test critic context\"\n      instructions: \"review the tests\"\n      constraints: \"review test bounds\"\n    referee:\n      identity: \"test referee identity\"\n      context: \"test referee context\"\n      instructions: \"decide the tests\"\n      constraints: \"decide test bounds\"\n"
         );
         let config: ProjectAdapterConfig = serde_yaml::from_str(&yaml).unwrap();
         assert_eq!(config.workers.len(), 2);
@@ -162,38 +185,90 @@ workers:
 
     #[test]
     fn missing_required_field_is_an_error() {
-        // Invariant: planner and workers, and each role prompt's
-        // instructions and constraints sub-fields, are all required — a
-        // config missing any of them fails to parse.
+        // Invariant: planner and workers, and each role prompt's identity,
+        // context, instructions, and constraints sub-fields, are all
+        // required — a config missing any of them fails to parse.
         let missing_worker_referee = r#"
 planner:
   producer:
+    identity: "plan identity"
+    context: "plan context"
     instructions: "plan it"
     constraints: "plan bounds"
   critic:
+    identity: "plan critic identity"
+    context: "plan critic context"
     instructions: "review the plan"
     constraints: "review plan bounds"
   referee:
+    identity: "plan referee identity"
+    context: "plan referee context"
     instructions: "decide the plan"
     constraints: "decide plan bounds"
 workers:
   - role: implementer
     description: "Implements code changes."
     producer:
+      identity: "build identity"
+      context: "build context"
       instructions: "build it"
       constraints: "build bounds"
     critic:
+      identity: "build critic identity"
+      context: "build critic context"
       instructions: "review the work"
       constraints: "review work bounds"
 "#;
         let missing_constraints_sub_field = r#"
 planner:
   producer:
+    identity: "plan identity"
+    context: "plan context"
     instructions: "plan it"
   critic:
+    identity: "plan critic identity"
+    context: "plan critic context"
     instructions: "review the plan"
     constraints: "review plan bounds"
   referee:
+    identity: "plan referee identity"
+    context: "plan referee context"
+    instructions: "decide the plan"
+    constraints: "decide plan bounds"
+workers: []
+"#;
+        let missing_identity_sub_field = r#"
+planner:
+  producer:
+    context: "plan context"
+    instructions: "plan it"
+    constraints: "plan bounds"
+  critic:
+    identity: "plan critic identity"
+    context: "plan critic context"
+    instructions: "review the plan"
+    constraints: "review plan bounds"
+  referee:
+    identity: "plan referee identity"
+    context: "plan referee context"
+    instructions: "decide the plan"
+    constraints: "decide plan bounds"
+workers: []
+"#;
+        let missing_context_sub_field = r#"
+planner:
+  producer:
+    identity: "plan identity"
+    instructions: "plan it"
+    constraints: "plan bounds"
+  critic:
+    identity: "plan critic identity"
+    context: "plan critic context"
+    instructions: "review the plan"
+    constraints: "review plan bounds"
+  referee:
+    identity: "plan referee identity"
+    context: "plan referee context"
     instructions: "decide the plan"
     constraints: "decide plan bounds"
 workers: []
@@ -201,12 +276,18 @@ workers: []
         let missing_workers_block = r#"
 planner:
   producer:
+    identity: "plan identity"
+    context: "plan context"
     instructions: "plan it"
     constraints: "plan bounds"
   critic:
+    identity: "plan critic identity"
+    context: "plan critic context"
     instructions: "review the plan"
     constraints: "review plan bounds"
   referee:
+    identity: "plan referee identity"
+    context: "plan referee context"
     instructions: "decide the plan"
     constraints: "decide plan bounds"
 "#;
@@ -216,6 +297,14 @@ planner:
             (
                 missing_constraints_sub_field,
                 "missing planner.producer.constraints",
+            ),
+            (
+                missing_identity_sub_field,
+                "missing planner.producer.identity",
+            ),
+            (
+                missing_context_sub_field,
+                "missing planner.producer.context",
             ),
             (missing_workers_block, "missing workers block"),
         ];
