@@ -38,6 +38,8 @@ fn plan_node_creates_work_child() {
                 children: vec![NodeRequest {
                     id: NodeId("child-1".to_string()),
                     kind: NodeKind::Work,
+                    team: String::new(),
+                    task_id: None,
                     worker_role: None,
                     objective: "child work".to_string(),
                     target_files: vec![],
@@ -77,6 +79,8 @@ fn plan_with_unknown_dependency_fails_scheduler() {
                 children: vec![NodeRequest {
                     id: NodeId("child-1".to_string()),
                     kind: NodeKind::Work,
+                    team: String::new(),
+                    task_id: None,
                     worker_role: None,
                     objective: "child work".to_string(),
                     target_files: vec![],
@@ -129,6 +133,8 @@ fn plan_with_valid_dependencies_still_succeeds() {
                 children: vec![NodeRequest {
                     id: NodeId("child-1".to_string()),
                     kind: NodeKind::Work,
+                    team: String::new(),
+                    task_id: None,
                     worker_role: None,
                     objective: "child work".to_string(),
                     target_files: vec![],
@@ -169,6 +175,8 @@ fn sibling_dependencies_are_resolved_to_graph_ids() {
                     NodeRequest {
                         id: NodeId("A".to_string()),
                         kind: NodeKind::Work,
+                        team: String::new(),
+                        task_id: None,
                         worker_role: None,
                         objective: "step A".to_string(),
                         target_files: vec![],
@@ -179,6 +187,8 @@ fn sibling_dependencies_are_resolved_to_graph_ids() {
                     NodeRequest {
                         id: NodeId("B".to_string()),
                         kind: NodeKind::Work,
+                        team: String::new(),
+                        task_id: None,
                         worker_role: None,
                         objective: "step B".to_string(),
                         target_files: vec![],
@@ -258,6 +268,8 @@ fn planner_can_create_two_work_nodes_with_dependency() {
                     NodeRequest {
                         id: NodeId("write-tests".to_string()),
                         kind: NodeKind::Work,
+                        team: String::new(),
+                        task_id: None,
                         worker_role: None,
                         objective: "write tests".to_string(),
                         target_files: vec![],
@@ -268,6 +280,8 @@ fn planner_can_create_two_work_nodes_with_dependency() {
                     NodeRequest {
                         id: NodeId("implement".to_string()),
                         kind: NodeKind::Work,
+                        team: String::new(),
+                        task_id: None,
                         worker_role: None,
                         objective: "implement feature".to_string(),
                         target_files: vec![],
@@ -343,6 +357,7 @@ fn planner_can_create_two_work_nodes_with_dependency() {
             output: IntegrationOutput {
                 summary: "tests integrated".to_string(),
             },
+            manifest_tasks: vec![],
         },
     );
     let SchedulerState::Active { graph, .. } = t.state else {
@@ -396,6 +411,7 @@ fn planner_can_create_two_work_nodes_with_dependency() {
             output: IntegrationOutput {
                 summary: "implementation integrated".to_string(),
             },
+            manifest_tasks: vec![],
         },
     );
     let SchedulerState::Active { graph, .. } = t.state else {

@@ -173,6 +173,21 @@ pub struct Node {
     pub id: NodeId,
     /// Whether this node plans or executes.
     pub kind: NodeKind,
+    /// The team that owns this node.
+    ///
+    /// Empty for the single-team root/plan-expansion path, where no team
+    /// dispatch exists yet. Non-empty only for nodes spawned directly by
+    /// team trigger evaluation, which tags them with the configured team
+    /// name so later trigger evaluations can find them.
+    #[serde(default)]
+    pub team: String,
+    /// The manifest task id this node was spawned to act on, if any.
+    ///
+    /// `Some` only for `AfterEach`-triggered nodes, carrying the completed
+    /// task id they were spawned for. Used to detect a node already exists
+    /// for a given (team, task) pair without re-reading the manifest.
+    #[serde(default)]
+    pub task_id: Option<String>,
     /// The adapter-assigned worker role for a `Work` node (e.g. `"tester"`).
     ///
     /// Assigned deterministically by the planner from the node's target files
@@ -487,6 +502,8 @@ impl RunGraph {
             self.nodes.push(Node {
                 id,
                 kind: req.kind,
+                team: req.team,
+                task_id: req.task_id,
                 worker_role: req.worker_role,
                 objective: req.objective,
                 target_files: req.target_files,
@@ -664,6 +681,19 @@ impl RunGraph {
             )),
             _ => None,
         }
+    }
+
+    /// Whether a non-terminal-failed node already exists for `team`, optionally
+    /// scoped to a specific `task_id`.
+    ///
+    /// Used before inserting a team-trigger-spawned node so re-evaluating
+    /// triggers on every node completion doesn't insert duplicates for a pair
+    /// still in flight (no manifest row yet, so the manifest alone can't tell
+    /// us it's already been requested).
+    pub(super) fn has_active_team_node(&self, team: &str, task_id: Option<&str>) -> bool {
+        self.nodes.iter().any(|n| {
+            n.team == team && n.task_id.as_deref() == task_id && n.status != NodeStatus::Failed
+        })
     }
 
     /// Count `(node_count, completed_count)` for a graph — used in telemetry.

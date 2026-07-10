@@ -64,6 +64,12 @@ pub struct NodeRequest {
     pub id: NodeId,
     /// Whether the new node should plan or execute.
     pub kind: NodeKind,
+    /// The team that owns the resulting node. Copied verbatim onto
+    /// `Node.team`; empty for the single-team planner-authored path.
+    pub team: String,
+    /// The manifest task id the resulting node was spawned to act on, if any.
+    /// Copied verbatim onto `Node.task_id`.
+    pub task_id: Option<String>,
     /// The adapter-assigned worker role for a `Work` node (e.g. `"tester"`).
     ///
     /// `None` for `Plan` nodes and for `Work` nodes with no distinct role.

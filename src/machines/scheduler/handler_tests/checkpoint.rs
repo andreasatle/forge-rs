@@ -59,6 +59,7 @@ fn temporary_workspace_removed_after_integration() {
             attempt: 0,
             target_files: vec![],
             validation_plan: None,
+            team: "test-team".to_string(),
         });
 
         let path = captured
@@ -135,6 +136,8 @@ fn checkpoint_load_round_trip() {
                 Node {
                     id: NodeId("A".to_string()),
                     kind: NodeKind::Work,
+                    team: String::new(),
+                    task_id: None,
                     worker_role: None,
                     objective: "do A".to_string(),
                     target_files: vec![],

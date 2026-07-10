@@ -42,6 +42,8 @@ impl NodeRunner for StaticNodeRunner {
                 children: vec![NodeRequest {
                     id: NodeId("child-work".to_string()),
                     kind: NodeKind::Work,
+                    team: String::new(),
+                    task_id: None,
                     worker_role: None,
                     objective: format!("work for: {}", request.objective),
                     target_files: vec![],

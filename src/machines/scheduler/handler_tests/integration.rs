@@ -558,6 +558,7 @@ fn integrate_work_commits_pending_workspace_mutation() {
         attempt: 0,
         target_files: vec![],
         validation_plan: None,
+        team: "test-team".to_string(),
     });
 
     assert!(

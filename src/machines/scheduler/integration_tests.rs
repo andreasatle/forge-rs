@@ -130,9 +130,10 @@ fn integrate_planner_tasks_creates_manifest_only_commit() {
 }
 
 /// `integrate_plan_tasks` is the scheduler-facing entry point: it converts
-/// `PlannerTaskOutput`s into `TaskRecord`s (leaving `commit` empty and `team`
-/// `None`, per the placeholder team-identity contract) and translates the
-/// manifest write into a `SchedulerEvent`.
+/// `PlannerTaskOutput`s into `TaskRecord`s (leaving `commit` empty, `team` set
+/// to the completing node's team) and translates the manifest write into a
+/// `SchedulerEvent`, whose `manifest_tasks` carries the resulting records so
+/// team trigger evaluation can act on them without a separate manifest read.
 #[test]
 fn integrate_plan_tasks_returns_planner_tasks_integrated_event() {
     let (_temp, artifact) = fixture("plan-tasks-event");
@@ -150,12 +151,20 @@ fn integrate_plan_tasks_returns_planner_tasks_integrated_event() {
                 objective: "decompose beta".to_string(),
             },
         ],
+        "planner".to_string(),
     );
 
-    assert_eq!(
-        event,
-        SchedulerEvent::PlannerTasksIntegrated {
-            node_id: NodeId("P".to_string())
-        }
-    );
+    let SchedulerEvent::PlannerTasksIntegrated {
+        node_id,
+        manifest_tasks,
+    } = event
+    else {
+        panic!("expected PlannerTasksIntegrated, got {event:#?}");
+    };
+    assert_eq!(node_id, NodeId("P".to_string()));
+    assert_eq!(manifest_tasks.len(), 2);
+    assert_eq!(manifest_tasks[0].id, "t1");
+    assert_eq!(manifest_tasks[0].team, Some("planner".to_string()));
+    assert_eq!(manifest_tasks[1].id, "t2");
+    assert_eq!(manifest_tasks[1].team, Some("planner".to_string()));
 }

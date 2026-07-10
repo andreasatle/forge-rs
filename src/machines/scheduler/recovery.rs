@@ -236,6 +236,8 @@ impl RecoveryApplicator {
     fn apply_retry(self, retry_message: &str) -> RunGraph {
         let (
             kind,
+            team,
+            task_id,
             worker_role,
             objective,
             target_files,
@@ -249,6 +251,8 @@ impl RecoveryApplicator {
             let n = self.graph.get_node(&self.node_id);
             (
                 n.kind.clone(),
+                n.team.clone(),
+                n.task_id.clone(),
                 n.worker_role.clone(),
                 n.objective.clone(),
                 n.target_files.clone(),
@@ -265,6 +269,8 @@ impl RecoveryApplicator {
         let replacement = Node {
             id: replacement_id.clone(),
             kind,
+            team,
+            task_id,
             worker_role,
             objective,
             target_files,
@@ -285,9 +291,20 @@ impl RecoveryApplicator {
     }
 
     fn apply_split(self, message: String) -> RunGraph {
-        let (objective, target_files, required_validation_targets, deps, attempt, plan_depth) = {
+        let (
+            team,
+            task_id,
+            objective,
+            target_files,
+            required_validation_targets,
+            deps,
+            attempt,
+            plan_depth,
+        ) = {
             let n = self.graph.get_node(&self.node_id);
             (
+                n.team.clone(),
+                n.task_id.clone(),
                 n.objective.clone(),
                 n.target_files.clone(),
                 n.required_validation_targets.clone(),
@@ -305,6 +322,8 @@ impl RecoveryApplicator {
         let split_node = Node {
             id: split_id.clone(),
             kind: NodeKind::Plan,
+            team,
+            task_id,
             worker_role: None,
             objective: format!(
                 "{objective}\n\nThe previous attempt failed and requires decomposition:\n{message}"
@@ -329,6 +348,8 @@ impl RecoveryApplicator {
     fn apply_elevate(self) -> RunGraph {
         let (
             kind,
+            team,
+            task_id,
             worker_role,
             objective,
             target_files,
@@ -341,6 +362,8 @@ impl RecoveryApplicator {
             let n = self.graph.get_node(&self.node_id);
             (
                 n.kind.clone(),
+                n.team.clone(),
+                n.task_id.clone(),
                 n.worker_role.clone(),
                 n.objective.clone(),
                 n.target_files.clone(),
@@ -355,6 +378,8 @@ impl RecoveryApplicator {
         let replacement = Node {
             id: elevated_id.clone(),
             kind,
+            team,
+            task_id,
             worker_role,
             objective,
             target_files,

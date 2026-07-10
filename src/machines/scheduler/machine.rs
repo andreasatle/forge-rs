@@ -20,7 +20,7 @@ use super::graph::{ModelTier, Node, NodeId, NodeKind, NodeOrigin, NodeStatus, Ru
 use super::request::RunRequest;
 use super::state::SchedulerState;
 use super::types::{IntegrationFailure, NodeFailure};
-use super::{graph, recovery};
+use super::{graph, recovery, triggers};
 
 // Re-expose constants so the nested test module sees them via `use super::*`.
 #[cfg(test)]
@@ -114,6 +114,8 @@ impl SchedulerMachine {
         let root = Node {
             id: graph::new_node_id(),
             kind: NodeKind::Plan,
+            team: String::new(),
+            task_id: None,
             worker_role: None,
             objective: request.objective,
             target_files: vec![],
@@ -363,12 +365,14 @@ impl SchedulerMachine {
                                         effects: vec![],
                                     }
                                 } else {
+                                    let team = graph.get_node(&node_id).team.clone();
                                     let graph = graph.mark_node(&node_id, NodeStatus::Integrating);
                                     Transition {
                                         state: SchedulerState::Waiting { graph, run_config },
                                         effects: vec![SchedulerEffect::IntegratePlannerTasks {
                                             node_id,
                                             tasks: plan.tasks,
+                                            team,
                                         }],
                                     }
                                 }
@@ -380,13 +384,14 @@ impl SchedulerMachine {
                     // effect is emitted. The node is not yet dependency-satisfying; that
                     // only happens when IntegrationSucceeded arrives.
                     SchedulerEvent::WorkAccepted { work, .. } => {
-                        let (objective, target_files, validation_plan, attempt) = {
+                        let (objective, target_files, validation_plan, attempt, team) = {
                             let node = graph.get_node(&node_id);
                             (
                                 node.objective.clone(),
                                 node.target_files.clone(),
                                 node.validation_plan.clone(),
                                 node.attempt,
+                                node.team.clone(),
                             )
                         };
                         let graph = graph.mark_node(&node_id, NodeStatus::Integrating);
@@ -399,6 +404,7 @@ impl SchedulerMachine {
                                 attempt,
                                 target_files,
                                 validation_plan,
+                                team,
                             }],
                         }
                     }
@@ -462,10 +468,17 @@ impl SchedulerMachine {
                 match event {
                     SchedulerEvent::IntegrationSucceeded {
                         output: integration_output,
+                        manifest_tasks,
                         ..
                     } => {
                         let graph = graph
                             .mark_node_completed_with_summary(&node_id, integration_output.summary);
+                        let graph = triggers::apply_team_triggers(
+                            graph,
+                            &node_id,
+                            &run_config,
+                            &manifest_tasks,
+                        );
                         Transition {
                             state: SchedulerState::Active { graph, run_config },
                             effects: vec![],
@@ -527,8 +540,14 @@ impl SchedulerMachine {
                 }
 
                 match event {
-                    SchedulerEvent::PlannerTasksIntegrated { .. } => {
+                    SchedulerEvent::PlannerTasksIntegrated { manifest_tasks, .. } => {
                         let graph = graph.mark_node(&node_id, NodeStatus::Completed);
+                        let graph = triggers::apply_team_triggers(
+                            graph,
+                            &node_id,
+                            &run_config,
+                            &manifest_tasks,
+                        );
                         Transition {
                             state: SchedulerState::Active { graph, run_config },
                             effects: vec![],
@@ -642,7 +661,7 @@ fn integration_event_id(event: &SchedulerEvent) -> &NodeId {
 
 fn planner_task_event_id(event: &SchedulerEvent) -> &NodeId {
     match event {
-        SchedulerEvent::PlannerTasksIntegrated { node_id }
+        SchedulerEvent::PlannerTasksIntegrated { node_id, .. }
         | SchedulerEvent::PlannerTasksIntegrationFailed { node_id, .. } => node_id,
         _ => unreachable!("not a planner-task integration event"),
     }

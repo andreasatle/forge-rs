@@ -51,8 +51,12 @@ impl fmt::Display for TaskManifestError {
 impl std::error::Error for TaskManifestError {}
 
 /// A single completed Work node, recorded for observability.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct TaskRecord {
+///
+/// `pub` (rather than `pub(crate)` like the rest of this module) because it
+/// appears in `SchedulerEvent::IntegrationSucceeded`/`PlannerTasksIntegrated`,
+/// which is part of the scheduler's public event vocabulary.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TaskRecord {
     /// The node's stable identifier.
     pub id: String,
     /// The node's objective, as passed to the runner.
@@ -64,8 +68,9 @@ pub(crate) struct TaskRecord {
     /// UTC ISO 8601 timestamp of when the task was recorded.
     pub completed_at: String,
     /// The team that completed this task, per the multi-team manifest schema
-    /// (AUDITS/MULTI-TEAM-SUMMARY.md). `None` until team identity is threaded
-    /// through by the multi-team scheduler.
+    /// (AUDITS/MULTI-TEAM-SUMMARY.md). Set from the completing node's `team`
+    /// field; `None` only for nodes with no team (the single-team path,
+    /// where no trigger evaluation depends on this row).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub team: Option<String>,
 }
@@ -81,12 +86,15 @@ struct TaskManifestFile {
 ///
 /// `artifact` must be the result of a just-succeeded `integrate()` call: its
 /// `commit_sha` is used both as the commit to amend and as the CAS lease
-/// value for the re-push. Returns the amended `Artifact` on success.
+/// value for the re-push. Returns the amended `Artifact` plus the full
+/// manifest task list (including `record`) on success, so callers can
+/// evaluate team triggers against the current manifest without a second
+/// read.
 pub(crate) fn record_task(
     artifact: &Artifact,
     workspace: &Workspace,
     record: TaskRecord,
-) -> Result<Artifact, TaskManifestError> {
+) -> Result<(Artifact, Vec<TaskRecord>), TaskManifestError> {
     ensure_forge_ignored(workspace)?;
 
     let mut manifest = read_manifest(workspace)?;
@@ -111,11 +119,14 @@ pub(crate) fn record_task(
 
     push_amended(artifact, workspace, &amended_sha)?;
 
-    Ok(Artifact {
-        repo_path: artifact.repo_path.clone(),
-        branch: artifact.branch.clone(),
-        commit_sha: amended_sha,
-    })
+    Ok((
+        Artifact {
+            repo_path: artifact.repo_path.clone(),
+            branch: artifact.branch.clone(),
+            commit_sha: amended_sha,
+        },
+        manifest.tasks,
+    ))
 }
 
 /// Appends `records` to `.forge/tasks.json` in `workspace` (checked out at
@@ -126,11 +137,15 @@ pub(crate) fn record_task(
 /// into: planner-produced task records (`PlannerOutputKind::Task`) carry no
 /// file targets, so this creates a fresh commit via the standard CAS
 /// integration path instead.
+///
+/// Returns the amended `Artifact` plus the full manifest task list
+/// (including `records`), so callers can evaluate team triggers against the
+/// current manifest without a second read.
 pub(crate) fn record_planner_tasks(
     artifact: &Artifact,
     workspace: &Workspace,
     records: Vec<TaskRecord>,
-) -> Result<Artifact, TaskManifestError> {
+) -> Result<(Artifact, Vec<TaskRecord>), TaskManifestError> {
     ensure_forge_ignored(workspace)?;
 
     let mut manifest = read_manifest(workspace)?;
@@ -141,10 +156,12 @@ pub(crate) fn record_planner_tasks(
     // `git add --all` inside `integrate` runs (which respects .gitignore).
     run_git(workspace, &["add", "-f", MANIFEST_PATH, GITIGNORE_PATH])?;
 
-    super::integrate(artifact, workspace).map_err(|err| TaskManifestError::Git {
-        operation: "integrate".to_owned(),
-        stderr: err.to_string(),
-    })
+    let integrated =
+        super::integrate(artifact, workspace).map_err(|err| TaskManifestError::Git {
+            operation: "integrate".to_owned(),
+            stderr: err.to_string(),
+        })?;
+    Ok((integrated, manifest.tasks))
 }
 
 /// Adds `.forge/` to the workspace's `.gitignore` when not already present.

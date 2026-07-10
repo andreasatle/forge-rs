@@ -7,6 +7,8 @@
 //! This module owns only `SchedulerEvent`. Event payload types live in
 //! `types.rs`; state and effect shapes live in `state.rs` and `effect.rs`.
 
+use crate::artifacts::TaskRecord;
+
 use super::graph::NodeId;
 use super::types::{IntegrationFailure, IntegrationOutput, NodeFailure, PlanOutput, WorkOutput};
 
@@ -54,6 +56,9 @@ pub enum SchedulerEvent {
         node_id: NodeId,
         /// The integration output to store on the node.
         output: IntegrationOutput,
+        /// The full task manifest as of this integration, used to evaluate
+        /// every configured team's trigger without a separate manifest read.
+        manifest_tasks: Vec<TaskRecord>,
     },
     /// A previously-dispatched integration could not complete.
     IntegrationFailed {
@@ -67,6 +72,9 @@ pub enum SchedulerEvent {
     PlannerTasksIntegrated {
         /// The ID of the plan node whose task records were integrated.
         node_id: NodeId,
+        /// The full task manifest as of this integration, used to evaluate
+        /// every configured team's trigger without a separate manifest read.
+        manifest_tasks: Vec<TaskRecord>,
     },
     /// A previously-dispatched plan node's `Task`-kind output could not be
     /// recorded into the task manifest.

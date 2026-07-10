@@ -67,6 +67,8 @@ mod tests {
         Node {
             id: NodeId(id.to_string()),
             kind: NodeKind::Work,
+            team: String::new(),
+            task_id: None,
             worker_role: None,
             objective: format!("objective for {id}"),
             target_files: vec![],

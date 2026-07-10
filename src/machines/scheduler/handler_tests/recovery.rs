@@ -67,6 +67,7 @@ fn scheduler_handler_maps_integration_error_to_failed_outcome() {
         attempt: 0,
         target_files: vec![],
         validation_plan: None,
+        team: "test-team".to_string(),
     });
 
     assert!(
@@ -122,6 +123,7 @@ fn scheduler_handler_maps_integration_conflict_to_failed_outcome() {
         attempt: 0,
         target_files: vec![],
         validation_plan: None,
+        team: "test-team".to_string(),
     });
 
     let SchedulerEvent::IntegrationFailed { failure, .. } = &event else {

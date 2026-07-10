@@ -23,6 +23,21 @@ use super::validation::validation_retry_message;
 type AttemptKey = (NodeId, u32);
 type AttemptWorkspace = Rc<RefCell<Workspace>>;
 
+/// Parameters for integrating a completed `Work` node's changes.
+///
+/// Bundled into a struct (rather than passed as individual arguments) purely
+/// to stay under clippy's argument-count lint; each field is used exactly as
+/// it would be as a bare parameter.
+pub(crate) struct WorkIntegration {
+    pub node_id: NodeId,
+    pub objective: String,
+    pub work: WorkOutput,
+    pub attempt: u32,
+    pub target_files: Vec<String>,
+    pub validation_plan: Option<ValidationPlan>,
+    pub team: String,
+}
+
 pub(crate) struct IntegrationService {
     artifact: RefCell<Option<Artifact>>,
     pending_attempts: RefCell<HashMap<AttemptKey, AttemptWorkspace>>,
@@ -125,15 +140,16 @@ impl IntegrationService {
             .insert((node_id.clone(), attempt), error);
     }
 
-    pub(crate) fn integrate_work(
-        &self,
-        node_id: NodeId,
-        objective: String,
-        work: WorkOutput,
-        attempt: u32,
-        target_files: Vec<String>,
-        validation_plan: Option<ValidationPlan>,
-    ) -> SchedulerEvent {
+    pub(crate) fn integrate_work(&self, request: WorkIntegration) -> SchedulerEvent {
+        let WorkIntegration {
+            node_id,
+            objective,
+            work,
+            attempt,
+            target_files,
+            validation_plan,
+            team,
+        } = request;
         eprintln!("[integration] start {}", node_id.short());
 
         let failed_attempt = self
@@ -153,6 +169,7 @@ impl IntegrationService {
             .borrow_mut()
             .remove(&(node_id.clone(), attempt));
         let artifact_snapshot = self.artifact.borrow().clone();
+        let mut manifest_tasks: Vec<TaskRecord> = Vec::new();
 
         if let (Some(workspace), Some(artifact)) = (pending_workspace, artifact_snapshot) {
             let changed_files = changed_paths(&workspace.borrow());
@@ -195,18 +212,21 @@ impl IntegrationService {
                             targets: target_files.clone(),
                             commit: new_artifact.commit_sha.clone(),
                             completed_at: utc_now_iso8601(),
-                            team: None,
+                            team: Some(team.clone()),
                         };
-                        let recorded = record_task(&new_artifact, &workspace.borrow(), record)
-                            .unwrap_or_else(|err| {
-                                eprintln!(
-                                    "[integration] task manifest update failed for {}: {}",
-                                    node_id.short(),
-                                    err
-                                );
-                                new_artifact
-                            });
+                        let (recorded, tasks) =
+                            record_task(&new_artifact, &workspace.borrow(), record).unwrap_or_else(
+                                |err| {
+                                    eprintln!(
+                                        "[integration] task manifest update failed for {}: {}",
+                                        node_id.short(),
+                                        err
+                                    );
+                                    (new_artifact, Vec::new())
+                                },
+                            );
                         *self.artifact.borrow_mut() = Some(recorded);
+                        manifest_tasks = tasks;
                     }
                     Err(err) => {
                         let message = err.to_string();
@@ -272,6 +292,7 @@ impl IntegrationService {
             output: IntegrationOutput {
                 summary: work.summary,
             },
+            manifest_tasks,
         }
     }
 
@@ -280,18 +301,22 @@ impl IntegrationService {
     ///
     /// Parallel to [`Self::integrate_work`]'s manifest write, but for
     /// `PlannerOutputKind::Task` output, which has no `Work` node or
-    /// `WorkAttempt` workspace of its own.
-    pub(crate) fn integrate_planner_tasks(&self, records: Vec<TaskRecord>) -> Result<(), String> {
+    /// `WorkAttempt` workspace of its own. Returns the full manifest task
+    /// list (including `records`) on success.
+    pub(crate) fn integrate_planner_tasks(
+        &self,
+        records: Vec<TaskRecord>,
+    ) -> Result<Vec<TaskRecord>, String> {
         let Some(artifact) = self.artifact.borrow().clone() else {
-            return Ok(());
+            return Ok(Vec::new());
         };
         let workspace = WorkspaceFactory::new(&artifact)
             .create_temporary_workspace()
             .map_err(|err| format!("worktree creation failed: {err}"))?;
-        let recorded =
+        let (recorded, tasks) =
             record_planner_tasks(&artifact, &workspace, records).map_err(|err| err.to_string())?;
         *self.artifact.borrow_mut() = Some(recorded);
-        Ok(())
+        Ok(tasks)
     }
 
     /// Converts a completed `Plan` node's `Task`-kind output into
@@ -299,13 +324,12 @@ impl IntegrationService {
     /// `SchedulerEvent`.
     ///
     /// Parallel to [`Self::integrate_work`], but planner-produced task intent
-    /// has no per-task commit of its own, so `commit` is left empty. `team`
-    /// stays `None` until team identity is threaded through by the
-    /// multi-team scheduler.
+    /// has no per-task commit of its own, so `commit` is left empty.
     pub(crate) fn integrate_plan_tasks(
         &self,
         node_id: NodeId,
         tasks: Vec<PlannerTaskOutput>,
+        team: String,
     ) -> SchedulerEvent {
         let completed_at = utc_now_iso8601();
         let records = tasks
@@ -316,11 +340,14 @@ impl IntegrationService {
                 targets: vec![],
                 commit: String::new(),
                 completed_at: completed_at.clone(),
-                team: None,
+                team: Some(team.clone()),
             })
             .collect();
         match self.integrate_planner_tasks(records) {
-            Ok(()) => SchedulerEvent::PlannerTasksIntegrated { node_id },
+            Ok(manifest_tasks) => SchedulerEvent::PlannerTasksIntegrated {
+                node_id,
+                manifest_tasks,
+            },
             Err(message) => SchedulerEvent::PlannerTasksIntegrationFailed {
                 node_id,
                 failure: integration_failure(message),

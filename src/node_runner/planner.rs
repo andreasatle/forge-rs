@@ -326,6 +326,8 @@ impl<'a> PlannerOutputProcessor<'a> {
                 .map(|task| NodeRequest {
                     id: NodeId(task.id),
                     kind: child_kind.clone(),
+                    team: String::new(),
+                    task_id: None,
                     worker_role: task.role,
                     objective: task.objective,
                     target_files: task.targets,

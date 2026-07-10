@@ -275,6 +275,8 @@ fn runtime_summary_uses_post_integration_artifact_commit() {
                     children: vec![NodeRequest {
                         id: NodeId("work".to_string()),
                         kind: NodeKind::Work,
+                        team: String::new(),
+                        task_id: None,
                         worker_role: None,
                         objective: "generate result.txt".to_string(),
                         target_files: vec![],
@@ -462,6 +464,8 @@ fn successful_validated_run_sets_validation_passed_true() {
                     children: vec![NodeRequest {
                         id: NodeId("work".to_string()),
                         kind: NodeKind::Work,
+                        team: String::new(),
+                        task_id: None,
                         worker_role: None,
                         objective: "write result.txt".to_string(),
                         target_files: vec![],
@@ -547,6 +551,8 @@ fn validation_failure_sets_validation_passed_false_in_manifest() {
                     children: vec![NodeRequest {
                         id: NodeId("work".to_string()),
                         kind: NodeKind::Work,
+                        team: String::new(),
+                        task_id: None,
                         worker_role: None,
                         objective: "write result.txt".to_string(),
                         target_files: vec![],
@@ -712,6 +718,7 @@ fn run_config_has_strong_tier_false_when_provider_strong_is_none() {
 
     let run_config = RunConfig {
         has_strong_tier: provider.strong.is_some(),
+        teams: vec![],
     };
     let state = SchedulerMachine::initial_state(
         RunRequest {
@@ -754,6 +761,7 @@ fn run_config_has_strong_tier_true_when_provider_strong_is_some() {
 
     let run_config = RunConfig {
         has_strong_tier: provider.strong.is_some(),
+        teams: vec![],
     };
     let state = SchedulerMachine::initial_state(
         RunRequest {

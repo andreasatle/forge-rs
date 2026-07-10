@@ -115,6 +115,8 @@ fn terminal_failure_produces_failed_scheduler_terminal_output() {
         nodes: vec![Node {
             id: NodeId("T".to_string()),
             kind: NodeKind::Work,
+            team: String::new(),
+            task_id: None,
             worker_role: None,
             objective: "fail this step".to_string(),
             target_files: vec![],
@@ -146,6 +148,8 @@ fn scheduler_terminal_output_includes_node_failure_reason() {
         nodes: vec![Node {
             id: NodeId("T".to_string()),
             kind: NodeKind::Work,
+            team: String::new(),
+            task_id: None,
             worker_role: None,
             objective: "fail this step".to_string(),
             target_files: vec![],
@@ -246,6 +250,7 @@ fn split_remaps_downstream_dependencies_and_chain_completes() {
             output: IntegrationOutput {
                 summary: "A integrated".to_string(),
             },
+            manifest_tasks: vec![],
         },
     );
     let SchedulerState::Active { graph, .. } = t.state else {
@@ -381,6 +386,7 @@ fn split_remaps_downstream_dependencies_and_chain_completes() {
             output: IntegrationOutput {
                 summary: "C integrated".to_string(),
             },
+            manifest_tasks: vec![],
         },
     );
     let SchedulerState::Active { graph, .. } = t.state else {
@@ -464,6 +470,8 @@ fn split_success_reports_recovery() {
             Node {
                 id: source_id.clone(),
                 kind: NodeKind::Work,
+                team: String::new(),
+                task_id: None,
                 worker_role: None,
                 objective: "complex task".to_string(),
                 target_files: vec![],
@@ -481,6 +489,8 @@ fn split_success_reports_recovery() {
             Node {
                 id: split_id,
                 kind: NodeKind::Plan,
+                team: String::new(),
+                task_id: None,
                 worker_role: None,
                 objective: "decompose complex task".to_string(),
                 target_files: vec![],

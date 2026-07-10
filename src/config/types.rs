@@ -10,9 +10,13 @@ pub struct ForgeConfig {
     /// The objective the run will work toward. Required.
     #[serde(default)]
     pub objective: Option<String>,
-    /// Team definitions for multi-team runs. Not yet consumed by the
-    /// scheduler; parsed and validated here so `forge.yaml` authors can
-    /// start declaring teams ahead of the scheduler that will read them.
+    /// Team definitions for multi-team runs.
+    ///
+    /// Each team's `trigger` is evaluated against the task manifest on every
+    /// `IntegrationSucceeded`/`PlannerTasksIntegrated` transition to decide
+    /// when to spawn its nodes. Per-team `northstar`/`adapter` dispatch is
+    /// not yet wired: spawned nodes reuse the run's existing single-adapter
+    /// conventions.
     #[serde(default)]
     pub teams: Vec<TeamConfig>,
     /// Artifact repository settings.
@@ -34,7 +38,7 @@ pub struct ForgeConfig {
 
 /// One team entry in `teams`. A team executes work under its own northstar
 /// and adapter, activated according to its `trigger`.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct TeamConfig {
     /// The team's name, referenced by other teams' `trigger` expressions.
     pub name: String,
@@ -49,8 +53,9 @@ pub struct TeamConfig {
     pub trigger: Trigger,
 }
 
-/// Parsed form of a `TeamConfig::trigger` expression. Not yet consumed by a
-/// scheduler; parsed here so malformed triggers fail at config-load time.
+/// Parsed form of a `TeamConfig::trigger` expression, consumed by
+/// `crate::services::team_trigger::evaluate_trigger` on every scheduler
+/// task-completion transition.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Trigger {
     /// Runs once, when the forge run starts.
@@ -99,6 +104,22 @@ impl<'de> Deserialize<'de> for Trigger {
     {
         let raw = String::deserialize(deserializer)?;
         Trigger::try_from(raw).map_err(serde::de::Error::custom)
+    }
+}
+
+/// Mirrors the custom `Deserialize` impl (parsed from `"start"` /
+/// `"after_each(team[, team...])"`) so `Trigger` round-trips through
+/// checkpoint serialization as the same string form it was parsed from.
+impl Serialize for Trigger {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let rendered = match self {
+            Trigger::Start => "start".to_string(),
+            Trigger::AfterEach(teams) => format!("after_each({})", teams.join(", ")),
+        };
+        serializer.serialize_str(&rendered)
     }
 }
 

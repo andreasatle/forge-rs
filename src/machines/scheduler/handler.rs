@@ -16,7 +16,7 @@ use crate::machines::scheduler::checkpoint::CheckpointService;
 use crate::machines::scheduler::dispatch::{RunNodeDispatch, dispatch_run_node};
 use crate::machines::scheduler::effect::SchedulerEffect;
 use crate::machines::scheduler::event::SchedulerEvent;
-use crate::machines::scheduler::integration::IntegrationService;
+use crate::machines::scheduler::integration::{IntegrationService, WorkIntegration};
 use crate::machines::scheduler::machine::SchedulerMachine;
 use crate::machines::scheduler::progress::{is_progress_event, print_returned_progress};
 use crate::machines::scheduler::state::SchedulerState;
@@ -185,17 +185,21 @@ impl<R: NodeRunner> SchedulerHandler<R> {
                 attempt,
                 target_files,
                 validation_plan,
-            } => self.integration.integrate_work(
+                team,
+            } => self.integration.integrate_work(WorkIntegration {
                 node_id,
                 objective,
                 work,
                 attempt,
                 target_files,
                 validation_plan,
-            ),
-            SchedulerEffect::IntegratePlannerTasks { node_id, tasks } => {
-                self.integration.integrate_plan_tasks(node_id, tasks)
-            }
+                team,
+            }),
+            SchedulerEffect::IntegratePlannerTasks {
+                node_id,
+                tasks,
+                team,
+            } => self.integration.integrate_plan_tasks(node_id, tasks, team),
         }
     }
 }

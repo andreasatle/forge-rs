@@ -38,6 +38,8 @@ fn scheduler_terminal_output_includes_integration_failure_reason() {
         nodes: vec![Node {
             id: NodeId("W".to_string()),
             kind: NodeKind::Work,
+            team: String::new(),
+            task_id: None,
             worker_role: None,
             objective: "integrate this step".to_string(),
             target_files: vec![],
@@ -246,6 +248,7 @@ fn planner_tasks_integrated_completes_plan_node() {
         },
         SchedulerEvent::PlannerTasksIntegrated {
             node_id: NodeId("P".to_string()),
+            manifest_tasks: vec![],
         },
     );
 

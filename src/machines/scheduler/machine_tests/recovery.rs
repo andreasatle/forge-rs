@@ -577,6 +577,7 @@ fn single_tier_elevate_falls_back_to_retry() {
             graph: running(graph, "W"),
             run_config: RunConfig {
                 has_strong_tier: false,
+                teams: vec![],
             },
         },
         SchedulerEvent::NodeFailed {
@@ -622,6 +623,7 @@ fn single_tier_elevate_exhausted_gives_clear_terminal_failure() {
             graph: running(graph, "W"),
             run_config: RunConfig {
                 has_strong_tier: false,
+                teams: vec![],
             },
         },
         SchedulerEvent::NodeFailed {

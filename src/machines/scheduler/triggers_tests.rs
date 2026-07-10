@@ -1,0 +1,231 @@
+use super::*;
+use crate::config::Trigger;
+use crate::machines::scheduler::graph::{ModelTier, Node, NodeStatus};
+
+fn team(name: &str, trigger: Trigger) -> TeamConfig {
+    TeamConfig {
+        name: name.to_string(),
+        northstar: String::new(),
+        adapter: String::new(),
+        trigger,
+    }
+}
+
+fn record(id: &str, objective: &str, team: &str) -> TaskRecord {
+    TaskRecord {
+        id: id.to_string(),
+        objective: objective.to_string(),
+        targets: vec![],
+        commit: String::new(),
+        completed_at: String::new(),
+        team: Some(team.to_string()),
+    }
+}
+
+fn root_node() -> Node {
+    Node {
+        id: NodeId("root".to_string()),
+        kind: NodeKind::Plan,
+        team: String::new(),
+        task_id: None,
+        worker_role: None,
+        objective: "build a fibonacci program".to_string(),
+        target_files: vec![],
+        required_validation_targets: vec![],
+        dependencies: vec![],
+        status: NodeStatus::Completed,
+        attempt: 0,
+        plan_depth: 0,
+        model_tier: ModelTier::Cheap,
+        summary: None,
+        origin: NodeOrigin::Root,
+        validation_plan: None,
+        retry_feedback: None,
+    }
+}
+
+fn run_config(teams: Vec<TeamConfig>) -> RunConfig {
+    RunConfig {
+        has_strong_tier: true,
+        teams,
+    }
+}
+
+/// A `start`-triggered team with no manifest rows yet gets its initial Plan
+/// node spawned, seeded with the run's root objective.
+#[test]
+fn run_once_spawns_initial_plan_node() {
+    let graph = RunGraph {
+        nodes: vec![root_node()],
+    };
+    let config = run_config(vec![team("planner", Trigger::Start)]);
+    let graph = apply_team_triggers(graph, &NodeId("root".to_string()), &config, &[]);
+
+    let spawned: Vec<&Node> = graph.nodes.iter().filter(|n| n.team == "planner").collect();
+    assert_eq!(spawned.len(), 1, "exactly one node spawned for the team");
+    assert_eq!(spawned[0].kind, NodeKind::Plan);
+    assert_eq!(spawned[0].objective, "build a fibonacci program");
+    assert_eq!(spawned[0].task_id, None);
+}
+
+/// Re-evaluating the same `start` trigger while the team's node is still
+/// Pending must not spawn a second node: the manifest has no row yet, so
+/// only the graph-based dedup check prevents a duplicate.
+#[test]
+fn run_once_does_not_duplicate_while_node_in_flight() {
+    let graph = RunGraph {
+        nodes: vec![root_node()],
+    };
+    let config = run_config(vec![team("planner", Trigger::Start)]);
+    let graph = apply_team_triggers(graph, &NodeId("root".to_string()), &config, &[]);
+    assert_eq!(
+        graph.nodes.iter().filter(|n| n.team == "planner").count(),
+        1
+    );
+
+    // Re-evaluate again with the same (empty) manifest, simulating another
+    // unrelated node completing before the planner's node has finished.
+    let graph = apply_team_triggers(graph, &NodeId("root".to_string()), &config, &[]);
+    assert_eq!(
+        graph.nodes.iter().filter(|n| n.team == "planner").count(),
+        1,
+        "must not spawn a duplicate while the first node is still in flight"
+    );
+}
+
+/// Once a team has a manifest row, `RunOnce` reports `should_run: false`, so
+/// no further node is spawned even after the original node is long gone.
+#[test]
+fn run_once_does_not_spawn_after_manifest_row_recorded() {
+    let graph = RunGraph {
+        nodes: vec![root_node()],
+    };
+    let config = run_config(vec![team("planner", Trigger::Start)]);
+    let manifest = [record("t1", "do a thing", "planner")];
+    let graph = apply_team_triggers(graph, &NodeId("root".to_string()), &config, &manifest);
+
+    assert_eq!(
+        graph.nodes.iter().filter(|n| n.team == "planner").count(),
+        0
+    );
+}
+
+/// `after_each(planner)` fires for a task id the planner has recorded once
+/// `implement` has no row of its own for that id yet, spawning a Work node
+/// with the completed task's original objective text.
+#[test]
+fn for_tasks_spawns_work_node_with_original_objective() {
+    let graph = RunGraph {
+        nodes: vec![root_node()],
+    };
+    let config = run_config(vec![team(
+        "implement",
+        Trigger::AfterEach(vec!["planner".to_string()]),
+    )]);
+    let manifest = [record("t1", "implement fibonacci(n: int)", "planner")];
+    let graph = apply_team_triggers(graph, &NodeId("root".to_string()), &config, &manifest);
+
+    let spawned: Vec<&Node> = graph
+        .nodes
+        .iter()
+        .filter(|n| n.team == "implement")
+        .collect();
+    assert_eq!(spawned.len(), 1);
+    assert_eq!(spawned[0].kind, NodeKind::Work);
+    assert_eq!(spawned[0].task_id, Some("t1".to_string()));
+    assert_eq!(spawned[0].objective, "implement fibonacci(n: int)");
+}
+
+/// Re-evaluating `after_each` while the spawned Work node is still Pending
+/// (no manifest row from `implement` yet) must not spawn a duplicate for the
+/// same task id.
+#[test]
+fn for_tasks_does_not_duplicate_while_node_in_flight() {
+    let graph = RunGraph {
+        nodes: vec![root_node()],
+    };
+    let config = run_config(vec![team(
+        "implement",
+        Trigger::AfterEach(vec!["planner".to_string()]),
+    )]);
+    let manifest = [record("t1", "implement fibonacci(n: int)", "planner")];
+    let graph = apply_team_triggers(graph, &NodeId("root".to_string()), &config, &manifest);
+    assert_eq!(
+        graph.nodes.iter().filter(|n| n.team == "implement").count(),
+        1
+    );
+
+    let graph = apply_team_triggers(graph, &NodeId("root".to_string()), &config, &manifest);
+    assert_eq!(
+        graph.nodes.iter().filter(|n| n.team == "implement").count(),
+        1,
+        "must not spawn a duplicate while the first node is still in flight"
+    );
+}
+
+/// Once `implement` has its own manifest row for a task id, `ForTasks`
+/// excludes that id, so no further node is spawned for it even after the
+/// original node is marked Failed (recovery would have created a replacement
+/// carrying the team/task_id forward instead).
+#[test]
+fn for_tasks_excludes_ids_already_recorded_by_the_team() {
+    let graph = RunGraph {
+        nodes: vec![root_node()],
+    };
+    let config = run_config(vec![team(
+        "implement",
+        Trigger::AfterEach(vec!["planner".to_string()]),
+    )]);
+    let manifest = [
+        record("t1", "implement fibonacci(n: int)", "planner"),
+        record("t1", "implemented fibonacci", "implement"),
+    ];
+    let graph = apply_team_triggers(graph, &NodeId("root".to_string()), &config, &manifest);
+
+    assert_eq!(
+        graph.nodes.iter().filter(|n| n.team == "implement").count(),
+        0
+    );
+}
+
+/// A Failed node for a (team, task) pair does not block re-spawning: the
+/// dedup check only treats non-terminal-failed nodes as "already requested".
+#[test]
+fn for_tasks_respawns_after_prior_attempt_failed() {
+    let mut graph = RunGraph {
+        nodes: vec![root_node()],
+    };
+    graph.nodes.push(Node {
+        id: NodeId("failed-attempt".to_string()),
+        kind: NodeKind::Work,
+        team: "implement".to_string(),
+        task_id: Some("t1".to_string()),
+        worker_role: None,
+        objective: "implement fibonacci(n: int)".to_string(),
+        target_files: vec![],
+        required_validation_targets: vec![],
+        dependencies: vec![],
+        status: NodeStatus::Failed,
+        attempt: 3,
+        plan_depth: 0,
+        model_tier: ModelTier::Strong,
+        summary: None,
+        origin: NodeOrigin::Root,
+        validation_plan: None,
+        retry_feedback: None,
+    });
+
+    let config = run_config(vec![team(
+        "implement",
+        Trigger::AfterEach(vec!["planner".to_string()]),
+    )]);
+    let manifest = [record("t1", "implement fibonacci(n: int)", "planner")];
+    let graph = apply_team_triggers(graph, &NodeId("root".to_string()), &config, &manifest);
+
+    let pending: Vec<&Node> = graph
+        .nodes
+        .iter()
+        .filter(|n| n.team == "implement" && n.status == NodeStatus::Pending)
+        .collect();
+    assert_eq!(pending.len(), 1, "a new attempt must be spawned");
+}

@@ -57,6 +57,7 @@ mod progress;
 mod recovery;
 mod request;
 mod state;
+mod triggers;
 mod types;
 mod validation;
 

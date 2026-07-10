@@ -79,6 +79,7 @@ fn event_kind_or_status_mismatch_fails_with_protocol_violation() {
                 output: IntegrationOutput {
                     summary: "done".to_string(),
                 },
+                manifest_tasks: vec![],
             },
             expected_detail: "node A has status Running but IntegrationReturned requires Integrating",
         },
@@ -95,6 +96,7 @@ fn event_kind_or_status_mismatch_fails_with_protocol_violation() {
                 output: IntegrationOutput {
                     summary: "done".to_string(),
                 },
+                manifest_tasks: vec![],
             },
             expected_detail: "node P is Plan but IntegrationReturned requires a Work node",
         },
@@ -157,6 +159,7 @@ fn wrong_node_id_fails_scheduler_with_protocol_violation() {
                 output: IntegrationOutput {
                     summary: "spurious result".to_string(),
                 },
+                manifest_tasks: vec![],
             },
             expected_detail: "expected integration result for node A but received B",
         },
@@ -219,6 +222,7 @@ fn active_state_rejects_return_events() {
                 output: IntegrationOutput {
                     summary: "spurious".to_string(),
                 },
+                manifest_tasks: vec![],
             },
             expected_detail: "state Active cannot consume IntegrationReturned",
         },

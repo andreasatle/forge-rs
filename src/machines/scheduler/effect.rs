@@ -78,6 +78,9 @@ pub enum SchedulerEffect {
         /// When present, integration executes this plan instead of the global
         /// handler-level validator.  `None` falls back to the global validator.
         validation_plan: Option<ValidationPlan>,
+        /// The completing node's team, recorded into the manifest's
+        /// `TaskRecord.team` so team trigger evaluation can see it.
+        team: String,
     },
 
     /// Record a completed `Plan` node's `Task`-kind output into the task
@@ -91,5 +94,8 @@ pub enum SchedulerEffect {
         node_id: NodeId,
         /// The planner-produced task records to record into the manifest.
         tasks: Vec<PlannerTaskOutput>,
+        /// The completing node's team, recorded into each resulting
+        /// `TaskRecord.team` so team trigger evaluation can see it.
+        team: String,
     },
 }

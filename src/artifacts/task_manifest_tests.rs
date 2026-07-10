@@ -108,7 +108,7 @@ fn record_task_amends_and_pushes_manifest() {
 
     let workspace = WorkspaceFactory::new(&integrated).create_workspace(temp.join("record-ws"));
     let record = sample_record(&integrated.commit_sha);
-    let result = record_task(&integrated, &workspace, record).expect("record_task");
+    let (result, _tasks) = record_task(&integrated, &workspace, record).expect("record_task");
 
     assert_ne!(
         result.commit_sha, integrated.commit_sha,
@@ -150,7 +150,7 @@ fn record_task_appends_to_existing_manifest() {
     let first_integrated = integrate_a_change(&temp, &artifact);
 
     let first_ws = WorkspaceFactory::new(&first_integrated).create_workspace(temp.join("ws-1"));
-    let after_first = record_task(
+    let (after_first, _tasks) = record_task(
         &first_integrated,
         &first_ws,
         sample_record(&first_integrated.commit_sha),
@@ -166,7 +166,7 @@ fn record_task_appends_to_existing_manifest() {
     let third_ws = WorkspaceFactory::new(&second_integrated).create_workspace(temp.join("ws-3"));
     let mut second_record = sample_record(&second_integrated.commit_sha);
     second_record.id = "node-2".to_string();
-    let final_artifact =
+    let (final_artifact, _tasks) =
         record_task(&second_integrated, &third_ws, second_record).expect("second record_task");
 
     let manifest_blob = git_output(
@@ -209,7 +209,7 @@ fn record_task_does_not_duplicate_existing_gitignore_entry() {
 
     let integrated = integrate_a_change(&temp, &artifact);
     let workspace = WorkspaceFactory::new(&integrated).create_workspace(temp.join("record-ws"));
-    let result = record_task(
+    let (result, _tasks) = record_task(
         &integrated,
         &workspace,
         sample_record(&integrated.commit_sha),

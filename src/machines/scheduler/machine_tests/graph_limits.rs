@@ -18,6 +18,8 @@ fn plan_child_depth_limit_fails_scheduler() {
                 children: vec![NodeRequest {
                     id: NodeId("nested-plan".to_string()),
                     kind: NodeKind::Plan,
+                    team: String::new(),
+                    task_id: None,
                     worker_role: None,
                     objective: "nested plan".to_string(),
                     target_files: vec![],
@@ -77,6 +79,8 @@ fn plan_expansion_respects_graph_size_limit() {
                     NodeRequest {
                         id: NodeId("child-1".to_string()),
                         kind: NodeKind::Work,
+                        team: String::new(),
+                        task_id: None,
                         worker_role: None,
                         objective: "child one".to_string(),
                         target_files: vec![],
@@ -87,6 +91,8 @@ fn plan_expansion_respects_graph_size_limit() {
                     NodeRequest {
                         id: NodeId("child-2".to_string()),
                         kind: NodeKind::Work,
+                        team: String::new(),
+                        task_id: None,
                         worker_role: None,
                         objective: "child two".to_string(),
                         target_files: vec![],
@@ -249,6 +255,7 @@ fn split_depth_limit_with_no_strong_tier_falls_back_to_retry() {
             graph: running(graph, "W"),
             run_config: RunConfig {
                 has_strong_tier: false,
+                teams: vec![],
             },
         },
         SchedulerEvent::NodeFailed {
