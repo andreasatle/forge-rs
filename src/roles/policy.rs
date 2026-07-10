@@ -380,18 +380,16 @@ pub struct RolePolicy {
     /// re-show the exact schema variant the model was originally given
     /// (with or without the `operation` field) instead of guessing.
     ///
-    /// Applies to [`NodeKind::Work`] only — [`NodeKind::OldDecomposition`]
-    /// and [`NodeKind::Plan`] use the fixed schema variants selected by
-    /// [`planner_protocol_schema_for`].
+    /// Applies to [`NodeKind::Work`] only — [`NodeKind::Plan`] uses the
+    /// fixed schema variant selected by [`planner_protocol_schema_for`].
     pub planner_protocol_schema: String,
     /// `planner_producer_system` with the trailing protocol-schema footer
     /// removed: role identity, adapter instructions/constraints, and the
     /// generic JSON-format constraints, but no task-schema footer.
     ///
     /// Combined with a node-kind-specific footer to build the
-    /// [`NodeKind::OldDecomposition`] and [`NodeKind::Plan`] Producer system
-    /// prompts, which use fixed schema variants rather than the adapter's
-    /// configured `planner_protocol_schema`.
+    /// [`NodeKind::Plan`] Producer system prompt, which uses a fixed schema
+    /// variant rather than the adapter's configured `planner_protocol_schema`.
     pub planner_producer_base: String,
     /// Worker role name/description pairs, surfaced to the Plan-node
     /// Producer so it can assign roles explicitly to each task.
@@ -449,20 +447,18 @@ impl Default for RolePolicy {
 }
 
 /// Select the planner protocol footer — and therefore the task output schema
-/// — for a Plan-family Producer, based on structural node kind rather than
-/// adapter configuration.
+/// — for a Plan Producer, based on structural node kind rather than adapter
+/// configuration.
 ///
-/// [`NodeKind::OldDecomposition`] and [`NodeKind::Plan`] share the same fixed
-/// schema: both are points where tasks may be assigned worker roles and
+/// [`NodeKind::Plan`] always uses the fixed with-operation, with-roles
+/// schema: it is the point where tasks may be assigned worker roles and
 /// concrete file operations, or escalate to further planning.
 pub(crate) fn planner_protocol_schema_for<'a>(
     node_kind: &NodeKind,
     policy: &'a RolePolicy,
 ) -> &'a str {
     match node_kind {
-        NodeKind::OldDecomposition | NodeKind::Plan => {
-            PLANNER_PROTOCOL_FOOTER_WITH_OPERATION_AND_ROLES
-        }
+        NodeKind::Plan => PLANNER_PROTOCOL_FOOTER_WITH_OPERATION_AND_ROLES,
         NodeKind::Work => &policy.planner_protocol_schema,
     }
 }

@@ -23,11 +23,10 @@ pub(crate) struct DeliberationContextConfig<'a> {
     pub(crate) required_test_targets_fn: &'a Arc<TestTargetsFn>,
     pub(crate) context_file_names: &'a [String],
     /// Language plugin's per-file API summary command, when configured. Run
-    /// for `Decomposition` and `Plan` nodes to surface existing API shape to
-    /// the planner.
+    /// for `Plan` nodes to surface existing API shape to the planner.
     pub(crate) api_summary_command: Option<&'a CommandSpec>,
-    /// The configured northstar text, when present. Surfaced only to
-    /// `Decomposition` nodes alongside the API summary.
+    /// The configured northstar text, when present. Surfaced only to `Plan`
+    /// nodes alongside the API summary.
     pub(crate) northstar: Option<&'a str>,
     /// The adapter's declared language plugins, keyed by extension. Used to
     /// select the plugin whose prompt sections apply to this node's own
@@ -47,17 +46,17 @@ pub(crate) fn build_deliberation_context(
         None
     };
 
-    let northstar = matches!(request.kind, NodeKind::OldDecomposition)
+    let northstar = matches!(request.kind, NodeKind::Plan)
         .then(|| config.northstar)
         .flatten()
         .map(str::to_string);
 
-    // Decomposition nodes have no target files of their own — `target_files`
-    // may still be non-empty here (a split node inherits it from the failed
+    // Plan nodes have no target files of their own — `target_files` may
+    // still be non-empty here (a split node inherits it from the failed
     // node it replaces, for objective-rendering context), but that inherited
     // list must never drive language-plugin selection for a node that isn't
     // producing code itself.
-    let plugin_prompt = (!matches!(request.kind, NodeKind::OldDecomposition))
+    let plugin_prompt = (!matches!(request.kind, NodeKind::Plan))
         .then(|| select_plugin(config.language_plugins, &request.target_files))
         .flatten()
         .map(LanguageSpec::prompt_sections);
@@ -104,7 +103,7 @@ pub(crate) fn build_artifact_context(
         .collect();
 
     let api_summary = api_summary_command
-        .filter(|_| matches!(node_kind, NodeKind::OldDecomposition | NodeKind::Plan))
+        .filter(|_| matches!(node_kind, NodeKind::Plan))
         .and_then(|command| build_api_summary(view, &files, command));
 
     Some(ArtifactContext {

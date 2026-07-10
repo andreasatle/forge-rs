@@ -2,7 +2,6 @@ use super::*;
 
 const PLAN_RESPONSE: &str = r#"{"tasks":[{"id":"t1","objective":"do the work","operation":"modify","targets":["work.txt"],"depends_on":[]}]}"#;
 const PLAN_RESPONSE_WITH_ROLE: &str = r#"{"tasks":[{"id":"t1","objective":"do the work","operation":"modify","role":"implementer","targets":["work.txt"],"depends_on":[]}]}"#;
-const DECOMPOSITION_RESPONSE: &str = r#"{"tasks":[{"id":"t1","objective":"do the work","operation":"modify","role":"implementer","targets":["work.txt"],"depends_on":[]}]}"#;
 
 #[test]
 fn rendered_prompts_use_expected_role_schemas() {
@@ -121,9 +120,8 @@ fn review_contract_renders_for_reviewers_only() {
 fn worker_role_descriptions_render_for_plan_producer_only() {
     // Invariant: the "Available worker roles" section is built from
     // RolePolicy::worker_role_descriptions and appears only in the
-    // Plan-node Producer's prompt — Critic, Referee, the Work-node
-    // Producer, and the Decomposition-node Producer never assign roles, so
-    // they must not see it.
+    // Plan-node Producer's prompt — Critic, Referee, and the Work-node
+    // Producer never assign roles, so they must not see it.
     let policy = RolePolicy {
         worker_role_descriptions: vec![
             ("tester".to_string(), "Writes test files.".to_string()),
@@ -138,15 +136,6 @@ fn worker_role_descriptions_render_for_plan_producer_only() {
             plan_request("plan the work"),
             PLAN_RESPONSE_WITH_ROLE,
             true,
-        ),
-        (
-            "decomposition producer",
-            RoleRequest {
-                node_kind: NodeKind::OldDecomposition,
-                ..plan_request("decompose the work")
-            },
-            DECOMPOSITION_RESPONSE,
-            false,
         ),
         (
             "worker producer",

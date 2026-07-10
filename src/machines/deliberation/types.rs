@@ -47,8 +47,8 @@ pub struct DeliberationContext {
     /// Read-only artifact context made visible to roles.
     pub artifact: Option<ArtifactContext>,
     /// The configured northstar text (desired end state), surfaced to
-    /// [`NodeKind::OldDecomposition`] nodes alongside the API summary so the
-    /// producer can plan only the gap between the two.
+    /// [`NodeKind::Plan`] nodes alongside the API summary so the producer can
+    /// plan only the gap between the two.
     pub northstar: Option<String>,
     /// The language plugin's prompt sections selected for this node's own
     /// target files (see [`crate::language::select_plugin`]), when a
@@ -66,8 +66,8 @@ pub struct ArtifactContext {
     pub selected_files: Vec<SelectedFileContent>,
     /// Per-file API summaries extracted by the language plugin's
     /// `api_summary` command, rendered as "Current artifact state". Present
-    /// only for planning nodes ([`NodeKind::OldDecomposition`]/[`NodeKind::Plan`])
-    /// when the language plugin configures `api_summary`.
+    /// only for planning nodes ([`NodeKind::Plan`]) when the language plugin
+    /// configures `api_summary`.
     pub api_summary: Option<String>,
 }
 

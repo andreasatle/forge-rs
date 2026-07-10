@@ -297,14 +297,14 @@ impl RecoveryApplicator {
             )
         };
         let split_id = new_node_id();
-        // Split creates a new Decomposition node to re-plan the original
-        // objective; `message` is diagnostic context, not the objective
-        // itself. The new node re-plans the same task, so its objective is
-        // preserved and the diagnostic is appended for the planner's benefit.
-        // validation_plan and retry_feedback belong to Work nodes only.
+        // Split creates a new Plan node to re-plan the original objective;
+        // `message` is diagnostic context, not the objective itself. The new
+        // node re-plans the same task, so its objective is preserved and the
+        // diagnostic is appended for the planner's benefit. validation_plan
+        // and retry_feedback belong to Work nodes only.
         let split_node = Node {
             id: split_id.clone(),
-            kind: NodeKind::OldDecomposition,
+            kind: NodeKind::Plan,
             worker_role: None,
             objective: format!(
                 "{objective}\n\nThe previous attempt failed and requires decomposition:\n{message}"

@@ -106,14 +106,14 @@ pub struct SchedulerMachine;
 impl SchedulerMachine {
     /// Build the initial scheduler state from a run request and policy config.
     ///
-    /// Creates a `SchedulerState::Active` containing a single root
-    /// `Decomposition` node whose objective is taken from the request. The
-    /// `run_config` is embedded in the state so `transition` is fully
-    /// reproducible from `(state, event)`.
+    /// Creates a `SchedulerState::Active` containing a single root `Plan`
+    /// node whose objective is taken from the request. The `run_config` is
+    /// embedded in the state so `transition` is fully reproducible from
+    /// `(state, event)`.
     pub fn initial_state(request: RunRequest, run_config: RunConfig) -> SchedulerState {
         let root = Node {
             id: graph::new_node_id(),
-            kind: NodeKind::OldDecomposition,
+            kind: NodeKind::Plan,
             worker_role: None,
             objective: request.objective,
             target_files: vec![],

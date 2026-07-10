@@ -54,9 +54,8 @@ pub enum PlannerOperation {
     Delete,
 }
 
-/// Whether a [`NodeKind::Plan`] or [`NodeKind::OldDecomposition`] parent's
-/// output's tasks become `Work` children or escalate to further `Plan`
-/// nodes.
+/// Whether a [`NodeKind::Plan`] parent's output's tasks become `Work`
+/// children or escalate to further `Plan` nodes.
 ///
 /// All tasks in a single [`PlannerOutput`] share one kind — a planner cannot
 /// mix concrete work with further sub-planning in the same batch. Absent from
@@ -73,8 +72,8 @@ pub enum PlannerOutputKind {
     Plan,
 }
 
-/// The structured JSON output a [`NodeKind::Plan`] or
-/// [`NodeKind::OldDecomposition`] parent's planner is expected to produce.
+/// The structured JSON output a [`NodeKind::Plan`] parent's planner is
+/// expected to produce.
 ///
 /// Each task becomes a scheduler [`NodeRequest`]. The `depends_on` entries
 /// reference other tasks by id within the same output batch.

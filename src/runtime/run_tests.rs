@@ -271,20 +271,18 @@ fn runtime_summary_uses_post_integration_artifact_commit() {
             _telemetry: &dyn crate::telemetry::TelemetrySink,
         ) -> NodeRunResult {
             match request.kind {
-                NodeKind::OldDecomposition | NodeKind::Plan => {
-                    NodeRunResult::PlanAccepted(PlanOutput {
-                        children: vec![NodeRequest {
-                            id: NodeId("work".to_string()),
-                            kind: NodeKind::Work,
-                            worker_role: None,
-                            objective: "generate result.txt".to_string(),
-                            target_files: vec![],
-                            required_validation_targets: vec![],
-                            dependencies: vec![],
-                            validation_plan: None,
-                        }],
-                    })
-                }
+                NodeKind::Plan => NodeRunResult::PlanAccepted(PlanOutput {
+                    children: vec![NodeRequest {
+                        id: NodeId("work".to_string()),
+                        kind: NodeKind::Work,
+                        worker_role: None,
+                        objective: "generate result.txt".to_string(),
+                        target_files: vec![],
+                        required_validation_targets: vec![],
+                        dependencies: vec![],
+                        validation_plan: None,
+                    }],
+                }),
                 NodeKind::Work => {
                     request
                         .work_attempt
@@ -459,20 +457,18 @@ fn successful_validated_run_sets_validation_passed_true() {
             _telemetry: &dyn crate::telemetry::TelemetrySink,
         ) -> NodeRunResult {
             match request.kind {
-                NodeKind::OldDecomposition | NodeKind::Plan => {
-                    NodeRunResult::PlanAccepted(PlanOutput {
-                        children: vec![NodeRequest {
-                            id: NodeId("work".to_string()),
-                            kind: NodeKind::Work,
-                            worker_role: None,
-                            objective: "write result.txt".to_string(),
-                            target_files: vec![],
-                            required_validation_targets: vec![],
-                            dependencies: vec![],
-                            validation_plan: None,
-                        }],
-                    })
-                }
+                NodeKind::Plan => NodeRunResult::PlanAccepted(PlanOutput {
+                    children: vec![NodeRequest {
+                        id: NodeId("work".to_string()),
+                        kind: NodeKind::Work,
+                        worker_role: None,
+                        objective: "write result.txt".to_string(),
+                        target_files: vec![],
+                        required_validation_targets: vec![],
+                        dependencies: vec![],
+                        validation_plan: None,
+                    }],
+                }),
                 NodeKind::Work => {
                     request
                         .work_attempt
@@ -545,20 +541,18 @@ fn validation_failure_sets_validation_passed_false_in_manifest() {
             _telemetry: &dyn crate::telemetry::TelemetrySink,
         ) -> NodeRunResult {
             match request.kind {
-                NodeKind::OldDecomposition | NodeKind::Plan => {
-                    NodeRunResult::PlanAccepted(PlanOutput {
-                        children: vec![NodeRequest {
-                            id: NodeId("work".to_string()),
-                            kind: NodeKind::Work,
-                            worker_role: None,
-                            objective: "write result.txt".to_string(),
-                            target_files: vec![],
-                            required_validation_targets: vec![],
-                            dependencies: vec![],
-                            validation_plan: None,
-                        }],
-                    })
-                }
+                NodeKind::Plan => NodeRunResult::PlanAccepted(PlanOutput {
+                    children: vec![NodeRequest {
+                        id: NodeId("work".to_string()),
+                        kind: NodeKind::Work,
+                        worker_role: None,
+                        objective: "write result.txt".to_string(),
+                        target_files: vec![],
+                        required_validation_targets: vec![],
+                        dependencies: vec![],
+                        validation_plan: None,
+                    }],
+                }),
                 NodeKind::Work => {
                     request
                         .work_attempt

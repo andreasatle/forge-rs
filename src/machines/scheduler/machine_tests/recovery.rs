@@ -435,7 +435,7 @@ fn split_below_attempt_limit_still_creates_plan_node() {
         .iter()
         .find(|n| matches!(&n.origin, NodeOrigin::Split { source } if source.0 == "W"))
         .expect("split Plan node");
-    assert_eq!(split.kind, NodeKind::OldDecomposition);
+    assert_eq!(split.kind, NodeKind::Plan);
     assert_eq!(split.status, NodeStatus::Pending);
     assert_eq!(split.attempt, 1, "split Plan node must carry attempt + 1");
     assert_eq!(split.model_tier, ModelTier::Strong);

@@ -17,7 +17,7 @@
 //!   forge vast list                                         — list current instances
 //!   forge vast destroy <instance_id>                        — destroy an instance
 //!
-//!   forge prompt-preview <config.yaml> --node <decomposition|plan|work> --role <producer|critic|referee> [--worker <name>]
+//!   forge prompt-preview <config.yaml> --node <plan|work> --role <producer|critic|referee> [--worker <name>]
 //!       — render the static prompt template for a role/node-kind combination
 //!
 //! For smoke-test scenarios, use the examples:
@@ -111,8 +111,6 @@ enum Command {
 /// `clap::ValueEnum` impl of its own.
 #[derive(Clone, Copy, ValueEnum)]
 enum NodeKindArg {
-    /// A planning node with no worker-role assignment.
-    Decomposition,
     /// A planning node that assigns worker roles and file operations.
     Plan,
     /// An execution node.
@@ -122,7 +120,6 @@ enum NodeKindArg {
 impl From<NodeKindArg> for NodeKind {
     fn from(value: NodeKindArg) -> Self {
         match value {
-            NodeKindArg::Decomposition => NodeKind::OldDecomposition,
             NodeKindArg::Plan => NodeKind::Plan,
             NodeKindArg::Work => NodeKind::Work,
         }

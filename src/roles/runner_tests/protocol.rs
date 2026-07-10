@@ -328,55 +328,39 @@ fn planner_accepts_valid_planner_output() {
 
 #[test]
 fn planner_producer_grammar_and_footer_are_selected_by_node_kind() {
-    // Invariant: OldDecomposition and Plan nodes both use the fixed
-    // with-operation, with-roles grammar and footer, regardless of the
-    // adapter's configured `planner_protocol_schema`.
+    // Invariant: Plan nodes use the fixed with-operation, with-roles grammar
+    // and footer, regardless of the adapter's configured
+    // `planner_protocol_schema`.
     use crate::roles::policy::PLANNER_GBNF_WITH_ROLES;
 
-    let cases = [
-        (
-            "OldDecomposition",
-            NodeKind::OldDecomposition,
-            r#"{"tasks":[{"id":"t1","objective":"do the thing","operation":"modify","role":"implementer","targets":["thing.txt"],"depends_on":[]}]}"#,
-            PLANNER_GBNF_WITH_ROLES,
-            "Required `role` field",
-        ),
-        (
-            "Plan",
-            NodeKind::Plan,
-            r#"{"tasks":[{"id":"t1","objective":"do the thing","operation":"modify","role":"implementer","targets":["thing.txt"],"depends_on":[]}]}"#,
-            PLANNER_GBNF_WITH_ROLES,
-            "Required `role` field",
-        ),
-    ];
+    let response = r#"{"tasks":[{"id":"t1","objective":"do the thing","operation":"modify","role":"implementer","targets":["thing.txt"],"depends_on":[]}]}"#;
+    let provider = ScriptedProvider::from_strs(&[response]);
+    let runner = ProviderRoleRunner::new(&provider);
+    let request = RoleRequest {
+        node_kind: NodeKind::Plan,
+        ..plan_request("plan the work")
+    };
 
-    for (label, node_kind, response, expected_grammar, expected_footer_marker) in cases {
-        let provider = ScriptedProvider::from_strs(&[response]);
-        let runner = ProviderRoleRunner::new(&provider);
-        let request = RoleRequest {
-            node_kind,
-            ..plan_request("plan the work")
-        };
+    let output = runner.run_role(request, &crate::telemetry::NoopTelemetry);
+    assert!(
+        matches!(output.result, RoleResult::Accepted { .. }),
+        "valid PlannerOutput must be accepted; got {:?}",
+        output.result
+    );
 
-        let output = runner.run_role(request, &crate::telemetry::NoopTelemetry);
-        assert!(
-            matches!(output.result, RoleResult::Accepted { .. }),
-            "[{label}] valid PlannerOutput must be accepted; got {:?}",
-            output.result
-        );
-
-        let requests = provider.requests.borrow();
-        assert_eq!(
-            requests[0].output_schema,
-            Some(StructuredOutput::Grammar(expected_grammar.to_string())),
-            "[{label}] must request the node-kind-specific grammar"
-        );
-        assert!(
-            requests[0].prompt.contains(expected_footer_marker),
-            "[{label}] prompt must contain the node-kind-specific protocol footer; got:\n{}",
-            requests[0].prompt
-        );
-    }
+    let requests = provider.requests.borrow();
+    assert_eq!(
+        requests[0].output_schema,
+        Some(StructuredOutput::Grammar(
+            PLANNER_GBNF_WITH_ROLES.to_string()
+        )),
+        "must request the node-kind-specific grammar"
+    );
+    assert!(
+        requests[0].prompt.contains("Required `role` field"),
+        "prompt must contain the node-kind-specific protocol footer; got:\n{}",
+        requests[0].prompt
+    );
 }
 
 #[test]

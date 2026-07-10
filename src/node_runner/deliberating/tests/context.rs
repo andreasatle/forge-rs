@@ -254,9 +254,9 @@ fn no_context_file_names_produces_no_extra_content() {
 
 #[test]
 fn api_summary_section_appears_in_plan_node_prompt_when_configured() {
-    // Invariant: when the language plugin configures api_summary, Decomposition
-    // and Plan node prompts must include a "Current artifact state" section
-    // built from that command's per-file output.
+    // Invariant: when the language plugin configures api_summary, Plan node
+    // prompts must include a "Current artifact state" section built from
+    // that command's per-file output.
     let temp = TempDir::new("api-summary-plan");
     let view = make_artifact_view(&temp, "main.py", "def f():\n    pass\n");
 
@@ -296,24 +296,24 @@ fn api_summary_section_appears_in_plan_node_prompt_when_configured() {
 }
 
 #[test]
-fn northstar_section_appears_in_decomposition_node_prompt_when_configured() {
-    // Invariant: when a northstar is configured, Decomposition node prompts
-    // must surface it as a "Northstar:" section alongside the API summary so
-    // the producer can plan the gap between the two.
-    let temp = TempDir::new("northstar-decomposition");
+fn northstar_section_appears_in_plan_node_prompt_when_configured() {
+    // Invariant: when a northstar is configured, Plan node prompts must
+    // surface it as a "Northstar:" section alongside the API summary so the
+    // producer can plan the gap between the two.
+    let temp = TempDir::new("northstar-plan");
     let view = make_artifact_view(&temp, "main.py", "def f():\n    pass\n");
 
-    let decomposition = r#"{"kind":"plan"}"#;
+    let plan = r#"{"kind":"plan","tasks":[{"id":"t1","objective":"decompose the CLI work","depends_on":[]}]}"#;
     let provider = RecordingProvider::from_strs(&[
-        decomposition,
-        r#"{"status":"accepted","content":"decomposition looks good"}"#,
-        r#"{"status":"accepted","content":"decomposition approved"}"#,
+        plan,
+        r#"{"status":"accepted","content":"plan looks good"}"#,
+        r#"{"status":"accepted","content":"plan approved"}"#,
     ]);
     let runner = DeliberatingNodeRunner::new(&provider, &provider)
         .with_api_summary_command(Some(cat_command()))
         .with_northstar(Some("Ship a fibonacci CLI.".to_string()));
     let request = NodeRunRequest {
-        kind: NodeKind::OldDecomposition,
+        kind: NodeKind::Plan,
         node_id: NodeId("test-node".to_string()),
         objective: "Ship a fibonacci CLI.".to_string(),
         target_files: vec![],
@@ -331,27 +331,28 @@ fn northstar_section_appears_in_decomposition_node_prompt_when_configured() {
     let first = &prompts[0];
     assert!(
         first.contains("Northstar:\nShip a fibonacci CLI."),
-        "decomposition prompt must include the northstar section; got:\n{first}"
+        "plan prompt must include the northstar section; got:\n{first}"
     );
 }
 
 #[test]
-fn northstar_section_is_absent_for_plan_nodes_even_when_configured() {
-    // Invariant: the northstar section is a Decomposition-only gap-analysis
-    // aid; Plan node prompts must never include it.
-    let temp = TempDir::new("northstar-plan");
+fn northstar_section_is_absent_for_work_nodes_even_when_configured() {
+    // Invariant: the northstar section is a planning-time gap-analysis aid;
+    // Work node prompts must never include it.
+    let temp = TempDir::new("northstar-work");
     let view = make_artifact_view(&temp, "main.py", "def f():\n    pass\n");
 
-    let plan = r#"{"tasks":[{"id":"task-1","objective":"Add a function.","operation":"modify","targets":["main.py"],"depends_on":[]}]}"#;
     let provider = RecordingProvider::from_strs(&[
-        plan,
-        r#"{"status":"accepted","content":"plan looks good"}"#,
-        r#"{"status":"accepted","content":"plan approved"}"#,
+        r#"{"summary":"draft output"}"#,
+        r#"{"tool":"read_file","path":"main.py"}"#,
+        r#"{"summary":"review ok"}"#,
+        r#"{"tool":"read_file","path":"main.py"}"#,
+        r#"{"summary":"approved"}"#,
     ]);
     let runner = DeliberatingNodeRunner::new(&provider, &provider)
         .with_northstar(Some("Ship a fibonacci CLI.".to_string()));
     let request = NodeRunRequest {
-        kind: NodeKind::Plan,
+        kind: NodeKind::Work,
         node_id: NodeId("test-node".to_string()),
         objective: "Add a function to main.py".to_string(),
         target_files: vec![],
@@ -369,7 +370,7 @@ fn northstar_section_is_absent_for_plan_nodes_even_when_configured() {
     let first = &prompts[0];
     assert!(
         !first.contains("Northstar:"),
-        "plan node prompt must not include the northstar section; got:\n{first}"
+        "work node prompt must not include the northstar section; got:\n{first}"
     );
 }
 
@@ -457,20 +458,21 @@ fn language_plugin_matching_node_target_extension_appears_in_prompt() {
 }
 
 #[test]
-fn language_plugin_is_absent_from_decomposition_node_prompt_even_with_target_files() {
-    // Invariant: a split node re-decomposes a failed node and inherits its
+fn language_plugin_is_absent_from_plan_node_prompt_even_with_target_files() {
+    // Invariant: a split node re-plans a failed node and inherits its
     // `target_files` for objective-rendering context (see
-    // `recovery::apply_split`), but a Decomposition node never produces
+    // `recovery::apply_split`), but a Plan node never produces
     // language-specific code itself — that inherited list must not select a
     // language plugin into its prompt.
-    let temp = TempDir::new("plugin-prompt-decomposition");
+    let temp = TempDir::new("plugin-prompt-plan");
     let view = make_artifact_view(&temp, "main.py", "def f():\n    pass\n");
 
-    let decomposition = r#"{"kind":"plan"}"#;
+    let plan =
+        r#"{"kind":"plan","tasks":[{"id":"t1","objective":"re-plan main.py","depends_on":[]}]}"#;
     let provider = RecordingProvider::from_strs(&[
-        decomposition,
-        r#"{"status":"accepted","content":"decomposition looks good"}"#,
-        r#"{"status":"accepted","content":"decomposition approved"}"#,
+        plan,
+        r#"{"status":"accepted","content":"plan looks good"}"#,
+        r#"{"status":"accepted","content":"plan approved"}"#,
     ]);
     let mut plugins = BTreeMap::new();
     plugins.insert(
@@ -479,7 +481,7 @@ fn language_plugin_is_absent_from_decomposition_node_prompt_even_with_target_fil
     );
     let runner = DeliberatingNodeRunner::new(&provider, &provider).with_language_plugins(plugins);
     let request = NodeRunRequest {
-        kind: NodeKind::OldDecomposition,
+        kind: NodeKind::Plan,
         node_id: NodeId("test-node".to_string()),
         objective: "Fix main.py".to_string(),
         target_files: vec!["main.py".to_string()],
@@ -497,7 +499,7 @@ fn language_plugin_is_absent_from_decomposition_node_prompt_even_with_target_fil
     let first = &prompts[0];
     assert!(
         !first.contains("Follow PEP 8 conventions."),
-        "decomposition prompt must not include plugin guidance even when target_files is non-empty; got:\n{first}"
+        "plan prompt must not include plugin guidance even when target_files is non-empty; got:\n{first}"
     );
 }
 
