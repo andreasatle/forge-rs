@@ -245,6 +245,117 @@ enum PlanParseOutcome {
     ParseFailed(String),
 }
 
+/// The prompt strings [`build_role_prompt`] composes for one role invocation.
+pub(super) struct BuiltRolePrompt {
+    /// The rendered prompt without the tool section appended.
+    ///
+    /// Kept separately from `base_prompt` because retry prompts (planner
+    /// validation, must-read enforcement) are re-derived from this rather
+    /// than from the tool-augmented prompt.
+    pub(super) core_prompt: String,
+    /// `core_prompt` with the tool section appended when `has_tools` is
+    /// true; otherwise identical to `core_prompt`. This is the exact prompt
+    /// sent to the model on the first attempt.
+    pub(super) base_prompt: String,
+}
+
+/// Compose the system prompt and full user prompt for one role invocation,
+/// exactly as [`ProviderRoleRunner::run_role`] does before entering its
+/// provider round-trip loop.
+///
+/// Factored out so the prompt-preview CLI can render the same static
+/// Identity/Context/Instructions/Constraints/tool-section content a real run
+/// would produce, from a mock [`RoleRequest`], without duplicating the
+/// system-prompt-selection and section-composition logic.
+pub(super) fn build_role_prompt(
+    request: &RoleRequest,
+    policy: &RolePolicy,
+    file_tool_policy: &crate::tools::FileToolPolicy,
+    has_tools: bool,
+) -> BuiltRolePrompt {
+    let worker_role_policy = request
+        .worker_role
+        .as_deref()
+        .and_then(|role| policy.worker_role_policies.get(role));
+
+    // Decomposition and Plan Producer prompts use a fixed schema variant
+    // rebuilt from `planner_producer_base` — see `planner_protocol_schema_for`.
+    let system: String = match (&request.node_kind, &request.role) {
+        (NodeKind::Decomposition | NodeKind::Plan, DeliberationRole::Producer) => format!(
+            "{}\n{}",
+            policy.planner_producer_base,
+            planner_protocol_schema_for(&request.node_kind, policy)
+        ),
+        (NodeKind::Decomposition | NodeKind::Plan, DeliberationRole::Critic) => {
+            policy.planner_critic_system.clone()
+        }
+        (NodeKind::Decomposition | NodeKind::Plan, DeliberationRole::Referee) => {
+            policy.planner_referee_system.clone()
+        }
+        (NodeKind::Work, DeliberationRole::Producer) => worker_role_policy
+            .map(|p| p.producer_system.clone())
+            .unwrap_or_else(|| policy.worker_producer_system.clone()),
+        (NodeKind::Work, DeliberationRole::Critic) => worker_role_policy
+            .map(|p| p.critic_system.clone())
+            .unwrap_or_else(|| policy.worker_critic_system.clone()),
+        (NodeKind::Work, DeliberationRole::Referee) => worker_role_policy
+            .map(|p| p.referee_system.clone())
+            .unwrap_or_else(|| policy.worker_referee_system.clone()),
+    };
+    // The language plugin selected for this node's own target files
+    // (see `select_plugin`) is composed here, per node, rather than
+    // baked into `policy` — an adapter's declared plugins vary by
+    // node, not by adapter, so a Rust node's prompt must not carry
+    // Python guidance and vice versa.
+    let system = match &request.context.plugin_prompt {
+        Some(plugin) => format!("{system}\n\n{}", render_plugin_prompt(plugin)),
+        None => system,
+    };
+
+    let review_contract = NodeReviewContract::for_role(
+        &request.role,
+        &request.node_kind,
+        &request.context.target_files,
+        &request.test_plan_context,
+        has_tools,
+    );
+    // Only the Plan-node Producer sees the available worker roles — that
+    // is the only kind that assigns roles to tasks. Decomposition tasks
+    // have no roles, so the section is omitted from their prompt even
+    // when the adapter defines worker roles.
+    let worker_role_descriptions: &[(String, String)] =
+        if matches!(request.node_kind, NodeKind::Plan)
+            && matches!(request.role, DeliberationRole::Producer)
+        {
+            &policy.worker_role_descriptions
+        } else {
+            &[]
+        };
+    let core_prompt = render_role_prompt_with_test_plan_context(RolePromptRender {
+        system: &system,
+        role: &request.role,
+        objective: &request.objective,
+        context: &request.context,
+        producer_content: request.producer_content.as_deref(),
+        critic_content: request.critic_content.as_deref(),
+        feedback: &request.feedback,
+        target_views: &request.target_views,
+        test_plan_context: &request.test_plan_context,
+        review_contract: review_contract.as_ref(),
+        worker_role_descriptions,
+    });
+    let base_prompt = if has_tools {
+        format!("{core_prompt}\n\n{}", render_tool_section(file_tool_policy))
+    } else {
+        core_prompt.clone()
+    };
+
+    BuiltRolePrompt {
+        core_prompt,
+        base_prompt,
+    }
+}
+
 impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
     fn run_role(&self, request: RoleRequest, telemetry: &dyn TelemetrySink) -> RoleRunOutput {
         let subsource = role_subsource(&request.role);
@@ -257,82 +368,10 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
             &request.test_plan_context.required_validation_targets,
         );
 
-        let worker_role_policy = request
-            .worker_role
-            .as_deref()
-            .and_then(|role| self.policy.worker_role_policies.get(role));
-
-        // Decomposition and Plan Producer prompts use a fixed schema variant
-        // rebuilt from `planner_producer_base` — see `planner_protocol_schema_for`.
-        let system: String = match (&request.node_kind, &request.role) {
-            (NodeKind::Decomposition | NodeKind::Plan, DeliberationRole::Producer) => format!(
-                "{}\n{}",
-                self.policy.planner_producer_base,
-                planner_protocol_schema_for(&request.node_kind, &self.policy)
-            ),
-            (NodeKind::Decomposition | NodeKind::Plan, DeliberationRole::Critic) => {
-                self.policy.planner_critic_system.clone()
-            }
-            (NodeKind::Decomposition | NodeKind::Plan, DeliberationRole::Referee) => {
-                self.policy.planner_referee_system.clone()
-            }
-            (NodeKind::Work, DeliberationRole::Producer) => worker_role_policy
-                .map(|p| p.producer_system.clone())
-                .unwrap_or_else(|| self.policy.worker_producer_system.clone()),
-            (NodeKind::Work, DeliberationRole::Critic) => worker_role_policy
-                .map(|p| p.critic_system.clone())
-                .unwrap_or_else(|| self.policy.worker_critic_system.clone()),
-            (NodeKind::Work, DeliberationRole::Referee) => worker_role_policy
-                .map(|p| p.referee_system.clone())
-                .unwrap_or_else(|| self.policy.worker_referee_system.clone()),
-        };
-        // The language plugin selected for this node's own target files
-        // (see `select_plugin`) is composed here, per node, rather than
-        // baked into `self.policy` — an adapter's declared plugins vary by
-        // node, not by adapter, so a Rust node's prompt must not carry
-        // Python guidance and vice versa.
-        let system = match &request.context.plugin_prompt {
-            Some(plugin) => format!("{system}\n\n{}", render_plugin_prompt(plugin)),
-            None => system,
-        };
-
-        let review_contract = NodeReviewContract::for_role(
-            &request.role,
-            &request.node_kind,
-            &request.context.target_files,
-            &request.test_plan_context,
-            has_tools,
-        );
-        // Only the Plan-node Producer sees the available worker roles — that
-        // is the only kind that assigns roles to tasks. Decomposition tasks
-        // have no roles, so the section is omitted from their prompt even
-        // when the adapter defines worker roles.
-        let worker_role_descriptions: &[(String, String)] =
-            if matches!(request.node_kind, NodeKind::Plan)
-                && matches!(request.role, DeliberationRole::Producer)
-            {
-                &self.policy.worker_role_descriptions
-            } else {
-                &[]
-            };
-        let core_prompt = render_role_prompt_with_test_plan_context(RolePromptRender {
-            system: &system,
-            role: &request.role,
-            objective: &request.objective,
-            context: &request.context,
-            producer_content: request.producer_content.as_deref(),
-            critic_content: request.critic_content.as_deref(),
-            feedback: &request.feedback,
-            target_views: &request.target_views,
-            test_plan_context: &request.test_plan_context,
-            review_contract: review_contract.as_ref(),
-            worker_role_descriptions,
-        });
-        let base_prompt = if has_tools {
-            format!("{core_prompt}\n\n{}", render_tool_section(&policy))
-        } else {
-            core_prompt.clone()
-        };
+        let BuiltRolePrompt {
+            core_prompt,
+            base_prompt,
+        } = build_role_prompt(&request, &self.policy, &policy, has_tools);
 
         let executor: Option<FileToolExecutor> = request.tool_context.map(|ctx| {
             if let Some(workspace) = ctx.writable_workspace {

@@ -10,6 +10,7 @@
 
 mod parser;
 pub mod policy;
+mod preview;
 mod prompt;
 mod protocol_state;
 pub mod runner;
@@ -17,5 +18,6 @@ pub mod target_view;
 mod tooling;
 
 pub use policy::RolePolicy;
+pub use preview::render_prompt_preview;
 pub use runner::{ProviderRoleRunner, RoleRequest, RoleRunOutput, RoleRunner, RoleToolContext};
 pub use target_view::{TargetView, TargetViewKind};

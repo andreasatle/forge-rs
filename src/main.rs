@@ -17,13 +17,20 @@
 //!   forge vast list                                         — list current instances
 //!   forge vast destroy <instance_id>                        — destroy an instance
 //!
+//!   forge prompt-preview <config.yaml> --node <decomposition|plan|work> --role <producer|critic|referee> [--worker <name>]
+//!       — render the static prompt template for a role/node-kind combination
+//!
 //! For smoke-test scenarios, use the examples:
 //!   cargo run --example scheduler_deliberation_demo
 //!   cargo run --example deliberation_demo
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 
 use forge_rs::config::ForgeConfig;
+use forge_rs::machines::deliberation::DeliberationRole;
+use forge_rs::machines::scheduler::NodeKind;
+use forge_rs::project::ProjectAdapter;
+use forge_rs::roles::render_prompt_preview;
 use forge_rs::runtime::{ForgeRuntime, TraceFilter, run_history, run_reset, run_show, run_trace};
 use forge_rs::vast::VastClient;
 
@@ -83,6 +90,65 @@ enum Command {
         #[command(subcommand)]
         action: VastCommand,
     },
+    /// Render the static prompt template for a role/node-kind combination.
+    PromptPreview {
+        /// Path to the forge config YAML file.
+        config: String,
+        /// Node kind whose prompt template to render.
+        #[arg(long, value_enum)]
+        node: NodeKindArg,
+        /// Role whose prompt template to render.
+        #[arg(long, value_enum)]
+        role: RoleArg,
+        /// Worker role name (for `--node work` only); selects that role's
+        /// prompts in place of the adapter's shared worker prompts.
+        #[arg(long)]
+        worker: Option<String>,
+    },
+}
+
+/// CLI-facing mirror of [`NodeKind`], since the domain type has no
+/// `clap::ValueEnum` impl of its own.
+#[derive(Clone, Copy, ValueEnum)]
+enum NodeKindArg {
+    /// A planning node with no worker-role assignment.
+    Decomposition,
+    /// A planning node that assigns worker roles and file operations.
+    Plan,
+    /// An execution node.
+    Work,
+}
+
+impl From<NodeKindArg> for NodeKind {
+    fn from(value: NodeKindArg) -> Self {
+        match value {
+            NodeKindArg::Decomposition => NodeKind::Decomposition,
+            NodeKindArg::Plan => NodeKind::Plan,
+            NodeKindArg::Work => NodeKind::Work,
+        }
+    }
+}
+
+/// CLI-facing mirror of [`DeliberationRole`], since the domain type has no
+/// `clap::ValueEnum` impl of its own.
+#[derive(Clone, Copy, ValueEnum)]
+enum RoleArg {
+    /// Generates the initial content for the objective.
+    Producer,
+    /// Evaluates the producer's content and accepts or rejects it.
+    Critic,
+    /// Makes the final acceptance decision after the critic has weighed in.
+    Referee,
+}
+
+impl From<RoleArg> for DeliberationRole {
+    fn from(value: RoleArg) -> Self {
+        match value {
+            RoleArg::Producer => DeliberationRole::Producer,
+            RoleArg::Critic => DeliberationRole::Critic,
+            RoleArg::Referee => DeliberationRole::Referee,
+        }
+    }
 }
 
 #[derive(Subcommand)]
@@ -148,7 +214,52 @@ fn main() {
             });
         }
         Command::Vast { action } => handle_result(run_vast_command(action)),
+        Command::PromptPreview {
+            config,
+            node,
+            role,
+            worker,
+        } => run_config_command(&config, move |config| {
+            run_prompt_preview(&config, node.into(), role.into(), worker)
+        }),
     }
+}
+
+/// Load the adapter `config` points at and print the rendered prompt
+/// template for `node_kind`/`role` (and, for [`NodeKind::Work`], `worker`).
+fn run_prompt_preview(
+    config: &ForgeConfig,
+    node_kind: NodeKind,
+    role: DeliberationRole,
+    worker: Option<String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let adapter = forge_rs::project::load_adapter(std::path::Path::new(&config.adapter))?;
+    let policy = adapter.role_policy();
+
+    if let Some(worker_role) = &worker {
+        let known = policy
+            .worker_role_descriptions
+            .iter()
+            .any(|(name, _)| name == worker_role);
+        if !known {
+            let available: Vec<&str> = policy
+                .worker_role_descriptions
+                .iter()
+                .map(|(name, _)| name.as_str())
+                .collect();
+            return Err(format!(
+                "unknown worker role '{worker_role}'; available roles: {}",
+                available.join(", ")
+            )
+            .into());
+        }
+    }
+
+    println!(
+        "{}",
+        render_prompt_preview(&policy, node_kind, role, worker)
+    );
+    Ok(())
 }
 
 /// Run a `vast` subcommand against the Vast.ai API.
