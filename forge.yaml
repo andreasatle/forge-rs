@@ -1,14 +1,36 @@
-northstar: northstar.md
+objective: >
+  A Python program in main.py that implements a Fibonacci number generator.
+  The program exposes a reusable fibonacci(n: int) function and has
+  corresponding unit tests.
 artifact:
   repo_path: ".forge/artifacts/main.git"
   branch: "main"
 provider:
   cheap:
-    unmanaged:
-      base_url: http://127.0.0.1:8080
-      model: Qwen2.5-Coder-7B-Instruct
-      backend: llama_cpp
-      n_predict: 4096
+    managed:
+      llama_cpp:
+        command: "llama-server"
+        model:
+          hf: "lm-kit/qwen-3-14b-instruct-gguf:Q4_K_M"
+        host: "127.0.0.1"
+        port: 8080
+        startup_timeout_seconds: 120
+        n_predict: 4096
+  strong:
+    managed:
+      llama_cpp:
+        command: "llama-server"
+        model:
+          hf: "lm-kit/qwen-3-14b-instruct-gguf:Q4_K_M"
+        host: "127.0.0.1"
+        port: 8081
+        startup_timeout_seconds: 120
+        n_predict: 4096
 telemetry:
   directory: "runs"
 adapter: adapters/coding_tdd.yaml
+teams:
+  - name: main
+    northstar: northstar.md
+    adapter: adapters/coding_tdd.yaml
+    trigger: start
