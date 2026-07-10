@@ -13,6 +13,7 @@
 //! If a component has durable state and transitions over time, it belongs under
 //! `machines/`, not `services/`.
 
+pub mod team_trigger;
 pub mod time;
 
 /// Extract the first balanced JSON object from `s`.
