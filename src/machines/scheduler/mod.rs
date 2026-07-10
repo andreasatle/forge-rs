@@ -73,6 +73,6 @@ pub use machine::{RecoverySummary, SchedulerMachine, SchedulerTerminalOutput};
 pub use request::RunRequest;
 pub use state::SchedulerState;
 pub use types::{
-    IntegrationFailure, IntegrationOutput, NodeFailure, NodeRequest, PlanOutput, RecoveryAction,
-    WorkOutput,
+    IntegrationFailure, IntegrationOutput, NodeFailure, NodeRequest, PlanOutput, PlannerTaskOutput,
+    RecoveryAction, WorkOutput,
 };

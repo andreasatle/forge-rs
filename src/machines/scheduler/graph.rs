@@ -648,6 +648,24 @@ impl RunGraph {
         }
     }
 
+    pub(super) fn invalid_planner_task_integration_reason(
+        &self,
+        node_id: &NodeId,
+    ) -> Option<String> {
+        match self.node_for_running(node_id) {
+            None => Some(format!("node {} not found in graph", node_id.0)),
+            Some(node) if node.kind != NodeKind::Plan => Some(format!(
+                "node {} is {:?} but PlannerTaskIntegrationReturned requires a Plan node",
+                node_id.0, node.kind
+            )),
+            Some(node) if node.status != NodeStatus::Integrating => Some(format!(
+                "node {} has status {:?} but PlannerTaskIntegrationReturned requires Integrating",
+                node_id.0, node.status
+            )),
+            _ => None,
+        }
+    }
+
     /// Count `(node_count, completed_count)` for a graph — used in telemetry.
     pub fn node_counts(&self) -> (usize, usize) {
         let completed = self

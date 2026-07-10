@@ -331,7 +331,10 @@ fn split_remaps_downstream_dependencies_and_chain_completes() {
         },
         SchedulerEvent::PlanAccepted {
             node_id: split_id.clone(),
-            plan: PlanOutput { children: vec![] },
+            plan: PlanOutput {
+                children: vec![],
+                tasks: vec![],
+            },
         },
     );
     let SchedulerState::Active { graph, .. } = t.state else {

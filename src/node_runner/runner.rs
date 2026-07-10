@@ -49,6 +49,7 @@ impl NodeRunner for StaticNodeRunner {
                     dependencies: vec![],
                     validation_plan: None,
                 }],
+                tasks: vec![],
             }),
             NodeKind::Work => NodeRunResult::WorkAccepted(NodeRunWorkResult {
                 work: WorkOutput {

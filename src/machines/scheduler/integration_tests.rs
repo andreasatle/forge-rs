@@ -128,3 +128,34 @@ fn integrate_planner_tasks_creates_manifest_only_commit() {
     let file_blob = git_output(&repo_path, &["show", &format!("{new_sha}:file.txt")]);
     assert_eq!(file_blob, "v1");
 }
+
+/// `integrate_plan_tasks` is the scheduler-facing entry point: it converts
+/// `PlannerTaskOutput`s into `TaskRecord`s (leaving `commit` empty and `team`
+/// `None`, per the placeholder team-identity contract) and translates the
+/// manifest write into a `SchedulerEvent`.
+#[test]
+fn integrate_plan_tasks_returns_planner_tasks_integrated_event() {
+    let (_temp, artifact) = fixture("plan-tasks-event");
+    let service = IntegrationService::with_artifact(artifact, Rc::new(NoopTelemetry));
+
+    let event = service.integrate_plan_tasks(
+        NodeId("P".to_string()),
+        vec![
+            PlannerTaskOutput {
+                id: "t1".to_string(),
+                objective: "decompose alpha".to_string(),
+            },
+            PlannerTaskOutput {
+                id: "t2".to_string(),
+                objective: "decompose beta".to_string(),
+            },
+        ],
+    );
+
+    assert_eq!(
+        event,
+        SchedulerEvent::PlannerTasksIntegrated {
+            node_id: NodeId("P".to_string())
+        }
+    );
+}

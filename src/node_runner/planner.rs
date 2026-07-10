@@ -8,7 +8,7 @@ use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
 
-use crate::machines::scheduler::{NodeId, NodeKind, NodeRequest, PlanOutput};
+use crate::machines::scheduler::{NodeId, NodeKind, NodeRequest, PlanOutput, PlannerTaskOutput};
 
 /// A single task in a structured planner response.
 #[derive(Deserialize, Serialize, Debug)]
@@ -74,11 +74,11 @@ pub enum PlannerOutputKind {
     /// Tasks are pure planner intent — id, objective, and ordering only, with
     /// no file targets, role, or operation. Does not correspond to any
     /// scheduler [`NodeKind`], so [`PlannerOutputProcessor::into_plan`]
-    /// produces no children for it. Recording these tasks into
-    /// `.forge/tasks.json` is implemented as
-    /// `IntegrationService::integrate_planner_tasks`, but wiring a completed
-    /// `Plan` node's `Task`-kind output to call it, and triggering worker
-    /// teams from the manifest, is not yet implemented.
+    /// produces no children for it, carrying the tasks in
+    /// [`crate::machines::scheduler::PlanOutput::tasks`] instead. The
+    /// scheduler records these into `.forge/tasks.json` via
+    /// `SchedulerEffect::IntegratePlannerTasks`. Triggering worker teams from
+    /// the manifest is not yet implemented.
     Task,
 }
 
@@ -297,14 +297,26 @@ impl<'a> PlannerOutputProcessor<'a> {
     /// [`NodeRequest`]s.
     ///
     /// `Task`-kind output produces no children: it does not correspond to any
-    /// scheduler [`NodeKind`]. Recording its tasks into `.forge/tasks.json`
-    /// happens through `IntegrationService::integrate_planner_tasks`, not
-    /// through scheduler child nodes.
+    /// scheduler [`NodeKind`]. Its tasks are carried instead in
+    /// [`PlanOutput::tasks`], which the scheduler records into
+    /// `.forge/tasks.json` via `SchedulerEffect::IntegratePlannerTasks`.
     pub(crate) fn into_plan(self, output: PlannerOutput) -> PlanOutput {
         let child_kind = match output.kind {
             PlannerOutputKind::Work => NodeKind::Work,
             PlannerOutputKind::Plan => NodeKind::Plan,
-            PlannerOutputKind::Task => return PlanOutput { children: vec![] },
+            PlannerOutputKind::Task => {
+                return PlanOutput {
+                    children: vec![],
+                    tasks: output
+                        .tasks
+                        .into_iter()
+                        .map(|task| PlannerTaskOutput {
+                            id: task.id,
+                            objective: task.objective,
+                        })
+                        .collect(),
+                };
+            }
         };
 
         PlanOutput {
@@ -322,6 +334,7 @@ impl<'a> PlannerOutputProcessor<'a> {
                     validation_plan: None,
                 })
                 .collect(),
+            tasks: vec![],
         }
     }
 }

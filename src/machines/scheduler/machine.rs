@@ -355,11 +355,22 @@ impl SchedulerMachine {
                                         },
                                     );
                                 }
-                                let graph = graph.mark_node(&node_id, NodeStatus::Completed);
-                                let graph = graph.insert_children(&node_id, plan.children);
-                                Transition {
-                                    state: SchedulerState::Active { graph, run_config },
-                                    effects: vec![],
+                                if plan.tasks.is_empty() {
+                                    let graph = graph.mark_node(&node_id, NodeStatus::Completed);
+                                    let graph = graph.insert_children(&node_id, plan.children);
+                                    Transition {
+                                        state: SchedulerState::Active { graph, run_config },
+                                        effects: vec![],
+                                    }
+                                } else {
+                                    let graph = graph.mark_node(&node_id, NodeStatus::Integrating);
+                                    Transition {
+                                        state: SchedulerState::Waiting { graph, run_config },
+                                        effects: vec![SchedulerEffect::IntegratePlannerTasks {
+                                            node_id,
+                                            tasks: plan.tasks,
+                                        }],
+                                    }
                                 }
                             }
                         }
@@ -475,6 +486,69 @@ impl SchedulerMachine {
                 }
             }
 
+            // Planner-task integration finished: parallel to the
+            // IntegrationSucceeded/Failed arm above, but for a `Plan` node's
+            // `Task`-kind output rather than a `Work` node's changes.
+            (
+                SchedulerState::Waiting { graph, run_config },
+                event @ (SchedulerEvent::PlannerTasksIntegrated { .. }
+                | SchedulerEvent::PlannerTasksIntegrationFailed { .. }),
+            ) => {
+                let node_id = planner_task_event_id(&event).clone();
+                let active_node = match graph.active_node() {
+                    Ok(node) => node.id.clone(),
+                    Err(detail) => {
+                        return recovery::failed_transition(
+                            graph,
+                            FailureReason::ProtocolViolation(detail),
+                        );
+                    }
+                };
+
+                if active_node != node_id {
+                    let detail = format!(
+                        "expected planner-task integration result for node {} but received {}",
+                        active_node.0, node_id.0
+                    );
+                    return recovery::failed_transition(
+                        graph,
+                        FailureReason::ProtocolViolation(detail),
+                    );
+                }
+
+                if let Some(detail) = graph.invalid_planner_task_integration_reason(&node_id) {
+                    return Transition {
+                        state: SchedulerState::Failed {
+                            graph: graph.clone(),
+                            reason: FailureReason::ProtocolViolation(detail),
+                        },
+                        effects: vec![],
+                    };
+                }
+
+                match event {
+                    SchedulerEvent::PlannerTasksIntegrated { .. } => {
+                        let graph = graph.mark_node(&node_id, NodeStatus::Completed);
+                        Transition {
+                            state: SchedulerState::Active { graph, run_config },
+                            effects: vec![],
+                        }
+                    }
+                    SchedulerEvent::PlannerTasksIntegrationFailed {
+                        failure:
+                            IntegrationFailure {
+                                kind,
+                                message,
+                                recovery,
+                            },
+                        ..
+                    } => recovery::route_recovery(
+                        run_config, graph, &node_id, kind, message, recovery,
+                    ),
+                    _ => unreachable!("planner-task integration event group matched above"),
+                }
+            }
+
             (
                 SchedulerState::Active { graph, .. },
                 SchedulerEvent::PlanAccepted { .. }
@@ -495,6 +569,17 @@ impl SchedulerMachine {
                 graph,
                 FailureReason::ProtocolViolation(
                     "state Active cannot consume IntegrationReturned".to_string(),
+                ),
+            ),
+
+            (
+                SchedulerState::Active { graph, .. },
+                SchedulerEvent::PlannerTasksIntegrated { .. }
+                | SchedulerEvent::PlannerTasksIntegrationFailed { .. },
+            ) => recovery::failed_transition(
+                graph,
+                FailureReason::ProtocolViolation(
+                    "state Active cannot consume PlannerTaskIntegrationReturned".to_string(),
                 ),
             ),
 
@@ -552,6 +637,14 @@ fn integration_event_id(event: &SchedulerEvent) -> &NodeId {
         SchedulerEvent::IntegrationSucceeded { node_id, .. }
         | SchedulerEvent::IntegrationFailed { node_id, .. } => node_id,
         _ => unreachable!("not an integration result event"),
+    }
+}
+
+fn planner_task_event_id(event: &SchedulerEvent) -> &NodeId {
+    match event {
+        SchedulerEvent::PlannerTasksIntegrated { node_id }
+        | SchedulerEvent::PlannerTasksIntegrationFailed { node_id, .. } => node_id,
+        _ => unreachable!("not a planner-task integration event"),
     }
 }
 

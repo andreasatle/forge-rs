@@ -48,6 +48,7 @@ fn plan_expansion_stamps_validation_plan_onto_work_children() {
                     dependencies: vec![],
                     validation_plan: Some(plan.clone()),
                 }],
+                tasks: vec![],
             },
         },
     );

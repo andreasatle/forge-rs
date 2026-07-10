@@ -11,7 +11,7 @@
 use crate::validation::ValidationPlan;
 
 use super::graph::{ModelTier, NodeId, NodeKind, RetryFeedback, TestPlanContext};
-use super::types::WorkOutput;
+use super::types::{PlannerTaskOutput, WorkOutput};
 
 /// Commands that the scheduler emits to the outside world.
 ///
@@ -78,5 +78,18 @@ pub enum SchedulerEffect {
         /// When present, integration executes this plan instead of the global
         /// handler-level validator.  `None` falls back to the global validator.
         validation_plan: Option<ValidationPlan>,
+    },
+
+    /// Record a completed `Plan` node's `Task`-kind output into the task
+    /// manifest.
+    ///
+    /// Parallel to `IntegrateWork`: the handler records the tasks and
+    /// returns an integration result event. The node remains `Integrating`
+    /// until that event arrives.
+    IntegratePlannerTasks {
+        /// The ID of the plan node whose task records are being integrated.
+        node_id: NodeId,
+        /// The planner-produced task records to record into the manifest.
+        tasks: Vec<PlannerTaskOutput>,
     },
 }

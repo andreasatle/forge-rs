@@ -62,4 +62,18 @@ pub enum SchedulerEvent {
         /// The failure and recovery direction.
         failure: IntegrationFailure,
     },
+    /// A previously-dispatched plan node's `Task`-kind output was recorded
+    /// into the task manifest successfully.
+    PlannerTasksIntegrated {
+        /// The ID of the plan node whose task records were integrated.
+        node_id: NodeId,
+    },
+    /// A previously-dispatched plan node's `Task`-kind output could not be
+    /// recorded into the task manifest.
+    PlannerTasksIntegrationFailed {
+        /// The ID of the plan node whose task records were being integrated.
+        node_id: NodeId,
+        /// The failure and recovery direction.
+        failure: IntegrationFailure,
+    },
 }

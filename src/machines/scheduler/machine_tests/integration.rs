@@ -193,3 +193,104 @@ fn integration_failure_routes_to_recovery_replacement() {
         assert!(t.effects.is_empty());
     }
 }
+
+#[test]
+fn plan_task_output_marks_integrating_and_emits_integrate_planner_tasks() {
+    // Invariant: a Plan node whose accepted output carries planner `tasks`
+    // (Task-kind output) is not completed immediately — it moves to
+    // Integrating and emits IntegratePlannerTasks, parallel to how a Work
+    // node's WorkAccepted defers completion until IntegrationSucceeded.
+    let graph = RunGraph {
+        nodes: vec![plan_node("P", "decompose the epic", &[])],
+    };
+    let t = do_transition(
+        SchedulerState::Waiting {
+            graph: running(graph, "P"),
+            run_config: RunConfig::default(),
+        },
+        SchedulerEvent::PlanAccepted {
+            node_id: NodeId("P".to_string()),
+            plan: PlanOutput {
+                children: vec![],
+                tasks: vec![PlannerTaskOutput {
+                    id: "t1".to_string(),
+                    objective: "decompose alpha".to_string(),
+                }],
+            },
+        },
+    );
+
+    let SchedulerState::Waiting { graph, .. } = t.state else {
+        panic!("expected Waiting")
+    };
+    assert_eq!(graph.nodes[0].status, NodeStatus::Integrating);
+    assert!(matches!(
+        t.effects.as_slice(),
+        [SchedulerEffect::IntegratePlannerTasks { tasks, .. }] if tasks.len() == 1
+    ));
+}
+
+#[test]
+fn planner_tasks_integrated_completes_plan_node() {
+    // Invariant: PlannerTasksIntegrated completes the Plan node and resumes
+    // scanning, mirroring IntegrationSucceeded for Work nodes.
+    let mut graph = RunGraph {
+        nodes: vec![plan_node("P", "decompose the epic", &[])],
+    };
+    graph.nodes[0].status = NodeStatus::Integrating;
+
+    let t = do_transition(
+        SchedulerState::Waiting {
+            graph,
+            run_config: RunConfig::default(),
+        },
+        SchedulerEvent::PlannerTasksIntegrated {
+            node_id: NodeId("P".to_string()),
+        },
+    );
+
+    let SchedulerState::Active { graph, .. } = t.state else {
+        panic!("expected Active, got {:#?}", t.state);
+    };
+    assert_eq!(graph.nodes[0].status, NodeStatus::Completed);
+    assert!(t.effects.is_empty());
+}
+
+#[test]
+fn planner_tasks_integration_failed_routes_to_recovery() {
+    // Invariant: PlannerTasksIntegrationFailed routes through the same
+    // recovery machinery as IntegrationFailed, keyed off the same
+    // IntegrationFailure payload.
+    let mut graph = RunGraph {
+        nodes: vec![plan_node("P", "decompose the epic", &[])],
+    };
+    graph.nodes[0].status = NodeStatus::Integrating;
+
+    let t = do_transition(
+        SchedulerState::Waiting {
+            graph,
+            run_config: RunConfig::default(),
+        },
+        SchedulerEvent::PlannerTasksIntegrationFailed {
+            node_id: NodeId("P".to_string()),
+            failure: IntegrationFailure {
+                kind: FailureKind::IntegrationFailure,
+                message: "manifest commit failed".to_string(),
+                recovery: RecoveryAction::Terminal {
+                    message: "planner task integration failed".to_string(),
+                },
+            },
+        },
+    );
+
+    let SchedulerState::Failed { reason, .. } = t.state else {
+        panic!("expected Failed, got {:#?}", t.state);
+    };
+    let FailureReason::TerminalRecovery {
+        terminal_message, ..
+    } = reason
+    else {
+        panic!("expected TerminalRecovery, got {reason:?}");
+    };
+    assert_eq!(terminal_message, "planner task integration failed");
+}

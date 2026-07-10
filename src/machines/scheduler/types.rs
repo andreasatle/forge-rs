@@ -15,6 +15,24 @@ use super::graph::{NodeId, NodeKind};
 pub struct PlanOutput {
     /// The set of nodes the planner wants the scheduler to insert.
     pub children: Vec<NodeRequest>,
+    /// Planner-produced task records with no corresponding scheduler node.
+    ///
+    /// Populated only for `PlannerOutputKind::Task` output, in which case
+    /// `children` is always empty. Recorded into the task manifest via
+    /// `SchedulerEffect::IntegratePlannerTasks` instead of becoming graph
+    /// nodes.
+    pub tasks: Vec<PlannerTaskOutput>,
+}
+
+/// A single planner-produced task record with no corresponding scheduler
+/// node, carried from `PlannerOutputKind::Task` output through to
+/// `IntegrationService::integrate_plan_tasks`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PlannerTaskOutput {
+    /// Planner-assigned identifier for this task.
+    pub id: String,
+    /// Natural-language description of the planner's intent.
+    pub objective: String,
 }
 
 /// The structured output of a work node that succeeded.

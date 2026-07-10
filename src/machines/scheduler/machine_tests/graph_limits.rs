@@ -25,6 +25,7 @@ fn plan_child_depth_limit_fails_scheduler() {
                     dependencies: vec![NodeId("P".to_string())],
                     validation_plan: None,
                 }],
+                tasks: vec![],
             },
         },
     );
@@ -94,6 +95,7 @@ fn plan_expansion_respects_graph_size_limit() {
                         validation_plan: None,
                     },
                 ],
+                tasks: vec![],
             },
         },
     );

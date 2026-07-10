@@ -282,6 +282,7 @@ fn runtime_summary_uses_post_integration_artifact_commit() {
                         dependencies: vec![],
                         validation_plan: None,
                     }],
+                    tasks: vec![],
                 }),
                 NodeKind::Work => {
                     request
@@ -468,6 +469,7 @@ fn successful_validated_run_sets_validation_passed_true() {
                         dependencies: vec![],
                         validation_plan: None,
                     }],
+                    tasks: vec![],
                 }),
                 NodeKind::Work => {
                     request
@@ -552,6 +554,7 @@ fn validation_failure_sets_validation_passed_false_in_manifest() {
                         dependencies: vec![],
                         validation_plan: None,
                     }],
+                    tasks: vec![],
                 }),
                 NodeKind::Work => {
                     request

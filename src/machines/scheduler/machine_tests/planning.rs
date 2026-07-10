@@ -45,6 +45,7 @@ fn plan_node_creates_work_child() {
                     dependencies: vec![NodeId("P".to_string())],
                     validation_plan: None,
                 }],
+                tasks: vec![],
             },
         },
     );
@@ -83,6 +84,7 @@ fn plan_with_unknown_dependency_fails_scheduler() {
                     dependencies: vec![NodeId("missing".to_string())],
                     validation_plan: None,
                 }],
+                tasks: vec![],
             },
         },
     );
@@ -134,6 +136,7 @@ fn plan_with_valid_dependencies_still_succeeds() {
                     dependencies: vec![NodeId("P".to_string())],
                     validation_plan: None,
                 }],
+                tasks: vec![],
             },
         },
     );
@@ -184,6 +187,7 @@ fn sibling_dependencies_are_resolved_to_graph_ids() {
                         validation_plan: None,
                     },
                 ],
+                tasks: vec![],
             },
         },
     );
@@ -272,6 +276,7 @@ fn planner_can_create_two_work_nodes_with_dependency() {
                         validation_plan: None,
                     },
                 ],
+                tasks: vec![],
             },
         },
     );

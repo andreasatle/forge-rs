@@ -25,6 +25,12 @@ pub(crate) fn print_returned_progress(event: &SchedulerEvent) {
         SchedulerEvent::IntegrationSucceeded { node_id, .. } => {
             eprintln!("[integration] complete {}", node_id.short());
         }
+        SchedulerEvent::PlannerTasksIntegrationFailed { node_id, .. } => {
+            eprintln!("[integration] failed {}", node_id.short());
+        }
+        SchedulerEvent::PlannerTasksIntegrated { node_id, .. } => {
+            eprintln!("[integration] complete {}", node_id.short());
+        }
         SchedulerEvent::Start => {}
     }
 }
@@ -37,5 +43,7 @@ pub(crate) fn is_progress_event(event: &SchedulerEvent) -> bool {
             | SchedulerEvent::NodeFailed { .. }
             | SchedulerEvent::IntegrationSucceeded { .. }
             | SchedulerEvent::IntegrationFailed { .. }
+            | SchedulerEvent::PlannerTasksIntegrated { .. }
+            | SchedulerEvent::PlannerTasksIntegrationFailed { .. }
     )
 }

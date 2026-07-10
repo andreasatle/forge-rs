@@ -193,6 +193,9 @@ impl<R: NodeRunner> SchedulerHandler<R> {
                 target_files,
                 validation_plan,
             ),
+            SchedulerEffect::IntegratePlannerTasks { node_id, tasks } => {
+                self.integration.integrate_plan_tasks(node_id, tasks)
+            }
         }
     }
 }

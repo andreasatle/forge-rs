@@ -146,5 +146,6 @@ fn effect_node_context(effect: &SchedulerEffect) -> Option<(String, u32)> {
         SchedulerEffect::IntegrateWork {
             node_id, attempt, ..
         } => Some((node_id.0.clone(), *attempt)),
+        SchedulerEffect::IntegratePlannerTasks { .. } => None,
     }
 }

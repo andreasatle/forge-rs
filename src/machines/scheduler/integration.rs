@@ -11,7 +11,7 @@ use crate::machines::scheduler::event::SchedulerEvent;
 use crate::machines::scheduler::failure::FailureKind;
 use crate::machines::scheduler::graph::NodeId;
 use crate::machines::scheduler::types::{
-    IntegrationFailure, IntegrationOutput, RecoveryAction, WorkOutput,
+    IntegrationFailure, IntegrationOutput, PlannerTaskOutput, RecoveryAction, WorkOutput,
 };
 use crate::node_runner::WorkAttempt;
 use crate::services::time::utc_now_iso8601;
@@ -281,10 +281,6 @@ impl IntegrationService {
     /// Parallel to [`Self::integrate_work`]'s manifest write, but for
     /// `PlannerOutputKind::Task` output, which has no `Work` node or
     /// `WorkAttempt` workspace of its own.
-    ///
-    /// Not yet called by the scheduler: wiring a `Plan` node's `Task`-kind
-    /// output to invoke this is a separate follow-up task.
-    #[allow(dead_code)]
     pub(crate) fn integrate_planner_tasks(&self, records: Vec<TaskRecord>) -> Result<(), String> {
         let Some(artifact) = self.artifact.borrow().clone() else {
             return Ok(());
@@ -296,6 +292,40 @@ impl IntegrationService {
             record_planner_tasks(&artifact, &workspace, records).map_err(|err| err.to_string())?;
         *self.artifact.borrow_mut() = Some(recorded);
         Ok(())
+    }
+
+    /// Converts a completed `Plan` node's `Task`-kind output into
+    /// `TaskRecord`s and records them, translating the result into a
+    /// `SchedulerEvent`.
+    ///
+    /// Parallel to [`Self::integrate_work`], but planner-produced task intent
+    /// has no per-task commit of its own, so `commit` is left empty. `team`
+    /// stays `None` until team identity is threaded through by the
+    /// multi-team scheduler.
+    pub(crate) fn integrate_plan_tasks(
+        &self,
+        node_id: NodeId,
+        tasks: Vec<PlannerTaskOutput>,
+    ) -> SchedulerEvent {
+        let completed_at = utc_now_iso8601();
+        let records = tasks
+            .into_iter()
+            .map(|task| TaskRecord {
+                id: task.id,
+                objective: task.objective,
+                targets: vec![],
+                commit: String::new(),
+                completed_at: completed_at.clone(),
+                team: None,
+            })
+            .collect();
+        match self.integrate_planner_tasks(records) {
+            Ok(()) => SchedulerEvent::PlannerTasksIntegrated { node_id },
+            Err(message) => SchedulerEvent::PlannerTasksIntegrationFailed {
+                node_id,
+                failure: integration_failure(message),
+            },
+        }
     }
 
     fn record_attempt_evidence(

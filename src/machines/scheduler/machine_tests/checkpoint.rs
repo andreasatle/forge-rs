@@ -47,7 +47,10 @@ fn event_kind_or_status_mismatch_fails_with_protocol_violation() {
             graph: running(single_work_graph(), "A"),
             event: SchedulerEvent::PlanAccepted {
                 node_id: NodeId("A".to_string()),
-                plan: PlanOutput { children: vec![] },
+                plan: PlanOutput {
+                    children: vec![],
+                    tasks: vec![],
+                },
             },
             expected_detail: "node A is Work but received PlanAccepted outcome",
         },

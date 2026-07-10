@@ -4,7 +4,8 @@ use crate::machines::scheduler::handler::SchedulerHandler;
 use crate::machines::scheduler::request::RunRequest;
 use crate::machines::scheduler::{
     ExhaustedAction, FailureKind, FailureReason, IntegrationFailure, IntegrationOutput,
-    NodeFailure, NodeRequest, PlanOutput, RecoveryAction, RunConfig, WorkOutput, run_scheduler,
+    NodeFailure, NodeRequest, PlanOutput, PlannerTaskOutput, RecoveryAction, RunConfig, WorkOutput,
+    run_scheduler,
 };
 use crate::node_runner::StaticNodeRunner;
 
