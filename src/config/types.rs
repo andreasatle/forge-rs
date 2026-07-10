@@ -44,10 +44,62 @@ pub struct TeamConfig {
     /// Path to this team's project adapter YAML file, resolved relative to
     /// the config file.
     pub adapter: String,
-    /// Raw trigger expression (e.g. `start`, `after_each(team)`,
-    /// `after_each(team_a, team_b)`). Stored as-is; not yet parsed or
-    /// evaluated.
-    pub trigger: String,
+    /// Parsed trigger expression, e.g. `start` or
+    /// `after_each(team_a, team_b)`.
+    pub trigger: Trigger,
+}
+
+/// Parsed form of a `TeamConfig::trigger` expression. Not yet consumed by a
+/// scheduler; parsed here so malformed triggers fail at config-load time.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Trigger {
+    /// Runs once, when the forge run starts.
+    Start,
+    /// Runs after every named team has completed.
+    AfterEach(Vec<String>),
+}
+
+impl TryFrom<String> for Trigger {
+    type Error = String;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        let trimmed = value.trim();
+        if trimmed == "start" {
+            return Ok(Self::Start);
+        }
+        let Some(inner) = trimmed
+            .strip_prefix("after_each(")
+            .and_then(|rest| rest.strip_suffix(')'))
+        else {
+            return Err(format!(
+                "trigger must be 'start' or 'after_each(team[, team...])', got '{value}'"
+            ));
+        };
+        let teams = inner
+            .split(',')
+            .map(|s| {
+                let s = s.trim();
+                if s.is_empty() {
+                    Err(format!(
+                        "after_each(...) contains an empty team name in '{value}'"
+                    ))
+                } else {
+                    Ok(s.to_string())
+                }
+            })
+            .collect::<Result<Vec<String>, String>>()?;
+        Ok(Self::AfterEach(teams))
+    }
+}
+
+impl<'de> Deserialize<'de> for Trigger {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw = String::deserialize(deserializer)?;
+        Trigger::try_from(raw).map_err(serde::de::Error::custom)
+    }
 }
 
 /// Artifact repository configuration.

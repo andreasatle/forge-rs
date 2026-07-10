@@ -162,11 +162,76 @@ fn parses_teams() {
     assert_eq!(planner.name, "planner");
     assert_eq!(planner.northstar, "northstars/project.md");
     assert_eq!(planner.adapter, "adapters/planner.yaml");
-    assert_eq!(planner.trigger, "start");
+    assert_eq!(planner.trigger, Trigger::Start);
 
     let implement = &config.teams[1];
     assert_eq!(implement.name, "implement");
-    assert_eq!(implement.trigger, "after_each(planner)");
+    assert_eq!(
+        implement.trigger,
+        Trigger::AfterEach(vec!["planner".to_string()])
+    );
+}
+
+const MULTI_AFTER_EACH_YAML: &str = r#"
+objective: "test"
+artifact:
+  repo_path: ".forge/artifacts/main.git"
+  branch: "main"
+provider:
+  cheap:
+    unmanaged:
+      base_url: "http://localhost:8080"
+      model: "llama-test"
+      n_predict: 512
+telemetry:
+  directory: "runs"
+adapter: coding.yaml
+teams:
+  - name: gather
+    northstar: northstars/gather.md
+    adapter: adapters/gather.yaml
+    trigger: after_each(a, b)
+"#;
+
+#[test]
+fn parses_after_each_with_multiple_teams() {
+    let tmp = TempYaml::new(MULTI_AFTER_EACH_YAML);
+    let config = ForgeConfig::from_file(tmp.path()).unwrap();
+    assert_eq!(
+        config.teams[0].trigger,
+        Trigger::AfterEach(vec!["a".to_string(), "b".to_string()])
+    );
+}
+
+const MALFORMED_TRIGGER_YAML: &str = r#"
+objective: "test"
+artifact:
+  repo_path: ".forge/artifacts/main.git"
+  branch: "main"
+provider:
+  cheap:
+    unmanaged:
+      base_url: "http://localhost:8080"
+      model: "llama-test"
+      n_predict: 512
+telemetry:
+  directory: "runs"
+adapter: coding.yaml
+teams:
+  - name: bogus
+    northstar: northstars/bogus.md
+    adapter: adapters/bogus.yaml
+    trigger: whenever()
+"#;
+
+#[test]
+fn malformed_trigger_fails_fast_at_load() {
+    let tmp = TempYaml::new(MALFORMED_TRIGGER_YAML);
+    let err = ForgeConfig::from_file(tmp.path()).unwrap_err();
+    assert!(
+        err.to_string().contains("trigger must be"),
+        "error must explain the trigger grammar; got: {err}"
+    );
 }
 
 #[test]
