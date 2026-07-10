@@ -180,12 +180,14 @@ impl<R: NodeRunner> SchedulerHandler<R> {
             }
             SchedulerEffect::IntegrateWork {
                 node_id,
+                objective,
                 work,
                 attempt,
                 target_files,
                 validation_plan,
             } => self.integration.integrate_work(
                 node_id,
+                objective,
                 work,
                 attempt,
                 target_files,

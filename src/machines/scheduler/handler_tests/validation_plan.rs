@@ -57,6 +57,7 @@ fn integration_executes_nodes_passing_validation_plan() {
 
     let event = h.handle_effect(SchedulerEffect::IntegrateWork {
         node_id: NodeId("W".to_string()),
+        objective: "integration test objective".to_string(),
         work: WorkOutput {
             summary: "wrote output.txt".to_string(),
         },
@@ -98,6 +99,7 @@ fn integration_executes_nodes_failing_validation_plan() {
 
     let event = h.handle_effect(SchedulerEffect::IntegrateWork {
         node_id: NodeId("W".to_string()),
+        objective: "integration test objective".to_string(),
         work: WorkOutput {
             summary: "wrote output.txt".to_string(),
         },
@@ -157,6 +159,7 @@ fn integration_executes_validation_plan_with_target_file_scope() {
 
     let event = h.handle_effect(SchedulerEffect::IntegrateWork {
         node_id: NodeId("W".to_string()),
+        objective: "integration test objective".to_string(),
         work: WorkOutput {
             summary: "wrote scoped.py".to_string(),
         },
@@ -209,6 +212,7 @@ fn preconditioned_step_skipped_when_file_absent() {
 
     let event = h.handle_effect(SchedulerEffect::IntegrateWork {
         node_id: NodeId("W".to_string()),
+        objective: "integration test objective".to_string(),
         work: WorkOutput {
             summary: "wrote output.txt".to_string(),
         },

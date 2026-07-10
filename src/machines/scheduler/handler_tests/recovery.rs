@@ -60,6 +60,7 @@ fn scheduler_handler_maps_integration_error_to_failed_outcome() {
 
     let event = h.handle_effect(SchedulerEffect::IntegrateWork {
         node_id: NodeId("W".to_string()),
+        objective: "integration test objective".to_string(),
         work: WorkOutput {
             summary: "wrote output.txt".to_string(),
         },
@@ -114,6 +115,7 @@ fn scheduler_handler_maps_integration_conflict_to_failed_outcome() {
     // Attempt to integrate the stale workspace.
     let event = h.handle_effect(SchedulerEffect::IntegrateWork {
         node_id: NodeId("W".to_string()),
+        objective: "integration test objective".to_string(),
         work: WorkOutput {
             summary: "wrote cas-output.txt".to_string(),
         },

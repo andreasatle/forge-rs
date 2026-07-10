@@ -52,6 +52,7 @@ fn temporary_workspace_removed_after_integration() {
 
         h.handle_effect(SchedulerEffect::IntegrateWork {
             node_id: NodeId("W".to_string()),
+            objective: "integration test objective".to_string(),
             work: WorkOutput {
                 summary: "wrote output.txt".to_string(),
             },

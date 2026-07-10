@@ -4,7 +4,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use crate::artifacts::{Artifact, Workspace, WorkspaceFactory, integrate};
+use crate::artifacts::{Artifact, TaskRecord, Workspace, WorkspaceFactory, integrate, record_task};
 use crate::machines::scheduler::event::SchedulerEvent;
 use crate::machines::scheduler::failure::FailureKind;
 use crate::machines::scheduler::graph::NodeId;
@@ -12,6 +12,7 @@ use crate::machines::scheduler::types::{
     IntegrationFailure, IntegrationOutput, RecoveryAction, WorkOutput,
 };
 use crate::node_runner::WorkAttempt;
+use crate::services::time::utc_now_iso8601;
 use crate::telemetry::{TelemetryEvent, TelemetryRecord, TelemetrySink};
 use crate::validation::{AlwaysPassValidator, ValidationPlan, ValidationResult, Validator};
 
@@ -125,6 +126,7 @@ impl IntegrationService {
     pub(crate) fn integrate_work(
         &self,
         node_id: NodeId,
+        objective: String,
         work: WorkOutput,
         attempt: u32,
         target_files: Vec<String>,
@@ -185,7 +187,23 @@ impl IntegrationService {
                 ));
                 match integrate(&artifact, &workspace.borrow()) {
                     Ok(new_artifact) => {
-                        *self.artifact.borrow_mut() = Some(new_artifact);
+                        let record = TaskRecord {
+                            id: node_id.0.clone(),
+                            objective: objective.clone(),
+                            targets: target_files.clone(),
+                            commit: new_artifact.commit_sha.clone(),
+                            completed_at: utc_now_iso8601(),
+                        };
+                        let recorded = record_task(&new_artifact, &workspace.borrow(), record)
+                            .unwrap_or_else(|err| {
+                                eprintln!(
+                                    "[integration] task manifest update failed for {}: {}",
+                                    node_id.short(),
+                                    err
+                                );
+                                new_artifact
+                            });
+                        *self.artifact.borrow_mut() = Some(recorded);
                     }
                     Err(err) => {
                         let message = err.to_string();

@@ -61,6 +61,12 @@ pub enum SchedulerEffect {
     IntegrateWork {
         /// The ID of the node whose work is being integrated.
         node_id: NodeId,
+        /// Natural-language description of what the node accomplished.
+        ///
+        /// Carried here (rather than re-read from the graph) so the task
+        /// manifest record can be built without the integration layer
+        /// depending on graph internals.
+        objective: String,
         /// The work output to integrate.
         work: WorkOutput,
         /// Zero-based attempt number whose worktree should be integrated.

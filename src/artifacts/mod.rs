@@ -8,12 +8,14 @@ mod artifact;
 pub(crate) mod file_ops;
 mod integration;
 mod read;
+pub(crate) mod task_manifest;
 mod workspace;
 
 pub use artifact::{Artifact, ArtifactView};
 pub use file_ops::{ArtifactError, WorkspaceFileOps};
 pub use integration::{IntegrationError, integrate};
 pub use read::ArtifactRead;
+pub(crate) use task_manifest::{TaskRecord, record_task};
 pub use workspace::{Workspace, WorkspaceFactory};
 
 #[cfg(test)]

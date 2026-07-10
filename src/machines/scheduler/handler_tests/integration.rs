@@ -190,6 +190,47 @@ fn work_node_workspace_mutation_creates_new_commit() {
     );
 }
 
+/// The task manifest must be updated in the same commit that integrates a
+/// Work node's changes, driven through the full RunNode → IntegrateWork
+/// machine flow (not by constructing `IntegrateWork` directly).
+#[test]
+fn work_node_integration_records_task_manifest_in_same_commit() {
+    let (_temp, artifact) = fixture("records-task-manifest");
+    let repo_path = artifact.repo_path.clone();
+
+    let runner = FileWritingRunner {
+        path: "output.txt".to_string(),
+        content: "hello from work node\n".to_string(),
+    };
+    let state = SchedulerState::Active {
+        graph: RunGraph {
+            nodes: vec![work_node("W", "write a file")],
+        },
+        run_config: RunConfig::default(),
+    };
+    run_scheduler(SchedulerHandler::with_artifact(runner, artifact), state);
+
+    let new_sha = git_output(&repo_path, &["rev-parse", "HEAD"]);
+
+    let manifest = git_output(
+        &repo_path,
+        &["show", &format!("{new_sha}:.forge/tasks.json")],
+    );
+    let manifest: serde_json::Value = serde_json::from_str(&manifest).unwrap();
+    assert_eq!(manifest["tasks"][0]["id"], "W");
+    assert_eq!(manifest["tasks"][0]["objective"], "write a file");
+    // The recorded commit is the pre-amend integration commit, not the final
+    // amended HEAD that also carries the manifest update itself.
+    assert_ne!(manifest["tasks"][0]["commit"], serde_json::Value::Null);
+    assert_ne!(manifest["tasks"][0]["commit"], new_sha);
+
+    let gitignore = git_output(&repo_path, &["show", &format!("{new_sha}:.gitignore")]);
+    assert!(gitignore.lines().any(|line| line.trim() == ".forge/"));
+
+    let file_content = git_output(&repo_path, &["show", &format!("{new_sha}:output.txt")]);
+    assert_eq!(file_content, "hello from work node");
+}
+
 #[test]
 fn second_work_node_sees_first_work_node_changes() {
     let (_temp, artifact) = fixture("second-sees-first");
@@ -510,6 +551,7 @@ fn integrate_work_commits_pending_workspace_mutation() {
 
     let event = h.handle_effect(SchedulerEffect::IntegrateWork {
         node_id: NodeId("W".to_string()),
+        objective: "integration test objective".to_string(),
         work: WorkOutput {
             summary: "wrote output.txt".to_string(),
         },

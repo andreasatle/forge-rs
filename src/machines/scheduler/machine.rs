@@ -369,9 +369,10 @@ impl SchedulerMachine {
                     // effect is emitted. The node is not yet dependency-satisfying; that
                     // only happens when IntegrationSucceeded arrives.
                     SchedulerEvent::WorkAccepted { work, .. } => {
-                        let (target_files, validation_plan, attempt) = {
+                        let (objective, target_files, validation_plan, attempt) = {
                             let node = graph.get_node(&node_id);
                             (
+                                node.objective.clone(),
                                 node.target_files.clone(),
                                 node.validation_plan.clone(),
                                 node.attempt,
@@ -382,6 +383,7 @@ impl SchedulerMachine {
                             state: SchedulerState::Waiting { graph, run_config },
                             effects: vec![SchedulerEffect::IntegrateWork {
                                 node_id,
+                                objective,
                                 work,
                                 attempt,
                                 target_files,

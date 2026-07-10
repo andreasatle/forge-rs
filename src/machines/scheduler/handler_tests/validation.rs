@@ -28,6 +28,7 @@ fn validation_pass_allows_commit() {
 
     let event = h.handle_effect(SchedulerEffect::IntegrateWork {
         node_id: NodeId("W".to_string()),
+        objective: "integration test objective".to_string(),
         work: WorkOutput {
             summary: "wrote output.txt".to_string(),
         },
@@ -75,6 +76,7 @@ fn validation_failure_blocks_commit() {
 
     let event = h.handle_effect(SchedulerEffect::IntegrateWork {
         node_id: NodeId("W".to_string()),
+        objective: "integration test objective".to_string(),
         work: WorkOutput {
             summary: "wrote output.txt".to_string(),
         },
@@ -188,6 +190,7 @@ fn validation_failure_telemetry_keeps_full_diagnostics() {
 
     h.handle_effect(SchedulerEffect::IntegrateWork {
         node_id: NodeId("W".to_string()),
+        objective: "integration test objective".to_string(),
         work: WorkOutput {
             summary: "wrote output.txt".to_string(),
         },
@@ -243,6 +246,7 @@ fn validation_failure_records_attempt_evidence_before_cleanup() {
 
     h.handle_effect(SchedulerEffect::IntegrateWork {
         node_id: NodeId("W".to_string()),
+        objective: "integration test objective".to_string(),
         work: WorkOutput {
             summary: "wrote output.txt".to_string(),
         },
@@ -316,6 +320,7 @@ fn validator_runs_after_workspace_mutation() {
 
     h.handle_effect(SchedulerEffect::IntegrateWork {
         node_id: NodeId("W".to_string()),
+        objective: "integration test objective".to_string(),
         work: WorkOutput {
             summary: "wrote applied.txt".to_string(),
         },
@@ -355,6 +360,7 @@ fn no_diff_fails_before_running_validator() {
     // semantically before project validation.
     let event = h.handle_effect(SchedulerEffect::IntegrateWork {
         node_id: NodeId("W".to_string()),
+        objective: "integration test objective".to_string(),
         work: WorkOutput {
             summary: "no file changes".to_string(),
         },
@@ -413,6 +419,7 @@ fn validation_pass_sets_validation_passed_true() {
 
     h.handle_effect(SchedulerEffect::IntegrateWork {
         node_id: NodeId("W".to_string()),
+        objective: "integration test objective".to_string(),
         work: WorkOutput {
             summary: "wrote output.txt".to_string(),
         },
@@ -453,6 +460,7 @@ fn validation_failure_sets_validation_passed_false() {
 
     h.handle_effect(SchedulerEffect::IntegrateWork {
         node_id: NodeId("W".to_string()),
+        objective: "integration test objective".to_string(),
         work: WorkOutput {
             summary: "wrote output.txt".to_string(),
         },
@@ -488,6 +496,7 @@ fn no_diff_leaves_validation_passed_none() {
 
     h.handle_effect(SchedulerEffect::IntegrateWork {
         node_id: NodeId("W".to_string()),
+        objective: "integration test objective".to_string(),
         work: WorkOutput {
             summary: "no files".to_string(),
         },
@@ -531,6 +540,7 @@ fn validation_passed_true_even_when_integration_conflicts() {
 
     let event = h.handle_effect(SchedulerEffect::IntegrateWork {
         node_id: NodeId("W".to_string()),
+        objective: "integration test objective".to_string(),
         work: WorkOutput {
             summary: "wrote output.txt".to_string(),
         },
@@ -589,6 +599,7 @@ fn timeout_blocks_commit() {
 
     let event = h.handle_effect(SchedulerEffect::IntegrateWork {
         node_id: NodeId("W".to_string()),
+        objective: "integration test objective".to_string(),
         work: WorkOutput {
             summary: "wrote output.txt".to_string(),
         },
