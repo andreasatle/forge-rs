@@ -7,20 +7,14 @@ use serde::{Deserialize, Deserializer, Serialize};
 /// Top-level configuration for a forge run.
 #[derive(Debug, Deserialize)]
 pub struct ForgeConfig {
-    /// The objective the run will work toward. Mutually exclusive with
-    /// `northstar`; exactly one of the two is required.
+    /// The objective the run will work toward. Required.
     #[serde(default)]
     pub objective: Option<String>,
-    /// Path to a plain text file describing the desired end state, resolved
-    /// relative to the config file. Mutually exclusive with `objective`;
-    /// exactly one of the two is required. When set, the gap between this
-    /// text and the current artifact state becomes the run's objective.
+    /// Team definitions for multi-team runs. Not yet consumed by the
+    /// scheduler; parsed and validated here so `forge.yaml` authors can
+    /// start declaring teams ahead of the scheduler that will read them.
     #[serde(default)]
-    pub northstar: Option<String>,
-    /// The loaded contents of the file at `northstar`, populated by
-    /// [`Self::from_file`]. Not part of the YAML schema.
-    #[serde(skip)]
-    pub northstar_text: Option<String>,
+    pub teams: Vec<TeamConfig>,
     /// Artifact repository settings.
     pub artifact: ArtifactConfig,
     /// Provider settings.
@@ -36,6 +30,24 @@ pub struct ForgeConfig {
     /// config file, like `artifact.repo_path`.
     #[serde(default)]
     pub adapter: String,
+}
+
+/// One team entry in `teams`. A team executes work under its own northstar
+/// and adapter, activated according to its `trigger`.
+#[derive(Debug, Deserialize)]
+pub struct TeamConfig {
+    /// The team's name, referenced by other teams' `trigger` expressions.
+    pub name: String,
+    /// Path to a plain text file describing this team's desired end state,
+    /// resolved relative to the config file.
+    pub northstar: String,
+    /// Path to this team's project adapter YAML file, resolved relative to
+    /// the config file.
+    pub adapter: String,
+    /// Raw trigger expression (e.g. `start`, `after_each(team)`,
+    /// `after_each(team_a, team_b)`). Stored as-is; not yet parsed or
+    /// evaluated.
+    pub trigger: String,
 }
 
 /// Artifact repository configuration.
@@ -265,20 +277,8 @@ impl ForgeConfig {
         // `forge start path/to/forge.yaml` works correctly from any cwd.
         let config_dir = config_path.parent().filter(|p| !p.as_os_str().is_empty());
 
-        match (&config.objective, &config.northstar) {
-            (Some(_), Some(_)) => {
-                return Err("set either northstar or objective, not both".into());
-            }
-            (None, None) => {
-                return Err("either northstar or objective is required".into());
-            }
-            _ => {}
-        }
-        if let Some(northstar_path) = &mut config.northstar {
-            if let Some(dir) = config_dir {
-                *northstar_path = resolve_relative(northstar_path, dir);
-            }
-            config.northstar_text = Some(std::fs::read_to_string(&*northstar_path)?);
+        if config.objective.is_none() {
+            return Err("objective is required".into());
         }
 
         if config.adapter.trim().is_empty() {
@@ -299,14 +299,12 @@ impl ForgeConfig {
         Ok(config)
     }
 
-    /// The run's root objective text: the explicit `objective` when set, or
-    /// the loaded `northstar` file contents otherwise. `from_file` guarantees
-    /// exactly one of the two is present.
+    /// The run's root objective text. `from_file` guarantees `objective` is
+    /// present.
     pub fn root_objective(&self) -> &str {
         self.objective
             .as_deref()
-            .or(self.northstar_text.as_deref())
-            .expect("from_file guarantees objective or northstar_text is set")
+            .expect("from_file guarantees objective is set")
     }
 }
 

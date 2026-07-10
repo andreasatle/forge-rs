@@ -61,7 +61,6 @@ impl RunSession {
                 .with_required_test_targets_fn(setup.required_test_targets_fn)
                 .with_context_file_names(setup.context_file_names)
                 .with_api_summary_command(setup.api_summary_command)
-                .with_northstar(self.config.northstar_text.clone())
                 .with_language_plugins(setup.language_plugins)
                 .with_validation_plan_for_role_fn(setup.validation_plan_for_role_fn);
         let handler = SchedulerHandler::with_artifact(runner, artifact)

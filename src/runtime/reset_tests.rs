@@ -37,8 +37,7 @@ fn make_forge_config(repo_path: &Path, telemetry_path: &Path) -> ForgeConfig {
     };
     ForgeConfig {
         objective: Some("test".to_string()),
-        northstar: None,
-        northstar_text: None,
+        teams: Vec::new(),
         artifact: ArtifactConfig {
             repo_path: repo_path.to_str().unwrap().to_string(),
             branch: "main".to_string(),
@@ -132,8 +131,7 @@ fn make_forge_config_with_language(
     let adapter_path = write_adapter_with_plugin(dir, language);
     ForgeConfig {
         objective: Some("test".to_string()),
-        northstar: None,
-        northstar_text: None,
+        teams: Vec::new(),
         artifact: ArtifactConfig {
             repo_path: repo_path.to_str().unwrap().to_string(),
             branch: "main".to_string(),
@@ -386,8 +384,7 @@ fn reset_creates_configured_branch() {
         };
         ForgeConfig {
             objective: Some("test".to_string()),
-            northstar: None,
-            northstar_text: None,
+            teams: Vec::new(),
             artifact: ArtifactConfig {
                 repo_path: repo_path.to_str().unwrap().to_string(),
                 branch: "artifact".to_string(),

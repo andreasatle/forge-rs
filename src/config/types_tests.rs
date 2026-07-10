@@ -7,9 +7,8 @@ static TEMP_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 /// Creates a fresh, uniquely named directory, so each `TempYaml` gets its
 /// own isolated config directory instead of sharing one process-wide temp
-/// directory (tests that write companion files, like `northstar.md`, next
-/// to the config would otherwise race with each other under parallel test
-/// execution).
+/// directory (tests that write companion files next to the config would
+/// otherwise race with each other under parallel test execution).
 fn unique_config_dir() -> PathBuf {
     let id = TEMP_COUNTER.fetch_add(1, Ordering::SeqCst);
     let dir =
@@ -101,10 +100,7 @@ fn parses_objective() {
     );
 }
 
-// ── northstar config tests ───────────────────────────────────────────────
-
-const NORTHSTAR_YAML: &str = r#"
-northstar: "northstar.md"
+const NO_OBJECTIVE_YAML: &str = r#"
 artifact:
   repo_path: ".forge/artifacts/main.git"
   branch: "main"
@@ -120,37 +116,19 @@ adapter: coding.yaml
 "#;
 
 #[test]
-fn northstar_loads_file_contents_and_becomes_root_objective() {
-    let tmp = TempYaml::new(NORTHSTAR_YAML);
-    let dir = std::path::Path::new(tmp.path()).parent().unwrap();
-    std::fs::write(dir.join("northstar.md"), "Desired end state text.\n").unwrap();
-
-    let config = ForgeConfig::from_file(tmp.path()).unwrap();
+fn objective_is_required() {
+    let tmp = TempYaml::new(NO_OBJECTIVE_YAML);
+    let err = ForgeConfig::from_file(tmp.path()).unwrap_err();
     assert!(
-        config.objective.is_none(),
-        "objective must remain unset when northstar is configured"
+        err.to_string().contains("objective is required"),
+        "error must explain that objective is required; got: {err}"
     );
-    assert_eq!(
-        config.northstar_text.as_deref(),
-        Some("Desired end state text.\n")
-    );
-    assert_eq!(config.root_objective(), "Desired end state text.\n");
 }
 
-#[test]
-fn northstar_path_resolves_against_config_dir() {
-    let tmp = TempYaml::new(NORTHSTAR_YAML);
-    let dir = std::path::Path::new(tmp.path()).parent().unwrap();
-    std::fs::write(dir.join("northstar.md"), "Desired end state text.\n").unwrap();
+// ── teams config tests ───────────────────────────────────────────────────
 
-    let config = ForgeConfig::from_file(tmp.path()).unwrap();
-    let expected = dir.join("northstar.md").to_string_lossy().into_owned();
-    assert_eq!(config.northstar.as_deref(), Some(expected.as_str()));
-}
-
-const OBJECTIVE_AND_NORTHSTAR_YAML: &str = r#"
+const TEAMS_YAML: &str = r#"
 objective: "test"
-northstar: "northstar.md"
 artifact:
   repo_path: ".forge/artifacts/main.git"
   branch: "main"
@@ -163,53 +141,41 @@ provider:
 telemetry:
   directory: "runs"
 adapter: coding.yaml
+teams:
+  - name: planner
+    northstar: northstars/project.md
+    adapter: adapters/planner.yaml
+    trigger: start
+  - name: implement
+    northstar: northstars/implementation.md
+    adapter: adapters/implementation.yaml
+    trigger: after_each(planner)
 "#;
 
 #[test]
-fn objective_and_northstar_are_mutually_exclusive() {
-    let tmp = TempYaml::new(OBJECTIVE_AND_NORTHSTAR_YAML);
-    let err = ForgeConfig::from_file(tmp.path()).unwrap_err();
-    assert!(
-        err.to_string()
-            .contains("set either northstar or objective, not both"),
-        "error must explain the mutual exclusivity; got: {err}"
-    );
-}
+fn parses_teams() {
+    let tmp = TempYaml::new(TEAMS_YAML);
+    let config = ForgeConfig::from_file(tmp.path()).unwrap();
+    assert_eq!(config.teams.len(), 2);
 
-const NEITHER_OBJECTIVE_NOR_NORTHSTAR_YAML: &str = r#"
-artifact:
-  repo_path: ".forge/artifacts/main.git"
-  branch: "main"
-provider:
-  cheap:
-    unmanaged:
-      base_url: "http://localhost:8080"
-      model: "llama-test"
-      n_predict: 512
-telemetry:
-  directory: "runs"
-adapter: coding.yaml
-"#;
+    let planner = &config.teams[0];
+    assert_eq!(planner.name, "planner");
+    assert_eq!(planner.northstar, "northstars/project.md");
+    assert_eq!(planner.adapter, "adapters/planner.yaml");
+    assert_eq!(planner.trigger, "start");
 
-#[test]
-fn objective_or_northstar_is_required() {
-    let tmp = TempYaml::new(NEITHER_OBJECTIVE_NOR_NORTHSTAR_YAML);
-    let err = ForgeConfig::from_file(tmp.path()).unwrap_err();
-    assert!(
-        err.to_string()
-            .contains("either northstar or objective is required"),
-        "error must explain that one of the two is required; got: {err}"
-    );
+    let implement = &config.teams[1];
+    assert_eq!(implement.name, "implement");
+    assert_eq!(implement.trigger, "after_each(planner)");
 }
 
 #[test]
-fn missing_northstar_file_fails_at_config_load_time() {
-    let tmp = TempYaml::new(NORTHSTAR_YAML);
-    // Deliberately do not write northstar.md.
-    let result = ForgeConfig::from_file(tmp.path());
+fn teams_defaults_to_empty_when_absent() {
+    let tmp = TempYaml::new(EXAMPLE_YAML);
+    let config = ForgeConfig::from_file(tmp.path()).unwrap();
     assert!(
-        result.is_err(),
-        "a northstar path that does not resolve to a file must fail from_file"
+        config.teams.is_empty(),
+        "teams must default to empty when absent from the config"
     );
 }
 
