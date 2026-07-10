@@ -67,10 +67,9 @@ pub struct TaskRecord {
     pub commit: String,
     /// UTC ISO 8601 timestamp of when the task was recorded.
     pub completed_at: String,
-    /// The team that completed this task, per the multi-team manifest schema
-    /// (AUDITS/MULTI-TEAM-SUMMARY.md). Set from the completing node's `team`
-    /// field; `None` only for nodes with no team (the single-team path,
-    /// where no trigger evaluation depends on this row).
+    /// The team that completed this task. Set from the completing node's
+    /// `team` field; `None` only for nodes with no team (the single-team
+    /// path, where no trigger evaluation depends on this row).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub team: Option<String>,
 }

@@ -1,10 +1,10 @@
 //! Evaluates a team's [`Trigger`] against a snapshot of the `.forge/tasks.json`
 //! manifest.
 //!
-//! Per `AUDITS/MULTI-TEAM-SUMMARY.md`, a manifest row is both a team's
-//! declaration and its completion record for a task id. `after_each(team)`
-//! is satisfied for a task id once that team has recorded a row for it;
-//! `after_each(a, b)` is satisfied once every named team has.
+//! A manifest row is both a team's declaration and its completion record
+//! for a task id. `after_each(team)` is satisfied for a task id once that
+//! team has recorded a row for it; `after_each(a, b)` is satisfied once
+//! every named team has.
 
 use std::collections::HashSet;
 
