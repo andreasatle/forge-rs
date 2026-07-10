@@ -88,14 +88,14 @@ ws ::= ([ \t\n] ws)?"#;
 
 /// GBNF grammar constraining output to the `PlannerOutput` schema used by
 /// adapters that model tasks as concrete operations
-/// (`{"kind":"work|decomposition","tasks":[{"id":...,"objective":...,"operation":"create|modify|delete","role":...,"targets":[...],"depends_on":[...]}]}`).
+/// (`{"kind":"work|plan","tasks":[{"id":...,"objective":...,"operation":"create|modify|delete","role":...,"targets":[...],"depends_on":[...]}]}`).
 /// The top-level `kind` field is optional (grammar permits its omission,
 /// defaulting to `work` on the parsing side); `targets` may be empty since
-/// `kind: "decomposition"` tasks have no concrete files yet. `role` is optional
+/// `kind: "plan"` tasks have no concrete files yet. `role` is optional
 /// (grammar permits its omission, defaulting to no assigned role on the
 /// parsing side).
 pub(crate) const PLANNER_GBNF: &str = r#"root ::= "{" ws (kind-field ws "," ws)? "\"tasks\"" ws ":" ws "[" ws task (ws "," ws task)* ws "]" ws "}" ws
-kind-field ::= "\"kind\"" ws ":" ws ("\"work\"" | "\"decomposition\"")
+kind-field ::= "\"kind\"" ws ":" ws ("\"work\"" | "\"plan\"")
 task ::= "{" ws "\"id\"" ws ":" ws string ws "," ws "\"objective\"" ws ":" ws string ws "," ws "\"operation\"" ws ":" ws operation ws "," ws (role-field ws "," ws)? "\"targets\"" ws ":" ws string-array ws "," ws "\"depends_on\"" ws ":" ws string-array ws "}" ws
 operation ::= "\"create\"" | "\"modify\"" | "\"delete\""
 role-field ::= "\"role\"" ws ":" ws string
@@ -131,31 +131,10 @@ ws ::= ([ \t\n] ws)?"#;
 /// `role` is a required field rather than an optional one, since the planner
 /// must assign every task to one of the adapter's configured worker roles.
 pub(crate) const PLANNER_GBNF_WITH_ROLES: &str = r#"root ::= "{" ws (kind-field ws "," ws)? "\"tasks\"" ws ":" ws "[" ws task (ws "," ws task)* ws "]" ws "}" ws
-kind-field ::= "\"kind\"" ws ":" ws ("\"work\"" | "\"decomposition\"")
+kind-field ::= "\"kind\"" ws ":" ws ("\"work\"" | "\"plan\"")
 task ::= "{" ws "\"id\"" ws ":" ws string ws "," ws "\"objective\"" ws ":" ws string ws "," ws "\"operation\"" ws ":" ws operation ws "," ws role-field ws "," ws "\"targets\"" ws ":" ws string-array ws "," ws "\"depends_on\"" ws ":" ws string-array ws "}" ws
 operation ::= "\"create\"" | "\"modify\"" | "\"delete\""
 role-field ::= "\"role\"" ws ":" ws string
-string-array ::= "[" ws (string (ws "," ws string)*)? ws "]" ws
-
-string ::=
-  "\"" (
-    [^\\"\x7F\x00-\x1F] |
-    "\\" (["\\/bfnrt] | "u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F])
-  )* "\"" ws
-
-ws ::= ([ \t\n] ws)?"#;
-
-/// GBNF grammar constraining output to the `NodeKind::OldDecomposition` Producer
-/// schema: `{"kind":"decomposition","objectives":[{"id":...,"objective":...,"depends_on":[...]}]}`
-/// or `{"kind":"plan"}`. Unlike [`PLANNER_GBNF`], `kind` is required (never
-/// omitted) and `"work"` is not a valid value; `decomposition` objectives
-/// carry no `targets` or `role` field at all, and `plan` carries no
-/// `objectives` field or any other field — the bare `kind` tag is the entire
-/// signal that the objective is atomic.
-pub(crate) const DECOMPOSITION_GBNF: &str = r#"root ::= decomposition | plan
-decomposition ::= "{" ws "\"kind\"" ws ":" ws "\"decomposition\"" ws "," ws "\"objectives\"" ws ":" ws "[" ws objective (ws "," ws objective)* ws "]" ws "}" ws
-plan ::= "{" ws "\"kind\"" ws ":" ws "\"plan\"" ws "}" ws
-objective ::= "{" ws "\"id\"" ws ":" ws string ws "," ws "\"objective\"" ws ":" ws string ws "," ws "\"depends_on\"" ws ":" ws string-array ws "}" ws
 string-array ::= "[" ws (string (ws "," ws string)*)? ws "]" ws
 
 string ::=
@@ -210,16 +189,6 @@ pub(crate) const PLANNER_PROTOCOL_FOOTER: &str = "PlannerOutput: `tasks` must be
 Each task requires `id`, `objective`, `targets`, and `depends_on`.\n\
 Each `targets` array must be non-empty and list exact files the task may create, modify, or delete.";
 
-/// JSON protocol instructions for the [`NodeKind::OldDecomposition`] Producer
-/// role: a required top-level `kind` field of exactly `"decomposition"` or
-/// `"plan"`, with no `"work"` option.
-///
-/// Framework protocol, fixed by structural node kind rather than adapter
-/// configuration — see [`planner_protocol_schema_for`].
-pub(crate) const DECOMPOSITION_PROTOCOL_FOOTER: &str = "DecompositionOutput: top-level `kind` is required; must be \"decomposition\" or \"plan\".\n\
-\"decomposition\": the objective spans multiple concerns and needs further breakdown. `objectives` is required and must be non-empty; each objective requires `id`, `objective`, and `depends_on` only — no `targets`, no `role`. Each objective becomes a further Decomposition node.\n\
-\"plan\": the objective is already concrete and atomic, ready for a leaf planner to structure the work. No `objectives` field or any other field is permitted: return exactly `{\"kind\": \"plan\"}`. This is a complete, valid, and immediately acceptable response on its own. The objective becomes a single Plan node.";
-
 /// Generic role-identity and task-decomposition instruction for the Plan-node
 /// Producer role.
 ///
@@ -256,9 +225,9 @@ Each task requires `id`, `objective`, `operation`, `targets`, and `depends_on`.\
 Each `targets` array must be non-empty and list exact files the task may create, modify, or delete.\n\
 Optional `role` field: the name of one of the available worker roles to assign this task to. \
 Omit `role` to leave the task unassigned.\n\
-Optional top-level `kind` field: \"work\" (default when omitted) or \"decomposition\". \
-When `kind` is \"decomposition\", every task becomes a further planning node instead of a work node, and `targets` may be empty. \
-All tasks in one PlannerOutput share the same kind — never mix work and decomposition tasks in one response.";
+Optional top-level `kind` field: \"work\" (default when omitted) or \"plan\". \
+When `kind` is \"plan\", every task becomes a further planning node instead of a work node, and `targets` may be empty. \
+All tasks in one PlannerOutput share the same kind — never mix work and plan tasks in one response.";
 
 /// JSON protocol instructions for planner-style roles under an adapter that
 /// defines worker roles: identical to
@@ -271,9 +240,9 @@ Each task requires `id`, `objective`, `operation`, `role`, `targets`, and `depen
 Each `targets` array must be non-empty and list exact files the task may create, modify, or delete.\n\
 Required `role` field: the name of one of the available worker roles listed above. \
 Every task must be assigned to one of those roles.\n\
-Optional top-level `kind` field: \"work\" (default when omitted) or \"decomposition\". \
-When `kind` is \"decomposition\", every task becomes a further planning node instead of a work node, and `targets` may be empty. \
-All tasks in one PlannerOutput share the same kind — never mix work and decomposition tasks in one response.";
+Optional top-level `kind` field: \"work\" (default when omitted) or \"plan\". \
+When `kind` is \"plan\", every task becomes a further planning node instead of a work node, and `targets` may be empty. \
+All tasks in one PlannerOutput share the same kind — never mix work and plan tasks in one response.";
 
 /// A role prompt split into four explicit sections.
 ///
@@ -483,16 +452,17 @@ impl Default for RolePolicy {
 /// — for a Plan-family Producer, based on structural node kind rather than
 /// adapter configuration.
 ///
-/// [`NodeKind::OldDecomposition`] nodes only ever decompose further, with no
-/// worker-role assignment; [`NodeKind::Plan`] nodes are the point where tasks
-/// are assigned worker roles and concrete file operations.
+/// [`NodeKind::OldDecomposition`] and [`NodeKind::Plan`] share the same fixed
+/// schema: both are points where tasks may be assigned worker roles and
+/// concrete file operations, or escalate to further planning.
 pub(crate) fn planner_protocol_schema_for<'a>(
     node_kind: &NodeKind,
     policy: &'a RolePolicy,
 ) -> &'a str {
     match node_kind {
-        NodeKind::OldDecomposition => DECOMPOSITION_PROTOCOL_FOOTER,
-        NodeKind::Plan => PLANNER_PROTOCOL_FOOTER_WITH_OPERATION_AND_ROLES,
+        NodeKind::OldDecomposition | NodeKind::Plan => {
+            PLANNER_PROTOCOL_FOOTER_WITH_OPERATION_AND_ROLES
+        }
         NodeKind::Work => &policy.planner_protocol_schema,
     }
 }

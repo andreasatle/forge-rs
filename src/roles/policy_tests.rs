@@ -86,10 +86,10 @@ fn planner_producer_base_plus_configured_footer_reconstructs_producer_system() {
 
 #[test]
 fn planner_protocol_schema_for_selects_fixed_schema_by_node_kind() {
-    // Invariant: Decomposition always gets the no-operation, no-role
-    // schema and Plan always gets the with-operation, with-roles schema,
-    // regardless of what the adapter configured; Work defers to the
-    // adapter-configured `planner_protocol_schema`.
+    // Invariant: OldDecomposition and Plan always get the same
+    // with-operation, with-roles schema, regardless of what the adapter
+    // configured; Work defers to the adapter-configured
+    // `planner_protocol_schema`.
     let policy = RolePolicy {
         planner_protocol_schema: "custom adapter schema".to_string(),
         ..RolePolicy::default()
@@ -97,7 +97,7 @@ fn planner_protocol_schema_for_selects_fixed_schema_by_node_kind() {
 
     assert_eq!(
         planner_protocol_schema_for(&NodeKind::OldDecomposition, &policy),
-        DECOMPOSITION_PROTOCOL_FOOTER
+        PLANNER_PROTOCOL_FOOTER_WITH_OPERATION_AND_ROLES
     );
     assert_eq!(
         planner_protocol_schema_for(&NodeKind::Plan, &policy),

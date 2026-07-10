@@ -7,7 +7,6 @@
 use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 use crate::machines::scheduler::{NodeId, NodeKind, NodeRequest, PlanOutput};
 
@@ -35,8 +34,8 @@ pub struct PlannerTask {
     pub role: Option<String>,
     /// Explicit artifact files this task is allowed and expected to touch.
     ///
-    /// Omitted (defaults empty) by [`NodeKind::OldDecomposition`]'s
-    /// `decomposition` schema, whose tasks carry no file targets.
+    /// Omitted (defaults empty) by `kind: "plan"` tasks, which escalate to
+    /// further planning nodes and carry no file targets yet.
     #[serde(default)]
     pub targets: Vec<String>,
     /// Ids of other tasks in the same output that must complete before this one.
@@ -55,62 +54,9 @@ pub enum PlannerOperation {
     Delete,
 }
 
-/// Whether a [`NodeKind::OldDecomposition`] parent's output still spans multiple
-/// concerns or has reached an atomic objective.
-#[derive(Clone, Copy, Deserialize, Serialize, Debug, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum DecompositionOutputKind {
-    /// The objective still spans multiple concerns: `objectives` become
-    /// further `Decomposition` children.
-    Decomposition,
-    /// The objective is atomic and ready for a leaf planner: the response
-    /// carries no `objectives`, and the parent's own objective becomes a
-    /// single `Plan` child.
-    Plan,
-}
-
-/// A single objective in a [`NodeKind::OldDecomposition`] parent's structured
-/// response.
-///
-/// Leaner than [`PlannerTask`]: Decomposition objectives carry no concrete
-/// file assignment, so there is no `operation`, `role`, or `targets`.
-#[derive(Deserialize, Serialize, Debug)]
-pub struct DecompositionObjective {
-    /// Planner-assigned identifier, unique within the output.
-    pub id: String,
-    /// Natural-language description of what this objective should accomplish.
-    pub objective: String,
-    /// Ids of other objectives in the same output that must complete before
-    /// this one.
-    pub depends_on: Vec<String>,
-}
-
-/// The structured JSON output a [`NodeKind::OldDecomposition`] parent's planner
-/// is expected to produce.
-///
-/// Each objective becomes a scheduler [`NodeRequest`]. The `depends_on`
-/// entries reference other objectives by id within the same output batch.
-#[derive(Deserialize, Serialize, Debug)]
-pub struct DecompositionOutput {
-    /// Whether `objectives` become further `Decomposition` children, or the
-    /// objective is atomic.
-    ///
-    /// Mandatory in the JSON (no default): this is what lets parsing reject
-    /// unrelated JSON shapes (e.g. the Critic/Referee accept-or-reject
-    /// wrapper) instead of silently matching as an empty `DecompositionOutput`.
-    pub kind: DecompositionOutputKind,
-    /// The ordered list of objectives the planner wants the scheduler to
-    /// execute.
-    ///
-    /// Required (non-empty) when `kind` is `Decomposition`. Omitted (defaults
-    /// empty) when `kind` is `Plan`, whose response carries no objective list
-    /// at all — just `{"kind": "plan"}`.
-    #[serde(default)]
-    pub objectives: Vec<DecompositionObjective>,
-}
-
-/// Whether a [`NodeKind::Plan`] parent's output's tasks become `Work`
-/// children or escalate to further `Decomposition`.
+/// Whether a [`NodeKind::Plan`] or [`NodeKind::OldDecomposition`] parent's
+/// output's tasks become `Work` children or escalate to further `Plan`
+/// nodes.
 ///
 /// All tasks in a single [`PlannerOutput`] share one kind — a planner cannot
 /// mix concrete work with further sub-planning in the same batch. Absent from
@@ -123,19 +69,18 @@ pub enum PlannerOutputKind {
     #[default]
     Work,
     /// The objective is too complex for direct work: `tasks` become further
-    /// `Decomposition` children instead.
-    Decomposition,
+    /// `Plan` children instead.
+    Plan,
 }
 
-/// The structured JSON output a [`NodeKind::Plan`] parent's planner is
-/// expected to produce.
+/// The structured JSON output a [`NodeKind::Plan`] or
+/// [`NodeKind::OldDecomposition`] parent's planner is expected to produce.
 ///
 /// Each task becomes a scheduler [`NodeRequest`]. The `depends_on` entries
 /// reference other tasks by id within the same output batch.
 #[derive(Deserialize, Serialize, Debug)]
 pub struct PlannerOutput {
-    /// Whether `tasks` become `Work` or `Decomposition` children. Defaults to
-    /// `Work`.
+    /// Whether `tasks` become `Work` or `Plan` children. Defaults to `Work`.
     #[serde(default)]
     pub kind: PlannerOutputKind,
     /// The ordered list of tasks the planner wants the scheduler to execute.
@@ -234,114 +179,6 @@ impl<'a> PlannerOutputProcessor<'a> {
         }
     }
 
-    /// Attempt to parse raw provider content as a [`DecompositionOutput`].
-    pub(crate) fn parse_decomposition_content(&self, content: &str) -> Option<DecompositionOutput> {
-        serde_json::from_str::<DecompositionOutput>(content).ok()
-    }
-
-    /// Parse a raw provider response as a [`DecompositionOutput`] directly.
-    pub(crate) fn parse_decomposition_response(
-        &self,
-        raw: &str,
-    ) -> Result<DecompositionOutput, String> {
-        let text = raw.trim();
-        if !text.starts_with('{') {
-            return Err(
-                "planner response must start with '{'; preamble text is not permitted".to_string(),
-            );
-        }
-        serde_json::from_str::<DecompositionOutput>(text)
-            .map_err(|e| format!("planner JSON parse error: {e}"))
-    }
-
-    /// Validate structural constraints for a [`NodeKind::OldDecomposition`]
-    /// parent's output.
-    ///
-    /// A `kind: "plan"` response carries no `objectives` at all — the
-    /// objective is atomic, so there is nothing to validate; it maps to a
-    /// single `Plan` child in [`Self::into_decomposition_plan`]. Decomposition
-    /// objectives are never assigned worker roles or concrete targets, so
-    /// this never validates either.
-    pub(crate) fn validate_decomposition_structure(
-        &self,
-        output: &DecompositionOutput,
-    ) -> Result<(), PlannerValidationError> {
-        if output.kind == DecompositionOutputKind::Plan {
-            return Ok(());
-        }
-        if output.objectives.is_empty() {
-            return Err(PlannerValidationError::EmptyTaskList);
-        }
-        let mut seen: HashSet<&str> = HashSet::new();
-        for objective in &output.objectives {
-            if !seen.insert(objective.id.as_str()) {
-                return Err(PlannerValidationError::DuplicateId(objective.id.clone()));
-            }
-            if objective.objective.trim().is_empty() {
-                return Err(PlannerValidationError::EmptyObjective(objective.id.clone()));
-            }
-            if objective.depends_on.iter().any(|d| d == &objective.id) {
-                return Err(PlannerValidationError::SelfDependency(objective.id.clone()));
-            }
-        }
-        let all_ids: HashSet<&str> = output.objectives.iter().map(|o| o.id.as_str()).collect();
-        for objective in &output.objectives {
-            for dep in &objective.depends_on {
-                if !all_ids.contains(dep.as_str()) {
-                    return Err(PlannerValidationError::UnknownDependency {
-                        task_id: objective.id.clone(),
-                        dep_id: dep.clone(),
-                    });
-                }
-            }
-        }
-        Ok(())
-    }
-
-    /// Convert a validated [`DecompositionOutput`] into a [`PlanOutput`] of
-    /// child [`NodeRequest`]s.
-    ///
-    /// `parent_objective` is the objective of the node that produced `output`
-    /// — used only when `output.kind` is `Plan`, since that response carries
-    /// no task list of its own.
-    pub(crate) fn into_decomposition_plan(
-        self,
-        output: DecompositionOutput,
-        parent_objective: &str,
-    ) -> PlanOutput {
-        if output.kind == DecompositionOutputKind::Plan {
-            return PlanOutput {
-                children: vec![NodeRequest {
-                    id: NodeId(Uuid::new_v4().to_string()),
-                    kind: NodeKind::Plan,
-                    worker_role: None,
-                    objective: parent_objective.to_string(),
-                    target_files: vec![],
-                    required_validation_targets: vec![],
-                    dependencies: vec![],
-                    validation_plan: None,
-                }],
-            };
-        }
-
-        PlanOutput {
-            children: output
-                .objectives
-                .into_iter()
-                .map(|objective| NodeRequest {
-                    id: NodeId(objective.id),
-                    kind: NodeKind::OldDecomposition,
-                    worker_role: None,
-                    objective: objective.objective,
-                    target_files: vec![],
-                    required_validation_targets: vec![],
-                    dependencies: objective.depends_on.into_iter().map(NodeId).collect(),
-                    validation_plan: None,
-                })
-                .collect(),
-        }
-    }
-
     /// Attempt to parse raw provider content as a [`PlannerOutput`].
     pub(crate) fn parse_content(&self, content: &str) -> Option<PlannerOutput> {
         serde_json::from_str::<PlannerOutput>(content).ok()
@@ -413,7 +250,7 @@ impl<'a> PlannerOutputProcessor<'a> {
 
     pub(crate) fn validate(&self, output: &PlannerOutput) -> Result<(), PlannerValidationError> {
         self.validate_structure(output)?;
-        if output.kind == PlannerOutputKind::Decomposition {
+        if output.kind == PlannerOutputKind::Plan {
             // Escalated tasks have no concrete files yet, so target-based
             // validation does not apply until they are decomposed further.
             return Ok(());
@@ -452,7 +289,7 @@ impl<'a> PlannerOutputProcessor<'a> {
     pub(crate) fn into_plan(self, output: PlannerOutput) -> PlanOutput {
         let child_kind = match output.kind {
             PlannerOutputKind::Work => NodeKind::Work,
-            PlannerOutputKind::Decomposition => NodeKind::OldDecomposition,
+            PlannerOutputKind::Plan => NodeKind::Plan,
         };
 
         PlanOutput {

@@ -306,50 +306,15 @@ impl<R: RoleRunner> DeliberationHandler<R> {
         node_kind: &NodeKind,
     ) -> Result<(), ProducerValidationRetry> {
         match node_kind {
-            NodeKind::OldDecomposition if self.plan_validation_context.is_some() => {
-                self.validate_decomposition_producer_content(content)
-            }
-            NodeKind::Plan if self.plan_validation_context.is_some() => {
+            NodeKind::OldDecomposition | NodeKind::Plan
+                if self.plan_validation_context.is_some() =>
+            {
                 self.validate_plan_producer_content(content)
             }
             NodeKind::Work if self.work_requires_artifact_mutation => {
                 self.validate_work_producer_output(artifact_changed)
             }
             _ => Ok(()),
-        }
-    }
-
-    pub(crate) fn validate_decomposition_producer_content(
-        &self,
-        content: &str,
-    ) -> Result<(), ProducerValidationRetry> {
-        let context = self
-            .plan_validation_context
-            .as_ref()
-            .expect("plan_validation_context must be Some when this method is called");
-        let processor = PlannerOutputProcessor::new(
-            context.required_test_targets_fn.as_ref(),
-            &context.available_worker_roles,
-        );
-
-        let Some(decomposition_out) = processor.parse_decomposition_content(content) else {
-            return Err(ProducerValidationRetry {
-                feedback_reason: planner_parse_failure_feedback(),
-                max_retries: MAX_PLAN_VALIDATION_RETRIES,
-                failure_kind: FailureKind::PlannerValidationFailure,
-                failure_reason:
-                    "planner validation failed: content is not valid PlannerOutput JSON".to_string(),
-            });
-        };
-
-        match processor.validate_decomposition_structure(&decomposition_out) {
-            Ok(()) => Ok(()),
-            Err(e) => Err(ProducerValidationRetry {
-                feedback_reason: planner_validation_feedback(&e),
-                max_retries: MAX_PLAN_VALIDATION_RETRIES,
-                failure_kind: FailureKind::PlannerValidationFailure,
-                failure_reason: format!("planner validation failed: {e}"),
-            }),
         }
     }
 

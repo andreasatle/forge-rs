@@ -12,21 +12,13 @@ use crate::node_runner::types::{NodeRunResult, NodeRunWorkResult};
 pub(crate) fn map_output(
     output: DeliberationTerminalOutput,
     kind: NodeKind,
-    objective: &str,
     required_test_targets_fn: &TestTargetsFn,
     available_worker_roles: &[(String, String)],
     telemetry: &dyn TelemetrySink,
 ) -> NodeRunResult {
     match output {
         DeliberationTerminalOutput::Complete(out) => match &kind {
-            NodeKind::OldDecomposition => map_decomposition_output(
-                out.content,
-                objective,
-                required_test_targets_fn,
-                available_worker_roles,
-                telemetry,
-            ),
-            NodeKind::Plan => map_plan_output(
+            NodeKind::OldDecomposition | NodeKind::Plan => map_plan_output(
                 out.content,
                 required_test_targets_fn,
                 available_worker_roles,
@@ -56,58 +48,7 @@ pub(crate) fn map_output(
     }
 }
 
-/// Map a Decomposition node's raw content to a [`NodeRunResult`].
-///
-/// Attempts to parse `content` as a structured
-/// [`DecompositionOutput`](crate::node_runner::planner::DecompositionOutput)
-/// JSON object.
-///
-/// - If parsing succeeds and the graph is structurally valid: emits
-///   `PlannerOutputParsed` and returns `PlanAccepted` with one `NodeRequest`
-///   per task.
-/// - If parsing succeeds but structural validation fails: emits
-///   `PlannerOutputValidationFailed` and returns `Failed` with `Terminal`
-///   recovery.
-/// - If parsing fails (prose or unexpected schema): emits
-///   `PlannerOutputFallback` and returns `Failed` with `Terminal` recovery.
-fn map_decomposition_output(
-    content: String,
-    parent_objective: &str,
-    required_test_targets_fn: &TestTargetsFn,
-    available_worker_roles: &[(String, String)],
-    telemetry: &dyn TelemetrySink,
-) -> NodeRunResult {
-    let processor = PlannerOutputProcessor::new(required_test_targets_fn, available_worker_roles);
-
-    match processor.parse_decomposition_content(&content) {
-        Some(decomposition_out) => {
-            match processor.validate_decomposition_structure(&decomposition_out) {
-                Ok(()) => {
-                    let task_count = decomposition_out.objectives.len();
-                    let dependency_count: usize = decomposition_out
-                        .objectives
-                        .iter()
-                        .map(|o| o.depends_on.len())
-                        .sum();
-                    telemetry.record(TelemetryRecord::new(
-                        "DeliberatingNodeRunner",
-                        TelemetryEvent::PlannerOutputParsed {
-                            task_count,
-                            dependency_count,
-                        },
-                    ));
-                    NodeRunResult::PlanAccepted(
-                        processor.into_decomposition_plan(decomposition_out, parent_objective),
-                    )
-                }
-                Err(e) => plan_validation_failed(e, telemetry),
-            }
-        }
-        None => plan_parse_failed(telemetry),
-    }
-}
-
-/// Map a Plan node's raw content to a [`NodeRunResult`].
+/// Map a Plan-family node's raw content to a [`NodeRunResult`].
 ///
 /// Attempts to parse `content` as a structured
 /// [`PlannerOutput`](crate::node_runner::planner::PlannerOutput) JSON object.

@@ -15,7 +15,7 @@ use crate::node_runner::planner::PlannerOutputProcessor;
 use crate::providers::{ProviderClient, ProviderErrorKind, ProviderRequest, StructuredOutput};
 use crate::roles::TargetView;
 use crate::roles::policy::{
-    DECOMPOSITION_GBNF, PLANNER_GBNF, PLANNER_GBNF_WITH_ROLES, PLANNER_NO_OPERATION_GBNF,
+    PLANNER_GBNF, PLANNER_GBNF_WITH_ROLES, PLANNER_NO_OPERATION_GBNF,
     PLANNER_PROTOCOL_FOOTER_WITH_OPERATION, PLANNER_PROTOCOL_FOOTER_WITH_OPERATION_AND_ROLES,
     PRODUCER_GBNF, PRODUCER_TOOL_GBNF, REVIEWER_TOOL_GBNF, ROLE_GBNF, RolePolicy,
     planner_protocol_schema_for, render_plugin_prompt,
@@ -181,15 +181,14 @@ const MAX_RESPONSE_TOKENS: u32 = 1024;
 /// Select the GBNF grammar constraining a role's output to its exact
 /// response schema, rather than the generic JSON-object grammar.
 ///
-/// `Decomposition` always uses [`DECOMPOSITION_GBNF`]. The `Plan` Producer
-/// schema is resolved by [`planner_protocol_schema_for`] — the same
-/// resolution the retry prompt uses to show the model the correct schema
-/// variant.
+/// `OldDecomposition` and `Plan` Producers share one schema, resolved by
+/// [`planner_protocol_schema_for`] — the same resolution the retry prompt
+/// uses to show the model the correct schema variant.
 ///
 /// `tools_active` selects between the union tool-call-or-final-response
 /// grammar and the final-response-only grammar. It is `true` only while the
 /// role still has a tool loop and tool use remains permitted (`has_tools &&
-/// proto.allow_tool_call()`); the Plan-node Producer never has tools, so it
+/// proto.allow_tool_call()`); the Plan-family Producer never has tools, so it
 /// always uses its single fixed grammar regardless of this flag.
 fn select_grammar(
     node_kind: &NodeKind,
@@ -213,8 +212,7 @@ fn select_grammar(
                     PRODUCER_GBNF
                 }
             }
-            NodeKind::OldDecomposition => DECOMPOSITION_GBNF,
-            NodeKind::Plan => {
+            NodeKind::OldDecomposition | NodeKind::Plan => {
                 let schema = planner_protocol_schema_for(node_kind, policy);
                 if schema == PLANNER_PROTOCOL_FOOTER_WITH_OPERATION_AND_ROLES {
                     PLANNER_GBNF_WITH_ROLES
@@ -506,37 +504,18 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                     &self.policy.worker_role_descriptions,
                 );
                 let planner_schema = planner_protocol_schema_for(&request.node_kind, &self.policy);
-                // Direct PlannerOutput/DecompositionOutput path: no status/content wrapper.
-                let outcome = match request.node_kind {
-                    NodeKind::OldDecomposition => {
-                        match processor.parse_decomposition_response(&response.content) {
-                            Ok(out) => match processor.validate_decomposition_structure(&out) {
-                                Ok(()) => PlanParseOutcome::Success(
-                                    serde_json::to_string(&out)
-                                        .expect("validated DecompositionOutput must serialize"),
-                                ),
-                                Err(e) => PlanParseOutcome::ValidationFailed(format!(
-                                    "planner output validation failed: {e}"
-                                )),
-                            },
-                            Err(e) => PlanParseOutcome::ParseFailed(e),
-                        }
-                    }
-                    NodeKind::Plan => match processor.parse_response(&response.content) {
-                        Ok(out) => match processor.validate(&out) {
-                            Ok(()) => PlanParseOutcome::Success(
-                                serde_json::to_string(&out)
-                                    .expect("validated PlannerOutput must serialize"),
-                            ),
-                            Err(e) => PlanParseOutcome::ValidationFailed(format!(
-                                "planner output validation failed: {e}"
-                            )),
-                        },
-                        Err(e) => PlanParseOutcome::ParseFailed(e),
+                // Direct PlannerOutput path: no status/content wrapper.
+                let outcome = match processor.parse_response(&response.content) {
+                    Ok(out) => match processor.validate(&out) {
+                        Ok(()) => PlanParseOutcome::Success(
+                            serde_json::to_string(&out)
+                                .expect("validated PlannerOutput must serialize"),
+                        ),
+                        Err(e) => PlanParseOutcome::ValidationFailed(format!(
+                            "planner output validation failed: {e}"
+                        )),
                     },
-                    NodeKind::Work => unreachable!(
-                        "planner output parsing only runs for Decomposition/Plan producers"
-                    ),
+                    Err(e) => PlanParseOutcome::ParseFailed(e),
                 };
                 match outcome {
                     PlanParseOutcome::Success(canonical) => {

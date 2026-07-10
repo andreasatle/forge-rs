@@ -36,27 +36,6 @@ fn planner_output_to_plan_output(output: PlannerOutput) -> PlanOutput {
     processor(&no_required_test_targets).into_plan(output)
 }
 
-fn parse_decomposition_content(content: &str) -> Option<DecompositionOutput> {
-    processor(&no_required_test_targets).parse_decomposition_content(content)
-}
-
-fn try_parse_decomposition_response(raw: &str) -> Result<DecompositionOutput, String> {
-    processor(&no_required_test_targets).parse_decomposition_response(raw)
-}
-
-fn validate_decomposition_output(
-    output: &DecompositionOutput,
-) -> Result<(), PlannerValidationError> {
-    processor(&no_required_test_targets).validate_decomposition_structure(output)
-}
-
-fn decomposition_output_to_plan_output(
-    output: DecompositionOutput,
-    parent_objective: &str,
-) -> PlanOutput {
-    processor(&no_required_test_targets).into_decomposition_plan(output, parent_objective)
-}
-
 // ── Direct planner response parsing ─────────────────────────────────────────
 
 #[test]
@@ -106,16 +85,6 @@ fn status_content_wrapper_fails_planner_parse() {
     assert!(
         result.is_err(),
         "status/content wrapper must not parse as PlannerOutput; got {:?}",
-        result
-    );
-}
-
-#[test]
-fn preamble_before_decomposition_json_is_rejected() {
-    let result = try_parse_decomposition_response("Here is the plan:\n{\"kind\":\"plan\"}");
-    assert!(
-        result.is_err(),
-        "preamble before JSON must fail; got {:?}",
         result
     );
 }
@@ -170,57 +139,14 @@ fn missing_kind_field_defaults_to_work() {
 }
 
 #[test]
-fn explicit_decomposition_kind_parses_with_empty_targets() {
-    // Invariant: `kind: "decomposition"` tasks have no concrete files yet, so
-    // an empty `targets` array must parse successfully rather than being
-    // rejected at the JSON level.
-    let json = r#"{"kind":"decomposition","tasks":[{"id":"a","objective":"decompose alpha","targets":[],"depends_on":[]}]}"#;
+fn explicit_plan_kind_parses_with_empty_targets() {
+    // Invariant: `kind: "plan"` tasks have no concrete files yet, so an empty
+    // `targets` array must parse successfully rather than being rejected at
+    // the JSON level.
+    let json = r#"{"kind":"plan","tasks":[{"id":"a","objective":"decompose alpha","targets":[],"depends_on":[]}]}"#;
     let output = parse_planner_content(json).expect("parse must return Some");
-    assert_eq!(output.kind, PlannerOutputKind::Decomposition);
+    assert_eq!(output.kind, PlannerOutputKind::Plan);
     assert!(output.tasks[0].targets.is_empty());
-}
-
-// ── Recursive planning: `kind` field (Decomposition-node `DecompositionOutput`) ─
-
-#[test]
-fn decomposition_missing_kind_field_fails_to_parse() {
-    // Invariant: `kind` is mandatory (no default) — this is what lets an
-    // unrelated JSON shape (e.g. the Critic/Referee accept-or-reject wrapper)
-    // fail to parse as a `DecompositionOutput` instead of silently matching.
-    let json = r#"{"objectives":[{"id":"a","objective":"decompose alpha","depends_on":[]}]}"#;
-    assert!(
-        parse_decomposition_content(json).is_none(),
-        "DecompositionOutput without a `kind` field must not parse"
-    );
-}
-
-#[test]
-fn status_content_wrapper_fails_decomposition_parse() {
-    let wrapped = r#"{"status":"accepted","content":"looks good"}"#;
-    assert!(
-        parse_decomposition_content(wrapped).is_none(),
-        "status/content wrapper must not parse as DecompositionOutput"
-    );
-}
-
-#[test]
-fn decomposition_kind_parses_objectives() {
-    let json = r#"{"kind":"decomposition","objectives":[{"id":"a","objective":"decompose alpha","depends_on":[]}]}"#;
-    let output = parse_decomposition_content(json).expect("parse must return Some");
-    assert_eq!(output.kind, DecompositionOutputKind::Decomposition);
-    assert_eq!(output.objectives[0].id, "a");
-    assert_eq!(output.objectives[0].objective, "decompose alpha");
-}
-
-#[test]
-fn decomposition_plan_kind_parses_with_no_objectives_field() {
-    // Invariant: a Decomposition node's `kind: "plan"` response carries no
-    // `objectives` field at all — the bare `{"kind": "plan"}` is the entire
-    // signal that the objective is atomic.
-    let json = r#"{"kind":"plan"}"#;
-    let output = parse_decomposition_content(json).expect("parse must return Some");
-    assert_eq!(output.kind, DecompositionOutputKind::Plan);
-    assert!(output.objectives.is_empty());
 }
 
 // ── Validation (Plan-node `PlannerOutput`) ──────────────────────────────────
@@ -379,43 +305,43 @@ fn missing_role_not_enforced_when_adapter_defines_no_worker_roles() {
 }
 
 #[test]
-fn decomposition_kind_task_missing_role_skips_role_validation() {
-    // Invariant: `kind: "decomposition"` tasks are exempt from role
-    // validation, the same as target validation — escalated tasks have no
-    // concrete targets or role yet.
+fn plan_kind_task_missing_role_skips_role_validation() {
+    // Invariant: `kind: "plan"` tasks are exempt from role validation, the
+    // same as target validation — escalated tasks have no concrete targets
+    // or role yet.
     let roles = [("implementer".to_string(), "Implements code.".to_string())];
     let output = PlannerOutput {
-        kind: PlannerOutputKind::Decomposition,
+        kind: PlannerOutputKind::Plan,
         tasks: vec![planner_task("sub-plan", "decompose this further", &[], &[])],
     };
     assert!(
         processor_with_roles(&no_required_test_targets, &roles)
             .validate(&output)
             .is_ok(),
-        "decomposition-kind task must not require a role even when worker roles are configured"
+        "plan-kind task must not require a role even when worker roles are configured"
     );
 }
 
 #[test]
-fn decomposition_kind_task_with_empty_targets_passes_structural_validation() {
-    // Invariant: `kind: "decomposition"` tasks have no concrete files yet, so
-    // an empty `targets` array must not trigger `EmptyTargets`.
+fn plan_kind_task_with_empty_targets_passes_structural_validation() {
+    // Invariant: `kind: "plan"` tasks have no concrete files yet, so an empty
+    // `targets` array must not trigger `EmptyTargets`.
     let output = PlannerOutput {
-        kind: PlannerOutputKind::Decomposition,
+        kind: PlannerOutputKind::Plan,
         tasks: vec![planner_task("sub-plan", "decompose this further", &[], &[])],
     };
     assert!(
         validate_planner_output(&output).is_ok(),
-        "decomposition-kind task with empty targets must pass validation"
+        "plan-kind task with empty targets must pass validation"
     );
 }
 
 #[test]
-fn decomposition_kind_task_still_requires_non_empty_objective() {
+fn plan_kind_task_still_requires_non_empty_objective() {
     // Invariant: the `kind` field only exempts target-related validation —
     // structural checks like a non-empty objective still apply.
     let output = PlannerOutput {
-        kind: PlannerOutputKind::Decomposition,
+        kind: PlannerOutputKind::Plan,
         tasks: vec![planner_task("sub-plan", "   ", &[], &[])],
     };
     assert_eq!(
@@ -427,17 +353,17 @@ fn decomposition_kind_task_still_requires_non_empty_objective() {
 }
 
 #[test]
-fn decomposition_kind_skips_tests_required_check() {
-    // Invariant: `kind: "decomposition"` tasks are exempt from target-based
-    // validation entirely. This task's target shape — no test target — would
-    // fail the tests-required check under `kind: "work"` (see other tests in
-    // this module); under `kind: "decomposition"` it must pass.
+fn plan_kind_skips_tests_required_check() {
+    // Invariant: `kind: "plan"` tasks are exempt from target-based validation
+    // entirely. This task's target shape — no test target — would fail the
+    // tests-required check under `kind: "work"` (see other tests in this
+    // module); under `kind: "plan"` it must pass.
     fn required_test_targets(_: &[String]) -> Vec<String> {
         vec!["tests/test_main.py".to_string()]
     }
 
     let output = PlannerOutput {
-        kind: PlannerOutputKind::Decomposition,
+        kind: PlannerOutputKind::Plan,
         tasks: vec![planner_task(
             "sub-plan",
             "decompose the pyproject.toml change",
@@ -448,7 +374,7 @@ fn decomposition_kind_skips_tests_required_check() {
     let processor = PlannerOutputProcessor::new(&required_test_targets, &[]);
     assert!(
         processor.validate(&output).is_ok(),
-        "decomposition-kind output must skip the tests-required check"
+        "plan-kind output must skip the tests-required check"
     );
 }
 
@@ -534,34 +460,17 @@ fn tests_required_passes_when_adapter_requires_nothing() {
     );
 }
 
-// ── Validation (Decomposition-node `DecompositionOutput`) ──────────────────
-
 #[test]
-fn decomposition_output_plan_kind_with_no_objectives_passes_structural_validation() {
-    // Invariant: a Decomposition node's `kind: "plan"` response carries no
-    // objective list at all — validation must not require a non-empty
-    // `objectives` array in that case, unlike `kind: "decomposition"`.
-    let output = DecompositionOutput {
-        kind: DecompositionOutputKind::Plan,
-        objectives: vec![],
-    };
-    assert!(
-        validate_decomposition_output(&output).is_ok(),
-        "Decomposition node's plan-kind output with no objectives must pass validation"
-    );
-}
-
-#[test]
-fn decomposition_output_decomposition_kind_with_no_objectives_fails_empty_task_list() {
-    // Invariant: `kind: "decomposition"` still requires at least one
-    // objective — only `kind: "plan"` is exempt from the non-empty
-    // `objectives` requirement.
-    let output = DecompositionOutput {
-        kind: DecompositionOutputKind::Decomposition,
-        objectives: vec![],
+fn plan_kind_with_no_tasks_fails_empty_task_list() {
+    // Invariant: an empty `tasks` array fails validation regardless of
+    // `kind` — `kind: "plan"` exempts target and role validation, but not
+    // the non-empty `tasks` requirement.
+    let output = PlannerOutput {
+        kind: PlannerOutputKind::Plan,
+        tasks: vec![],
     };
     assert_eq!(
-        validate_decomposition_output(&output),
+        validate_planner_output(&output),
         Err(PlannerValidationError::EmptyTaskList)
     );
 }
@@ -603,12 +512,12 @@ fn planner_tasks_become_node_requests() {
 }
 
 #[test]
-fn decomposition_kind_output_produces_decomposition_children_with_no_worker_role() {
-    // Invariant: `kind: "decomposition"` maps every task to a
-    // `NodeKind::OldDecomposition` child, and such children never get a
-    // "tester" worker role since they carry no concrete targets.
+fn plan_kind_output_produces_plan_children_with_no_worker_role() {
+    // Invariant: `kind: "plan"` maps every task to a `NodeKind::Plan` child,
+    // and such children never get a "tester" worker role since they carry no
+    // concrete targets.
     let output = PlannerOutput {
-        kind: PlannerOutputKind::Decomposition,
+        kind: PlannerOutputKind::Plan,
         tasks: vec![
             PlannerTask {
                 id: "sub-a".to_string(),
@@ -631,7 +540,7 @@ fn decomposition_kind_output_produces_decomposition_children_with_no_worker_role
     let plan = planner_output_to_plan_output(output);
     assert_eq!(plan.children.len(), 2);
     for child in &plan.children {
-        assert_eq!(child.kind, NodeKind::OldDecomposition);
+        assert_eq!(child.kind, NodeKind::Plan);
         assert_eq!(child.worker_role, None);
     }
     assert_eq!(
@@ -732,56 +641,4 @@ fn planner_dependencies_preserved() {
         plan.children[1].dependencies,
         vec![NodeId("tests".to_string())]
     );
-}
-
-// ── Mapping (Decomposition-node `DecompositionOutput`) ──────────────────────
-
-#[test]
-fn decomposition_output_with_decomposition_kind_spawns_decomposition_children() {
-    // Invariant: a Decomposition node whose planner reports
-    // `kind: "decomposition"` still spans multiple concerns, so its tasks
-    // become further Decomposition children.
-    let output = DecompositionOutput {
-        kind: DecompositionOutputKind::Decomposition,
-        objectives: vec![
-            DecompositionObjective {
-                id: "sub-a".to_string(),
-                objective: "decompose part a".to_string(),
-                depends_on: vec![],
-            },
-            DecompositionObjective {
-                id: "sub-b".to_string(),
-                objective: "decompose part b".to_string(),
-                depends_on: vec!["sub-a".to_string()],
-            },
-        ],
-    };
-    let plan = decomposition_output_to_plan_output(output, "parent objective");
-    assert_eq!(plan.children.len(), 2);
-    for child in &plan.children {
-        assert_eq!(child.kind, NodeKind::OldDecomposition);
-        assert_eq!(child.worker_role, None);
-    }
-    assert_eq!(
-        plan.children[1].dependencies,
-        vec![NodeId("sub-a".to_string())]
-    );
-}
-
-#[test]
-fn decomposition_output_with_plan_kind_spawns_single_plan_child_with_parent_objective() {
-    // Invariant: a Decomposition node whose planner reports `kind: "plan"`
-    // has reached an atomic objective. The response carries no objective
-    // list — the child reuses the Decomposition node's own objective and
-    // always becomes exactly one `Plan` node.
-    let output = DecompositionOutput {
-        kind: DecompositionOutputKind::Plan,
-        objectives: vec![],
-    };
-    let plan = decomposition_output_to_plan_output(output, "implement the atomic change");
-    assert_eq!(plan.children.len(), 1);
-    assert_eq!(plan.children[0].kind, NodeKind::Plan);
-    assert_eq!(plan.children[0].objective, "implement the atomic change");
-    assert_eq!(plan.children[0].target_files, Vec::<String>::new());
-    assert_eq!(plan.children[0].worker_role, None);
 }

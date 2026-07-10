@@ -2,7 +2,7 @@ use super::*;
 
 const PLAN_RESPONSE: &str = r#"{"tasks":[{"id":"t1","objective":"do the work","operation":"modify","targets":["work.txt"],"depends_on":[]}]}"#;
 const PLAN_RESPONSE_WITH_ROLE: &str = r#"{"tasks":[{"id":"t1","objective":"do the work","operation":"modify","role":"implementer","targets":["work.txt"],"depends_on":[]}]}"#;
-const DECOMPOSITION_RESPONSE: &str = r#"{"kind":"decomposition","objectives":[{"id":"t1","objective":"do the work","depends_on":[]}]}"#;
+const DECOMPOSITION_RESPONSE: &str = r#"{"tasks":[{"id":"t1","objective":"do the work","operation":"modify","role":"implementer","targets":["work.txt"],"depends_on":[]}]}"#;
 
 #[test]
 fn rendered_prompts_use_expected_role_schemas() {
