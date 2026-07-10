@@ -96,7 +96,7 @@ fn planner_protocol_schema_for_selects_fixed_schema_by_node_kind() {
     };
 
     assert_eq!(
-        planner_protocol_schema_for(&NodeKind::Decomposition, &policy),
+        planner_protocol_schema_for(&NodeKind::OldDecomposition, &policy),
         DECOMPOSITION_PROTOCOL_FOOTER
     );
     assert_eq!(

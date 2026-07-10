@@ -338,7 +338,7 @@ fn planner_producer_grammar_and_footer_are_selected_by_node_kind() {
     let cases = [
         (
             "Decomposition",
-            NodeKind::Decomposition,
+            NodeKind::OldDecomposition,
             r#"{"kind":"decomposition","objectives":[{"id":"t1","objective":"do the thing","depends_on":[]}]}"#,
             DECOMPOSITION_GBNF,
             "DecompositionOutput: top-level `kind` is required",

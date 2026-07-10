@@ -313,7 +313,7 @@ fn northstar_section_appears_in_decomposition_node_prompt_when_configured() {
         .with_api_summary_command(Some(cat_command()))
         .with_northstar(Some("Ship a fibonacci CLI.".to_string()));
     let request = NodeRunRequest {
-        kind: NodeKind::Decomposition,
+        kind: NodeKind::OldDecomposition,
         node_id: NodeId("test-node".to_string()),
         objective: "Ship a fibonacci CLI.".to_string(),
         target_files: vec![],
@@ -479,7 +479,7 @@ fn language_plugin_is_absent_from_decomposition_node_prompt_even_with_target_fil
     );
     let runner = DeliberatingNodeRunner::new(&provider, &provider).with_language_plugins(plugins);
     let request = NodeRunRequest {
-        kind: NodeKind::Decomposition,
+        kind: NodeKind::OldDecomposition,
         node_id: NodeId("test-node".to_string()),
         objective: "Fix main.py".to_string(),
         target_files: vec!["main.py".to_string()],

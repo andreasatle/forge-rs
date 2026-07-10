@@ -19,7 +19,7 @@ pub(crate) fn map_output(
 ) -> NodeRunResult {
     match output {
         DeliberationTerminalOutput::Complete(out) => match &kind {
-            NodeKind::Decomposition => map_decomposition_output(
+            NodeKind::OldDecomposition => map_decomposition_output(
                 out.content,
                 objective,
                 required_test_targets_fn,

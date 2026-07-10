@@ -605,7 +605,7 @@ fn planner_tasks_become_node_requests() {
 #[test]
 fn decomposition_kind_output_produces_decomposition_children_with_no_worker_role() {
     // Invariant: `kind: "decomposition"` maps every task to a
-    // `NodeKind::Decomposition` child, and such children never get a
+    // `NodeKind::OldDecomposition` child, and such children never get a
     // "tester" worker role since they carry no concrete targets.
     let output = PlannerOutput {
         kind: PlannerOutputKind::Decomposition,
@@ -631,7 +631,7 @@ fn decomposition_kind_output_produces_decomposition_children_with_no_worker_role
     let plan = planner_output_to_plan_output(output);
     assert_eq!(plan.children.len(), 2);
     for child in &plan.children {
-        assert_eq!(child.kind, NodeKind::Decomposition);
+        assert_eq!(child.kind, NodeKind::OldDecomposition);
         assert_eq!(child.worker_role, None);
     }
     assert_eq!(
@@ -759,7 +759,7 @@ fn decomposition_output_with_decomposition_kind_spawns_decomposition_children() 
     let plan = decomposition_output_to_plan_output(output, "parent objective");
     assert_eq!(plan.children.len(), 2);
     for child in &plan.children {
-        assert_eq!(child.kind, NodeKind::Decomposition);
+        assert_eq!(child.kind, NodeKind::OldDecomposition);
         assert_eq!(child.worker_role, None);
     }
     assert_eq!(

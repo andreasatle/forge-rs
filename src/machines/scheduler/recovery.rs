@@ -304,7 +304,7 @@ impl RecoveryApplicator {
         // validation_plan and retry_feedback belong to Work nodes only.
         let split_node = Node {
             id: split_id.clone(),
-            kind: NodeKind::Decomposition,
+            kind: NodeKind::OldDecomposition,
             worker_role: None,
             objective: format!(
                 "{objective}\n\nThe previous attempt failed and requires decomposition:\n{message}"

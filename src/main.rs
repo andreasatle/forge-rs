@@ -122,7 +122,7 @@ enum NodeKindArg {
 impl From<NodeKindArg> for NodeKind {
     fn from(value: NodeKindArg) -> Self {
         match value {
-            NodeKindArg::Decomposition => NodeKind::Decomposition,
+            NodeKindArg::Decomposition => NodeKind::OldDecomposition,
             NodeKindArg::Plan => NodeKind::Plan,
             NodeKindArg::Work => NodeKind::Work,
         }

@@ -213,7 +213,7 @@ fn select_grammar(
                     PRODUCER_GBNF
                 }
             }
-            NodeKind::Decomposition => DECOMPOSITION_GBNF,
+            NodeKind::OldDecomposition => DECOMPOSITION_GBNF,
             NodeKind::Plan => {
                 let schema = planner_protocol_schema_for(node_kind, policy);
                 if schema == PLANNER_PROTOCOL_FOOTER_WITH_OPERATION_AND_ROLES {
@@ -281,15 +281,15 @@ pub(super) fn build_role_prompt(
     // Decomposition and Plan Producer prompts use a fixed schema variant
     // rebuilt from `planner_producer_base` — see `planner_protocol_schema_for`.
     let system: String = match (&request.node_kind, &request.role) {
-        (NodeKind::Decomposition | NodeKind::Plan, DeliberationRole::Producer) => format!(
+        (NodeKind::OldDecomposition | NodeKind::Plan, DeliberationRole::Producer) => format!(
             "{}\n{}",
             policy.planner_producer_base,
             planner_protocol_schema_for(&request.node_kind, policy)
         ),
-        (NodeKind::Decomposition | NodeKind::Plan, DeliberationRole::Critic) => {
+        (NodeKind::OldDecomposition | NodeKind::Plan, DeliberationRole::Critic) => {
             policy.planner_critic_system.clone()
         }
-        (NodeKind::Decomposition | NodeKind::Plan, DeliberationRole::Referee) => {
+        (NodeKind::OldDecomposition | NodeKind::Plan, DeliberationRole::Referee) => {
             policy.planner_referee_system.clone()
         }
         (NodeKind::Work, DeliberationRole::Producer) => worker_role_policy
@@ -495,8 +495,10 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
             }
 
             // Not a tool request — select parser based on role and node kind.
-            if matches!(request.node_kind, NodeKind::Decomposition | NodeKind::Plan)
-                && matches!(request.role, DeliberationRole::Producer)
+            if matches!(
+                request.node_kind,
+                NodeKind::OldDecomposition | NodeKind::Plan
+            ) && matches!(request.role, DeliberationRole::Producer)
             {
                 let no_required_test_targets = |_: &[String]| Vec::new();
                 let processor = PlannerOutputProcessor::new(
@@ -506,7 +508,7 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                 let planner_schema = planner_protocol_schema_for(&request.node_kind, &self.policy);
                 // Direct PlannerOutput/DecompositionOutput path: no status/content wrapper.
                 let outcome = match request.node_kind {
-                    NodeKind::Decomposition => {
+                    NodeKind::OldDecomposition => {
                         match processor.parse_decomposition_response(&response.content) {
                             Ok(out) => match processor.validate_decomposition_structure(&out) {
                                 Ok(()) => PlanParseOutcome::Success(

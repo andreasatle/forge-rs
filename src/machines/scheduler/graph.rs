@@ -57,7 +57,7 @@ impl NodeId {
 pub enum NodeKind {
     /// A planning node. Decomposes an objective into child nodes with no
     /// worker-role assignment.
-    Decomposition,
+    OldDecomposition,
     /// A planning node. Decomposes an objective into child nodes and
     /// assigns worker roles and concrete file operations to each task.
     Plan,
@@ -675,7 +675,7 @@ pub(super) fn new_node_id() -> NodeId {
 
 pub(super) fn plan_child_depth(parent_depth: usize, kind: &NodeKind) -> usize {
     match kind {
-        NodeKind::Decomposition | NodeKind::Plan => parent_depth + 1,
+        NodeKind::OldDecomposition | NodeKind::Plan => parent_depth + 1,
         NodeKind::Work => parent_depth,
     }
 }
@@ -716,7 +716,7 @@ pub(super) fn invalid_node_event_reason(
             "node {} is Work but received PlanAccepted outcome",
             node_id.0
         )),
-        (NodeKind::Decomposition | NodeKind::Plan, SchedulerEvent::WorkAccepted { .. }) => {
+        (NodeKind::OldDecomposition | NodeKind::Plan, SchedulerEvent::WorkAccepted { .. }) => {
             Some(format!(
                 "node {} is Plan but received WorkAccepted outcome",
                 node_id.0

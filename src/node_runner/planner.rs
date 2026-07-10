@@ -35,7 +35,7 @@ pub struct PlannerTask {
     pub role: Option<String>,
     /// Explicit artifact files this task is allowed and expected to touch.
     ///
-    /// Omitted (defaults empty) by [`NodeKind::Decomposition`]'s
+    /// Omitted (defaults empty) by [`NodeKind::OldDecomposition`]'s
     /// `decomposition` schema, whose tasks carry no file targets.
     #[serde(default)]
     pub targets: Vec<String>,
@@ -55,7 +55,7 @@ pub enum PlannerOperation {
     Delete,
 }
 
-/// Whether a [`NodeKind::Decomposition`] parent's output still spans multiple
+/// Whether a [`NodeKind::OldDecomposition`] parent's output still spans multiple
 /// concerns or has reached an atomic objective.
 #[derive(Clone, Copy, Deserialize, Serialize, Debug, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -69,7 +69,7 @@ pub enum DecompositionOutputKind {
     Plan,
 }
 
-/// A single objective in a [`NodeKind::Decomposition`] parent's structured
+/// A single objective in a [`NodeKind::OldDecomposition`] parent's structured
 /// response.
 ///
 /// Leaner than [`PlannerTask`]: Decomposition objectives carry no concrete
@@ -85,7 +85,7 @@ pub struct DecompositionObjective {
     pub depends_on: Vec<String>,
 }
 
-/// The structured JSON output a [`NodeKind::Decomposition`] parent's planner
+/// The structured JSON output a [`NodeKind::OldDecomposition`] parent's planner
 /// is expected to produce.
 ///
 /// Each objective becomes a scheduler [`NodeRequest`]. The `depends_on`
@@ -254,7 +254,7 @@ impl<'a> PlannerOutputProcessor<'a> {
             .map_err(|e| format!("planner JSON parse error: {e}"))
     }
 
-    /// Validate structural constraints for a [`NodeKind::Decomposition`]
+    /// Validate structural constraints for a [`NodeKind::OldDecomposition`]
     /// parent's output.
     ///
     /// A `kind: "plan"` response carries no `objectives` at all — the
@@ -330,7 +330,7 @@ impl<'a> PlannerOutputProcessor<'a> {
                 .into_iter()
                 .map(|objective| NodeRequest {
                     id: NodeId(objective.id),
-                    kind: NodeKind::Decomposition,
+                    kind: NodeKind::OldDecomposition,
                     worker_role: None,
                     objective: objective.objective,
                     target_files: vec![],
@@ -452,7 +452,7 @@ impl<'a> PlannerOutputProcessor<'a> {
     pub(crate) fn into_plan(self, output: PlannerOutput) -> PlanOutput {
         let child_kind = match output.kind {
             PlannerOutputKind::Work => NodeKind::Work,
-            PlannerOutputKind::Decomposition => NodeKind::Decomposition,
+            PlannerOutputKind::Decomposition => NodeKind::OldDecomposition,
         };
 
         PlanOutput {

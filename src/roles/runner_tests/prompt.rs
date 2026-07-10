@@ -142,7 +142,7 @@ fn worker_role_descriptions_render_for_plan_producer_only() {
         (
             "decomposition producer",
             RoleRequest {
-                node_kind: NodeKind::Decomposition,
+                node_kind: NodeKind::OldDecomposition,
                 ..plan_request("decompose the work")
             },
             DECOMPOSITION_RESPONSE,

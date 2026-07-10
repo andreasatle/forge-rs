@@ -113,7 +113,7 @@ impl SchedulerMachine {
     pub fn initial_state(request: RunRequest, run_config: RunConfig) -> SchedulerState {
         let root = Node {
             id: graph::new_node_id(),
-            kind: NodeKind::Decomposition,
+            kind: NodeKind::OldDecomposition,
             worker_role: None,
             objective: request.objective,
             target_files: vec![],

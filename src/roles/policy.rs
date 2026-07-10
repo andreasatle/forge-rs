@@ -145,7 +145,7 @@ string ::=
 
 ws ::= ([ \t\n] ws)?"#;
 
-/// GBNF grammar constraining output to the `NodeKind::Decomposition` Producer
+/// GBNF grammar constraining output to the `NodeKind::OldDecomposition` Producer
 /// schema: `{"kind":"decomposition","objectives":[{"id":...,"objective":...,"depends_on":[...]}]}`
 /// or `{"kind":"plan"}`. Unlike [`PLANNER_GBNF`], `kind` is required (never
 /// omitted) and `"work"` is not a valid value; `decomposition` objectives
@@ -210,7 +210,7 @@ pub(crate) const PLANNER_PROTOCOL_FOOTER: &str = "PlannerOutput: `tasks` must be
 Each task requires `id`, `objective`, `targets`, and `depends_on`.\n\
 Each `targets` array must be non-empty and list exact files the task may create, modify, or delete.";
 
-/// JSON protocol instructions for the [`NodeKind::Decomposition`] Producer
+/// JSON protocol instructions for the [`NodeKind::OldDecomposition`] Producer
 /// role: a required top-level `kind` field of exactly `"decomposition"` or
 /// `"plan"`, with no `"work"` option.
 ///
@@ -411,7 +411,7 @@ pub struct RolePolicy {
     /// re-show the exact schema variant the model was originally given
     /// (with or without the `operation` field) instead of guessing.
     ///
-    /// Applies to [`NodeKind::Work`] only — [`NodeKind::Decomposition`]
+    /// Applies to [`NodeKind::Work`] only — [`NodeKind::OldDecomposition`]
     /// and [`NodeKind::Plan`] use the fixed schema variants selected by
     /// [`planner_protocol_schema_for`].
     pub planner_protocol_schema: String,
@@ -420,7 +420,7 @@ pub struct RolePolicy {
     /// generic JSON-format constraints, but no task-schema footer.
     ///
     /// Combined with a node-kind-specific footer to build the
-    /// [`NodeKind::Decomposition`] and [`NodeKind::Plan`] Producer system
+    /// [`NodeKind::OldDecomposition`] and [`NodeKind::Plan`] Producer system
     /// prompts, which use fixed schema variants rather than the adapter's
     /// configured `planner_protocol_schema`.
     pub planner_producer_base: String,
@@ -483,7 +483,7 @@ impl Default for RolePolicy {
 /// — for a Plan-family Producer, based on structural node kind rather than
 /// adapter configuration.
 ///
-/// [`NodeKind::Decomposition`] nodes only ever decompose further, with no
+/// [`NodeKind::OldDecomposition`] nodes only ever decompose further, with no
 /// worker-role assignment; [`NodeKind::Plan`] nodes are the point where tasks
 /// are assigned worker roles and concrete file operations.
 pub(crate) fn planner_protocol_schema_for<'a>(
@@ -491,7 +491,7 @@ pub(crate) fn planner_protocol_schema_for<'a>(
     policy: &'a RolePolicy,
 ) -> &'a str {
     match node_kind {
-        NodeKind::Decomposition => DECOMPOSITION_PROTOCOL_FOOTER,
+        NodeKind::OldDecomposition => DECOMPOSITION_PROTOCOL_FOOTER,
         NodeKind::Plan => PLANNER_PROTOCOL_FOOTER_WITH_OPERATION_AND_ROLES,
         NodeKind::Work => &policy.planner_protocol_schema,
     }

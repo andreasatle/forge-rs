@@ -38,18 +38,20 @@ impl NodeRunner for StaticNodeRunner {
             });
         }
         match request.kind {
-            NodeKind::Decomposition | NodeKind::Plan => NodeRunResult::PlanAccepted(PlanOutput {
-                children: vec![NodeRequest {
-                    id: NodeId("child-work".to_string()),
-                    kind: NodeKind::Work,
-                    worker_role: None,
-                    objective: format!("work for: {}", request.objective),
-                    target_files: vec![],
-                    required_validation_targets: vec![],
-                    dependencies: vec![],
-                    validation_plan: None,
-                }],
-            }),
+            NodeKind::OldDecomposition | NodeKind::Plan => {
+                NodeRunResult::PlanAccepted(PlanOutput {
+                    children: vec![NodeRequest {
+                        id: NodeId("child-work".to_string()),
+                        kind: NodeKind::Work,
+                        worker_role: None,
+                        objective: format!("work for: {}", request.objective),
+                        target_files: vec![],
+                        required_validation_targets: vec![],
+                        dependencies: vec![],
+                        validation_plan: None,
+                    }],
+                })
+            }
             NodeKind::Work => NodeRunResult::WorkAccepted(NodeRunWorkResult {
                 work: WorkOutput {
                     summary: format!("completed: {}", request.objective),

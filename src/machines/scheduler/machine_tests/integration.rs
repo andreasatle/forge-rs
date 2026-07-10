@@ -122,7 +122,7 @@ fn integration_failure_routes_to_recovery_replacement() {
                 message: "decompose step B".to_string(),
             },
             initial_attempt: 0,
-            expected_kind: NodeKind::Decomposition,
+            expected_kind: NodeKind::OldDecomposition,
             expected_tier: ModelTier::Strong,
         },
     ];

@@ -268,7 +268,7 @@ impl<R: RoleRunner> DeliberationHandler<R> {
         node_kind: &NodeKind,
         target_files: &[String],
     ) -> Result<(Option<RoleToolContext>, Vec<TargetView>), ArtifactError> {
-        if matches!(node_kind, NodeKind::Decomposition | NodeKind::Plan) {
+        if matches!(node_kind, NodeKind::OldDecomposition | NodeKind::Plan) {
             return Ok((None, vec![]));
         }
 
@@ -306,7 +306,7 @@ impl<R: RoleRunner> DeliberationHandler<R> {
         node_kind: &NodeKind,
     ) -> Result<(), ProducerValidationRetry> {
         match node_kind {
-            NodeKind::Decomposition if self.plan_validation_context.is_some() => {
+            NodeKind::OldDecomposition if self.plan_validation_context.is_some() => {
                 self.validate_decomposition_producer_content(content)
             }
             NodeKind::Plan if self.plan_validation_context.is_some() => {

@@ -47,7 +47,7 @@ pub(crate) fn build_deliberation_context(
         None
     };
 
-    let northstar = matches!(request.kind, NodeKind::Decomposition)
+    let northstar = matches!(request.kind, NodeKind::OldDecomposition)
         .then(|| config.northstar)
         .flatten()
         .map(str::to_string);
@@ -57,7 +57,7 @@ pub(crate) fn build_deliberation_context(
     // node it replaces, for objective-rendering context), but that inherited
     // list must never drive language-plugin selection for a node that isn't
     // producing code itself.
-    let plugin_prompt = (!matches!(request.kind, NodeKind::Decomposition))
+    let plugin_prompt = (!matches!(request.kind, NodeKind::OldDecomposition))
         .then(|| select_plugin(config.language_plugins, &request.target_files))
         .flatten()
         .map(LanguageSpec::prompt_sections);
@@ -104,7 +104,7 @@ pub(crate) fn build_artifact_context(
         .collect();
 
     let api_summary = api_summary_command
-        .filter(|_| matches!(node_kind, NodeKind::Decomposition | NodeKind::Plan))
+        .filter(|_| matches!(node_kind, NodeKind::OldDecomposition | NodeKind::Plan))
         .and_then(|command| build_api_summary(view, &files, command));
 
     Some(ArtifactContext {
