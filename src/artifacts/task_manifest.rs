@@ -63,6 +63,11 @@ pub(crate) struct TaskRecord {
     pub commit: String,
     /// UTC ISO 8601 timestamp of when the task was recorded.
     pub completed_at: String,
+    /// The team that completed this task, per the multi-team manifest schema
+    /// (AUDITS/MULTI-TEAM-SUMMARY.md). `None` until team identity is threaded
+    /// through by the multi-team scheduler.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -110,6 +115,35 @@ pub(crate) fn record_task(
         repo_path: artifact.repo_path.clone(),
         branch: artifact.branch.clone(),
         commit_sha: amended_sha,
+    })
+}
+
+/// Appends `records` to `.forge/tasks.json` in `workspace` (checked out at
+/// `artifact`'s current tip) and integrates the manifest update as a new,
+/// standalone commit.
+///
+/// Unlike [`record_task`], there is no accompanying code change to amend
+/// into: planner-produced task records (`PlannerOutputKind::Task`) carry no
+/// file targets, so this creates a fresh commit via the standard CAS
+/// integration path instead.
+pub(crate) fn record_planner_tasks(
+    artifact: &Artifact,
+    workspace: &Workspace,
+    records: Vec<TaskRecord>,
+) -> Result<Artifact, TaskManifestError> {
+    ensure_forge_ignored(workspace)?;
+
+    let mut manifest = read_manifest(workspace)?;
+    manifest.tasks.extend(records);
+    write_manifest(workspace, &manifest)?;
+
+    // `.forge/` is gitignored, so it must be force-added before the plain
+    // `git add --all` inside `integrate` runs (which respects .gitignore).
+    run_git(workspace, &["add", "-f", MANIFEST_PATH, GITIGNORE_PATH])?;
+
+    super::integrate(artifact, workspace).map_err(|err| TaskManifestError::Git {
+        operation: "integrate".to_owned(),
+        stderr: err.to_string(),
     })
 }
 

@@ -55,7 +55,8 @@ pub enum PlannerOperation {
 }
 
 /// Whether a [`NodeKind::Plan`] parent's output's tasks become `Work`
-/// children or escalate to further `Plan` nodes.
+/// children, escalate to further `Plan` nodes, or are pure planner intent
+/// with no corresponding scheduler node.
 ///
 /// All tasks in a single [`PlannerOutput`] share one kind — a planner cannot
 /// mix concrete work with further sub-planning in the same batch. Absent from
@@ -70,6 +71,15 @@ pub enum PlannerOutputKind {
     /// The objective is too complex for direct work: `tasks` become further
     /// `Plan` children instead.
     Plan,
+    /// Tasks are pure planner intent — id, objective, and ordering only, with
+    /// no file targets, role, or operation. Does not correspond to any
+    /// scheduler [`NodeKind`], so [`PlannerOutputProcessor::into_plan`]
+    /// produces no children for it. Recording these tasks into
+    /// `.forge/tasks.json` is implemented as
+    /// `IntegrationService::integrate_planner_tasks`, but wiring a completed
+    /// `Plan` node's `Task`-kind output to call it, and triggering worker
+    /// teams from the manifest, is not yet implemented.
+    Task,
 }
 
 /// The structured JSON output a [`NodeKind::Plan`] parent's planner is
@@ -285,10 +295,16 @@ impl<'a> PlannerOutputProcessor<'a> {
 
     /// Convert a validated [`PlannerOutput`] into a [`PlanOutput`] of child
     /// [`NodeRequest`]s.
+    ///
+    /// `Task`-kind output produces no children: it does not correspond to any
+    /// scheduler [`NodeKind`]. Recording its tasks into `.forge/tasks.json`
+    /// happens through `IntegrationService::integrate_planner_tasks`, not
+    /// through scheduler child nodes.
     pub(crate) fn into_plan(self, output: PlannerOutput) -> PlanOutput {
         let child_kind = match output.kind {
             PlannerOutputKind::Work => NodeKind::Work,
             PlannerOutputKind::Plan => NodeKind::Plan,
+            PlannerOutputKind::Task => return PlanOutput { children: vec![] },
         };
 
         PlanOutput {

@@ -149,6 +149,18 @@ fn explicit_plan_kind_parses_with_empty_targets() {
     assert!(output.tasks[0].targets.is_empty());
 }
 
+#[test]
+fn explicit_task_kind_parses_with_no_targets() {
+    // Invariant: `kind: "task"` tasks are pure planner intent (id, objective,
+    // depends_on) and carry no targets, so omitting `targets` entirely must
+    // parse successfully.
+    let json =
+        r#"{"kind":"task","tasks":[{"id":"a","objective":"decompose alpha","depends_on":[]}]}"#;
+    let output = parse_planner_content(json).expect("parse must return Some");
+    assert_eq!(output.kind, PlannerOutputKind::Task);
+    assert!(output.tasks[0].targets.is_empty());
+}
+
 // ── Validation (Plan-node `PlannerOutput`) ──────────────────────────────────
 
 fn planner_task(id: &str, objective: &str, targets: &[&str], depends_on: &[&str]) -> PlannerTask {
@@ -509,6 +521,27 @@ fn planner_tasks_become_node_requests() {
     assert_eq!(plan.children[1].id, NodeId("step-two".to_string()));
     assert_eq!(plan.children[1].objective, "do step two");
     assert_eq!(plan.children[1].target_files, vec!["two.txt".to_string()]);
+}
+
+#[test]
+fn task_kind_output_produces_no_scheduler_children() {
+    // Invariant: `kind: "task"` has no corresponding scheduler `NodeKind`, so
+    // `into_plan` must not panic and must not insert any scheduler nodes.
+    // Recording the tasks into the manifest happens outside the scheduler
+    // graph (`IntegrationService::integrate_planner_tasks`).
+    let output = PlannerOutput {
+        kind: PlannerOutputKind::Task,
+        tasks: vec![PlannerTask {
+            id: "sub-a".to_string(),
+            objective: "decompose part a".to_string(),
+            operation: None,
+            role: None,
+            targets: vec![],
+            depends_on: vec![],
+        }],
+    };
+    let plan = planner_output_to_plan_output(output);
+    assert!(plan.children.is_empty());
 }
 
 #[test]

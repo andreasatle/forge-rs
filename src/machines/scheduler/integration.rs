@@ -4,7 +4,9 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use crate::artifacts::{Artifact, TaskRecord, Workspace, WorkspaceFactory, integrate, record_task};
+use crate::artifacts::{
+    Artifact, TaskRecord, Workspace, WorkspaceFactory, integrate, record_planner_tasks, record_task,
+};
 use crate::machines::scheduler::event::SchedulerEvent;
 use crate::machines::scheduler::failure::FailureKind;
 use crate::machines::scheduler::graph::NodeId;
@@ -193,6 +195,7 @@ impl IntegrationService {
                             targets: target_files.clone(),
                             commit: new_artifact.commit_sha.clone(),
                             completed_at: utc_now_iso8601(),
+                            team: None,
                         };
                         let recorded = record_task(&new_artifact, &workspace.borrow(), record)
                             .unwrap_or_else(|err| {
@@ -270,6 +273,29 @@ impl IntegrationService {
                 summary: work.summary,
             },
         }
+    }
+
+    /// Writes planner-produced task records into `.forge/tasks.json` as a
+    /// standalone commit, with no accompanying code change to amend into.
+    ///
+    /// Parallel to [`Self::integrate_work`]'s manifest write, but for
+    /// `PlannerOutputKind::Task` output, which has no `Work` node or
+    /// `WorkAttempt` workspace of its own.
+    ///
+    /// Not yet called by the scheduler: wiring a `Plan` node's `Task`-kind
+    /// output to invoke this is a separate follow-up task.
+    #[allow(dead_code)]
+    pub(crate) fn integrate_planner_tasks(&self, records: Vec<TaskRecord>) -> Result<(), String> {
+        let Some(artifact) = self.artifact.borrow().clone() else {
+            return Ok(());
+        };
+        let workspace = WorkspaceFactory::new(&artifact)
+            .create_temporary_workspace()
+            .map_err(|err| format!("worktree creation failed: {err}"))?;
+        let recorded =
+            record_planner_tasks(&artifact, &workspace, records).map_err(|err| err.to_string())?;
+        *self.artifact.borrow_mut() = Some(recorded);
+        Ok(())
     }
 
     fn record_attempt_evidence(
@@ -406,3 +432,7 @@ fn integration_failure(message: String) -> IntegrationFailure {
 fn no_diff_work_message() -> String {
     "accepted artifact Work produced no file changes in its WorkAttempt workspace".to_string()
 }
+
+#[cfg(test)]
+#[path = "integration_tests.rs"]
+mod tests;

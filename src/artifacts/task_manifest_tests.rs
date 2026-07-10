@@ -95,6 +95,7 @@ fn sample_record(commit: &str) -> TaskRecord {
         targets: vec!["file.txt".to_string()],
         commit: commit.to_string(),
         completed_at: "2026-07-10T00:00:00Z".to_string(),
+        team: None,
     }
 }
 
