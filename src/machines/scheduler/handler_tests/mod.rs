@@ -336,6 +336,7 @@ impl Validator for MainPyValidator {
 mod checkpoint;
 mod dispatch;
 mod integration;
+mod multi_team;
 mod progress;
 mod recovery;
 mod validation;
