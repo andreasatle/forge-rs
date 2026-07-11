@@ -193,7 +193,6 @@ const MAX_RESPONSE_TOKENS: u32 = 1024;
 fn select_grammar(
     node_kind: &NodeKind,
     role: &DeliberationRole,
-    policy: &RolePolicy,
     tools_active: bool,
 ) -> &'static str {
     match role {
@@ -213,7 +212,7 @@ fn select_grammar(
                 }
             }
             NodeKind::Plan => {
-                let schema = planner_protocol_schema_for(node_kind, policy);
+                let schema = planner_protocol_schema_for();
                 if schema == PLANNER_PROTOCOL_FOOTER_WITH_OPERATION_AND_ROLES {
                     PLANNER_GBNF_WITH_ROLES
                 } else if schema == PLANNER_PROTOCOL_FOOTER_WITH_OPERATION {
@@ -282,7 +281,7 @@ pub(super) fn build_role_prompt(
         (NodeKind::Plan, DeliberationRole::Producer) => format!(
             "{}\n{}",
             policy.planner_producer_base,
-            planner_protocol_schema_for(&request.node_kind, policy)
+            planner_protocol_schema_for()
         ),
         (NodeKind::Plan, DeliberationRole::Critic) => policy.planner_critic_system.clone(),
         (NodeKind::Plan, DeliberationRole::Referee) => policy.planner_referee_system.clone(),
@@ -424,7 +423,6 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
             let grammar = select_grammar(
                 &request.node_kind,
                 &request.role,
-                &self.policy,
                 has_tools && tools.allow_tool_call(),
             );
 
@@ -497,7 +495,7 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                     &no_required_test_targets,
                     &self.policy.worker_role_descriptions,
                 );
-                let planner_schema = planner_protocol_schema_for(&request.node_kind, &self.policy);
+                let planner_schema = planner_protocol_schema_for();
                 // Direct PlannerOutput path: no status/content wrapper.
                 let outcome = match processor.parse_response(&response.content) {
                     Ok(out) => match processor.validate(&out) {

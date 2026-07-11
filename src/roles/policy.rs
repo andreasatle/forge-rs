@@ -11,8 +11,6 @@
 //! [`DeliberationRole::Producer`]: crate::machines::deliberation::DeliberationRole
 //! [`NodeKind`]: crate::machines::scheduler::NodeKind
 
-use crate::machines::scheduler::NodeKind;
-
 /// GBNF grammar constraining output to the Work-node Producer's
 /// `{"summary": "..."}` schema.
 pub(crate) const PRODUCER_GBNF: &str = r#"root ::= "{" ws "\"summary\"" ws ":" ws string ws "}" ws
@@ -375,21 +373,14 @@ pub struct RolePolicy {
     pub planner_referee_system: String,
     /// System instruction for Work-node Referee role.
     pub worker_referee_system: String,
-    /// The `PlannerOutput` task-schema footer used inside
-    /// `planner_producer_system`, kept separately so retry prompts can
-    /// re-show the exact schema variant the model was originally given
-    /// (with or without the `operation` field) instead of guessing.
-    ///
-    /// Applies to [`NodeKind::Work`] only — [`NodeKind::Plan`] uses the
-    /// fixed schema variant selected by [`planner_protocol_schema_for`].
-    pub planner_protocol_schema: String,
     /// `planner_producer_system` with the trailing protocol-schema footer
     /// removed: role identity, adapter instructions/constraints, and the
     /// generic JSON-format constraints, but no task-schema footer.
     ///
     /// Combined with a node-kind-specific footer to build the
-    /// [`NodeKind::Plan`] Producer system prompt, which uses a fixed schema
-    /// variant rather than the adapter's configured `planner_protocol_schema`.
+    /// [Plan-node](crate::machines::scheduler::NodeKind::Plan) Producer
+    /// system prompt, which uses the fixed schema variant selected by
+    /// [`planner_protocol_schema_for`].
     pub planner_producer_base: String,
     /// Worker role name/description pairs, surfaced to the Plan-node
     /// Producer so it can assign roles explicitly to each task.
@@ -438,7 +429,6 @@ impl Default for RolePolicy {
                 "{}\n{DEFAULT_SYSTEM}",
                 render_role_prompt(generic, &empty, None)
             ),
-            planner_protocol_schema: PLANNER_PROTOCOL_FOOTER.to_string(),
             planner_producer_base,
             worker_role_descriptions: Vec::new(),
             worker_role_policies: std::collections::HashMap::new(),
@@ -446,21 +436,17 @@ impl Default for RolePolicy {
     }
 }
 
-/// Select the planner protocol footer — and therefore the task output schema
-/// — for a Plan Producer, based on structural node kind rather than adapter
-/// configuration.
+/// The planner protocol footer — and therefore the task output schema — for
+/// a Plan Producer.
 ///
-/// [`NodeKind::Plan`] always uses the fixed with-operation, with-roles
-/// schema: it is the point where tasks may be assigned worker roles and
-/// concrete file operations, or escalate to further planning.
-pub(crate) fn planner_protocol_schema_for<'a>(
-    node_kind: &NodeKind,
-    policy: &'a RolePolicy,
-) -> &'a str {
-    match node_kind {
-        NodeKind::Plan => PLANNER_PROTOCOL_FOOTER_WITH_OPERATION_AND_ROLES,
-        NodeKind::Work => &policy.planner_protocol_schema,
-    }
+/// The [Plan node](crate::machines::scheduler::NodeKind::Plan) always uses
+/// the fixed with-operation, with-roles schema: it is the point where tasks
+/// may be assigned worker roles and concrete file operations, or escalate to
+/// further planning. Callers only ever invoke this for a Plan node — the
+/// [Work node](crate::machines::scheduler::NodeKind::Work) builds its
+/// Producer system prompt from `worker_producer_system` instead.
+pub(crate) fn planner_protocol_schema_for() -> &'static str {
+    PLANNER_PROTOCOL_FOOTER_WITH_OPERATION_AND_ROLES
 }
 
 #[cfg(test)]

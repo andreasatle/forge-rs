@@ -39,7 +39,6 @@ fn default_system_prompts_have_no_placeholder_values() {
         &policy.worker_critic_system,
         &policy.planner_referee_system,
         &policy.worker_referee_system,
-        &policy.planner_protocol_schema,
         &policy.planner_producer_base,
     ] {
         assert!(
@@ -69,37 +68,28 @@ fn assert_schema(system: &str, required: &[&str], forbidden: &[&str]) {
 }
 
 #[test]
-fn planner_producer_base_plus_configured_footer_reconstructs_producer_system() {
+fn planner_producer_base_plus_protocol_footer_reconstructs_producer_system() {
     // Invariant: `planner_producer_system` is exactly `planner_producer_base`
-    // followed by the adapter-configured `planner_protocol_schema` footer —
-    // callers rely on this to build fixed-schema variants for
-    // Decomposition/Plan nodes from the same base text.
+    // followed by the default `PLANNER_PROTOCOL_FOOTER` footer — callers rely
+    // on this to build fixed-schema variants for Decomposition/Plan nodes
+    // from the same base text.
     let policy = RolePolicy::default();
     assert_eq!(
         policy.planner_producer_system,
         format!(
-            "{}\n{}",
-            policy.planner_producer_base, policy.planner_protocol_schema
+            "{}\n{PLANNER_PROTOCOL_FOOTER}",
+            policy.planner_producer_base
         )
     );
 }
 
 #[test]
-fn planner_protocol_schema_for_selects_fixed_schema_by_node_kind() {
-    // Invariant: Plan always gets the fixed with-operation, with-roles
-    // schema, regardless of what the adapter configured; Work defers to the
-    // adapter-configured `planner_protocol_schema`.
-    let policy = RolePolicy {
-        planner_protocol_schema: "custom adapter schema".to_string(),
-        ..RolePolicy::default()
-    };
-
+fn planner_protocol_schema_for_returns_fixed_with_operation_and_roles_schema() {
+    // Invariant: the Plan Producer always uses the fixed with-operation,
+    // with-roles schema — it is the point where tasks may be assigned worker
+    // roles and concrete file operations, regardless of adapter config.
     assert_eq!(
-        planner_protocol_schema_for(&NodeKind::Plan, &policy),
+        planner_protocol_schema_for(),
         PLANNER_PROTOCOL_FOOTER_WITH_OPERATION_AND_ROLES
-    );
-    assert_eq!(
-        planner_protocol_schema_for(&NodeKind::Work, &policy),
-        "custom adapter schema"
     );
 }

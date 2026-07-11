@@ -128,7 +128,6 @@ impl ProjectAdapter for YamlProjectAdapter {
                 "{}\n{DEFAULT_SYSTEM}",
                 render_role_prompt(generic, &worker.referee, None)
             ),
-            planner_protocol_schema: planner_protocol_footer.to_string(),
             planner_producer_base,
             worker_role_descriptions: self
                 .config
