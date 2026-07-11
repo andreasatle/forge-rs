@@ -188,6 +188,19 @@ pub struct Node {
     /// for a given (team, task) pair without re-reading the manifest.
     #[serde(default)]
     pub task_id: Option<String>,
+    /// Path to the project adapter YAML file this node should run under.
+    ///
+    /// Empty for the single-team path, where the run's top-level
+    /// `ForgeConfig::adapter` applies. Non-empty only for nodes spawned by
+    /// team trigger evaluation, copied verbatim from `TeamConfig::adapter`.
+    #[serde(default)]
+    pub adapter: String,
+    /// Path to this node's desired-end-state northstar file.
+    ///
+    /// Empty for the single-team path. Non-empty only for nodes spawned by
+    /// team trigger evaluation, copied verbatim from `TeamConfig::northstar`.
+    #[serde(default)]
+    pub northstar: String,
     /// The adapter-assigned worker role for a `Work` node (e.g. `"tester"`).
     ///
     /// Assigned deterministically by the planner from the node's target files
@@ -504,6 +517,8 @@ impl RunGraph {
                 kind: req.kind,
                 team: req.team,
                 task_id: req.task_id,
+                adapter: req.adapter,
+                northstar: req.northstar,
                 worker_role: req.worker_role,
                 objective: req.objective,
                 target_files: req.target_files,

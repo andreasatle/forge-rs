@@ -328,6 +328,8 @@ impl<'a> PlannerOutputProcessor<'a> {
                     kind: child_kind.clone(),
                     team: String::new(),
                     task_id: None,
+                    adapter: String::new(),
+                    northstar: String::new(),
                     worker_role: task.role,
                     objective: task.objective,
                     target_files: task.targets,

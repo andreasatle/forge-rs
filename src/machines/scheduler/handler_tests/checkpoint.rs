@@ -138,6 +138,8 @@ fn checkpoint_load_round_trip() {
                     kind: NodeKind::Work,
                     team: String::new(),
                     task_id: None,
+                    adapter: String::new(),
+                    northstar: String::new(),
                     worker_role: None,
                     objective: "do A".to_string(),
                     target_files: vec![],

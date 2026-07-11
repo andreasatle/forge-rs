@@ -14,9 +14,10 @@ pub struct ForgeConfig {
     ///
     /// Each team's `trigger` is evaluated against the task manifest on every
     /// `IntegrationSucceeded`/`PlannerTasksIntegrated` transition to decide
-    /// when to spawn its nodes. Per-team `northstar`/`adapter` dispatch is
-    /// not yet wired: spawned nodes reuse the run's existing single-adapter
-    /// conventions.
+    /// when to spawn its nodes. Spawned nodes carry the team's `adapter`/
+    /// `northstar` paths (see `Node::adapter`/`Node::northstar`), but node
+    /// dispatch does not yet load them: the runner still executes every node
+    /// under the run's single top-level adapter.
     #[serde(default)]
     pub teams: Vec<TeamConfig>,
     /// Artifact repository settings.

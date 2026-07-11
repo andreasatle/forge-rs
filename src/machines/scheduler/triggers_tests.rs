@@ -11,6 +11,15 @@ fn team(name: &str, trigger: Trigger) -> TeamConfig {
     }
 }
 
+fn team_with_adapter(name: &str, trigger: Trigger, adapter: &str, northstar: &str) -> TeamConfig {
+    TeamConfig {
+        name: name.to_string(),
+        northstar: northstar.to_string(),
+        adapter: adapter.to_string(),
+        trigger,
+    }
+}
+
 fn record(id: &str, objective: &str, team: &str) -> TaskRecord {
     TaskRecord {
         id: id.to_string(),
@@ -28,6 +37,8 @@ fn root_node() -> Node {
         kind: NodeKind::Plan,
         team: String::new(),
         task_id: None,
+        adapter: String::new(),
+        northstar: String::new(),
         worker_role: None,
         objective: "build a fibonacci program".to_string(),
         target_files: vec![],
@@ -66,6 +77,29 @@ fn run_once_spawns_initial_plan_node() {
     assert_eq!(spawned[0].kind, NodeKind::Plan);
     assert_eq!(spawned[0].objective, "build a fibonacci program");
     assert_eq!(spawned[0].task_id, None);
+}
+
+/// A `RunOnce`-spawned Plan node carries its own team's adapter/northstar
+/// paths rather than empty strings, so the node can later be dispatched
+/// under team X's own project adapter and northstar instead of whatever
+/// the single-team path used.
+#[test]
+fn run_once_spawns_node_with_team_adapter_and_northstar() {
+    let graph = RunGraph {
+        nodes: vec![root_node()],
+    };
+    let config = run_config(vec![team_with_adapter(
+        "planner",
+        Trigger::Start,
+        "adapters/planner.yaml",
+        "northstars/planner.md",
+    )]);
+    let graph = apply_team_triggers(graph, &NodeId("root".to_string()), &config, &[]);
+
+    let spawned: Vec<&Node> = graph.nodes.iter().filter(|n| n.team == "planner").collect();
+    assert_eq!(spawned.len(), 1);
+    assert_eq!(spawned[0].adapter, "adapters/planner.yaml");
+    assert_eq!(spawned[0].northstar, "northstars/planner.md");
 }
 
 /// Re-evaluating the same `start` trigger while the team's node is still
@@ -136,6 +170,33 @@ fn for_tasks_spawns_work_node_with_original_objective() {
     assert_eq!(spawned[0].objective, "implement fibonacci(n: int)");
 }
 
+/// A `ForTasks`-spawned Work node carries its own team's adapter/northstar
+/// paths, distinct from another team's, so nodes for different teams never
+/// end up dispatched under a shared or borrowed adapter.
+#[test]
+fn for_tasks_spawns_node_with_team_adapter_and_northstar() {
+    let graph = RunGraph {
+        nodes: vec![root_node()],
+    };
+    let config = run_config(vec![team_with_adapter(
+        "implement",
+        Trigger::AfterEach(vec!["planner".to_string()]),
+        "adapters/implement.yaml",
+        "northstars/implement.md",
+    )]);
+    let manifest = [record("t1", "implement fibonacci(n: int)", "planner")];
+    let graph = apply_team_triggers(graph, &NodeId("root".to_string()), &config, &manifest);
+
+    let spawned: Vec<&Node> = graph
+        .nodes
+        .iter()
+        .filter(|n| n.team == "implement")
+        .collect();
+    assert_eq!(spawned.len(), 1);
+    assert_eq!(spawned[0].adapter, "adapters/implement.yaml");
+    assert_eq!(spawned[0].northstar, "northstars/implement.md");
+}
+
 /// Re-evaluating `after_each` while the spawned Work node is still Pending
 /// (no manifest row from `implement` yet) must not spawn a duplicate for the
 /// same task id.
@@ -200,6 +261,8 @@ fn for_tasks_respawns_after_prior_attempt_failed() {
         kind: NodeKind::Work,
         team: "implement".to_string(),
         task_id: Some("t1".to_string()),
+        adapter: String::new(),
+        northstar: String::new(),
         worker_role: None,
         objective: "implement fibonacci(n: int)".to_string(),
         target_files: vec![],

@@ -116,6 +116,8 @@ impl SchedulerMachine {
             kind: NodeKind::Plan,
             team: String::new(),
             task_id: None,
+            adapter: String::new(),
+            northstar: String::new(),
             worker_role: None,
             objective: request.objective,
             target_files: vec![],

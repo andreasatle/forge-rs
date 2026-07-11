@@ -69,6 +69,8 @@ mod tests {
             kind: NodeKind::Work,
             team: String::new(),
             task_id: None,
+            adapter: String::new(),
+            northstar: String::new(),
             worker_role: None,
             objective: format!("objective for {id}"),
             target_files: vec![],

@@ -43,6 +43,8 @@ fn plan_expansion_stamps_validation_plan_onto_work_children() {
                     kind: NodeKind::Work,
                     team: String::new(),
                     task_id: None,
+                    adapter: String::new(),
+                    northstar: String::new(),
                     worker_role: None,
                     objective: "do the work".to_string(),
                     target_files: vec![],

@@ -70,6 +70,14 @@ pub struct NodeRequest {
     /// The manifest task id the resulting node was spawned to act on, if any.
     /// Copied verbatim onto `Node.task_id`.
     pub task_id: Option<String>,
+    /// Path to the project adapter YAML file for the resulting node. Copied
+    /// verbatim onto `Node.adapter`; empty for the single-team planner-authored
+    /// path.
+    pub adapter: String,
+    /// Path to the desired-end-state northstar file for the resulting node.
+    /// Copied verbatim onto `Node.northstar`; empty for the single-team
+    /// planner-authored path.
+    pub northstar: String,
     /// The adapter-assigned worker role for a `Work` node (e.g. `"tester"`).
     ///
     /// `None` for `Plan` nodes and for `Work` nodes with no distinct role.
