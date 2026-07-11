@@ -1,10 +1,10 @@
 //! Wires an adapter (and the language plugins it declares) plus a
-//! [`ValidationConfig`] into the pieces the scheduler runner needs: role
-//! policy, context files, required test targets, validation plan, and
-//! validator.
+//! [`ValidationConfig`] into the pieces a node runner needs: role policy,
+//! context files, required test targets, validation plan, and validator.
 //!
-//! [`ProjectRuntimeSetup::build`] is the single entry point so `run` and
-//! `resume` derive identical wiring from identical config.
+//! [`ProjectRuntimeSetup::build`] is the single entry point so `run`,
+//! `resume`, and per-team dispatch inside [`DeliberatingNodeRunner`](super::DeliberatingNodeRunner)
+//! derive identical wiring from identical config.
 
 use std::collections::BTreeMap;
 use std::error::Error;
@@ -16,13 +16,14 @@ use std::time::Duration;
 use crate::config::ValidationConfig;
 use crate::language::select_plugin;
 use crate::language::spec::{LanguageInitSpec, LanguageSpec};
-use crate::node_runner::{TestTargetsFn, ValidationPlanForRoleFn};
 use crate::project::{ProjectAdapter, load_adapter};
 use crate::roles::RolePolicy;
 use crate::validation::{
     AlwaysPassValidator, CommandSpec, CommandValidator, ValidationPlan, ValidationScope,
     ValidationStage, ValidationStep, Validator,
 };
+
+use super::{TestTargetsFn, ValidationPlanForRoleFn};
 
 /// Project- and validation-derived wiring shared by `ForgeRuntime::run` and
 /// `ForgeRuntime::resume`.

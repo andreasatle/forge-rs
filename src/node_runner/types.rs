@@ -43,11 +43,12 @@ pub struct NodeRunRequest {
     /// same workspace. Integration is responsible for validating and
     /// publishing it.
     pub work_attempt: Option<WorkAttempt>,
-    /// Copied verbatim from `Node::adapter`. Empty for the single-team path.
-    /// Runners do not yet consume this field.
+    /// Copied verbatim from `Node::adapter`. Empty for the single-team path,
+    /// in which case the runner falls back to the run's top-level adapter.
     pub adapter: String,
     /// Copied verbatim from `Node::northstar`. Empty for the single-team
-    /// path. Runners do not yet consume this field.
+    /// path, in which case the runner falls back to the run's top-level
+    /// northstar.
     pub northstar: String,
 }
 

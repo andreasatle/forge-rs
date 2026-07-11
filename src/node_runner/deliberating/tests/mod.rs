@@ -297,5 +297,6 @@ mod context;
 mod failure;
 mod output;
 mod request;
+mod team;
 mod telemetry;
 mod validation;

@@ -2,7 +2,7 @@ use std::error::Error;
 use std::path::{Path, PathBuf};
 
 use crate::config::ForgeConfig;
-use crate::runtime::project_setup::ProjectRuntimeSetup;
+use crate::node_runner::ProjectRuntimeSetup;
 
 fn validate_reset_path(repo_path: &Path) -> Result<(), Box<dyn Error>> {
     // Canonicalize for comparisons when the path already exists.

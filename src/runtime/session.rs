@@ -10,10 +10,9 @@ use std::rc::Rc;
 
 use crate::config::ForgeConfig;
 use crate::machines::scheduler::{SchedulerHandler, SchedulerState, run_scheduler_with_telemetry};
-use crate::node_runner::DeliberatingNodeRunner;
+use crate::node_runner::{DeliberatingNodeRunner, ProjectRuntimeSetup};
 use crate::runtime::RunInfo;
 use crate::runtime::outcome::RunOutcome;
-use crate::runtime::project_setup::ProjectRuntimeSetup;
 use crate::runtime::provider_stack::ResolvedProviderStack;
 use crate::runtime::repo::load_or_create_artifact;
 use crate::telemetry::TelemetrySink;

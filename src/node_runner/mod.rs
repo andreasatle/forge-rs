@@ -9,14 +9,17 @@
 //! - `types.rs` — [`NodeRunRequest`] and [`NodeRunResult`]
 //! - `runner.rs` — [`NodeRunner`] trait and [`StaticNodeRunner`] fake implementation
 //! - `deliberating.rs` — [`DeliberatingNodeRunner`] backed by [`DeliberationMachine`](crate::machines::deliberation::DeliberationMachine)
+//! - `project_setup.rs` — [`ProjectRuntimeSetup`], which wires a project adapter into the pieces a runner needs
 
 pub mod classify;
 pub mod deliberating;
 pub mod planner;
+pub(crate) mod project_setup;
 pub mod runner;
 pub mod types;
 
 pub use deliberating::DeliberatingNodeRunner;
+pub(crate) use project_setup::ProjectRuntimeSetup;
 pub use runner::{NodeRunner, StaticNodeRunner};
 pub use types::{NodeRunRequest, NodeRunResult, NodeRunWorkResult, WorkAttempt};
 

@@ -6,6 +6,7 @@ mod execution;
 mod machine;
 mod output;
 mod request;
+mod team;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -23,6 +24,7 @@ use super::types::{NodeRunRequest, NodeRunResult};
 
 use self::context::DeliberationContextConfig;
 use self::execution::run_with_provider;
+use self::team::{load_team_northstar, load_team_setup, team_wiring_failed};
 
 /// Runs a node by driving a
 /// [`DeliberationMachine`](crate::machines::deliberation::DeliberationMachine)
@@ -168,19 +170,58 @@ impl<C, S> DeliberatingNodeRunner<C, S> {
 
 impl<C: ProviderClient, S: ProviderClient> NodeRunner for DeliberatingNodeRunner<C, S> {
     fn run_node(&self, request: NodeRunRequest, telemetry: &dyn TelemetrySink) -> NodeRunResult {
+        let team_setup = match load_team_setup(&request.adapter) {
+            Ok(team_setup) => team_setup,
+            Err(message) => return team_wiring_failed(message, telemetry),
+        };
+        let team_northstar = match load_team_northstar(&request.northstar) {
+            Ok(team_northstar) => team_northstar,
+            Err(message) => return team_wiring_failed(message, telemetry),
+        };
+
+        // A non-empty `request.adapter`/`request.northstar` names a team
+        // that owns this node; its own adapter wiring applies for the
+        // duration of this call instead of the run's top-level wiring, which
+        // remains the default whenever a request carries no team override.
+        let role_policy = team_setup
+            .as_ref()
+            .map(|setup| &setup.role_policy)
+            .unwrap_or(&self.role_policy);
+        let required_test_targets_fn = team_setup
+            .as_ref()
+            .map(|setup| &setup.required_test_targets_fn)
+            .unwrap_or(&self.required_test_targets_fn);
+        let validation_plan_for_role_fn = team_setup
+            .as_ref()
+            .map(|setup| &setup.validation_plan_for_role_fn)
+            .unwrap_or(&self.validation_plan_for_role_fn);
+        let context_file_names = team_setup
+            .as_ref()
+            .map(|setup| setup.context_file_names.as_slice())
+            .unwrap_or(&self.context_file_names);
+        let api_summary_command = team_setup
+            .as_ref()
+            .and_then(|setup| setup.api_summary_command.as_ref())
+            .or(self.api_summary_command.as_ref());
+        let language_plugins = team_setup
+            .as_ref()
+            .map(|setup| &setup.language_plugins)
+            .unwrap_or(&self.language_plugins);
+        let northstar = team_northstar.as_deref().or(self.northstar.as_deref());
+
         let context_config = DeliberationContextConfig {
-            required_test_targets_fn: &self.required_test_targets_fn,
-            context_file_names: &self.context_file_names,
-            api_summary_command: self.api_summary_command.as_ref(),
-            northstar: self.northstar.as_deref(),
-            language_plugins: &self.language_plugins,
+            required_test_targets_fn,
+            context_file_names,
+            api_summary_command,
+            northstar,
+            language_plugins,
         };
         let result = match request.model_tier {
             ModelTier::Cheap => run_with_provider(
                 &self.cheap_provider,
                 request,
                 self.cheap_max_tokens,
-                &self.role_policy,
+                role_policy,
                 &context_config,
                 telemetry,
             ),
@@ -188,14 +229,18 @@ impl<C: ProviderClient, S: ProviderClient> NodeRunner for DeliberatingNodeRunner
                 &self.strong_provider,
                 request,
                 self.strong_max_tokens,
-                &self.role_policy,
+                role_policy,
                 &context_config,
                 telemetry,
             ),
         };
 
         if let NodeRunResult::PlanAccepted(plan) = result {
-            NodeRunResult::PlanAccepted(self.stamp_plan_metadata(plan))
+            NodeRunResult::PlanAccepted(Self::stamp_plan_metadata(
+                plan,
+                required_test_targets_fn,
+                validation_plan_for_role_fn,
+            ))
         } else {
             result
         }
@@ -211,20 +256,22 @@ impl<C, S> DeliberatingNodeRunner<C, S> {
     /// `Plan` nodes, so this is a no-op for them — they carry no worker role
     /// or concrete targets yet. A `Plan` parent's children are `Work` nodes
     /// and get their validation plan stamped here.
+    ///
+    /// Takes the derivation functions as parameters, rather than reading
+    /// `self`, so a team-scoped plan node's children are stamped from that
+    /// team's own adapter wiring instead of the run's top-level one.
     fn stamp_plan_metadata(
-        &self,
         mut plan: crate::machines::scheduler::PlanOutput,
+        required_test_targets_fn: &Arc<TestTargetsFn>,
+        validation_plan_for_role_fn: &Arc<ValidationPlanForRoleFn>,
     ) -> crate::machines::scheduler::PlanOutput {
         for child in &mut plan.children {
             if child.kind != NodeKind::Work {
                 continue;
             }
-            child.required_validation_targets =
-                (self.required_test_targets_fn)(&child.target_files);
-            child.validation_plan = (self.validation_plan_for_role_fn)(
-                child.worker_role.as_deref(),
-                &child.target_files,
-            );
+            child.required_validation_targets = required_test_targets_fn(&child.target_files);
+            child.validation_plan =
+                validation_plan_for_role_fn(child.worker_role.as_deref(), &child.target_files);
         }
         plan
     }
