@@ -334,14 +334,20 @@ impl ForgeConfig {
     /// `adapter` is resolved and loaded first, before any other config field
     /// is validated or any provider/artifact setup happens — a missing or
     /// invalid adapter (or any language plugin it declares) fails
-    /// immediately. Relative paths (in `adapter`, `artifact.repo_path`, and
-    /// `telemetry.directory`) are resolved against the directory containing
-    /// the config file, not the process working directory.
+    /// immediately. Each team's `adapter`/`northstar` is resolved and
+    /// validated the same way immediately after. Relative paths (in
+    /// `adapter`, each team's `adapter`/`northstar`, `artifact.repo_path`,
+    /// and `telemetry.directory`) are resolved against the directory
+    /// containing the config file, not the process working directory.
     ///
     /// Returns an error if:
     /// - `adapter` is absent or blank.
     /// - `adapter` does not resolve to a loadable adapter YAML file, or any
     ///   plugin it declares fails to load.
+    /// - any team's `adapter` is blank, or does not resolve to a loadable
+    ///   adapter YAML file (or plugin it declares fails to load).
+    /// - any team's `northstar` is blank, or does not resolve to a readable
+    ///   file.
     pub fn from_file(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
         let config_path = Path::new(path);
         let content = std::fs::read_to_string(config_path)?;
@@ -362,6 +368,8 @@ impl ForgeConfig {
             config.adapter = resolve_relative(&config.adapter, dir);
         }
         crate::project::load_adapter(Path::new(&config.adapter))?;
+
+        resolve_team_paths(&mut config.teams, config_dir)?;
 
         if let Some(dir) = config_dir {
             config.artifact.repo_path = resolve_relative(&config.artifact.repo_path, dir);
@@ -477,6 +485,35 @@ fn resolve_relative(path_str: &str, base: &Path) -> String {
     } else {
         base.join(p).to_string_lossy().into_owned()
     }
+}
+
+/// Resolves and validates each team's `adapter`/`northstar` in place, the
+/// same way `ForgeConfig::from_file` resolves and validates the top-level
+/// `adapter` field.
+fn resolve_team_paths(
+    teams: &mut [TeamConfig],
+    config_dir: Option<&Path>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    for team in teams {
+        if team.adapter.trim().is_empty() {
+            return Err(format!("team '{}': adapter is required", team.name).into());
+        }
+        if team.northstar.trim().is_empty() {
+            return Err(format!("team '{}': northstar is required", team.name).into());
+        }
+        if let Some(dir) = config_dir {
+            team.adapter = resolve_relative(&team.adapter, dir);
+            team.northstar = resolve_relative(&team.northstar, dir);
+        }
+        crate::project::load_adapter(Path::new(&team.adapter))?;
+        std::fs::metadata(&team.northstar).map_err(|e| {
+            format!(
+                "team '{}': northstar at {} could not be read: {e}",
+                team.name, team.northstar
+            )
+        })?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]

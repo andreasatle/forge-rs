@@ -60,6 +60,10 @@ impl TempYaml {
     fn path(&self) -> &str {
         self.0.to_str().unwrap()
     }
+
+    fn dir(&self) -> &std::path::Path {
+        self.0.parent().unwrap()
+    }
 }
 
 impl Drop for TempYaml {
@@ -143,29 +147,41 @@ telemetry:
 adapter: coding.yaml
 teams:
   - name: planner
-    northstar: northstars/project.md
-    adapter: adapters/planner.yaml
+    northstar: project.md
+    adapter: coding.yaml
     trigger: start
   - name: implement
-    northstar: northstars/implementation.md
-    adapter: adapters/implementation.yaml
+    northstar: implementation.md
+    adapter: coding.yaml
     trigger: after_each(planner)
 "#;
 
 #[test]
 fn parses_teams() {
     let tmp = TempYaml::new(TEAMS_YAML);
+    std::fs::write(tmp.dir().join("project.md"), "gap: project").unwrap();
+    std::fs::write(tmp.dir().join("implementation.md"), "gap: implementation").unwrap();
     let config = ForgeConfig::from_file(tmp.path()).unwrap();
     assert_eq!(config.teams.len(), 2);
 
+    let expected_adapter = tmp.dir().join("coding.yaml").to_string_lossy().into_owned();
+
     let planner = &config.teams[0];
     assert_eq!(planner.name, "planner");
-    assert_eq!(planner.northstar, "northstars/project.md");
-    assert_eq!(planner.adapter, "adapters/planner.yaml");
+    assert_eq!(
+        planner.northstar,
+        tmp.dir().join("project.md").to_string_lossy()
+    );
+    assert_eq!(planner.adapter, expected_adapter);
     assert_eq!(planner.trigger, Trigger::Start);
 
     let implement = &config.teams[1];
     assert_eq!(implement.name, "implement");
+    assert_eq!(
+        implement.northstar,
+        tmp.dir().join("implementation.md").to_string_lossy()
+    );
+    assert_eq!(implement.adapter, expected_adapter);
     assert_eq!(
         implement.trigger,
         Trigger::AfterEach(vec!["planner".to_string()])
@@ -188,14 +204,15 @@ telemetry:
 adapter: coding.yaml
 teams:
   - name: gather
-    northstar: northstars/gather.md
-    adapter: adapters/gather.yaml
+    northstar: gather.md
+    adapter: coding.yaml
     trigger: after_each(a, b)
 "#;
 
 #[test]
 fn parses_after_each_with_multiple_teams() {
     let tmp = TempYaml::new(MULTI_AFTER_EACH_YAML);
+    std::fs::write(tmp.dir().join("gather.md"), "gap: gather").unwrap();
     let config = ForgeConfig::from_file(tmp.path()).unwrap();
     assert_eq!(
         config.teams[0].trigger,
@@ -241,6 +258,139 @@ fn teams_defaults_to_empty_when_absent() {
     assert!(
         config.teams.is_empty(),
         "teams must default to empty when absent from the config"
+    );
+}
+
+const BLANK_TEAM_ADAPTER_YAML: &str = r#"
+objective: "test"
+artifact:
+  repo_path: ".forge/artifacts/main.git"
+  branch: "main"
+provider:
+  cheap:
+    unmanaged:
+      base_url: "http://localhost:8080"
+      model: "llama-test"
+      n_predict: 512
+telemetry:
+  directory: "runs"
+adapter: coding.yaml
+teams:
+  - name: planner
+    northstar: project.md
+    adapter: "   "
+    trigger: start
+"#;
+
+#[test]
+fn team_adapter_is_required_when_blank() {
+    // Invariant: a team's adapter must be validated the same way the
+    // top-level adapter is (see `adapter_is_required_when_blank`), not left
+    // to fail obscurely at dispatch time.
+    let tmp = TempYaml::new(BLANK_TEAM_ADAPTER_YAML);
+    let err = ForgeConfig::from_file(tmp.path()).unwrap_err();
+    assert!(
+        err.to_string().contains("planner"),
+        "error must name the team with the blank adapter; got: {err}"
+    );
+}
+
+const BLANK_TEAM_NORTHSTAR_YAML: &str = r#"
+objective: "test"
+artifact:
+  repo_path: ".forge/artifacts/main.git"
+  branch: "main"
+provider:
+  cheap:
+    unmanaged:
+      base_url: "http://localhost:8080"
+      model: "llama-test"
+      n_predict: 512
+telemetry:
+  directory: "runs"
+adapter: coding.yaml
+teams:
+  - name: planner
+    northstar: "   "
+    adapter: coding.yaml
+    trigger: start
+"#;
+
+#[test]
+fn team_northstar_is_required_when_blank() {
+    let tmp = TempYaml::new(BLANK_TEAM_NORTHSTAR_YAML);
+    let err = ForgeConfig::from_file(tmp.path()).unwrap_err();
+    assert!(
+        err.to_string().contains("planner"),
+        "error must name the team with the blank northstar; got: {err}"
+    );
+}
+
+const UNKNOWN_TEAM_ADAPTER_YAML: &str = r#"
+objective: "test"
+artifact:
+  repo_path: ".forge/artifacts/main.git"
+  branch: "main"
+provider:
+  cheap:
+    unmanaged:
+      base_url: "http://localhost:8080"
+      model: "llama-test"
+      n_predict: 512
+telemetry:
+  directory: "runs"
+adapter: coding.yaml
+teams:
+  - name: planner
+    northstar: project.md
+    adapter: bogus_team_adapter_that_does_not_exist.yaml
+    trigger: start
+"#;
+
+#[test]
+fn unknown_team_adapter_filename_fails_at_config_load_time() {
+    // Invariant: a team adapter path that does not exist on disk must fail
+    // `from_file` itself, the same way an unknown top-level adapter does
+    // (see `unknown_adapter_filename_fails_at_config_load_time`).
+    let tmp = TempYaml::new(UNKNOWN_TEAM_ADAPTER_YAML);
+    std::fs::write(tmp.dir().join("project.md"), "gap: project").unwrap();
+    let err = ForgeConfig::from_file(tmp.path()).unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("bogus_team_adapter_that_does_not_exist.yaml"),
+        "error must name the missing team adapter path; got: {err}"
+    );
+}
+
+const UNKNOWN_TEAM_NORTHSTAR_YAML: &str = r#"
+objective: "test"
+artifact:
+  repo_path: ".forge/artifacts/main.git"
+  branch: "main"
+provider:
+  cheap:
+    unmanaged:
+      base_url: "http://localhost:8080"
+      model: "llama-test"
+      n_predict: 512
+telemetry:
+  directory: "runs"
+adapter: coding.yaml
+teams:
+  - name: planner
+    northstar: bogus_northstar_that_does_not_exist.md
+    adapter: coding.yaml
+    trigger: start
+"#;
+
+#[test]
+fn unknown_team_northstar_path_fails_at_config_load_time() {
+    let tmp = TempYaml::new(UNKNOWN_TEAM_NORTHSTAR_YAML);
+    let err = ForgeConfig::from_file(tmp.path()).unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("bogus_northstar_that_does_not_exist.md"),
+        "error must name the missing team northstar path; got: {err}"
     );
 }
 
