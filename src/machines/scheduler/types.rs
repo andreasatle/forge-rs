@@ -33,6 +33,9 @@ pub struct PlannerTaskOutput {
     pub id: String,
     /// Natural-language description of the planner's intent.
     pub objective: String,
+    /// Bare symbol or concept identifier for this task, carried verbatim
+    /// from [`crate::node_runner::planner::PlannerTask::name`].
+    pub name: String,
 }
 
 /// The structured output of a work node that succeeded.

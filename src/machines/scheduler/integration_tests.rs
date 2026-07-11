@@ -89,6 +89,7 @@ fn integrate_planner_tasks_creates_manifest_only_commit() {
             commit: String::new(),
             completed_at: "2026-07-10T00:00:00Z".to_string(),
             team: Some("planner".to_string()),
+            name: None,
         },
         TaskRecord {
             id: "t2".to_string(),
@@ -97,6 +98,7 @@ fn integrate_planner_tasks_creates_manifest_only_commit() {
             commit: String::new(),
             completed_at: "2026-07-10T00:00:01Z".to_string(),
             team: Some("planner".to_string()),
+            name: None,
         },
     ];
 
@@ -144,6 +146,7 @@ fn integrate_planner_tasks_without_artifact_fails() {
         commit: String::new(),
         completed_at: "2026-07-10T00:00:00Z".to_string(),
         team: Some("planner".to_string()),
+        name: None,
     }];
 
     let err = service
@@ -171,10 +174,12 @@ fn integrate_plan_tasks_returns_planner_tasks_integrated_event() {
             PlannerTaskOutput {
                 id: "t1".to_string(),
                 objective: "decompose alpha".to_string(),
+                name: "alpha".to_string(),
             },
             PlannerTaskOutput {
                 id: "t2".to_string(),
                 objective: "decompose beta".to_string(),
+                name: "beta".to_string(),
             },
         ],
         "planner".to_string(),
@@ -191,6 +196,8 @@ fn integrate_plan_tasks_returns_planner_tasks_integrated_event() {
     assert_eq!(manifest_tasks.len(), 2);
     assert_eq!(manifest_tasks[0].id, "t1");
     assert_eq!(manifest_tasks[0].team, Some("planner".to_string()));
+    assert_eq!(manifest_tasks[0].name, Some("alpha".to_string()));
     assert_eq!(manifest_tasks[1].id, "t2");
     assert_eq!(manifest_tasks[1].team, Some("planner".to_string()));
+    assert_eq!(manifest_tasks[1].name, Some("beta".to_string()));
 }

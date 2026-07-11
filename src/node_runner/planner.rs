@@ -17,6 +17,15 @@ pub struct PlannerTask {
     pub id: String,
     /// Natural-language description of what this task should accomplish.
     pub objective: String,
+    /// Bare symbol or concept identifier for this task (e.g. `fibonacci`) —
+    /// not a file path or location.
+    ///
+    /// `#[serde(default)]` because no adapter prompt schema asks the planner
+    /// for a `name` yet; wiring that in (and any path-derivation from it) is
+    /// separate future work for whichever team consumes it. Defaults to an
+    /// empty string when the planner omits it.
+    #[serde(default)]
+    pub name: String,
     /// Concrete artifact operation this task will perform, when the active
     /// adapter's prompt schema asks for one.
     ///
@@ -313,6 +322,7 @@ impl<'a> PlannerOutputProcessor<'a> {
                         .map(|task| PlannerTaskOutput {
                             id: task.id,
                             objective: task.objective,
+                            name: task.name,
                         })
                         .collect(),
                 };

@@ -215,6 +215,7 @@ impl IntegrationService {
                             commit: new_artifact.commit_sha.clone(),
                             completed_at: utc_now_iso8601(),
                             team: Some(team.clone()),
+                            name: None,
                         };
                         let (recorded, tasks) =
                             record_task(&new_artifact, &workspace.borrow(), record).unwrap_or_else(
@@ -347,6 +348,7 @@ impl IntegrationService {
                 commit: String::new(),
                 completed_at: completed_at.clone(),
                 team: Some(team.clone()),
+                name: Some(task.name),
             })
             .collect();
         match self.integrate_planner_tasks(records) {

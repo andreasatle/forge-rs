@@ -72,6 +72,12 @@ pub struct TaskRecord {
     /// path, where no trigger evaluation depends on this row).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub team: Option<String>,
+    /// The planner-assigned symbol/concept name for this task, carried from
+    /// `PlannerTaskOutput::name`. `None` for rows recorded via
+    /// [`record_task`] (completed `Work` nodes), which have no corresponding
+    /// `PlannerTask` and thus no name to carry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

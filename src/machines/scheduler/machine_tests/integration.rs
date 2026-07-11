@@ -219,6 +219,7 @@ fn plan_task_output_marks_integrating_and_emits_integrate_planner_tasks() {
                 tasks: vec![PlannerTaskOutput {
                     id: "t1".to_string(),
                     objective: "decompose alpha".to_string(),
+                    name: String::new(),
                 }],
             },
         },
