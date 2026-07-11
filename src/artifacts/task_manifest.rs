@@ -196,16 +196,34 @@ fn ensure_forge_ignored(workspace: &Workspace) -> Result<(), TaskManifestError> 
 
 fn read_manifest(workspace: &Workspace) -> Result<TaskManifestFile, TaskManifestError> {
     let path = workspace.path().join(MANIFEST_PATH);
-    match fs::read_to_string(&path) {
-        Ok(contents) => {
-            serde_json::from_str(&contents).map_err(|e| TaskManifestError::Json(e.to_string()))
+    let contents = match fs::read_to_string(&path) {
+        Ok(contents) => Some(contents),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => return Err(TaskManifestError::Io(e.to_string())),
+    };
+    parse_manifest(contents.as_deref())
+}
+
+/// Parses raw `.forge/tasks.json` contents, treating a missing file
+/// (`contents = None`) as an empty manifest.
+fn parse_manifest(contents: Option<&str>) -> Result<TaskManifestFile, TaskManifestError> {
+    match contents {
+        Some(contents) => {
+            serde_json::from_str(contents).map_err(|e| TaskManifestError::Json(e.to_string()))
         }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(TaskManifestFile {
+        None => Ok(TaskManifestFile {
             schema_version: MANIFEST_SCHEMA_VERSION,
             tasks: Vec::new(),
         }),
-        Err(e) => Err(TaskManifestError::Io(e.to_string())),
     }
+}
+
+/// Parses `.forge/tasks.json` contents (as read from a committed artifact,
+/// e.g. via [`super::ArtifactView::read_file`]) into its task records.
+/// Shares [`parse_manifest`]'s schema and missing-file handling rather than
+/// making callers re-parse the manifest format themselves.
+pub(crate) fn manifest_tasks(contents: Option<&str>) -> Result<Vec<TaskRecord>, TaskManifestError> {
+    parse_manifest(contents).map(|manifest| manifest.tasks)
 }
 
 fn write_manifest(

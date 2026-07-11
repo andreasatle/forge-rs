@@ -6,6 +6,7 @@
 //!   forge show    <config.yaml>            — display the current artifact contents
 //!   forge history <config.yaml>            — print commit history (newest first)
 //!   forge reset   <config.yaml>            — delete and recreate the artifact repository
+//!   forge tasks   <config.yaml>            — list tasks recorded in .forge/tasks.json
 //!   forge trace   <config.yaml>                — node/attempt-grouped view of the latest run
 //!   forge trace   <config.yaml> --run <run-id>  — trace a specific past run
 //!   forge trace   <config.yaml> --summary       — print the old flat chronological event list
@@ -31,7 +32,9 @@ use forge_rs::machines::deliberation::DeliberationRole;
 use forge_rs::machines::scheduler::NodeKind;
 use forge_rs::project::ProjectAdapter;
 use forge_rs::roles::render_prompt_preview;
-use forge_rs::runtime::{ForgeRuntime, TraceFilter, run_history, run_reset, run_show, run_trace};
+use forge_rs::runtime::{
+    ForgeRuntime, TraceFilter, run_history, run_reset, run_show, run_tasks, run_trace,
+};
 use forge_rs::vast::VastClient;
 
 #[derive(Parser)]
@@ -63,6 +66,11 @@ enum Command {
     },
     /// Delete and recreate the artifact repository.
     Reset {
+        /// Path to the forge config YAML file.
+        config: String,
+    },
+    /// List tasks recorded in `.forge/tasks.json`.
+    Tasks {
         /// Path to the forge config YAML file.
         config: String,
     },
@@ -190,6 +198,7 @@ fn main() {
         Command::Show { config } => run_config_command(&config, run_show),
         Command::History { config } => run_config_command(&config, run_history),
         Command::Reset { config } => run_config_command(&config, run_reset),
+        Command::Tasks { config } => run_config_command(&config, run_tasks),
         Command::Trace {
             config,
             run,

@@ -16,7 +16,7 @@ pub use file_ops::{ArtifactError, WorkspaceFileOps};
 pub use integration::{IntegrationError, integrate};
 pub use read::ArtifactRead;
 pub use task_manifest::TaskRecord;
-pub(crate) use task_manifest::{record_planner_tasks, record_task};
+pub(crate) use task_manifest::{manifest_tasks, record_planner_tasks, record_task};
 pub use workspace::{Workspace, WorkspaceFactory};
 
 #[cfg(test)]

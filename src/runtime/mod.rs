@@ -12,6 +12,7 @@ mod run;
 mod run_info;
 mod session;
 mod show;
+mod tasks;
 mod trace;
 
 pub use history::run_history;
@@ -23,4 +24,5 @@ pub use run_info::{
     latest_run_dir,
 };
 pub use show::run_show;
+pub use tasks::run_tasks;
 pub use trace::{TraceFilter, run_trace};
