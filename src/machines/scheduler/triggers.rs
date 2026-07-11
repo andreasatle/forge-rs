@@ -29,12 +29,16 @@ use super::types::NodeRequest;
 /// re-evaluated on every task completion, not once per run — without the
 /// graph check, a still-in-flight node (no manifest row yet) would be
 /// re-spawned on every unrelated completion.
+///
+/// Returns `Err` with a diagnostic detail if a `ForTasks` spawn's target
+/// files could not be derived (see [`task_target_files`]); the caller is
+/// responsible for routing that into `FailureReason::TargetDerivationFailed`.
 pub(super) fn apply_team_triggers(
     mut graph: RunGraph,
     node_id: &NodeId,
     run_config: &RunConfig,
     manifest_tasks: &[TaskRecord],
-) -> RunGraph {
+) -> Result<RunGraph, String> {
     let completions: Vec<TaskCompletion> = manifest_tasks
         .iter()
         .filter_map(|record| {
@@ -51,11 +55,11 @@ pub(super) fn apply_team_triggers(
                 spawn_run_once(graph, node_id, team, should_run)
             }
             TriggerDecision::ForTasks(ids) => {
-                spawn_for_tasks(graph, node_id, team, ids, manifest_tasks)
+                spawn_for_tasks(graph, node_id, team, ids, manifest_tasks)?
             }
         };
     }
-    graph
+    Ok(graph)
 }
 
 /// Spawns a team's Start-triggered initial `Plan` node, unless it should not
@@ -88,21 +92,26 @@ fn spawn_run_once(
 
 /// Spawns a `Work` node per qualifying task id, skipping ids that already
 /// have a non-terminal-failed node for this team.
+///
+/// Returns `Err` as soon as any qualifying id's target files cannot be
+/// derived (see [`task_target_files`]), without inserting any of the
+/// requests built so far — a node that can touch no file must never reach
+/// the graph.
 fn spawn_for_tasks(
     mut graph: RunGraph,
     node_id: &NodeId,
     team: &TeamConfig,
     ids: Vec<String>,
     manifest_tasks: &[TaskRecord],
-) -> RunGraph {
+) -> Result<RunGraph, String> {
     let requests: Vec<NodeRequest> = ids
         .into_iter()
         .filter(|id| !graph.has_active_team_node(&team.name, Some(id.as_str())))
         .map(|id| {
             let record = manifest_tasks.iter().find(|record| record.id == id);
             let objective = record.map(|r| r.objective.clone()).unwrap_or_default();
-            let target_files = task_target_files(team, record, &id);
-            NodeRequest {
+            let target_files = task_target_files(team, record, &id)?;
+            Ok(NodeRequest {
                 id: new_node_id(),
                 kind: NodeKind::Work,
                 team: team.name.clone(),
@@ -115,13 +124,13 @@ fn spawn_for_tasks(
                 required_validation_targets: vec![],
                 dependencies: vec![],
                 validation_plan: None,
-            }
+            })
         })
-        .collect();
+        .collect::<Result<Vec<_>, String>>()?;
     if !requests.is_empty() {
         graph = graph.insert_children(node_id, requests);
     }
-    graph
+    Ok(graph)
 }
 
 /// Derives a `ForTasks`-spawned node's target files from its matched
@@ -129,30 +138,33 @@ fn spawn_for_tasks(
 /// its adapter's language plugins at config-load time — see
 /// [`TeamConfig::name_target_rules`]).
 ///
-/// Returns an empty vec — never a guessed fallback — when the task has no
-/// recorded name, or no rule's pattern matches it (including when `team` has
-/// no configured language plugins at all, i.e. `name_target_rules` is
-/// empty); either case is reported to stderr so a node that can touch no
-/// file is diagnosable rather than silently produced.
-fn task_target_files(team: &TeamConfig, record: Option<&TaskRecord>, id: &str) -> Vec<String> {
+/// A task with no recorded name (e.g. one recorded from a completed `Work`
+/// node rather than a planner `Task`, per [`TaskRecord::name`]) legitimately
+/// has nothing to derive from, so that case still spawns with no target
+/// files. But once a name exists, failing to match it against any configured
+/// rule — including when `team` has no language plugins at all, i.e.
+/// `name_target_rules` is empty — is `Err`, never a guessed fallback: the
+/// caller must fail the run rather than spawn a node that can touch no file.
+fn task_target_files(
+    team: &TeamConfig,
+    record: Option<&TaskRecord>,
+    id: &str,
+) -> Result<Vec<String>, String> {
     let Some(name) = record.and_then(|r| r.name.as_deref()) else {
         eprintln!(
             "[triggers] team '{}': task '{id}' has no recorded name; spawning with no target files",
             team.name
         );
-        return vec![];
+        return Ok(vec![]);
     };
-    match derive_target_from_name(&team.name_target_rules, name) {
-        Some(target) => vec![target],
-        None => {
-            eprintln!(
-                "[triggers] team '{}': no name_target_rule matched task name '{name}' (id {id}); \
-                 spawning with no target files",
+    derive_target_from_name(&team.name_target_rules, name)
+        .map(|target| vec![target])
+        .ok_or_else(|| {
+            format!(
+                "team '{}': no name_target_rule matched task name '{name}' (id {id})",
                 team.name
-            );
-            vec![]
-        }
-    }
+            )
+        })
 }
 
 /// The objective the run was started with, per the graph's `Root` node.

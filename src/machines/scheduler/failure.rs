@@ -105,6 +105,10 @@ pub enum FailureReason {
     },
     /// Required test targets were not completed before the run finished.
     RequiredTestTargetsMissing(String),
+    /// A `ForTasks`-spawned node's target files could not be derived from its
+    /// task's name, e.g. the task has no recorded name or no configured
+    /// `name_target_rule` matched it.
+    TargetDerivationFailed(String),
 }
 
 impl fmt::Display for FailureReason {
@@ -156,6 +160,7 @@ impl fmt::Display for FailureReason {
                 }
             }
             Self::RequiredTestTargetsMissing(detail) => write!(f, "{detail}"),
+            Self::TargetDerivationFailed(detail) => write!(f, "{detail}"),
         }
     }
 }

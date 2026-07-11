@@ -483,15 +483,24 @@ impl SchedulerMachine {
                     } => {
                         let graph = graph
                             .mark_node_completed_with_summary(&node_id, integration_output.summary);
-                        let graph = triggers::apply_team_triggers(
+                        let completed_graph = graph.clone();
+                        match triggers::apply_team_triggers(
                             graph,
                             &node_id,
                             &run_config,
                             &manifest_tasks,
-                        );
-                        Transition {
-                            state: SchedulerState::Active { graph, run_config },
-                            effects: vec![],
+                        ) {
+                            Ok(graph) => Transition {
+                                state: SchedulerState::Active { graph, run_config },
+                                effects: vec![],
+                            },
+                            Err(detail) => Transition {
+                                state: SchedulerState::Failed {
+                                    graph: completed_graph,
+                                    reason: FailureReason::TargetDerivationFailed(detail),
+                                },
+                                effects: vec![],
+                            },
                         }
                     }
                     SchedulerEvent::IntegrationFailed {
@@ -552,15 +561,24 @@ impl SchedulerMachine {
                 match event {
                     SchedulerEvent::PlannerTasksIntegrated { manifest_tasks, .. } => {
                         let graph = graph.mark_node(&node_id, NodeStatus::Completed);
-                        let graph = triggers::apply_team_triggers(
+                        let completed_graph = graph.clone();
+                        match triggers::apply_team_triggers(
                             graph,
                             &node_id,
                             &run_config,
                             &manifest_tasks,
-                        );
-                        Transition {
-                            state: SchedulerState::Active { graph, run_config },
-                            effects: vec![],
+                        ) {
+                            Ok(graph) => Transition {
+                                state: SchedulerState::Active { graph, run_config },
+                                effects: vec![],
+                            },
+                            Err(detail) => Transition {
+                                state: SchedulerState::Failed {
+                                    graph: completed_graph,
+                                    reason: FailureReason::TargetDerivationFailed(detail),
+                                },
+                                effects: vec![],
+                            },
                         }
                     }
                     SchedulerEvent::PlannerTasksIntegrationFailed {

@@ -95,7 +95,8 @@ fn run_once_spawns_initial_plan_node() {
         nodes: vec![root_node()],
     };
     let config = run_config(vec![team("planner", Trigger::Start)]);
-    let graph = apply_team_triggers(graph, &NodeId("root".to_string()), &config, &[]);
+    let graph = apply_team_triggers(graph, &NodeId("root".to_string()), &config, &[])
+        .expect("team triggers must apply cleanly");
 
     let spawned: Vec<&Node> = graph.nodes.iter().filter(|n| n.team == "planner").collect();
     assert_eq!(spawned.len(), 1, "exactly one node spawned for the team");
@@ -119,7 +120,8 @@ fn run_once_spawns_node_with_team_adapter_and_northstar() {
         "adapters/planner.yaml",
         "northstars/planner.md",
     )]);
-    let graph = apply_team_triggers(graph, &NodeId("root".to_string()), &config, &[]);
+    let graph = apply_team_triggers(graph, &NodeId("root".to_string()), &config, &[])
+        .expect("team triggers must apply cleanly");
 
     let spawned: Vec<&Node> = graph.nodes.iter().filter(|n| n.team == "planner").collect();
     assert_eq!(spawned.len(), 1);
@@ -136,7 +138,8 @@ fn run_once_does_not_duplicate_while_node_in_flight() {
         nodes: vec![root_node()],
     };
     let config = run_config(vec![team("planner", Trigger::Start)]);
-    let graph = apply_team_triggers(graph, &NodeId("root".to_string()), &config, &[]);
+    let graph = apply_team_triggers(graph, &NodeId("root".to_string()), &config, &[])
+        .expect("team triggers must apply cleanly");
     assert_eq!(
         graph.nodes.iter().filter(|n| n.team == "planner").count(),
         1
@@ -144,7 +147,8 @@ fn run_once_does_not_duplicate_while_node_in_flight() {
 
     // Re-evaluate again with the same (empty) manifest, simulating another
     // unrelated node completing before the planner's node has finished.
-    let graph = apply_team_triggers(graph, &NodeId("root".to_string()), &config, &[]);
+    let graph = apply_team_triggers(graph, &NodeId("root".to_string()), &config, &[])
+        .expect("team triggers must apply cleanly");
     assert_eq!(
         graph.nodes.iter().filter(|n| n.team == "planner").count(),
         1,
@@ -161,7 +165,8 @@ fn run_once_does_not_spawn_after_manifest_row_recorded() {
     };
     let config = run_config(vec![team("planner", Trigger::Start)]);
     let manifest = [record("t1", "do a thing", "planner")];
-    let graph = apply_team_triggers(graph, &NodeId("root".to_string()), &config, &manifest);
+    let graph = apply_team_triggers(graph, &NodeId("root".to_string()), &config, &manifest)
+        .expect("team triggers must apply cleanly");
 
     assert_eq!(
         graph.nodes.iter().filter(|n| n.team == "planner").count(),
@@ -182,7 +187,8 @@ fn for_tasks_spawns_work_node_with_original_objective() {
         Trigger::AfterEach(vec!["planner".to_string()]),
     )]);
     let manifest = [record("t1", "implement fibonacci(n: int)", "planner")];
-    let graph = apply_team_triggers(graph, &NodeId("root".to_string()), &config, &manifest);
+    let graph = apply_team_triggers(graph, &NodeId("root".to_string()), &config, &manifest)
+        .expect("team triggers must apply cleanly");
 
     let spawned: Vec<&Node> = graph
         .nodes
@@ -218,7 +224,8 @@ fn for_tasks_spawns_node_with_target_files_derived_from_task_name() {
         "planner",
         "fibonacci",
     )];
-    let graph = apply_team_triggers(graph, &NodeId("root".to_string()), &config, &manifest);
+    let graph = apply_team_triggers(graph, &NodeId("root".to_string()), &config, &manifest)
+        .expect("team triggers must apply cleanly");
 
     let spawned: Vec<&Node> = graph
         .nodes
@@ -233,10 +240,10 @@ fn for_tasks_spawns_node_with_target_files_derived_from_task_name() {
 }
 
 /// When no configured `name_target_rules` matches the task's name (or the
-/// team has none), the spawned node gets no target files — never a guessed
-/// fallback.
+/// team has none), applying triggers fails loudly instead of spawning a node
+/// that could touch no file — never a guessed empty fallback.
 #[test]
-fn for_tasks_spawns_node_with_no_target_files_when_no_rule_matches() {
+fn for_tasks_fails_when_no_rule_matches_task_name() {
     let graph = RunGraph {
         nodes: vec![root_node()],
     };
@@ -250,7 +257,31 @@ fn for_tasks_spawns_node_with_no_target_files_when_no_rule_matches() {
         "planner",
         "fibonacci",
     )];
-    let graph = apply_team_triggers(graph, &NodeId("root".to_string()), &config, &manifest);
+    let err = apply_team_triggers(graph, &NodeId("root".to_string()), &config, &manifest)
+        .expect_err("no name_target_rule matches, so target derivation must fail");
+    assert!(
+        err.contains("no name_target_rule matched"),
+        "error must name the cause: {err}"
+    );
+}
+
+/// A `ForTasks`-matched task with no recorded `name` at all (e.g. one
+/// recorded from a completed `Work` node rather than a planner `Task`) has
+/// nothing to derive a target from, so it still spawns with no target files
+/// — this is a distinct, legitimate case from a name that fails to match any
+/// rule.
+#[test]
+fn for_tasks_spawns_node_with_no_target_files_when_task_has_no_recorded_name() {
+    let graph = RunGraph {
+        nodes: vec![root_node()],
+    };
+    let config = run_config(vec![team(
+        "implement",
+        Trigger::AfterEach(vec!["planner".to_string()]),
+    )]);
+    let manifest = [record("t1", "implement fibonacci(n: int)", "planner")];
+    let graph = apply_team_triggers(graph, &NodeId("root".to_string()), &config, &manifest)
+        .expect("team triggers must apply cleanly");
 
     let spawned: Vec<&Node> = graph
         .nodes
@@ -276,7 +307,8 @@ fn for_tasks_spawns_node_with_team_adapter_and_northstar() {
         "northstars/implement.md",
     )]);
     let manifest = [record("t1", "implement fibonacci(n: int)", "planner")];
-    let graph = apply_team_triggers(graph, &NodeId("root".to_string()), &config, &manifest);
+    let graph = apply_team_triggers(graph, &NodeId("root".to_string()), &config, &manifest)
+        .expect("team triggers must apply cleanly");
 
     let spawned: Vec<&Node> = graph
         .nodes
@@ -301,13 +333,15 @@ fn for_tasks_does_not_duplicate_while_node_in_flight() {
         Trigger::AfterEach(vec!["planner".to_string()]),
     )]);
     let manifest = [record("t1", "implement fibonacci(n: int)", "planner")];
-    let graph = apply_team_triggers(graph, &NodeId("root".to_string()), &config, &manifest);
+    let graph = apply_team_triggers(graph, &NodeId("root".to_string()), &config, &manifest)
+        .expect("team triggers must apply cleanly");
     assert_eq!(
         graph.nodes.iter().filter(|n| n.team == "implement").count(),
         1
     );
 
-    let graph = apply_team_triggers(graph, &NodeId("root".to_string()), &config, &manifest);
+    let graph = apply_team_triggers(graph, &NodeId("root".to_string()), &config, &manifest)
+        .expect("team triggers must apply cleanly");
     assert_eq!(
         graph.nodes.iter().filter(|n| n.team == "implement").count(),
         1,
@@ -332,7 +366,8 @@ fn for_tasks_excludes_ids_already_recorded_by_the_team() {
         record("t1", "implement fibonacci(n: int)", "planner"),
         record("t1", "implemented fibonacci", "implement"),
     ];
-    let graph = apply_team_triggers(graph, &NodeId("root".to_string()), &config, &manifest);
+    let graph = apply_team_triggers(graph, &NodeId("root".to_string()), &config, &manifest)
+        .expect("team triggers must apply cleanly");
 
     assert_eq!(
         graph.nodes.iter().filter(|n| n.team == "implement").count(),
@@ -374,7 +409,8 @@ fn for_tasks_respawns_after_prior_attempt_failed() {
         Trigger::AfterEach(vec!["planner".to_string()]),
     )]);
     let manifest = [record("t1", "implement fibonacci(n: int)", "planner")];
-    let graph = apply_team_triggers(graph, &NodeId("root".to_string()), &config, &manifest);
+    let graph = apply_team_triggers(graph, &NodeId("root".to_string()), &config, &manifest)
+        .expect("team triggers must apply cleanly");
 
     let pending: Vec<&Node> = graph
         .nodes
