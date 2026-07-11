@@ -310,7 +310,11 @@ impl IntegrationService {
         records: Vec<TaskRecord>,
     ) -> Result<Vec<TaskRecord>, String> {
         let Some(artifact) = self.artifact.borrow().clone() else {
-            return Ok(Vec::new());
+            return Err(
+                "cannot integrate planner tasks: scheduler has no artifact wired (constructed \
+                 via SchedulerHandler::new instead of ::with_artifact)"
+                    .to_string(),
+            );
         };
         let workspace = WorkspaceFactory::new(&artifact)
             .create_temporary_workspace()

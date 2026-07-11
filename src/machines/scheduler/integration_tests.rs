@@ -129,6 +129,32 @@ fn integrate_planner_tasks_creates_manifest_only_commit() {
     assert_eq!(file_blob, "v1");
 }
 
+/// A scheduler with no artifact wired (`IntegrationService::without_artifact`,
+/// as used by `SchedulerHandler::new`) cannot persist a planner-task
+/// manifest. It must fail loudly rather than silently reporting an empty
+/// task list — an empty `Ok` here would make `after_each(...)` team triggers
+/// never fire, with nothing indicating why.
+#[test]
+fn integrate_planner_tasks_without_artifact_fails() {
+    let service = IntegrationService::without_artifact(Rc::new(NoopTelemetry));
+    let records = vec![TaskRecord {
+        id: "t1".to_string(),
+        objective: "decompose alpha".to_string(),
+        targets: vec![],
+        commit: String::new(),
+        completed_at: "2026-07-10T00:00:00Z".to_string(),
+        team: Some("planner".to_string()),
+    }];
+
+    let err = service
+        .integrate_planner_tasks(records)
+        .expect_err("no artifact means integration cannot succeed");
+    assert!(
+        err.contains("no artifact wired"),
+        "error should explain why integration failed, got: {err}"
+    );
+}
+
 /// `integrate_plan_tasks` is the scheduler-facing entry point: it converts
 /// `PlannerTaskOutput`s into `TaskRecord`s (leaving `commit` empty, `team` set
 /// to the completing node's team) and translates the manifest write into a
