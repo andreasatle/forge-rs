@@ -233,6 +233,60 @@ fn work_node_integration_records_task_manifest_in_same_commit() {
     assert_eq!(file_content, "hello from work node");
 }
 
+/// Two different teams' nodes spawned for the same manifest task (i.e. both
+/// carrying the same `Node::task_id`, as `AfterEach`-triggered nodes do) must
+/// record manifest rows sharing that `id` — not each node's own id, which is
+/// freshly minted per node and unstable across retries. Without this, a
+/// downstream team's multi-team `AfterEach` trigger could never join rows
+/// across teams for "the same" task.
+#[test]
+fn two_teams_completing_the_same_task_id_share_the_manifest_row_id() {
+    let (_temp, artifact) = fixture("shared-task-id-across-teams");
+    let repo_path = artifact.repo_path.clone();
+
+    let runner = TwoStepRunner {
+        call_count: RefCell::new(0),
+        second_view: Rc::new(RefCell::new(None)),
+    };
+
+    let mut node_a = work_node_with_deps("A", "team-a does its part", &[]);
+    node_a.team = "team-a".to_string();
+    node_a.task_id = Some("shared-task".to_string());
+
+    let mut node_b = work_node_with_deps("B", "team-b does its part", &["A"]);
+    node_b.team = "team-b".to_string();
+    node_b.task_id = Some("shared-task".to_string());
+
+    let state = SchedulerState::Active {
+        graph: RunGraph {
+            nodes: vec![node_a, node_b],
+        },
+        run_config: RunConfig::default(),
+    };
+    run_scheduler(SchedulerHandler::with_artifact(runner, artifact), state);
+
+    let new_sha = git_output(&repo_path, &["rev-parse", "HEAD"]);
+    let manifest = git_output(
+        &repo_path,
+        &["show", &format!("{new_sha}:.forge/tasks.json")],
+    );
+    let manifest: serde_json::Value = serde_json::from_str(&manifest).unwrap();
+    let tasks = manifest["tasks"]
+        .as_array()
+        .expect("manifest tasks must be an array");
+    assert_eq!(tasks.len(), 2, "both team nodes must record a manifest row");
+
+    let ids: Vec<&str> = tasks.iter().map(|t| t["id"].as_str().unwrap()).collect();
+    assert_eq!(
+        ids[0], ids[1],
+        "rows for the same manifest task must share `id` across teams; got {ids:?}"
+    );
+    assert_eq!(ids[0], "shared-task");
+
+    let teams: Vec<&str> = tasks.iter().map(|t| t["team"].as_str().unwrap()).collect();
+    assert_eq!(teams, vec!["team-a", "team-b"]);
+}
+
 #[test]
 fn second_work_node_sees_first_work_node_changes() {
     let (_temp, artifact) = fixture("second-sees-first");
@@ -565,6 +619,7 @@ fn integrate_work_commits_pending_workspace_mutation() {
         target_files: vec![],
         validation_plan: None,
         team: "test-team".to_string(),
+        task_id: None,
     });
 
     assert!(

@@ -36,6 +36,7 @@ pub(crate) struct WorkIntegration {
     pub target_files: Vec<String>,
     pub validation_plan: Option<ValidationPlan>,
     pub team: String,
+    pub task_id: Option<String>,
 }
 
 pub(crate) struct IntegrationService {
@@ -149,6 +150,7 @@ impl IntegrationService {
             target_files,
             validation_plan,
             team,
+            task_id,
         } = request;
         eprintln!("[integration] start {}", node_id.short());
 
@@ -207,7 +209,7 @@ impl IntegrationService {
                 match integrate(&artifact, &workspace.borrow()) {
                     Ok(new_artifact) => {
                         let record = TaskRecord {
-                            id: node_id.0.clone(),
+                            id: task_id.clone().unwrap_or_else(|| node_id.0.clone()),
                             objective: objective.clone(),
                             targets: target_files.clone(),
                             commit: new_artifact.commit_sha.clone(),

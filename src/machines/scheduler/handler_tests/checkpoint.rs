@@ -62,6 +62,7 @@ fn temporary_workspace_removed_after_integration() {
             target_files: vec![],
             validation_plan: None,
             team: "test-team".to_string(),
+            task_id: None,
         });
 
         let path = captured

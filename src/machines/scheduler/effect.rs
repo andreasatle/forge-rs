@@ -87,6 +87,14 @@ pub enum SchedulerEffect {
         /// The completing node's team, recorded into the manifest's
         /// `TaskRecord.team` so team trigger evaluation can see it.
         team: String,
+        /// Copied verbatim from `Node::task_id`.
+        ///
+        /// When present, recorded as the manifest row's `TaskRecord.id`
+        /// instead of the node's own id, so every team's row for the same
+        /// manifest task is joinable by `id`. `None` for nodes with no
+        /// triggering task (the single-team path), which fall back to the
+        /// node id.
+        task_id: Option<String>,
     },
 
     /// Record a completed `Plan` node's `Task`-kind output into the task

@@ -190,6 +190,7 @@ impl<R: NodeRunner> SchedulerHandler<R> {
                 target_files,
                 validation_plan,
                 team,
+                task_id,
             } => self.integration.integrate_work(WorkIntegration {
                 node_id,
                 objective,
@@ -198,6 +199,7 @@ impl<R: NodeRunner> SchedulerHandler<R> {
                 target_files,
                 validation_plan,
                 team,
+                task_id,
             }),
             SchedulerEffect::IntegratePlannerTasks {
                 node_id,

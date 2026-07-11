@@ -38,6 +38,7 @@ fn validation_pass_allows_commit() {
         target_files: vec![],
         validation_plan: None,
         team: "test-team".to_string(),
+        task_id: None,
     });
 
     assert!(
@@ -89,6 +90,7 @@ fn validation_failure_blocks_commit() {
         target_files: vec![],
         validation_plan: None,
         team: "test-team".to_string(),
+        task_id: None,
     });
 
     assert!(
@@ -206,6 +208,7 @@ fn validation_failure_telemetry_keeps_full_diagnostics() {
         target_files: vec![],
         validation_plan: None,
         team: "test-team".to_string(),
+        task_id: None,
     });
 
     let records = telemetry.records();
@@ -265,6 +268,7 @@ fn validation_failure_records_attempt_evidence_before_cleanup() {
         target_files: vec![],
         validation_plan: None,
         team: "test-team".to_string(),
+        task_id: None,
     });
 
     let records = telemetry.records();
@@ -342,6 +346,7 @@ fn validator_runs_after_workspace_mutation() {
         target_files: vec![],
         validation_plan: None,
         team: "test-team".to_string(),
+        task_id: None,
     });
 
     assert!(
@@ -385,6 +390,7 @@ fn no_diff_fails_before_running_validator() {
         target_files: vec![],
         validation_plan: None,
         team: "test-team".to_string(),
+        task_id: None,
     });
 
     assert!(
@@ -447,6 +453,7 @@ fn validation_pass_sets_validation_passed_true() {
         target_files: vec![],
         validation_plan: None,
         team: "test-team".to_string(),
+        task_id: None,
     });
 
     assert_eq!(
@@ -491,6 +498,7 @@ fn validation_failure_sets_validation_passed_false() {
         target_files: vec![],
         validation_plan: None,
         team: "test-team".to_string(),
+        task_id: None,
     });
 
     assert_eq!(
@@ -530,6 +538,7 @@ fn no_diff_leaves_validation_passed_none() {
         target_files: vec![],
         validation_plan: None,
         team: "test-team".to_string(),
+        task_id: None,
     });
 
     assert_eq!(
@@ -577,6 +586,7 @@ fn validation_passed_true_even_when_integration_conflicts() {
         target_files: vec![],
         validation_plan: None,
         team: "test-team".to_string(),
+        task_id: None,
     });
 
     assert!(
@@ -639,6 +649,7 @@ fn timeout_blocks_commit() {
         target_files: vec![],
         validation_plan: None,
         team: "test-team".to_string(),
+        task_id: None,
     });
 
     assert!(
