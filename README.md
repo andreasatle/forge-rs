@@ -120,7 +120,7 @@ provider:
   strong_timeout_seconds: 180   # optional; fallback to timeout_seconds
 telemetry:
   directory: "runs"
-adapter: adapters/coding_tdd.yaml  # required; path to a project adapter YAML file
+adapter: adapters/coding.yaml  # required; path to a project adapter YAML file
 validation:                     # optional
   commands:
     - cargo fmt --check
@@ -135,9 +135,11 @@ directory.
 `adapter` is a path to the project adapter YAML file governing role prompt
 policy. It is required; there is no default. A missing or invalid file — or
 any language plugin it declares — fails `forge.yaml` loading immediately.
-Built-in adapters (`coding.yaml`, `coding_tdd.yaml`) ship in this repo's
-`adapters/` directory; copy and modify them freely, or point at your own
-file.
+Built-in adapters ship in this repo's `adapters/` directory: `coding.yaml` is
+a single-team adapter, and `planner.yaml`, `implement.yaml`,
+`create_test.yaml`, `pass_tests.yaml` are single-purpose adapters meant to be
+combined in a multi-team `teams:` config (see below). Copy and modify any of
+them freely, or point at your own file.
 
 An adapter declares which language plugins it supports in its own
 `plugins:` list, e.g.:
@@ -156,6 +158,39 @@ plugins (`python.yaml`, `rust.yaml`) ship in this repo's `plugins/`
 directory. Declaring `plugins:` and an explicit `validation:` block are
 mutually usable together — `validation:` acts as the fallback validator for
 nodes whose target files match no configured plugin.
+
+### Multi-team configs
+
+A `forge.yaml` can run more than one team side by side instead of a single
+`adapter`/`northstar` pair, via a top-level `teams:` list:
+
+```yaml
+teams:
+  - name: planner
+    northstar: northstar.md
+    adapter: adapters/planner.yaml
+    trigger: start
+  - name: implement
+    northstar: northstar.md
+    adapter: adapters/implement.yaml
+    trigger: after_each(planner)
+  - name: create_test
+    northstar: northstar.md
+    adapter: adapters/create_test.yaml
+    trigger: after_each(planner)
+  - name: pass_tests
+    northstar: northstar.md
+    adapter: adapters/pass_tests.yaml
+    trigger: after_each(implement, create_test)
+```
+
+Each team has its own `name`, `northstar`, and `adapter`, and activates
+according to its `trigger`: either `start` (runs from the beginning) or
+`after_each(team_a, team_b, ...)` (runs after every named team has produced a
+node). The built-in `planner.yaml`, `implement.yaml`, `create_test.yaml`, and
+`pass_tests.yaml` adapters are designed to be combined this way — a planner
+team fans out tasks, and separate implement/create_test/pass_tests teams
+each own one concern instead of one adapter owning all of them.
 
 By default Forge connects to already-running provider servers. For llama.cpp,
 Forge can instead own a local `llama-server` process:
