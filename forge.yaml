@@ -28,9 +28,21 @@ provider:
         n_predict: 4096
 telemetry:
   directory: "runs"
-adapter: adapters/coding_tdd.yaml
+adapter: adapters/planner.yaml
 teams:
-  - name: main
+  - name: planner
     northstar: northstar.md
-    adapter: adapters/coding_tdd.yaml
+    adapter: adapters/planner.yaml
     trigger: start
+  - name: implement
+    northstar: northstar.md
+    adapter: adapters/implement.yaml
+    trigger: after_each(planner)
+  - name: create_test
+    northstar: northstar.md
+    adapter: adapters/create_test.yaml
+    trigger: after_each(planner)
+  - name: pass_tests
+    northstar: northstar.md
+    adapter: adapters/pass_tests.yaml
+    trigger: after_each(implement, create_test)

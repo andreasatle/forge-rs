@@ -190,47 +190,41 @@ fn adapter_with_unknown_plugin_path_fails_loudly() {
     );
 }
 
-// ── coding_tdd adapter content ───────────────────────────────────────────
+// ── bundled single-purpose adapter content ───────────────────────────────
 //
-// These protect the bundled coding_tdd.yaml's intent: test nodes scheduled
-// before the implementation nodes they cover, and workers importing from
-// the module under test rather than reimplementing it.
+// These protect each bundled team adapter's intent: the create_test worker
+// importing from the module under test rather than reimplementing it, and
+// every bundled adapter loading with its README.md context file intact.
 
 #[test]
-fn coding_tdd_planner_producer_prompt_requires_test_nodes_before_implementation() {
-    let policy = load_adapter(&repo_adapter("coding_tdd.yaml"))
-        .unwrap()
-        .role_policy();
-    let required_substrings = ["before the implementation nodes", "name the source module"];
-    for substring in required_substrings {
-        assert!(
-            policy.planner_producer_system.contains(substring),
-            "TDD planner prompt must contain {substring:?}; got:\n{}",
-            policy.planner_producer_system
-        );
-    }
-}
-
-#[test]
-fn coding_tdd_worker_producer_prompt_requires_importing_functions_under_test() {
-    let policy = load_adapter(&repo_adapter("coding_tdd.yaml"))
+fn create_test_worker_producer_prompt_requires_importing_functions_under_test() {
+    let policy = load_adapter(&repo_adapter("create_test.yaml"))
         .unwrap()
         .role_policy();
     assert!(
         policy
             .worker_producer_system
             .contains("import the functions under test"),
-        "TDD worker prompt must require importing functions under test; got:\n{}",
+        "create_test worker prompt must require importing functions under test; got:\n{}",
         policy.worker_producer_system
     );
 }
 
 #[test]
-fn coding_tdd_context_file_names_includes_readme() {
-    let adapter = load_adapter(&repo_adapter("coding_tdd.yaml")).unwrap();
-    assert!(
-        adapter
-            .context_file_names()
-            .contains(&"README.md".to_string())
-    );
+fn bundled_adapters_context_file_names_include_readme() {
+    for name in [
+        "coding.yaml",
+        "planner.yaml",
+        "implement.yaml",
+        "create_test.yaml",
+        "pass_tests.yaml",
+    ] {
+        let adapter = load_adapter(&repo_adapter(name)).unwrap();
+        assert!(
+            adapter
+                .context_file_names()
+                .contains(&"README.md".to_string()),
+            "{name} must include README.md in context_files"
+        );
+    }
 }

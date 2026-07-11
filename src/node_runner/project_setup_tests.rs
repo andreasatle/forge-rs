@@ -127,20 +127,25 @@ fn runtime_selects_coding_adapter() {
 }
 
 #[test]
-fn runtime_selects_coding_tdd_adapter() {
-    let policy = builder("coding_tdd.yaml", None).role_policy();
+fn runtime_selects_planner_adapter() {
+    let policy = builder("planner.yaml", None).role_policy();
     assert!(
         policy
             .planner_producer_system
-            .contains("before the implementation nodes"),
-        "coding_tdd adapter must select the TDD planner prompt; got:\n{}",
+            .contains("further decomposition or a single, self-contained task"),
+        "planner adapter must select the decomposition-or-task planner prompt; got:\n{}",
         policy.planner_producer_system
     );
+}
+
+#[test]
+fn runtime_selects_create_test_adapter() {
+    let policy = builder("create_test.yaml", None).role_policy();
     assert!(
         policy
             .worker_producer_system
             .contains("import the functions under test"),
-        "coding_tdd adapter must select the TDD worker prompt; got:\n{}",
+        "create_test adapter must select the test-writing worker prompt; got:\n{}",
         policy.worker_producer_system
     );
 }

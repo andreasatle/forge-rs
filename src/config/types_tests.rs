@@ -48,7 +48,13 @@ impl TempYaml {
         let path = dir.join("config.yaml");
         let mut f = std::fs::File::create(&path).unwrap();
         f.write_all(content.as_bytes()).unwrap();
-        for name in ["coding.yaml", "coding_tdd.yaml"] {
+        for name in [
+            "coding.yaml",
+            "planner.yaml",
+            "implement.yaml",
+            "create_test.yaml",
+            "pass_tests.yaml",
+        ] {
             stage_fixture(&dir, "adapters", name);
         }
         for name in ["rust.yaml", "python.yaml"] {
@@ -994,7 +1000,7 @@ fn adapter_is_required_when_blank() {
     );
 }
 
-const CODING_TDD_ADAPTER_YAML: &str = r#"
+const PLANNER_ADAPTER_YAML: &str = r#"
 objective: "test"
 artifact:
   repo_path: ".forge/artifacts/main.git"
@@ -1007,16 +1013,16 @@ provider:
       n_predict: 512
 telemetry:
   directory: "runs"
-adapter: coding_tdd.yaml
+adapter: planner.yaml
 "#;
 
 #[test]
 fn config_parses_adapter() {
-    let tmp = TempYaml::new(CODING_TDD_ADAPTER_YAML);
+    let tmp = TempYaml::new(PLANNER_ADAPTER_YAML);
     let config = ForgeConfig::from_file(tmp.path()).unwrap();
     let config_dir = std::path::Path::new(tmp.path()).parent().unwrap();
     let expected = config_dir
-        .join("coding_tdd.yaml")
+        .join("planner.yaml")
         .to_string_lossy()
         .into_owned();
     assert_eq!(
