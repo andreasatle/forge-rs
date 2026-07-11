@@ -108,9 +108,11 @@ fn spawn_for_tasks(
         .into_iter()
         .filter(|id| !graph.has_active_team_node(&team.name, Some(id.as_str())))
         .map(|id| {
-            let record = manifest_tasks.iter().find(|record| record.id == id);
-            let objective = record.map(|r| r.objective.clone()).unwrap_or_default();
-            let target_files = task_target_files(team, record, &id)?;
+            let record = manifest_tasks.iter().find(|record| record.id == id).expect(
+                "a ForTasks id is only ever drawn from `completions`, which is built from \
+                     `manifest_tasks` itself, so a matching row must already exist",
+            );
+            let target_files = task_target_files(team, record)?;
             Ok(NodeRequest {
                 id: new_node_id(),
                 kind: NodeKind::Work,
@@ -119,7 +121,7 @@ fn spawn_for_tasks(
                 adapter: team.adapter.clone(),
                 northstar: team.northstar.clone(),
                 worker_role: None,
-                objective,
+                objective: record.objective.clone(),
                 target_files,
                 required_validation_targets: vec![],
                 dependencies: vec![],
@@ -138,31 +140,27 @@ fn spawn_for_tasks(
 /// its adapter's language plugins at config-load time — see
 /// [`TeamConfig::name_target_rules`]).
 ///
-/// A task with no recorded name (e.g. one recorded from a completed `Work`
-/// node rather than a planner `Task`, per [`TaskRecord::name`]) legitimately
-/// has nothing to derive from, so that case still spawns with no target
-/// files. But once a name exists, failing to match it against any configured
-/// rule — including when `team` has no language plugins at all, i.e.
-/// `name_target_rules` is empty — is `Err`, never a guessed fallback: the
-/// caller must fail the run rather than spawn a node that can touch no file.
-fn task_target_files(
-    team: &TeamConfig,
-    record: Option<&TaskRecord>,
-    id: &str,
-) -> Result<Vec<String>, String> {
-    let Some(name) = record.and_then(|r| r.name.as_deref()) else {
-        eprintln!(
-            "[triggers] team '{}': task '{id}' has no recorded name; spawning with no target files",
-            team.name
-        );
-        return Ok(vec![]);
-    };
+/// `record` is always the planner `Task` row this id was decomposed from: a
+/// `ForTasks` id only ever exists because a manifest row with that id and a
+/// team already does, and the first such row for any id is always a planner
+/// row (a `Work`-node completion for the id can only be recorded *after* the
+/// planner row that gave rise to it). `EmptyName` validation guarantees a
+/// planner `Task` row's `name` is never empty. Failing to match it against
+/// any configured rule — including when `team` has no language plugins at
+/// all, i.e. `name_target_rules` is empty — is `Err`, never a guessed
+/// fallback: the caller must fail the run rather than spawn a node that can
+/// touch no file.
+fn task_target_files(team: &TeamConfig, record: &TaskRecord) -> Result<Vec<String>, String> {
+    let name = record
+        .name
+        .as_deref()
+        .expect("a ForTasks-matched record is always a planner Task row, which EmptyName validation guarantees carries a name");
     derive_target_from_name(&team.name_target_rules, name)
         .map(|target| vec![target])
         .ok_or_else(|| {
             format!(
-                "team '{}': no name_target_rule matched task name '{name}' (id {id})",
-                team.name
+                "team '{}': no name_target_rule matched task name '{name}' (id {})",
+                team.name, record.id
             )
         })
 }

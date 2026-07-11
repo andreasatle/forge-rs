@@ -19,7 +19,10 @@ fn team_with_adapter(name: &str, trigger: Trigger, adapter: &str, northstar: &st
         northstar: northstar.to_string(),
         adapter: adapter.to_string(),
         trigger,
-        name_target_rules: vec![],
+        name_target_rules: vec![NameTargetRule {
+            pattern: "{name}".to_string(),
+            target: "src/{name}.rs".to_string(),
+        }],
     }
 }
 
@@ -35,6 +38,19 @@ fn team_with_name_target_rules(
         trigger,
         name_target_rules,
     }
+}
+
+/// A team whose `name_target_rules` matches any task name, for tests that
+/// exercise `ForTasks` spawning but don't care what target file results.
+fn team_with_catchall_rule(name: &str, trigger: Trigger) -> TeamConfig {
+    team_with_name_target_rules(
+        name,
+        trigger,
+        vec![NameTargetRule {
+            pattern: "{name}".to_string(),
+            target: "src/{name}.rs".to_string(),
+        }],
+    )
 }
 
 fn record(id: &str, objective: &str, team: &str) -> TaskRecord {
@@ -182,11 +198,16 @@ fn for_tasks_spawns_work_node_with_original_objective() {
     let graph = RunGraph {
         nodes: vec![root_node()],
     };
-    let config = run_config(vec![team(
+    let config = run_config(vec![team_with_catchall_rule(
         "implement",
         Trigger::AfterEach(vec!["planner".to_string()]),
     )]);
-    let manifest = [record("t1", "implement fibonacci(n: int)", "planner")];
+    let manifest = [named_record(
+        "t1",
+        "implement fibonacci(n: int)",
+        "planner",
+        "fibonacci",
+    )];
     let graph = apply_team_triggers(graph, &NodeId("root".to_string()), &config, &manifest)
         .expect("team triggers must apply cleanly");
 
@@ -265,33 +286,6 @@ fn for_tasks_fails_when_no_rule_matches_task_name() {
     );
 }
 
-/// A `ForTasks`-matched task with no recorded `name` at all (e.g. one
-/// recorded from a completed `Work` node rather than a planner `Task`) has
-/// nothing to derive a target from, so it still spawns with no target files
-/// — this is a distinct, legitimate case from a name that fails to match any
-/// rule.
-#[test]
-fn for_tasks_spawns_node_with_no_target_files_when_task_has_no_recorded_name() {
-    let graph = RunGraph {
-        nodes: vec![root_node()],
-    };
-    let config = run_config(vec![team(
-        "implement",
-        Trigger::AfterEach(vec!["planner".to_string()]),
-    )]);
-    let manifest = [record("t1", "implement fibonacci(n: int)", "planner")];
-    let graph = apply_team_triggers(graph, &NodeId("root".to_string()), &config, &manifest)
-        .expect("team triggers must apply cleanly");
-
-    let spawned: Vec<&Node> = graph
-        .nodes
-        .iter()
-        .filter(|n| n.team == "implement")
-        .collect();
-    assert_eq!(spawned.len(), 1);
-    assert!(spawned[0].target_files.is_empty());
-}
-
 /// A `ForTasks`-spawned Work node carries its own team's adapter/northstar
 /// paths, distinct from another team's, so nodes for different teams never
 /// end up dispatched under a shared or borrowed adapter.
@@ -306,7 +300,12 @@ fn for_tasks_spawns_node_with_team_adapter_and_northstar() {
         "adapters/implement.yaml",
         "northstars/implement.md",
     )]);
-    let manifest = [record("t1", "implement fibonacci(n: int)", "planner")];
+    let manifest = [named_record(
+        "t1",
+        "implement fibonacci(n: int)",
+        "planner",
+        "fibonacci",
+    )];
     let graph = apply_team_triggers(graph, &NodeId("root".to_string()), &config, &manifest)
         .expect("team triggers must apply cleanly");
 
@@ -328,11 +327,16 @@ fn for_tasks_does_not_duplicate_while_node_in_flight() {
     let graph = RunGraph {
         nodes: vec![root_node()],
     };
-    let config = run_config(vec![team(
+    let config = run_config(vec![team_with_catchall_rule(
         "implement",
         Trigger::AfterEach(vec!["planner".to_string()]),
     )]);
-    let manifest = [record("t1", "implement fibonacci(n: int)", "planner")];
+    let manifest = [named_record(
+        "t1",
+        "implement fibonacci(n: int)",
+        "planner",
+        "fibonacci",
+    )];
     let graph = apply_team_triggers(graph, &NodeId("root".to_string()), &config, &manifest)
         .expect("team triggers must apply cleanly");
     assert_eq!(
@@ -404,11 +408,16 @@ fn for_tasks_respawns_after_prior_attempt_failed() {
         retry_feedback: None,
     });
 
-    let config = run_config(vec![team(
+    let config = run_config(vec![team_with_catchall_rule(
         "implement",
         Trigger::AfterEach(vec!["planner".to_string()]),
     )]);
-    let manifest = [record("t1", "implement fibonacci(n: int)", "planner")];
+    let manifest = [named_record(
+        "t1",
+        "implement fibonacci(n: int)",
+        "planner",
+        "fibonacci",
+    )];
     let graph = apply_team_triggers(graph, &NodeId("root".to_string()), &config, &manifest)
         .expect("team triggers must apply cleanly");
 
