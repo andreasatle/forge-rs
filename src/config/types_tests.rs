@@ -220,6 +220,61 @@ fn team_name_target_rules_are_merged_from_its_adapter_language_plugins() {
     }
 }
 
+#[test]
+fn terminal_teams_populated_from_teams_at_load_time() {
+    // Invariant: `ForgeConfig::from_file` wires `teams` through
+    // `team_triggers::compute_terminal_teams` (detailed chain/branch/cycle
+    // coverage lives in `config::team_triggers`'s own tests, since the
+    // computation itself is pure and needs no adapter/northstar fixtures) —
+    // this just confirms the field is actually populated, not left empty.
+    let tmp = TempYaml::new(TEAMS_YAML);
+    std::fs::write(tmp.dir().join("project.md"), "gap: project").unwrap();
+    std::fs::write(tmp.dir().join("implementation.md"), "gap: implementation").unwrap();
+    let config = ForgeConfig::from_file(tmp.path()).unwrap();
+    assert_eq!(config.terminal_teams, vec!["implement".to_string()]);
+}
+
+const TEAM_TRIGGER_CYCLE_YAML: &str = r#"
+objective: "test"
+artifact:
+  repo_path: ".forge/artifacts/main.git"
+  branch: "main"
+provider:
+  cheap:
+    unmanaged:
+      base_url: "http://localhost:8080"
+      model: "llama-test"
+      n_predict: 512
+telemetry:
+  directory: "runs"
+adapter: coding.yaml
+teams:
+  - name: a
+    northstar: a.md
+    adapter: coding.yaml
+    trigger: after_each(b)
+  - name: b
+    northstar: b.md
+    adapter: coding.yaml
+    trigger: after_each(a)
+"#;
+
+#[test]
+fn team_trigger_cycle_fails_to_load() {
+    // Invariant: a team-trigger cycle (a's after_each chain transitively
+    // refers back to a) must fail config load loudly, not silently produce a
+    // team that can never be scheduled.
+    let tmp = TempYaml::new(TEAM_TRIGGER_CYCLE_YAML);
+    for name in ["a", "b"] {
+        std::fs::write(tmp.dir().join(format!("{name}.md")), "gap: x").unwrap();
+    }
+    let err = ForgeConfig::from_file(tmp.path()).unwrap_err();
+    assert!(
+        err.to_string().contains("cycle"),
+        "error must explain that a team trigger cycle was found; got: {err}"
+    );
+}
+
 const MULTI_AFTER_EACH_YAML: &str = r#"
 objective: "test"
 artifact:

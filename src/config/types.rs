@@ -4,6 +4,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Deserializer, Serialize};
 
+use super::team_triggers;
 use crate::language::NameTargetRule;
 
 /// Top-level configuration for a forge run.
@@ -22,6 +23,12 @@ pub struct ForgeConfig {
     /// northstar instead of the run's top-level one.
     #[serde(default)]
     pub teams: Vec<TeamConfig>,
+    /// Team names that no other team's `Trigger::AfterEach` list names —
+    /// i.e. teams nothing else is scheduled to run after. Computed once by
+    /// [`compute_terminal_teams`] at config-load time (see
+    /// `ForgeConfig::from_file`), not re-derived per trigger evaluation.
+    #[serde(default)]
+    pub terminal_teams: Vec<String>,
     /// Artifact repository settings.
     pub artifact: ArtifactConfig,
     /// Provider settings.
@@ -360,6 +367,9 @@ impl ForgeConfig {
     ///   adapter YAML file (or plugin it declares fails to load).
     /// - any team's `northstar` is blank, or does not resolve to a readable
     ///   file.
+    /// - the team-trigger graph formed by `Trigger::AfterEach` references
+    ///   contains a cycle (a team whose `after_each` chain transitively
+    ///   refers back to itself).
     pub fn from_file(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
         let config_path = Path::new(path);
         let content = std::fs::read_to_string(config_path)?;
@@ -382,6 +392,7 @@ impl ForgeConfig {
         crate::project::load_adapter(Path::new(&config.adapter))?;
 
         resolve_team_paths(&mut config.teams, config_dir)?;
+        config.terminal_teams = team_triggers::compute_terminal_teams(&config.teams)?;
 
         if let Some(dir) = config_dir {
             config.artifact.repo_path = resolve_relative(&config.artifact.repo_path, dir);

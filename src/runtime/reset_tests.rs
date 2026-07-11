@@ -38,6 +38,7 @@ fn make_forge_config(repo_path: &Path, telemetry_path: &Path) -> ForgeConfig {
     ForgeConfig {
         objective: Some("test".to_string()),
         teams: Vec::new(),
+        terminal_teams: Vec::new(),
         artifact: ArtifactConfig {
             repo_path: repo_path.to_str().unwrap().to_string(),
             branch: "main".to_string(),
@@ -132,6 +133,7 @@ fn make_forge_config_with_language(
     ForgeConfig {
         objective: Some("test".to_string()),
         teams: Vec::new(),
+        terminal_teams: Vec::new(),
         artifact: ArtifactConfig {
             repo_path: repo_path.to_str().unwrap().to_string(),
             branch: "main".to_string(),
@@ -387,6 +389,7 @@ fn reset_creates_configured_branch() {
         ForgeConfig {
             objective: Some("test".to_string()),
             teams: Vec::new(),
+            terminal_teams: Vec::new(),
             artifact: ArtifactConfig {
                 repo_path: repo_path.to_str().unwrap().to_string(),
                 branch: "artifact".to_string(),
