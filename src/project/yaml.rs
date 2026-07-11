@@ -67,6 +67,16 @@ impl YamlProjectAdapter {
     pub fn plugin_paths(&self) -> &[String] {
         &self.config.plugins
     }
+
+    /// This adapter's first configured worker role name, if any.
+    ///
+    /// A single-purpose Work-only adapter (see [`ProjectAdapterConfig::workers`])
+    /// defines exactly one role; this is the role a language plugin's
+    /// per-role `name_target_rules` override is matched against when
+    /// resolving a [`crate::config::TeamConfig`]'s name-derived targets.
+    pub fn primary_worker_role(&self) -> Option<&str> {
+        self.config.workers.first().map(|w| w.role.as_str())
+    }
 }
 
 impl ProjectAdapter for YamlProjectAdapter {
@@ -83,11 +93,13 @@ impl ProjectAdapter for YamlProjectAdapter {
         // The shared worker_*_system fields below fall back to the first
         // configured worker role; node_runner dispatch selects a Work node's
         // own role from worker_role_policies when its worker_role matches.
-        let worker = self
-            .config
-            .workers
-            .first()
-            .expect("adapter config must define at least one worker role");
+        // A Plan-only adapter (no `workers` configured) never renders these
+        // shared Work-node fields for any real node — a Work node always
+        // needs *some* adapter to have supplied them, but this one simply
+        // never drives one — so fall back to empty prompts rather than
+        // panicking.
+        let default_worker = WorkerRoleConfig::default();
+        let worker = self.config.workers.first().unwrap_or(&default_worker);
         // Adapters that define worker roles must have the planner assign one
         // to every task; the footer variant describes `role` as required
         // rather than optional to match that expectation.
@@ -350,6 +362,23 @@ mod tests {
                 .contains("build it"),
             "expected first worker role's prompt to be used"
         );
+    }
+
+    #[test]
+    fn role_policy_does_not_panic_with_no_workers_configured() {
+        // Invariant: a Plan-only adapter (e.g. a planning-team adapter with
+        // no worker roles at all) must not panic building its RolePolicy —
+        // the shared Work-node fields it never actually uses simply fall
+        // back to empty prompts.
+        let adapter = YamlProjectAdapter::new(ProjectAdapterConfig {
+            planner: planner_config(),
+            workers: vec![],
+            context_files: vec![],
+            plugins: vec![],
+        });
+        let policy = adapter.role_policy();
+        assert!(policy.worker_role_descriptions.is_empty());
+        assert!(policy.worker_role_policies.is_empty());
     }
 
     #[test]

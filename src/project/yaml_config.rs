@@ -11,7 +11,11 @@ pub use crate::roles::policy::RolePromptConfig;
 
 /// Producer/Critic/Referee prompts for the planner deliberation, which
 /// operates on the task graph itself rather than any single worker role.
-#[derive(Debug, Clone, Deserialize)]
+///
+/// Defaults to empty prompts: an adapter whose teams never drive a `Plan`
+/// node (e.g. a Work-only adapter reached exclusively via `after_each`
+/// triggers) may omit `planner` entirely.
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PlannerConfig {
     /// System instruction for the Plan-node Producer.
@@ -31,7 +35,7 @@ pub struct PlannerConfig {
 /// [`crate::node_runner::planner::PlannerTask::role`]). Which validation
 /// contract a role runs is declared by the language plugin's per-role
 /// validation, not by this struct.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkerRoleConfig {
     /// The worker role name (e.g. `"tester"`, `"implementer"`).
@@ -50,14 +54,26 @@ pub struct WorkerRoleConfig {
 ///
 /// Covers the planner's role prompts, the worker roles this project defines,
 /// and ambient context file names for a project adapter, whether built-in
-/// (`coding.yaml`, `coding_tdd.yaml`) or user-defined.
+/// (`coding.yaml`, `planner.yaml`, `implement.yaml`, `create_test.yaml`,
+/// `pass_tests.yaml`) or user-defined.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectAdapterConfig {
     /// Planner Producer/Critic/Referee prompts.
+    ///
+    /// Omitted by adapters whose teams never drive a `Plan` node.
+    #[serde(default)]
     pub planner: PlannerConfig,
     /// Worker roles this project adapter defines, each with its own
     /// Producer/Critic/Referee prompts.
+    ///
+    /// Omitted (or empty) by adapters whose teams only ever drive a `Plan`
+    /// node, which never renders worker-role prompts. A Work-only adapter
+    /// still needs exactly one entry here even without naming multiple
+    /// roles: `workers.first()` supplies the shared Work-node prompts. An
+    /// empty list falls back to empty prompts rather than panicking — see
+    /// [`super::YamlProjectAdapter::role_policy`].
+    #[serde(default)]
     pub workers: Vec<WorkerRoleConfig>,
     /// Artifact file names included as ambient context in prompts.
     #[serde(default)]
@@ -177,9 +193,11 @@ workers:
 
     #[test]
     fn missing_required_field_is_an_error() {
-        // Invariant: planner and workers, and each role prompt's identity,
-        // context, instructions, and constraints sub-fields, are all
-        // required — a config missing any of them fails to parse.
+        // Invariant: `planner` and `workers` may each be omitted entirely
+        // (see `workers_and_planner_may_both_be_omitted`), but a role prompt
+        // that IS present still requires all four of its identity, context,
+        // instructions, and constraints sub-fields, and a worker entry that
+        // IS present still requires its own producer/critic/referee blocks.
         let missing_worker_referee = r#"
 planner:
   producer:
@@ -265,7 +283,35 @@ planner:
     constraints: "decide plan bounds"
 workers: []
 "#;
-        let missing_workers_block = r#"
+
+        let cases = [
+            (missing_worker_referee, "missing worker referee"),
+            (
+                missing_constraints_sub_field,
+                "missing planner.producer.constraints",
+            ),
+            (
+                missing_identity_sub_field,
+                "missing planner.producer.identity",
+            ),
+            (
+                missing_context_sub_field,
+                "missing planner.producer.context",
+            ),
+        ];
+        for (yaml, description) in cases {
+            let result: Result<ProjectAdapterConfig, _> = serde_yaml::from_str(yaml);
+            assert!(result.is_err(), "{description} must fail to parse");
+        }
+    }
+
+    #[test]
+    fn workers_and_planner_may_both_be_omitted() {
+        // Invariant: a single-purpose adapter whose teams drive only `Plan`
+        // nodes needs no `workers`, and one whose teams drive only `Work`
+        // nodes needs no `planner` — both fields default when absent rather
+        // than failing to parse.
+        let plan_only = r#"
 planner:
   producer:
     identity: "plan identity"
@@ -283,26 +329,32 @@ planner:
     instructions: "decide the plan"
     constraints: "decide plan bounds"
 "#;
-
-        let cases = [
-            (missing_worker_referee, "missing worker referee"),
-            (
-                missing_constraints_sub_field,
-                "missing planner.producer.constraints",
-            ),
-            (
-                missing_identity_sub_field,
-                "missing planner.producer.identity",
-            ),
-            (
-                missing_context_sub_field,
-                "missing planner.producer.context",
-            ),
-            (missing_workers_block, "missing workers block"),
-        ];
-        for (yaml, description) in cases {
+        let work_only = r#"
+workers:
+  - role: implementer
+    description: "Implements code changes."
+    producer:
+      identity: "build identity"
+      context: "build context"
+      instructions: "build it"
+      constraints: "build bounds"
+    critic:
+      identity: "build critic identity"
+      context: "build critic context"
+      instructions: "review the work"
+      constraints: "review work bounds"
+    referee:
+      identity: "build referee identity"
+      context: "build referee context"
+      instructions: "decide the work"
+      constraints: "decide work bounds"
+"#;
+        for (yaml, description) in [
+            (plan_only, "planner without workers"),
+            (work_only, "workers without planner"),
+        ] {
             let result: Result<ProjectAdapterConfig, _> = serde_yaml::from_str(yaml);
-            assert!(result.is_err(), "{description} must fail to parse");
+            assert!(result.is_ok(), "{description} must parse: {result:?}");
         }
     }
 
