@@ -36,6 +36,9 @@ pub struct PlannerTaskOutput {
     /// Bare symbol or concept identifier for this task, carried verbatim
     /// from [`crate::node_runner::planner::PlannerTask::name`].
     pub name: String,
+    /// Ids of other tasks in the same output this task depends on, carried
+    /// verbatim from [`crate::node_runner::planner::PlannerTask::depends_on`].
+    pub depends_on: Vec<String>,
 }
 
 /// The structured output of a work node that succeeded.

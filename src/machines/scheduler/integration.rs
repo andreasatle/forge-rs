@@ -216,6 +216,7 @@ impl IntegrationService {
                             completed_at: utc_now_iso8601(),
                             team: Some(team.clone()),
                             name: None,
+                            depends_on: vec![],
                         };
                         let (recorded, tasks) =
                             record_task(&new_artifact, &workspace.borrow(), record).unwrap_or_else(
@@ -349,6 +350,7 @@ impl IntegrationService {
                 completed_at: completed_at.clone(),
                 team: Some(team.clone()),
                 name: Some(task.name),
+                depends_on: task.depends_on,
             })
             .collect();
         match self.integrate_planner_tasks(records) {

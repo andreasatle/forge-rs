@@ -78,6 +78,12 @@ pub struct TaskRecord {
     /// `PlannerTask` and thus no name to carry.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    /// Ids of other tasks in the manifest this task depends on, carried from
+    /// `PlannerTaskOutput::depends_on`. Empty for rows recorded via
+    /// [`record_task`] (completed `Work` nodes), which have no corresponding
+    /// `PlannerTask` and thus no dependency ids to carry.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub depends_on: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

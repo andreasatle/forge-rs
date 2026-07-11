@@ -331,6 +331,7 @@ impl<'a> PlannerOutputProcessor<'a> {
                             id: task.id,
                             objective: task.objective,
                             name: task.name,
+                            depends_on: task.depends_on,
                         })
                         .collect(),
                 };

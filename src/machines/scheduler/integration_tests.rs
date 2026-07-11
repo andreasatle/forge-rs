@@ -90,6 +90,7 @@ fn integrate_planner_tasks_creates_manifest_only_commit() {
             completed_at: "2026-07-10T00:00:00Z".to_string(),
             team: Some("planner".to_string()),
             name: None,
+            depends_on: vec![],
         },
         TaskRecord {
             id: "t2".to_string(),
@@ -99,6 +100,7 @@ fn integrate_planner_tasks_creates_manifest_only_commit() {
             completed_at: "2026-07-10T00:00:01Z".to_string(),
             team: Some("planner".to_string()),
             name: None,
+            depends_on: vec![],
         },
     ];
 
@@ -147,6 +149,7 @@ fn integrate_planner_tasks_without_artifact_fails() {
         completed_at: "2026-07-10T00:00:00Z".to_string(),
         team: Some("planner".to_string()),
         name: None,
+        depends_on: vec![],
     }];
 
     let err = service
@@ -175,11 +178,13 @@ fn integrate_plan_tasks_returns_planner_tasks_integrated_event() {
                 id: "t1".to_string(),
                 objective: "decompose alpha".to_string(),
                 name: "alpha".to_string(),
+                depends_on: vec![],
             },
             PlannerTaskOutput {
                 id: "t2".to_string(),
                 objective: "decompose beta".to_string(),
                 name: "beta".to_string(),
+                depends_on: vec!["t1".to_string()],
             },
         ],
         "planner".to_string(),
@@ -197,7 +202,9 @@ fn integrate_plan_tasks_returns_planner_tasks_integrated_event() {
     assert_eq!(manifest_tasks[0].id, "t1");
     assert_eq!(manifest_tasks[0].team, Some("planner".to_string()));
     assert_eq!(manifest_tasks[0].name, Some("alpha".to_string()));
+    assert!(manifest_tasks[0].depends_on.is_empty());
     assert_eq!(manifest_tasks[1].id, "t2");
     assert_eq!(manifest_tasks[1].team, Some("planner".to_string()));
     assert_eq!(manifest_tasks[1].name, Some("beta".to_string()));
+    assert_eq!(manifest_tasks[1].depends_on, vec!["t1".to_string()]);
 }
