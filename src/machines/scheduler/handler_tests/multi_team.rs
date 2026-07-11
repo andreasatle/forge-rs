@@ -210,11 +210,11 @@ teams:
     //      referee loop (write_file, then read_file twice).
     let provider = RecordingScriptedProvider::from_strs(&[
         // 1. root Plan node
-        r#"{"kind":"task","tasks":[{"id":"root-t1","objective":"decompose the objective","depends_on":[]}]}"#,
+        r#"{"kind":"task","tasks":[{"id":"root-t1","objective":"decompose the objective","name":"root_t1","depends_on":[]}]}"#,
         r#"{"status":"accepted","content":"root plan ok"}"#,
         r#"{"status":"accepted","content":"root plan approved"}"#,
         // 2. planner-team Plan node
-        r#"{"kind":"task","tasks":[{"id":"task-1","objective":"implement the worker task","depends_on":[]}]}"#,
+        r#"{"kind":"task","tasks":[{"id":"task-1","objective":"implement the worker task","name":"worker_task","depends_on":[]}]}"#,
         r#"{"status":"accepted","content":"planner critic ok"}"#,
         r#"{"status":"accepted","content":"planner referee approved"}"#,
         // 3. worker-team Work node

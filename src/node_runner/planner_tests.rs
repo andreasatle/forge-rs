@@ -366,6 +366,51 @@ fn plan_kind_task_still_requires_non_empty_objective() {
 }
 
 #[test]
+fn task_kind_task_with_blank_name_fails_validation() {
+    // Invariant: `kind: "task"` tasks must carry a non-blank `name` — the
+    // grammar requires the field, so a blank value is a validation failure
+    // rather than a silently accepted default.
+    let output = PlannerOutput {
+        kind: PlannerOutputKind::Task,
+        tasks: vec![PlannerTask {
+            id: "sub-a".to_string(),
+            objective: "decompose part a".to_string(),
+            name: "  ".to_string(),
+            operation: None,
+            role: None,
+            targets: vec![],
+            depends_on: vec![],
+        }],
+    };
+    assert_eq!(
+        validate_planner_output(&output),
+        Err(PlannerValidationError::EmptyName("sub-a".to_string()))
+    );
+}
+
+#[test]
+fn task_kind_task_with_name_passes_validation() {
+    // Invariant: a non-blank `name` on a `kind: "task"` task satisfies the
+    // requirement checked by `task_kind_task_with_blank_name_fails_validation`.
+    let output = PlannerOutput {
+        kind: PlannerOutputKind::Task,
+        tasks: vec![PlannerTask {
+            id: "sub-a".to_string(),
+            objective: "decompose part a".to_string(),
+            name: "fibonacci".to_string(),
+            operation: None,
+            role: None,
+            targets: vec![],
+            depends_on: vec![],
+        }],
+    };
+    assert!(
+        validate_planner_output(&output).is_ok(),
+        "task-kind task with a non-blank name must pass validation"
+    );
+}
+
+#[test]
 fn plan_kind_skips_tests_required_check() {
     // Invariant: `kind: "plan"` tasks are exempt from target-based validation
     // entirely. This task's target shape — no test target — would fail the

@@ -128,12 +128,23 @@ ws ::= ([ \t\n] ws)?"#;
 /// adapters that define worker roles: identical to [`PLANNER_GBNF`] except
 /// `role` is a required field rather than an optional one, since the planner
 /// must assign every task to one of the adapter's configured worker roles.
-pub(crate) const PLANNER_GBNF_WITH_ROLES: &str = r#"root ::= "{" ws (kind-field ws "," ws)? "\"tasks\"" ws ":" ws "[" ws task (ws "," ws task)* ws "]" ws "}" ws
+///
+/// Also accepts a third top-level `kind`: `"task"`, whose tasks are pure
+/// planner intent (see [`crate::node_runner::planner::PlannerOutputKind::Task`])
+/// and use a distinct, narrower task-record shape —
+/// `{"id":...,"objective":...,"name":...,"depends_on":[...]}` — with no
+/// `operation`, `role`, or `targets`. Unlike `work`/`plan`, `kind: "task"`
+/// must be stated explicitly; it has no default.
+pub(crate) const PLANNER_GBNF_WITH_ROLES: &str = r#"root ::= work-plan-output | task-output
+work-plan-output ::= "{" ws (kind-field ws "," ws)? "\"tasks\"" ws ":" ws "[" ws task (ws "," ws task)* ws "]" ws "}" ws
 kind-field ::= "\"kind\"" ws ":" ws ("\"work\"" | "\"plan\"")
 task ::= "{" ws "\"id\"" ws ":" ws string ws "," ws "\"objective\"" ws ":" ws string ws "," ws "\"operation\"" ws ":" ws operation ws "," ws role-field ws "," ws "\"targets\"" ws ":" ws string-array ws "," ws "\"depends_on\"" ws ":" ws string-array ws "}" ws
 operation ::= "\"create\"" | "\"modify\"" | "\"delete\""
 role-field ::= "\"role\"" ws ":" ws string
 string-array ::= "[" ws (string (ws "," ws string)*)? ws "]" ws
+
+task-output ::= "{" ws "\"kind\"" ws ":" ws "\"task\"" ws "," ws "\"tasks\"" ws ":" ws "[" ws task-record (ws "," ws task-record)* ws "]" ws "}" ws
+task-record ::= "{" ws "\"id\"" ws ":" ws string ws "," ws "\"objective\"" ws ":" ws string ws "," ws "\"name\"" ws ":" ws string ws "," ws "\"depends_on\"" ws ":" ws string-array ws "}" ws
 
 string ::=
   "\"" (
@@ -238,9 +249,11 @@ Each task requires `id`, `objective`, `operation`, `role`, `targets`, and `depen
 Each `targets` array must be non-empty and list exact files the task may create, modify, or delete.\n\
 Required `role` field: the name of one of the available worker roles listed above. \
 Every task must be assigned to one of those roles.\n\
-Optional top-level `kind` field: \"work\" (default when omitted) or \"plan\". \
+Optional top-level `kind` field: \"work\" (default when omitted), \"plan\", or \"task\". \
 When `kind` is \"plan\", every task becomes a further planning node instead of a work node, and `targets` may be empty. \
-All tasks in one PlannerOutput share the same kind — never mix work and plan tasks in one response.";
+When `kind` is \"task\", `kind` must be stated explicitly and each task requires only `id`, `objective`, `name`, and `depends_on` — no `operation`, `role`, or `targets`. \
+`name` must be a bare symbol or concept identifier (e.g. \"fibonacci\"), not a file path or location.\n\
+All tasks in one PlannerOutput share the same kind — never mix kinds in one response.";
 
 /// A role prompt split into four explicit sections.
 ///

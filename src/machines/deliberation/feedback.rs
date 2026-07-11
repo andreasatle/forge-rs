@@ -33,6 +33,12 @@ pub(super) fn planner_validation_feedback(error: &PlannerValidationError) -> Str
                  Add a clear objective to task '{id}'."
             )
         }
+        PlannerValidationError::EmptyName(id) => {
+            format!(
+                "{error}. Every `kind: \"task\"` task must have a non-empty `name` — a bare \
+                 symbol or concept identifier, not a file path. Add a name to task '{id}'."
+            )
+        }
         PlannerValidationError::EmptyTargets(id) => {
             format!(
                 "{error}. Every task must declare at least one concrete target file. \

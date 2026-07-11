@@ -20,10 +20,10 @@ pub struct PlannerTask {
     /// Bare symbol or concept identifier for this task (e.g. `fibonacci`) —
     /// not a file path or location.
     ///
-    /// `#[serde(default)]` because no adapter prompt schema asks the planner
-    /// for a `name` yet; wiring that in (and any path-derivation from it) is
-    /// separate future work for whichever team consumes it. Defaults to an
-    /// empty string when the planner omits it.
+    /// Required (and validated non-blank) for [`PlannerOutputKind::Task`]
+    /// output, whose grammar and protocol footer ask the planner for it.
+    /// `#[serde(default)]` stays in place because `work`/`plan` task schemas
+    /// carry no `name` field at all, so their JSON never includes it.
     #[serde(default)]
     pub name: String,
     /// Concrete artifact operation this task will perform, when the active
@@ -119,6 +119,8 @@ pub enum PlannerValidationError {
     DuplicateId(String),
     /// A task has an empty (or whitespace-only) objective.
     EmptyObjective(String),
+    /// A `kind: "task"` task has an empty (or whitespace-only) name.
+    EmptyName(String),
     /// A work task does not declare any concrete target files.
     EmptyTargets(String),
     /// A task lists its own id in `depends_on`.
@@ -155,6 +157,9 @@ impl std::fmt::Display for PlannerValidationError {
             }
             PlannerValidationError::EmptyObjective(id) => {
                 write!(f, "empty objective for task: {id}")
+            }
+            PlannerValidationError::EmptyName(id) => {
+                write!(f, "empty name for task: {id}")
             }
             PlannerValidationError::EmptyTargets(id) => {
                 write!(f, "empty targets for task: {id}")
@@ -230,6 +235,9 @@ impl<'a> PlannerOutputProcessor<'a> {
             }
             if task.objective.trim().is_empty() {
                 return Err(PlannerValidationError::EmptyObjective(task.id.clone()));
+            }
+            if output.kind == PlannerOutputKind::Task && task.name.trim().is_empty() {
+                return Err(PlannerValidationError::EmptyName(task.id.clone()));
             }
             if output.kind == PlannerOutputKind::Work {
                 if task.targets.is_empty() || task.targets.iter().any(|t| t.trim().is_empty()) {
