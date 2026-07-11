@@ -15,6 +15,8 @@ fn run_node_effect_uses_node_runner() {
         model_tier: ModelTier::Cheap,
         attempt: 0,
         retry_feedback: None,
+        adapter: String::new(),
+        northstar: String::new(),
     };
     let event = h.handle_effect(effect);
     let SchedulerEvent::WorkAccepted { .. } = event else {

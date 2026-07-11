@@ -24,6 +24,8 @@ fn validation_pass_allows_commit() {
         model_tier: ModelTier::Cheap,
         attempt: 0,
         retry_feedback: None,
+        adapter: String::new(),
+        northstar: String::new(),
     });
 
     let event = h.handle_effect(SchedulerEffect::IntegrateWork {
@@ -73,6 +75,8 @@ fn validation_failure_blocks_commit() {
         model_tier: ModelTier::Cheap,
         attempt: 0,
         retry_feedback: None,
+        adapter: String::new(),
+        northstar: String::new(),
     });
 
     let event = h.handle_effect(SchedulerEffect::IntegrateWork {
@@ -188,6 +192,8 @@ fn validation_failure_telemetry_keeps_full_diagnostics() {
         model_tier: ModelTier::Cheap,
         attempt: 0,
         retry_feedback: None,
+        adapter: String::new(),
+        northstar: String::new(),
     });
 
     h.handle_effect(SchedulerEffect::IntegrateWork {
@@ -245,6 +251,8 @@ fn validation_failure_records_attempt_evidence_before_cleanup() {
         model_tier: ModelTier::Cheap,
         attempt: 0,
         retry_feedback: None,
+        adapter: String::new(),
+        northstar: String::new(),
     });
 
     h.handle_effect(SchedulerEffect::IntegrateWork {
@@ -320,6 +328,8 @@ fn validator_runs_after_workspace_mutation() {
         model_tier: ModelTier::Cheap,
         attempt: 0,
         retry_feedback: None,
+        adapter: String::new(),
+        northstar: String::new(),
     });
 
     h.handle_effect(SchedulerEffect::IntegrateWork {
@@ -359,6 +369,8 @@ fn no_diff_fails_before_running_validator() {
         model_tier: ModelTier::Cheap,
         attempt: 0,
         retry_feedback: None,
+        adapter: String::new(),
+        northstar: String::new(),
     });
 
     // StaticNodeRunner does not mutate the WorkAttempt, so integration fails
@@ -416,6 +428,8 @@ fn validation_pass_sets_validation_passed_true() {
         model_tier: ModelTier::Cheap,
         attempt: 0,
         retry_feedback: None,
+        adapter: String::new(),
+        northstar: String::new(),
     });
     assert_eq!(
         h.validation_passed(),
@@ -463,6 +477,8 @@ fn validation_failure_sets_validation_passed_false() {
         model_tier: ModelTier::Cheap,
         attempt: 0,
         retry_feedback: None,
+        adapter: String::new(),
+        northstar: String::new(),
     });
 
     h.handle_effect(SchedulerEffect::IntegrateWork {
@@ -500,6 +516,8 @@ fn no_diff_leaves_validation_passed_none() {
         model_tier: ModelTier::Cheap,
         attempt: 0,
         retry_feedback: None,
+        adapter: String::new(),
+        northstar: String::new(),
     });
 
     h.handle_effect(SchedulerEffect::IntegrateWork {
@@ -542,6 +560,8 @@ fn validation_passed_true_even_when_integration_conflicts() {
         model_tier: ModelTier::Cheap,
         attempt: 0,
         retry_feedback: None,
+        adapter: String::new(),
+        northstar: String::new(),
     });
 
     // Advance the branch externally so the integrate() CAS check fails.
@@ -605,6 +625,8 @@ fn timeout_blocks_commit() {
         model_tier: ModelTier::Cheap,
         attempt: 0,
         retry_feedback: None,
+        adapter: String::new(),
+        northstar: String::new(),
     });
 
     let event = h.handle_effect(SchedulerEffect::IntegrateWork {

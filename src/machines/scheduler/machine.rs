@@ -231,6 +231,8 @@ impl SchedulerMachine {
                             model_tier,
                             attempt,
                             retry_feedback,
+                            adapter,
+                            northstar,
                         ) = {
                             let n = graph.get_node(&node_id);
                             (
@@ -242,6 +244,8 @@ impl SchedulerMachine {
                                 n.model_tier,
                                 n.attempt,
                                 n.retry_feedback.clone(),
+                                n.adapter.clone(),
+                                n.northstar.clone(),
                             )
                         };
                         let effect = SchedulerEffect::RunNode {
@@ -254,6 +258,8 @@ impl SchedulerMachine {
                             model_tier,
                             attempt,
                             retry_feedback,
+                            adapter,
+                            northstar,
                         };
                         let graph = graph.mark_node(&node_id, NodeStatus::Running);
                         Transition {

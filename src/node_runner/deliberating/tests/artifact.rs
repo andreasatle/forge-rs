@@ -66,6 +66,8 @@ fn reviewer_can_read_work_attempt_target_file_with_relative_path() {
         artifact_view: Some(view),
         worker_role: None,
         work_attempt: Some(work_attempt),
+        adapter: String::new(),
+        northstar: String::new(),
     };
 
     let result = runner.run_node(request, &NoopTelemetry);

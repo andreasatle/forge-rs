@@ -48,6 +48,8 @@ fn temporary_workspace_removed_after_integration() {
             model_tier: ModelTier::Cheap,
             attempt: 0,
             retry_feedback: None,
+            adapter: String::new(),
+            northstar: String::new(),
         });
 
         h.handle_effect(SchedulerEffect::IntegrateWork {

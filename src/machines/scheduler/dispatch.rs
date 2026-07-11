@@ -19,6 +19,8 @@ pub(crate) struct RunNodeDispatch {
     pub(crate) model_tier: ModelTier,
     pub(crate) attempt: u32,
     pub(crate) retry_feedback: Option<RetryFeedback>,
+    pub(crate) adapter: String,
+    pub(crate) northstar: String,
 }
 
 pub(crate) struct DispatchResult {
@@ -60,6 +62,8 @@ pub(crate) fn dispatch_run_node<R: NodeRunner>(
         attempt: command.attempt,
         artifact_view,
         work_attempt,
+        adapter: command.adapter,
+        northstar: command.northstar,
     };
     let console_tel = ConsoleTelemetry::new(telemetry, label);
     let result = runner.run_node(request, &console_tel);

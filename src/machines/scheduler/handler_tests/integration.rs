@@ -152,6 +152,8 @@ fn scheduler_handler_passes_artifact_view_to_node_runner() {
         model_tier: ModelTier::Cheap,
         attempt: 0,
         retry_feedback: None,
+        adapter: String::new(),
+        northstar: String::new(),
     });
 
     let captured = views.borrow();
@@ -516,6 +518,8 @@ fn run_node_does_not_commit_workspace_mutation() {
         model_tier: ModelTier::Cheap,
         attempt: 0,
         retry_feedback: None,
+        adapter: String::new(),
+        northstar: String::new(),
     });
 
     let sha_after = git_output(&repo_path, &["rev-parse", "HEAD"]);
@@ -547,6 +551,8 @@ fn integrate_work_commits_pending_workspace_mutation() {
         model_tier: ModelTier::Cheap,
         attempt: 0,
         retry_feedback: None,
+        adapter: String::new(),
+        northstar: String::new(),
     });
 
     let event = h.handle_effect(SchedulerEffect::IntegrateWork {

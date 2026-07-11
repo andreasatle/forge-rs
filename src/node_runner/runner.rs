@@ -82,6 +82,8 @@ mod tests {
             artifact_view: None,
             worker_role: None,
             work_attempt: None,
+            adapter: String::new(),
+            northstar: String::new(),
         }
     }
 
@@ -97,6 +99,8 @@ mod tests {
             artifact_view: None,
             worker_role: None,
             work_attempt: None,
+            adapter: String::new(),
+            northstar: String::new(),
         }
     }
 

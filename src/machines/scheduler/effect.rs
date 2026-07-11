@@ -52,6 +52,12 @@ pub enum SchedulerEffect {
         /// failure. The dispatch layer appends this to the objective text;
         /// the machine keeps the objective field itself immutable.
         retry_feedback: Option<RetryFeedback>,
+        /// Copied verbatim from `Node::adapter`. Empty for the single-team
+        /// path. Dispatch does not yet consume this field.
+        adapter: String,
+        /// Copied verbatim from `Node::northstar`. Empty for the single-team
+        /// path. Dispatch does not yet consume this field.
+        northstar: String,
     },
 
     /// Dispatch the work produced by a node to the integration handler.

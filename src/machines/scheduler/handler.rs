@@ -142,6 +142,8 @@ impl<R: NodeRunner> SchedulerHandler<R> {
                 model_tier,
                 attempt,
                 retry_feedback,
+                adapter,
+                northstar,
             } => {
                 let command = RunNodeDispatch {
                     node_id: node_id.clone(),
@@ -153,6 +155,8 @@ impl<R: NodeRunner> SchedulerHandler<R> {
                     model_tier,
                     attempt,
                     retry_feedback,
+                    adapter,
+                    northstar,
                 };
                 let work_attempt = if command.kind == crate::machines::scheduler::NodeKind::Work {
                     self.integration
