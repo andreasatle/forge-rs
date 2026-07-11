@@ -49,8 +49,8 @@ pub struct LanguageSpec {
     /// [`crate::artifacts::TaskRecord::name`]), for nodes spawned with no
     /// target file of their own to select a plugin or validation rule from.
     ///
-    /// Config/parsing only for now: no code path derives targets from these
-    /// rules yet.
+    /// Used as the default for any worker role without its own override in
+    /// `roles` (see [`Self::name_target_rules_for_role`]).
     #[serde(default)]
     pub name_target_rules: Vec<NameTargetRule>,
 }
@@ -62,6 +62,22 @@ impl LanguageSpec {
     /// rather than by inspecting command tokens.
     pub fn validation_includes_test_command(&self) -> bool {
         self.validation.runs_tests
+    }
+
+    /// Name-target rules that apply for `role`, mirroring how `roles`
+    /// overrides `validation`: a role with its own non-empty
+    /// `name_target_rules` uses those instead of the plugin-level default —
+    /// e.g. a `tester` role deriving `tests/test_{name}.py` while the
+    /// plugin's own default derives `src/{name}.py` for every other role.
+    ///
+    /// Falls back to the plugin-level [`Self::name_target_rules`] when `role`
+    /// is `None`, matches no entry in `roles`, or that entry has no
+    /// `name_target_rules` of its own.
+    pub fn name_target_rules_for_role(&self, role: Option<&str>) -> &[NameTargetRule] {
+        role.and_then(|role| self.roles.iter().find(|r| r.role == role))
+            .map(|r| r.name_target_rules.as_slice())
+            .filter(|rules| !rules.is_empty())
+            .unwrap_or(&self.name_target_rules)
     }
 
     /// This plugin's prompt sections, for composition into a role prompt
@@ -130,6 +146,13 @@ pub struct LanguageRoleConfig {
     /// Validation spec used for nodes assigned this role, replacing the
     /// language's default `validation` spec entirely.
     pub validation: LanguageValidationSpec,
+    /// Name-target rules used for nodes assigned this role, replacing the
+    /// plugin-level [`LanguageSpec::name_target_rules`] entirely — same
+    /// override semantics as `validation`. Empty by default, in which case
+    /// [`LanguageSpec::name_target_rules_for_role`] falls back to the
+    /// plugin-level rules.
+    #[serde(default)]
+    pub name_target_rules: Vec<NameTargetRule>,
 }
 
 /// Init-phase command list for a language.
@@ -448,6 +471,99 @@ name_target_rules:
     }
 
     #[test]
+    fn name_target_rules_for_role_falls_back_to_plugin_default() {
+        // Invariant: a role with no override, or no role at all, uses the
+        // plugin-level name_target_rules — this is what keeps an
+        // implementer-only (or role-less) adapter deriving the same target
+        // it always has.
+        let default_rules = vec![NameTargetRule {
+            pattern: "{name}".to_string(),
+            target: "src/{name}.py".to_string(),
+        }];
+        let spec = LanguageSpec {
+            extensions: vec![],
+            identity: String::new(),
+            context: String::new(),
+            instructions: String::new(),
+            constraints: String::new(),
+            init: LanguageInitSpec {
+                gitignore: vec![],
+                commands: vec![],
+            },
+            validation: LanguageValidationSpec {
+                runs_tests: true,
+                commands: vec![],
+                validation_targets: vec![],
+            },
+            roles: vec![LanguageRoleConfig {
+                role: "implementer".to_string(),
+                validation: LanguageValidationSpec {
+                    runs_tests: true,
+                    commands: vec![],
+                    validation_targets: vec![],
+                },
+                name_target_rules: vec![],
+            }],
+            api_summary: None,
+            name_target_rules: default_rules.clone(),
+        };
+        assert_eq!(spec.name_target_rules_for_role(None), default_rules);
+        assert_eq!(
+            spec.name_target_rules_for_role(Some("implementer")),
+            default_rules
+        );
+        assert_eq!(
+            spec.name_target_rules_for_role(Some("unknown_role")),
+            default_rules
+        );
+    }
+
+    #[test]
+    fn name_target_rules_for_role_uses_role_override_when_present() {
+        // Invariant: a role with its own non-empty name_target_rules (e.g. a
+        // tester deriving a test file) replaces the plugin-level default
+        // entirely — the two never merge.
+        let tester_rules = vec![NameTargetRule {
+            pattern: "{name}".to_string(),
+            target: "tests/test_{name}.py".to_string(),
+        }];
+        let spec = LanguageSpec {
+            extensions: vec![],
+            identity: String::new(),
+            context: String::new(),
+            instructions: String::new(),
+            constraints: String::new(),
+            init: LanguageInitSpec {
+                gitignore: vec![],
+                commands: vec![],
+            },
+            validation: LanguageValidationSpec {
+                runs_tests: true,
+                commands: vec![],
+                validation_targets: vec![],
+            },
+            roles: vec![LanguageRoleConfig {
+                role: "tester".to_string(),
+                validation: LanguageValidationSpec {
+                    runs_tests: false,
+                    commands: vec![],
+                    validation_targets: vec![],
+                },
+                name_target_rules: tester_rules.clone(),
+            }],
+            api_summary: None,
+            name_target_rules: vec![NameTargetRule {
+                pattern: "{name}".to_string(),
+                target: "src/{name}.py".to_string(),
+            }],
+        };
+        assert_eq!(
+            spec.name_target_rules_for_role(Some("tester")),
+            tester_rules
+        );
+    }
+
+    #[test]
     fn bundled_language_specs_declare_name_target_rules() {
         for language in ["rust", "python"] {
             let spec =
@@ -455,6 +571,28 @@ name_target_rules:
             assert!(
                 !spec.name_target_rules.is_empty(),
                 "{language} plugin must configure name_target_rules"
+            );
+        }
+    }
+
+    #[test]
+    fn bundled_language_specs_derive_a_distinct_tester_target_from_the_default() {
+        // Invariant: the shipped plugins' tester role derives a test-file
+        // target distinct from the plugin-level default (which derives the
+        // source file) — this is what lets a create_test-style adapter's
+        // ForTasks-spawned Work node target a test file instead of colliding
+        // with the implementer's source-file target.
+        for language in ["rust", "python"] {
+            let spec =
+                language_spec(language).unwrap_or_else(|| panic!("{language} spec must load"));
+            let default_target = derive_target_from_name(&spec.name_target_rules, "example")
+                .unwrap_or_else(|| panic!("{language} default name_target_rules must match"));
+            let tester_target =
+                derive_target_from_name(spec.name_target_rules_for_role(Some("tester")), "example")
+                    .unwrap_or_else(|| panic!("{language} tester name_target_rules must match"));
+            assert_ne!(
+                default_target, tester_target,
+                "{language} tester role must derive a distinct target from the plugin default"
             );
         }
     }

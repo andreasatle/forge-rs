@@ -32,7 +32,7 @@ pub struct ForgeConfig {
     #[serde(default)]
     pub validation: Option<ValidationConfig>,
     /// Path to the project adapter YAML file governing role prompt policy
-    /// (e.g. `"adapters/coding_tdd.yaml"`). Required; there is no default. A
+    /// (e.g. `"adapters/planner.yaml"`). Required; there is no default. A
     /// relative path is resolved against the directory containing the
     /// config file, like `artifact.repo_path`.
     #[serde(default)]
@@ -518,10 +518,11 @@ fn resolve_team_paths(
             team.northstar = resolve_relative(&team.northstar, dir);
         }
         let adapter = crate::project::load_adapter(Path::new(&team.adapter))?;
+        let role = adapter.primary_worker_role();
         team.name_target_rules = adapter
             .language_plugins()
             .values()
-            .flat_map(|spec| spec.name_target_rules.iter().cloned())
+            .flat_map(|spec| spec.name_target_rules_for_role(role).iter().cloned())
             .collect();
         std::fs::metadata(&team.northstar).map_err(|e| {
             format!(

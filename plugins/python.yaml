@@ -55,6 +55,9 @@ roles:
         - program: uv
           args: ["run", "ruff", "check"]
           scope: changed_files
+    name_target_rules:
+      - pattern: "{name}"
+        target: "tests/test_{name}.py"
   - role: implementer
     validation:
       runs_tests: true
