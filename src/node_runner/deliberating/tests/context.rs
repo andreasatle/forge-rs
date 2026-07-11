@@ -36,6 +36,7 @@ fn plugin_spec(extension: &str, instructions: &str) -> LanguageSpec {
         },
         roles: vec![],
         api_summary: None,
+        name_target_rules: vec![],
     }
 }
 

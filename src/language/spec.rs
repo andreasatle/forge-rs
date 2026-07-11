@@ -45,6 +45,14 @@ pub struct LanguageSpec {
     /// file path as the last argument; its stdout is the file's summary.
     #[serde(default)]
     pub api_summary: Option<CommandSpec>,
+    /// Rules deriving a target file from a task's bare name (see
+    /// [`crate::artifacts::TaskRecord::name`]), for nodes spawned with no
+    /// target file of their own to select a plugin or validation rule from.
+    ///
+    /// Config/parsing only for now: no code path derives targets from these
+    /// rules yet.
+    #[serde(default)]
+    pub name_target_rules: Vec<NameTargetRule>,
 }
 
 impl LanguageSpec {
@@ -67,6 +75,25 @@ impl LanguageSpec {
             constraints: self.constraints.clone(),
         }
     }
+}
+
+/// A rule deriving a target file from a task's bare name, independent of
+/// any target file the task already carries.
+///
+/// `pattern` is matched against the whole name; it contains exactly one
+/// `{name}` placeholder and matches when the name starts with the text
+/// before it and ends with the text after it. The captured middle section
+/// is substituted into `target` to derive the target path.
+///
+/// Example: `pattern: "{name}"`, `target: "src/{name}.py"` derives
+/// `src/add_parser.py` from the name `add_parser`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NameTargetRule {
+    /// Task-name pattern, e.g. `"{name}"`.
+    pub pattern: String,
+    /// Target file pattern, e.g. `"src/{name}.py"`.
+    pub target: String,
 }
 
 /// A worker role's validation override for a language plugin.
@@ -134,6 +161,7 @@ mod tests {
             },
             roles: vec![],
             api_summary: None,
+            name_target_rules: vec![],
         };
         assert!(
             spec.validation_includes_test_command(),
@@ -165,6 +193,7 @@ mod tests {
             },
             roles: vec![],
             api_summary: None,
+            name_target_rules: vec![],
         };
         assert!(
             !spec.validation_includes_test_command(),
@@ -301,5 +330,54 @@ roles:
         assert_eq!(spec.roles[0].validation.commands[0].program, "reduced");
         assert!(spec.validation.runs_tests);
         assert_eq!(spec.validation.commands[0].program, "full");
+    }
+
+    #[test]
+    fn name_target_rules_defaults_to_empty_when_omitted_from_yaml() {
+        // Invariant: name_target_rules is optional — a language spec with no
+        // name-derived target rules still parses, defaulting to empty.
+        let yaml = r#"
+identity: "guidance"
+init:
+  commands: []
+validation:
+  commands: []
+"#;
+        let spec: LanguageSpec =
+            serde_yaml::from_str(yaml).expect("spec without name_target_rules must parse");
+        assert!(spec.name_target_rules.is_empty());
+    }
+
+    #[test]
+    fn name_target_rules_parse_pattern_and_target_from_yaml() {
+        // Invariant: each name_target_rules entry carries its own pattern and
+        // target strings, independent of validation_targets.
+        let yaml = r#"
+identity: "guidance"
+init:
+  commands: []
+validation:
+  commands: []
+name_target_rules:
+  - pattern: "{name}"
+    target: "src/{name}.py"
+"#;
+        let spec: LanguageSpec =
+            serde_yaml::from_str(yaml).expect("spec with name_target_rules must parse");
+        assert_eq!(spec.name_target_rules.len(), 1);
+        assert_eq!(spec.name_target_rules[0].pattern, "{name}");
+        assert_eq!(spec.name_target_rules[0].target, "src/{name}.py");
+    }
+
+    #[test]
+    fn bundled_language_specs_declare_name_target_rules() {
+        for language in ["rust", "python"] {
+            let spec =
+                language_spec(language).unwrap_or_else(|| panic!("{language} spec must load"));
+            assert!(
+                !spec.name_target_rules.is_empty(),
+                "{language} plugin must configure name_target_rules"
+            );
+        }
     }
 }

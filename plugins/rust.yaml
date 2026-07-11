@@ -60,6 +60,9 @@ roles:
       validation_targets:
         - pattern: "{stem}.rs"
           target: "{stem}_test.rs"
+name_target_rules:
+  - pattern: "{name}"
+    target: "src/{name}.rs"
 api_summary:
   program: sh
   args:

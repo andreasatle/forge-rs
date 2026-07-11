@@ -74,6 +74,9 @@ roles:
       validation_targets:
         - pattern: "{stem}.py"
           target: "tests/test_{stem}.py"
+name_target_rules:
+  - pattern: "{name}"
+    target: "src/{name}.py"
 api_summary:
   program: uv
   args:
