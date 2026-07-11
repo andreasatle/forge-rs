@@ -1,5 +1,6 @@
 use super::*;
 use crate::config::Trigger;
+use crate::language::NameTargetRule;
 use crate::machines::scheduler::graph::{ModelTier, Node, NodeStatus};
 
 fn team(name: &str, trigger: Trigger) -> TeamConfig {
@@ -8,6 +9,7 @@ fn team(name: &str, trigger: Trigger) -> TeamConfig {
         northstar: String::new(),
         adapter: String::new(),
         trigger,
+        name_target_rules: vec![],
     }
 }
 
@@ -17,6 +19,21 @@ fn team_with_adapter(name: &str, trigger: Trigger, adapter: &str, northstar: &st
         northstar: northstar.to_string(),
         adapter: adapter.to_string(),
         trigger,
+        name_target_rules: vec![],
+    }
+}
+
+fn team_with_name_target_rules(
+    name: &str,
+    trigger: Trigger,
+    name_target_rules: Vec<NameTargetRule>,
+) -> TeamConfig {
+    TeamConfig {
+        name: name.to_string(),
+        northstar: String::new(),
+        adapter: String::new(),
+        trigger,
+        name_target_rules,
     }
 }
 
@@ -29,6 +46,13 @@ fn record(id: &str, objective: &str, team: &str) -> TaskRecord {
         completed_at: String::new(),
         team: Some(team.to_string()),
         name: None,
+    }
+}
+
+fn named_record(id: &str, objective: &str, team: &str, name: &str) -> TaskRecord {
+    TaskRecord {
+        name: Some(name.to_string()),
+        ..record(id, objective, team)
     }
 }
 
@@ -169,6 +193,72 @@ fn for_tasks_spawns_work_node_with_original_objective() {
     assert_eq!(spawned[0].kind, NodeKind::Work);
     assert_eq!(spawned[0].task_id, Some("t1".to_string()));
     assert_eq!(spawned[0].objective, "implement fibonacci(n: int)");
+}
+
+/// A `ForTasks`-spawned Work node derives its `target_files` from the
+/// matched manifest task's `name` using the spawning team's
+/// `name_target_rules` — the fix for the bug where these nodes were spawned
+/// with `target_files: vec![]` unconditionally and so could touch no file.
+#[test]
+fn for_tasks_spawns_node_with_target_files_derived_from_task_name() {
+    let graph = RunGraph {
+        nodes: vec![root_node()],
+    };
+    let config = run_config(vec![team_with_name_target_rules(
+        "implement",
+        Trigger::AfterEach(vec!["planner".to_string()]),
+        vec![NameTargetRule {
+            pattern: "{name}".to_string(),
+            target: "src/{name}.rs".to_string(),
+        }],
+    )]);
+    let manifest = [named_record(
+        "t1",
+        "implement fibonacci(n: int)",
+        "planner",
+        "fibonacci",
+    )];
+    let graph = apply_team_triggers(graph, &NodeId("root".to_string()), &config, &manifest);
+
+    let spawned: Vec<&Node> = graph
+        .nodes
+        .iter()
+        .filter(|n| n.team == "implement")
+        .collect();
+    assert_eq!(spawned.len(), 1);
+    assert_eq!(
+        spawned[0].target_files,
+        vec!["src/fibonacci.rs".to_string()]
+    );
+}
+
+/// When no configured `name_target_rules` matches the task's name (or the
+/// team has none), the spawned node gets no target files — never a guessed
+/// fallback.
+#[test]
+fn for_tasks_spawns_node_with_no_target_files_when_no_rule_matches() {
+    let graph = RunGraph {
+        nodes: vec![root_node()],
+    };
+    let config = run_config(vec![team(
+        "implement",
+        Trigger::AfterEach(vec!["planner".to_string()]),
+    )]);
+    let manifest = [named_record(
+        "t1",
+        "implement fibonacci(n: int)",
+        "planner",
+        "fibonacci",
+    )];
+    let graph = apply_team_triggers(graph, &NodeId("root".to_string()), &config, &manifest);
+
+    let spawned: Vec<&Node> = graph
+        .nodes
+        .iter()
+        .filter(|n| n.team == "implement")
+        .collect();
+    assert_eq!(spawned.len(), 1);
+    assert!(spawned[0].target_files.is_empty());
 }
 
 /// A `ForTasks`-spawned Work node carries its own team's adapter/northstar

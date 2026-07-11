@@ -16,7 +16,9 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 pub use registry::language_spec;
-pub use spec::{LanguageInitSpec, LanguageSpec, LanguageValidationSpec};
+pub use spec::{
+    LanguageInitSpec, LanguageSpec, LanguageValidationSpec, NameTargetRule, derive_target_from_name,
+};
 
 /// Picks the language plugin that applies to a node from the extensions of
 /// its target files: the first target file (in order) whose extension has a

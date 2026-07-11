@@ -4,6 +4,8 @@ use std::path::Path;
 
 use serde::{Deserialize, Deserializer, Serialize};
 
+use crate::language::NameTargetRule;
+
 /// Top-level configuration for a forge run.
 #[derive(Debug, Deserialize)]
 pub struct ForgeConfig {
@@ -52,6 +54,16 @@ pub struct TeamConfig {
     /// Parsed trigger expression, e.g. `start` or
     /// `after_each(team_a, team_b)`.
     pub trigger: Trigger,
+    /// Name-to-target derivation rules merged from every language plugin
+    /// this team's `adapter` declares, keyed by nothing (tried in plugin
+    /// declaration order) — never authored directly in `forge.yaml`.
+    ///
+    /// Populated by [`ForgeConfig::from_file`]'s `resolve_team_paths` step
+    /// from the adapter loaded for `adapter`, so it is available to the
+    /// (pure) scheduler transition that spawns `ForTasks` nodes without that
+    /// transition performing any I/O itself.
+    #[serde(default)]
+    pub name_target_rules: Vec<NameTargetRule>,
 }
 
 /// Parsed form of a `TeamConfig::trigger` expression, consumed by
@@ -505,7 +517,12 @@ fn resolve_team_paths(
             team.adapter = resolve_relative(&team.adapter, dir);
             team.northstar = resolve_relative(&team.northstar, dir);
         }
-        crate::project::load_adapter(Path::new(&team.adapter))?;
+        let adapter = crate::project::load_adapter(Path::new(&team.adapter))?;
+        team.name_target_rules = adapter
+            .language_plugins()
+            .values()
+            .flat_map(|spec| spec.name_target_rules.iter().cloned())
+            .collect();
         std::fs::metadata(&team.northstar).map_err(|e| {
             format!(
                 "team '{}': northstar at {} could not be read: {e}",

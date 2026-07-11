@@ -1,6 +1,6 @@
 //! Language specification types deserialized from YAML.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::roles::policy::RolePromptConfig;
 use crate::validation::{CommandSpec, ValidationTargetRule};
@@ -87,13 +87,39 @@ impl LanguageSpec {
 ///
 /// Example: `pattern: "{name}"`, `target: "src/{name}.py"` derives
 /// `src/add_parser.py` from the name `add_parser`.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct NameTargetRule {
     /// Task-name pattern, e.g. `"{name}"`.
     pub pattern: String,
     /// Target file pattern, e.g. `"src/{name}.py"`.
     pub target: String,
+}
+
+impl NameTargetRule {
+    /// Applies this rule to `name`, returning the derived target path if
+    /// `name` matches `pattern` as a whole (not a substring). See the type
+    /// docs for the matching rule.
+    fn apply(&self, name: &str) -> Option<String> {
+        let (before, after) = self.pattern.split_once("{name}")?;
+        if name.len() < before.len() + after.len() {
+            return None;
+        }
+        if !name.starts_with(before) || !name.ends_with(after) {
+            return None;
+        }
+        let captured = &name[before.len()..name.len() - after.len()];
+        if captured.is_empty() {
+            return None;
+        }
+        Some(self.target.replace("{name}", captured))
+    }
+}
+
+/// Applies `rules` in order to `name`, returning the first matching rule's
+/// derived target path, or `None` when no rule's pattern matches.
+pub fn derive_target_from_name(rules: &[NameTargetRule], name: &str) -> Option<String> {
+    rules.iter().find_map(|rule| rule.apply(name))
 }
 
 /// A worker role's validation override for a language plugin.
@@ -367,6 +393,58 @@ name_target_rules:
         assert_eq!(spec.name_target_rules.len(), 1);
         assert_eq!(spec.name_target_rules[0].pattern, "{name}");
         assert_eq!(spec.name_target_rules[0].target, "src/{name}.py");
+    }
+
+    #[test]
+    fn derive_target_from_name_substitutes_captured_middle() {
+        // Invariant: the text captured between a rule's pattern prefix/suffix
+        // is substituted verbatim into the target pattern's {name} slot.
+        let rules = vec![NameTargetRule {
+            pattern: "{name}".to_string(),
+            target: "src/{name}.py".to_string(),
+        }];
+        assert_eq!(
+            derive_target_from_name(&rules, "add_parser"),
+            Some("src/add_parser.py".to_string())
+        );
+    }
+
+    #[test]
+    fn derive_target_from_name_returns_none_when_no_rule_matches() {
+        // Invariant: a name that fits no configured rule's pattern derives
+        // no target — callers must not guess a fallback.
+        let rules = vec![NameTargetRule {
+            pattern: "test_{name}".to_string(),
+            target: "tests/test_{name}.py".to_string(),
+        }];
+        assert_eq!(derive_target_from_name(&rules, "add_parser"), None);
+    }
+
+    #[test]
+    fn derive_target_from_name_returns_none_for_empty_rules() {
+        // Invariant: a team/spec with no configured name_target_rules never
+        // derives a target, regardless of the name.
+        assert_eq!(derive_target_from_name(&[], "add_parser"), None);
+    }
+
+    #[test]
+    fn derive_target_from_name_uses_first_matching_rule() {
+        // Invariant: rules are tried in order and the first match wins, same
+        // as validation_targets' derivation semantics.
+        let rules = vec![
+            NameTargetRule {
+                pattern: "{name}".to_string(),
+                target: "src/{name}.rs".to_string(),
+            },
+            NameTargetRule {
+                pattern: "{name}".to_string(),
+                target: "src/{name}.py".to_string(),
+            },
+        ];
+        assert_eq!(
+            derive_target_from_name(&rules, "add_parser"),
+            Some("src/add_parser.rs".to_string())
+        );
     }
 
     #[test]

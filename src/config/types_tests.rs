@@ -188,6 +188,32 @@ fn parses_teams() {
     );
 }
 
+#[test]
+fn team_name_target_rules_are_merged_from_its_adapter_language_plugins() {
+    // Invariant: each team's name_target_rules is populated at config-load
+    // time from the language plugins its own adapter declares (coding.yaml
+    // declares both python.yaml and rust.yaml), not left empty — this is
+    // what lets a ForTasks-spawned node derive target_files from a task
+    // name with no I/O inside the (pure) scheduler transition.
+    let tmp = TempYaml::new(TEAMS_YAML);
+    std::fs::write(tmp.dir().join("project.md"), "gap: project").unwrap();
+    std::fs::write(tmp.dir().join("implementation.md"), "gap: implementation").unwrap();
+    let config = ForgeConfig::from_file(tmp.path()).unwrap();
+
+    for team in &config.teams {
+        let targets: Vec<&str> = team
+            .name_target_rules
+            .iter()
+            .map(|rule| rule.target.as_str())
+            .collect();
+        assert!(
+            targets.contains(&"src/{name}.py") && targets.contains(&"src/{name}.rs"),
+            "team '{}' must inherit name_target_rules from both plugins its adapter declares, got {targets:?}",
+            team.name
+        );
+    }
+}
+
 const MULTI_AFTER_EACH_YAML: &str = r#"
 objective: "test"
 artifact:

@@ -8,6 +8,7 @@
 
 use crate::artifacts::TaskRecord;
 use crate::config::TeamConfig;
+use crate::language::derive_target_from_name;
 use crate::services::team_trigger::{TaskCompletion, TriggerDecision, evaluate_trigger};
 
 use super::config::RunConfig;
@@ -98,11 +99,9 @@ fn spawn_for_tasks(
         .into_iter()
         .filter(|id| !graph.has_active_team_node(&team.name, Some(id.as_str())))
         .map(|id| {
-            let objective = manifest_tasks
-                .iter()
-                .find(|record| record.id == id)
-                .map(|record| record.objective.clone())
-                .unwrap_or_default();
+            let record = manifest_tasks.iter().find(|record| record.id == id);
+            let objective = record.map(|r| r.objective.clone()).unwrap_or_default();
+            let target_files = task_target_files(team, record, &id);
             NodeRequest {
                 id: new_node_id(),
                 kind: NodeKind::Work,
@@ -112,7 +111,7 @@ fn spawn_for_tasks(
                 northstar: team.northstar.clone(),
                 worker_role: None,
                 objective,
-                target_files: vec![],
+                target_files,
                 required_validation_targets: vec![],
                 dependencies: vec![],
                 validation_plan: None,
@@ -123,6 +122,37 @@ fn spawn_for_tasks(
         graph = graph.insert_children(node_id, requests);
     }
     graph
+}
+
+/// Derives a `ForTasks`-spawned node's target files from its matched
+/// manifest task's `name`, using `team`'s `name_target_rules` (merged from
+/// its adapter's language plugins at config-load time — see
+/// [`TeamConfig::name_target_rules`]).
+///
+/// Returns an empty vec — never a guessed fallback — when the task has no
+/// recorded name, or no rule's pattern matches it (including when `team` has
+/// no configured language plugins at all, i.e. `name_target_rules` is
+/// empty); either case is reported to stderr so a node that can touch no
+/// file is diagnosable rather than silently produced.
+fn task_target_files(team: &TeamConfig, record: Option<&TaskRecord>, id: &str) -> Vec<String> {
+    let Some(name) = record.and_then(|r| r.name.as_deref()) else {
+        eprintln!(
+            "[triggers] team '{}': task '{id}' has no recorded name; spawning with no target files",
+            team.name
+        );
+        return vec![];
+    };
+    match derive_target_from_name(&team.name_target_rules, name) {
+        Some(target) => vec![target],
+        None => {
+            eprintln!(
+                "[triggers] team '{}': no name_target_rule matched task name '{name}' (id {id}); \
+                 spawning with no target files",
+                team.name
+            );
+            vec![]
+        }
+    }
 }
 
 /// The objective the run was started with, per the graph's `Root` node.
