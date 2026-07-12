@@ -340,5 +340,6 @@ mod integration;
 mod multi_team;
 mod progress;
 mod recovery;
+mod recursive_plan_team;
 mod validation;
 mod validation_plan;
