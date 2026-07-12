@@ -46,7 +46,12 @@ pub(crate) fn dispatch_run_node<R: NodeRunner>(
         commit_sha: artifact.commit_sha.clone(),
     });
 
-    let label = progress_label(&command.kind, &command.node_id, &command.worker_role);
+    let label = progress_label(
+        &command.kind,
+        &command.node_id,
+        &command.worker_role,
+        &command.team,
+    );
     let rendered_objective = render_objective(
         &command.objective,
         &command.target_files,
@@ -76,13 +81,30 @@ pub(crate) fn dispatch_run_node<R: NodeRunner>(
 
 /// Builds the `[planner ...]`/`[worker ...]` progress-line label for a
 /// dispatched node, appending the short node id and (for Work nodes) the
-/// worker role when the node has one.
-fn progress_label(kind: &NodeKind, node_id: &NodeId, worker_role: &Option<String>) -> String {
+/// worker role when the node has one. When `team` is non-empty it is
+/// appended to the kind word (e.g. `[worker:implement ...]`) so multi-team
+/// runs can tell which team's dispatch produced a given log line; the
+/// root/single-team path (`team` empty) keeps the plain `[worker ...]` form.
+fn progress_label(
+    kind: &NodeKind,
+    node_id: &NodeId,
+    worker_role: &Option<String>,
+    team: &str,
+) -> String {
+    let kind_word = match kind {
+        NodeKind::Plan => "planner",
+        NodeKind::Work => "worker",
+    };
+    let prefix = if team.is_empty() {
+        kind_word.to_string()
+    } else {
+        format!("{kind_word}:{team}")
+    };
     match kind {
-        NodeKind::Plan => format!("[planner {}]", node_id.short()),
+        NodeKind::Plan => format!("[{prefix} {}]", node_id.short()),
         NodeKind::Work => match worker_role {
-            Some(role) => format!("[worker {}/{role}]", node_id.short()),
-            None => format!("[worker {}]", node_id.short()),
+            Some(role) => format!("[{prefix} {}/{role}]", node_id.short()),
+            None => format!("[{prefix} {}]", node_id.short()),
         },
     }
 }
@@ -133,7 +155,7 @@ mod tests {
         // Invariant: Plan nodes always render as "[planner <short id>]",
         // regardless of worker_role (which is always None for Plan nodes,
         // but the label must not depend on that being true).
-        let label = progress_label(&NodeKind::Plan, &NodeId("root".to_string()), &None);
+        let label = progress_label(&NodeKind::Plan, &NodeId("root".to_string()), &None, "");
         assert_eq!(
             label,
             format!("[planner {}]", NodeId("root".to_string()).short())
@@ -146,13 +168,51 @@ mod tests {
             &NodeKind::Work,
             &NodeId("a3f7c2".to_string()),
             &Some("tester".to_string()),
+            "",
         );
         assert_eq!(label, "[worker a3f7c2/tester]");
     }
 
     #[test]
     fn work_node_label_omits_slash_when_worker_role_absent() {
-        let label = progress_label(&NodeKind::Work, &NodeId("a3f7c2".to_string()), &None);
+        let label = progress_label(&NodeKind::Work, &NodeId("a3f7c2".to_string()), &None, "");
         assert_eq!(label, "[worker a3f7c2]");
+    }
+
+    #[test]
+    fn plan_node_label_includes_team_when_set() {
+        // Invariant: multi-team runs must show which team a planner dispatch
+        // belongs to, so log lines aren't ambiguous between concurrent teams.
+        let label = progress_label(
+            &NodeKind::Plan,
+            &NodeId("472468da".to_string()),
+            &None,
+            "planner",
+        );
+        assert_eq!(label, "[planner:planner 472468da]");
+    }
+
+    #[test]
+    fn work_node_label_includes_team_when_set() {
+        let label = progress_label(
+            &NodeKind::Work,
+            &NodeId("a910fa9b".to_string()),
+            &Some("implementer".to_string()),
+            "implement",
+        );
+        assert_eq!(label, "[worker:implement a910fa9b/implementer]");
+    }
+
+    #[test]
+    fn empty_team_leaves_label_unchanged() {
+        // Invariant: the root/single-team bootstrap path (team == "") must
+        // keep today's plain label format, with no empty ":" tag.
+        let with_empty_team = progress_label(
+            &NodeKind::Work,
+            &NodeId("a3f7c2".to_string()),
+            &Some("tester".to_string()),
+            "",
+        );
+        assert_eq!(with_empty_team, "[worker a3f7c2/tester]");
     }
 }
