@@ -59,6 +59,36 @@ impl ProjectRuntimeSetup {
     }
 }
 
+/// Every worker role the adapter defines must have a matching entry in each
+/// configured plugin's `roles` list, so a missing per-role validation
+/// override is a hard error at config load time rather than a silent
+/// fallback to that plugin's default validation at run time — regardless of
+/// which plugin ends up selected for a given node.
+///
+/// Shared by [`ProjectRuntimeSetupBuilder::new`] (the run's top-level
+/// adapter) and `resolve_team_paths` (each team's adapter), so both fail
+/// fast at config-load time rather than one of them deferring to first
+/// dispatch.
+pub(crate) fn validate_worker_roles(
+    adapter: &dyn ProjectAdapter,
+    plugins: &BTreeMap<String, LanguageSpec>,
+) -> Result<(), Box<dyn Error>> {
+    let worker_roles = adapter.role_policy().worker_role_descriptions;
+    for (extension, spec) in plugins {
+        let plugin_roles: std::collections::HashSet<&str> =
+            spec.roles.iter().map(|role| role.role.as_str()).collect();
+        for (role, _) in &worker_roles {
+            if !plugin_roles.contains(role.as_str()) {
+                return Err(format!(
+                    "adapter role '{role}' is not defined in the plugin for extension '{extension}'"
+                )
+                .into());
+            }
+        }
+    }
+    Ok(())
+}
+
 struct ProjectRuntimeSetupBuilder<'a> {
     validation: Option<&'a ValidationConfig>,
     language_plugins: BTreeMap<String, LanguageSpec>,
@@ -72,37 +102,12 @@ impl<'a> ProjectRuntimeSetupBuilder<'a> {
     ) -> Result<Self, Box<dyn Error>> {
         let adapter = load_adapter(adapter)?;
         let language_plugins = adapter.language_plugins().clone();
-        Self::validate_worker_roles(&adapter, &language_plugins)?;
+        validate_worker_roles(&adapter, &language_plugins)?;
         Ok(Self {
             validation,
             language_plugins,
             adapter: Box::new(adapter),
         })
-    }
-
-    /// Every worker role the adapter defines must have a matching entry in
-    /// each configured plugin's `roles` list, so a missing per-role
-    /// validation override is a hard error at config load time rather than a
-    /// silent fallback to that plugin's default validation at run time —
-    /// regardless of which plugin ends up selected for a given node.
-    fn validate_worker_roles(
-        adapter: &dyn ProjectAdapter,
-        plugins: &BTreeMap<String, LanguageSpec>,
-    ) -> Result<(), Box<dyn Error>> {
-        let worker_roles = adapter.role_policy().worker_role_descriptions;
-        for (extension, spec) in plugins {
-            let plugin_roles: std::collections::HashSet<&str> =
-                spec.roles.iter().map(|role| role.role.as_str()).collect();
-            for (role, _) in &worker_roles {
-                if !plugin_roles.contains(role.as_str()) {
-                    return Err(format!(
-                        "adapter role '{role}' is not defined in the plugin for extension '{extension}'"
-                    )
-                    .into());
-                }
-            }
-        }
-        Ok(())
     }
 
     fn build(&self) -> ProjectRuntimeSetup {

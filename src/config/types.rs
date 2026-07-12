@@ -372,7 +372,9 @@ impl ForgeConfig {
     /// - `adapter` does not resolve to a loadable adapter YAML file, or any
     ///   plugin it declares fails to load.
     /// - any team's `adapter` is blank, or does not resolve to a loadable
-    ///   adapter YAML file (or plugin it declares fails to load).
+    ///   adapter YAML file (or plugin it declares fails to load), or declares
+    ///   a worker role that is missing from one of its plugins' `roles`
+    ///   lists.
     /// - any team's `northstar` is blank, or does not resolve to a readable
     ///   file.
     /// - the team-trigger graph formed by `Trigger::AfterEach` references
@@ -520,7 +522,9 @@ fn resolve_relative(path_str: &str, base: &Path) -> String {
 
 /// Resolves and validates each team's `adapter`/`northstar` in place, the
 /// same way `ForgeConfig::from_file` resolves and validates the top-level
-/// `adapter` field.
+/// `adapter` field — including the worker-role/plugin check, so a team with
+/// a worker role missing from its plugins' `roles` lists fails here rather
+/// than at first dispatch.
 fn resolve_team_paths(
     teams: &mut [TeamConfig],
     config_dir: Option<&Path>,
@@ -537,6 +541,11 @@ fn resolve_team_paths(
             team.northstar = resolve_relative(&team.northstar, dir);
         }
         let adapter = crate::project::load_adapter(Path::new(&team.adapter))?;
+        crate::node_runner::project_setup::validate_worker_roles(
+            &adapter,
+            adapter.language_plugins(),
+        )
+        .map_err(|e| format!("team '{}': {e}", team.name))?;
         let role = adapter.primary_worker_role();
         team.name_target_rules = adapter
             .language_plugins()

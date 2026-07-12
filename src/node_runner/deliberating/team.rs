@@ -42,10 +42,11 @@ pub(super) fn load_team_northstar(northstar_path: &str) -> Result<Option<String>
 
 /// Converts a team wiring load failure into a terminal node failure.
 ///
-/// Both `adapter` and `northstar` are resolved and validated as loadable at
-/// `ForgeConfig::from_file` time, so reaching this at dispatch means the
-/// filesystem changed underneath a validated config — not a recoverable
-/// condition, so recovery is `Terminal`.
+/// Both `adapter` and `northstar` — including the adapter's worker-role/
+/// plugin validation — are resolved and validated at `ForgeConfig::from_file`
+/// time, so reaching this at dispatch means the filesystem changed
+/// underneath a validated config — not a recoverable condition, so recovery
+/// is `Terminal`.
 pub(super) fn team_wiring_failed(message: String, telemetry: &dyn TelemetrySink) -> NodeRunResult {
     telemetry.record(TelemetryRecord::new(
         "DeliberatingNodeRunner",
