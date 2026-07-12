@@ -159,6 +159,8 @@ fn spawn_for_tasks(
                      `manifest_tasks` itself, so a matching row must already exist",
             );
             let target_files = task_target_files(team, record)?;
+            let required_validation_targets =
+                crate::language::required_validation_targets(&team.language_plugins, &target_files);
             Ok(NodeRequest {
                 id: new_node_id(),
                 kind: NodeKind::Work,
@@ -169,7 +171,7 @@ fn spawn_for_tasks(
                 worker_role: None,
                 objective: record.objective.clone(),
                 target_files,
-                required_validation_targets: vec![],
+                required_validation_targets,
                 dependencies: vec![],
                 validation_plan: None,
             })

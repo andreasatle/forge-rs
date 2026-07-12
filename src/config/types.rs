@@ -1,11 +1,12 @@
 //! Forge configuration types loaded from a YAML file.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use serde::{Deserialize, Deserializer, Serialize};
 
 use super::team_triggers;
-use crate::language::NameTargetRule;
+use crate::language::{LanguageSpec, NameTargetRule};
 
 /// Top-level configuration for a forge run.
 #[derive(Debug, Deserialize)]
@@ -71,6 +72,13 @@ pub struct TeamConfig {
     /// transition performing any I/O itself.
     #[serde(default)]
     pub name_target_rules: Vec<NameTargetRule>,
+    /// This team's `adapter`-declared language plugins, keyed by extension —
+    /// merged in the same `resolve_team_paths` step as `name_target_rules`,
+    /// so `required_validation_targets` can be derived for a `ForTasks`-
+    /// spawned node without performing adapter-YAML I/O from inside the
+    /// (pure) scheduler transition that spawns it.
+    #[serde(default)]
+    pub language_plugins: BTreeMap<String, LanguageSpec>,
 }
 
 /// Parsed form of a `TeamConfig::trigger` expression, consumed by
@@ -535,6 +543,7 @@ fn resolve_team_paths(
             .values()
             .flat_map(|spec| spec.name_target_rules_for_role(role).iter().cloned())
             .collect();
+        team.language_plugins = adapter.language_plugins().clone();
         std::fs::metadata(&team.northstar).map_err(|e| {
             format!(
                 "team '{}': northstar at {} could not be read: {e}",

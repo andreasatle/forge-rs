@@ -4,7 +4,7 @@
 //! "a source file matching this pattern needs a validation target matching
 //! that pattern" without duplicating the matching engine.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// One source-to-validation-target derivation rule.
 ///
@@ -24,7 +24,7 @@ use serde::Deserialize;
 /// `target: "{stem}_test.rs"` derives `lib_test.rs` from `lib.rs`.
 /// `pattern: "{stem}.py"`, `target: "tests/test_{stem}.py"` derives
 /// `tests/test_main.py` from `main.py`.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ValidationTargetRule {
     /// Source basename pattern, e.g. `"{stem}.py"`.

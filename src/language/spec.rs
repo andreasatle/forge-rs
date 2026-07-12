@@ -6,7 +6,7 @@ use crate::roles::policy::RolePromptConfig;
 use crate::validation::{CommandSpec, ValidationTargetRule};
 
 /// Complete specification for a language plugin.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LanguageSpec {
     /// File extensions (without the leading dot, e.g. `"py"`, `"rs"`) this
     /// plugin applies to. Used by the project adapter to pick the right
@@ -139,7 +139,7 @@ pub fn derive_target_from_name(rules: &[NameTargetRule], name: &str) -> Option<S
 }
 
 /// A worker role's validation override for a language plugin.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LanguageRoleConfig {
     /// The worker role name this override applies to (e.g. `"tester"`).
     pub role: String,
@@ -156,7 +156,7 @@ pub struct LanguageRoleConfig {
 }
 
 /// Init-phase command list for a language.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LanguageInitSpec {
     /// Patterns appended to `.gitignore` before init commands run.
     ///
@@ -169,7 +169,7 @@ pub struct LanguageInitSpec {
 }
 
 /// Validation-phase command list for a language.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LanguageValidationSpec {
     /// When true, the validation suite runs tests and the planner must include
     /// test-related targets for code-changing plans.

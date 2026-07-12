@@ -38,3 +38,26 @@ pub fn select_plugin<'a>(
         plugins.get(extension)
     })
 }
+
+/// Required validation targets (e.g. test files) implied by `target_files`,
+/// derived from whichever plugin in `plugins` matches by extension. Empty
+/// when no plugin matches `target_files`, or the matching plugin doesn't run
+/// tests.
+///
+/// Shared by the planner path (`ProjectRuntimeSetup`'s `required_test_targets_fn`)
+/// and the `ForTasks` multi-team spawn path, so both stamp
+/// `required_validation_targets` from the same plugin rules.
+pub fn required_validation_targets(
+    plugins: &BTreeMap<String, LanguageSpec>,
+    target_files: &[String],
+) -> Vec<String> {
+    match select_plugin(plugins, target_files) {
+        Some(spec) if spec.validation_includes_test_command() => {
+            crate::validation::derive_validation_targets(
+                &spec.validation.validation_targets,
+                target_files,
+            )
+        }
+        _ => vec![],
+    }
+}

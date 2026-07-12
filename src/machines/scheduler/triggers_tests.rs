@@ -1,7 +1,11 @@
+use std::collections::BTreeMap;
+
 use super::*;
 use crate::config::Trigger;
 use crate::language::NameTargetRule;
+use crate::language::spec::{LanguageInitSpec, LanguageSpec, LanguageValidationSpec};
 use crate::machines::scheduler::graph::{ModelTier, Node, NodeStatus};
+use crate::validation::ValidationTargetRule;
 
 fn team(name: &str, trigger: Trigger) -> TeamConfig {
     TeamConfig {
@@ -10,6 +14,7 @@ fn team(name: &str, trigger: Trigger) -> TeamConfig {
         adapter: String::new(),
         trigger,
         name_target_rules: vec![],
+        language_plugins: BTreeMap::new(),
     }
 }
 
@@ -23,6 +28,7 @@ fn team_with_adapter(name: &str, trigger: Trigger, adapter: &str, northstar: &st
             pattern: "{name}".to_string(),
             target: "src/{name}.rs".to_string(),
         }],
+        language_plugins: BTreeMap::new(),
     }
 }
 
@@ -37,6 +43,47 @@ fn team_with_name_target_rules(
         adapter: String::new(),
         trigger,
         name_target_rules,
+        language_plugins: BTreeMap::new(),
+    }
+}
+
+/// A minimal language plugin that requires tests and derives a `test_{stem}.rs`
+/// validation target for every `.rs` source, keyed under the `"rs"` extension —
+/// mirrors what `resolve_team_paths` merges onto `TeamConfig::language_plugins`
+/// from a real adapter's plugins at config-load time.
+fn rs_plugin_requiring_tests() -> LanguageSpec {
+    LanguageSpec {
+        extensions: vec!["rs".to_string()],
+        identity: String::new(),
+        context: String::new(),
+        instructions: String::new(),
+        constraints: String::new(),
+        init: LanguageInitSpec {
+            gitignore: vec![],
+            commands: vec![],
+        },
+        validation: LanguageValidationSpec {
+            runs_tests: true,
+            commands: vec![],
+            validation_targets: vec![ValidationTargetRule {
+                pattern: "{stem}.rs".to_string(),
+                target: "{stem}_test.rs".to_string(),
+            }],
+        },
+        roles: vec![],
+        api_summary: None,
+        name_target_rules: vec![],
+    }
+}
+
+/// A team whose `name_target_rules` derives a `.rs` target file from any task
+/// name, and whose `language_plugins` declares that `.rs` sources require a
+/// test target — the wiring needed to exercise real (non-hardcoded-empty)
+/// `required_validation_targets` computation on the `ForTasks` spawn path.
+fn team_with_catchall_rule_and_validation_targets(name: &str, trigger: Trigger) -> TeamConfig {
+    TeamConfig {
+        language_plugins: BTreeMap::from([("rs".to_string(), rs_plugin_requiring_tests())]),
+        ..team_with_catchall_rule(name, trigger)
     }
 }
 
@@ -564,4 +611,109 @@ fn for_tasks_unaffected_when_no_depends_on() {
         .collect();
     assert_eq!(spawned.len(), 1);
     assert_eq!(spawned[0].task_id, Some("t1".to_string()));
+}
+
+/// A `ForTasks`-spawned Work node's `required_validation_targets` is derived
+/// for real from the spawning team's language plugins, mirroring
+/// `required_test_targets_fn` on the planner path — not hardcoded to
+/// `vec![]` regardless of what the team's adapter declares.
+#[test]
+fn for_tasks_spawns_node_with_required_validation_targets_from_team_language_plugins() {
+    let graph = RunGraph {
+        nodes: vec![root_node()],
+    };
+    let config = run_config(vec![team_with_catchall_rule_and_validation_targets(
+        "implement",
+        Trigger::AfterEach(vec!["planner".to_string()]),
+    )]);
+    let manifest = [named_record(
+        "t1",
+        "implement fibonacci(n: int)",
+        "planner",
+        "fibonacci",
+    )];
+    let graph = apply_team_triggers(graph, &NodeId("root".to_string()), &config, &manifest)
+        .expect("team triggers must apply cleanly");
+
+    let spawned: Vec<&Node> = graph
+        .nodes
+        .iter()
+        .filter(|n| n.team == "implement")
+        .collect();
+    assert_eq!(spawned.len(), 1);
+    assert_eq!(
+        spawned[0].target_files,
+        vec!["src/fibonacci.rs".to_string()]
+    );
+    assert_eq!(
+        spawned[0].required_validation_targets,
+        vec!["src/fibonacci_test.rs".to_string()],
+        "must derive a real required validation target from the team's language plugin, not vec![]"
+    );
+}
+
+/// The `required_validation_targets` computed for a `ForTasks`-spawned node is
+/// not just populated but actually enforced: `validate_required_tests_completed`
+/// fails while the derived test target is incomplete, and passes once it is —
+/// proving the gate is non-vacuous on the multi-team spawn path, not merely
+/// that a value was stamped somewhere no one reads.
+#[test]
+fn for_tasks_spawned_node_required_validation_target_is_enforced_by_the_gate() {
+    let graph = RunGraph {
+        nodes: vec![root_node()],
+    };
+    let config = run_config(vec![team_with_catchall_rule_and_validation_targets(
+        "implement",
+        Trigger::AfterEach(vec!["planner".to_string()]),
+    )]);
+    let manifest = [named_record(
+        "t1",
+        "implement fibonacci(n: int)",
+        "planner",
+        "fibonacci",
+    )];
+    let mut graph = apply_team_triggers(graph, &NodeId("root".to_string()), &config, &manifest)
+        .expect("team triggers must apply cleanly");
+
+    let spawned_id = graph
+        .nodes
+        .iter()
+        .find(|n| n.team == "implement")
+        .expect("a node must have spawned")
+        .id
+        .clone();
+    graph = graph.mark_node(&spawned_id, NodeStatus::Completed);
+
+    let err = graph
+        .validate_required_tests_completed()
+        .expect_err("the derived required validation target has no completed node yet");
+    assert!(
+        err.contains("src/fibonacci_test.rs"),
+        "failure must name the missing required validation target; got: {err}"
+    );
+
+    graph.nodes.push(Node {
+        id: NodeId("tests".to_string()),
+        kind: NodeKind::Work,
+        team: "implement".to_string(),
+        task_id: None,
+        adapter: String::new(),
+        northstar: String::new(),
+        worker_role: None,
+        objective: "write tests".to_string(),
+        target_files: vec!["src/fibonacci_test.rs".to_string()],
+        required_validation_targets: vec![],
+        dependencies: vec![],
+        status: NodeStatus::Completed,
+        attempt: 0,
+        plan_depth: 0,
+        model_tier: ModelTier::Cheap,
+        summary: None,
+        origin: NodeOrigin::Root,
+        validation_plan: None,
+        retry_feedback: None,
+    });
+    graph
+        .validate_required_tests_completed()
+        .expect("the required validation target is now completed by another node");
 }

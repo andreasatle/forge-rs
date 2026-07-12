@@ -31,7 +31,7 @@ fn default_validation_scope() -> ValidationScope {
 /// The program is invoked via [`Command::new`]; args are passed as-is and are
 /// never interpreted by a shell. Use `CommandSpec { program: "sh".into(), args:
 /// vec!["-c".into(), cmd] }` to run shell syntax when needed.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CommandSpec {
     /// The program to execute.
     pub program: String,

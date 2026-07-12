@@ -142,15 +142,7 @@ impl<'a> ProjectRuntimeSetupBuilder<'a> {
     /// imply.
     fn required_test_targets_fn(&self) -> Arc<TestTargetsFn> {
         let plugins = self.language_plugins.clone();
-        Arc::new(move |targets| match select_plugin(&plugins, targets) {
-            Some(spec) if spec.validation_includes_test_command() => {
-                crate::validation::derive_validation_targets(
-                    &spec.validation.validation_targets,
-                    targets,
-                )
-            }
-            _ => vec![],
-        })
+        Arc::new(move |targets| crate::language::required_validation_targets(&plugins, targets))
     }
 
     /// Builds the per-role validation plan lookup stamped onto every `Work`
