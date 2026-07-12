@@ -61,8 +61,6 @@ pub struct TaskRecord {
     pub id: String,
     /// The node's objective, as passed to the runner.
     pub objective: String,
-    /// The node's declared target files.
-    pub targets: Vec<String>,
     /// The artifact commit this task's changes were integrated into.
     pub commit: String,
     /// UTC ISO 8601 timestamp of when the task was recorded.

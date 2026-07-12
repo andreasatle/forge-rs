@@ -45,7 +45,8 @@ fn planner_output_to_plan_output(output: PlannerOutput) -> PlanOutput {
 
 #[test]
 fn direct_planner_output_parses_successfully() {
-    let json = r#"{"tasks":[{"id":"a","objective":"do alpha","operation":"modify","targets":["alpha.txt"],"depends_on":[]}]}"#;
+    let json =
+        r#"{"tasks":[{"id":"a","objective":"do alpha","targets":["alpha.txt"],"depends_on":[]}]}"#;
     let result = try_parse_planner_response(json);
     assert!(
         result.is_ok(),
@@ -54,23 +55,6 @@ fn direct_planner_output_parses_successfully() {
     );
     let output = result.unwrap();
     assert_eq!(output.tasks[0].id, "a");
-}
-
-#[test]
-fn planner_output_without_operation_field_parses_successfully() {
-    // Regression: DefaultProjectAdapter's prompt schema (PLANNER_PROTOCOL_FOOTER)
-    // never asks the model for `operation`, so a response following that
-    // schema must not fail to parse for lacking a field the model was
-    // never told to produce.
-    let json =
-        r#"{"tasks":[{"id":"a","objective":"do alpha","targets":["alpha.txt"],"depends_on":[]}]}"#;
-    let result = try_parse_planner_response(json);
-    assert!(
-        result.is_ok(),
-        "PlannerOutput without an operation field must parse; got {:?}",
-        result
-    );
-    assert_eq!(result.unwrap().tasks[0].operation, None);
 }
 
 #[test]
@@ -100,8 +84,8 @@ fn status_content_wrapper_fails_planner_parse() {
 fn parses_multiple_tasks() {
     let json = r#"{
             "tasks": [
-                {"id": "a", "objective": "do alpha", "operation": "modify", "targets": ["alpha.txt"], "depends_on": []},
-                {"id": "b", "objective": "do beta", "operation": "modify", "targets": ["beta.txt"], "depends_on": []}
+                {"id": "a", "objective": "do alpha", "targets": ["alpha.txt"], "depends_on": []},
+                {"id": "b", "objective": "do beta", "targets": ["beta.txt"], "depends_on": []}
             ]
         }"#;
     let output = parse_planner_content(json).expect("parse must return Some");
@@ -117,8 +101,8 @@ fn parses_multiple_tasks() {
 fn parses_dependencies() {
     let json = r#"{
             "tasks": [
-                {"id": "first",  "objective": "write tests", "operation": "modify", "targets": ["test.txt"], "depends_on": []},
-                {"id": "second", "objective": "implement it", "operation": "modify", "targets": ["impl.txt"], "depends_on": ["first"]}
+                {"id": "first",  "objective": "write tests", "targets": ["test.txt"], "depends_on": []},
+                {"id": "second", "objective": "implement it", "targets": ["impl.txt"], "depends_on": ["first"]}
             ]
         }"#;
     let output = parse_planner_content(json).expect("parse must return Some");
@@ -173,7 +157,6 @@ fn planner_task(id: &str, objective: &str, targets: &[&str], depends_on: &[&str]
         id: id.to_string(),
         objective: objective.to_string(),
         name: String::new(),
-        operation: Some(PlannerOperation::Modify),
         role: None,
         targets: targets.iter().map(|s| s.to_string()).collect(),
         depends_on: depends_on.iter().map(|s| s.to_string()).collect(),
@@ -381,7 +364,6 @@ fn task_kind_task_with_blank_name_fails_validation() {
             id: "sub-a".to_string(),
             objective: "decompose part a".to_string(),
             name: "  ".to_string(),
-            operation: None,
             role: None,
             targets: vec![],
             depends_on: vec![],
@@ -403,7 +385,6 @@ fn task_kind_task_with_name_passes_validation() {
             id: "sub-a".to_string(),
             objective: "decompose part a".to_string(),
             name: "fibonacci".to_string(),
-            operation: None,
             role: None,
             targets: vec![],
             depends_on: vec![],
@@ -462,7 +443,6 @@ fn code_target_without_test_target_rejected_when_tests_required() {
             id: "main".to_string(),
             objective: "Modify main.py.".to_string(),
             name: String::new(),
-            operation: Some(PlannerOperation::Modify),
             role: None,
             targets: vec!["main.py".to_string()],
             depends_on: vec![],
@@ -484,7 +464,6 @@ fn code_target_with_test_target_passes_when_tests_required() {
                 id: "main".to_string(),
                 objective: "Modify main.py.".to_string(),
                 name: String::new(),
-                operation: Some(PlannerOperation::Modify),
                 role: None,
                 targets: vec!["main.py".to_string()],
                 depends_on: vec![],
@@ -493,7 +472,6 @@ fn code_target_with_test_target_passes_when_tests_required() {
                 id: "tests".to_string(),
                 objective: "Add tests for main.py.".to_string(),
                 name: String::new(),
-                operation: Some(PlannerOperation::Modify),
                 role: None,
                 targets: vec!["tests/test_main.py".to_string()],
                 depends_on: vec!["main".to_string()],
@@ -515,7 +493,6 @@ fn tests_required_passes_when_adapter_requires_nothing() {
             id: "main".to_string(),
             objective: "Modify main.py.".to_string(),
             name: String::new(),
-            operation: Some(PlannerOperation::Modify),
             role: None,
             targets: vec!["main.py".to_string()],
             depends_on: vec![],
@@ -553,7 +530,6 @@ fn planner_tasks_become_node_requests() {
                 id: "step-one".to_string(),
                 objective: "do step one".to_string(),
                 name: String::new(),
-                operation: Some(PlannerOperation::Modify),
                 role: None,
                 targets: vec!["one.txt".to_string()],
                 depends_on: vec![],
@@ -562,7 +538,6 @@ fn planner_tasks_become_node_requests() {
                 id: "step-two".to_string(),
                 objective: "do step two".to_string(),
                 name: String::new(),
-                operation: Some(PlannerOperation::Modify),
                 role: None,
                 targets: vec!["two.txt".to_string()],
                 depends_on: vec![],
@@ -592,7 +567,6 @@ fn task_kind_output_produces_no_scheduler_children() {
             id: "sub-a".to_string(),
             objective: "decompose part a".to_string(),
             name: String::new(),
-            operation: None,
             role: None,
             targets: vec![],
             depends_on: vec![],
@@ -614,7 +588,6 @@ fn task_kind_output_carries_name_into_plan_tasks() {
             id: "sub-a".to_string(),
             objective: "decompose part a".to_string(),
             name: "sub_a".to_string(),
-            operation: None,
             role: None,
             targets: vec![],
             depends_on: vec![],
@@ -636,7 +609,6 @@ fn plan_kind_output_produces_plan_children_with_no_worker_role() {
                 id: "sub-a".to_string(),
                 objective: "decompose part a".to_string(),
                 name: String::new(),
-                operation: None,
                 role: None,
                 targets: vec![],
                 depends_on: vec![],
@@ -645,7 +617,6 @@ fn plan_kind_output_produces_plan_children_with_no_worker_role() {
                 id: "sub-b".to_string(),
                 objective: "decompose part b".to_string(),
                 name: String::new(),
-                operation: None,
                 role: None,
                 targets: vec![],
                 depends_on: vec!["sub-a".to_string()],
@@ -676,7 +647,6 @@ fn task_role_becomes_node_request_worker_role() {
                 id: "impl".to_string(),
                 objective: "modify main.py".to_string(),
                 name: String::new(),
-                operation: Some(PlannerOperation::Modify),
                 role: Some("implementer".to_string()),
                 targets: vec!["main.py".to_string()],
                 depends_on: vec![],
@@ -685,7 +655,6 @@ fn task_role_becomes_node_request_worker_role() {
                 id: "test".to_string(),
                 objective: "add tests for main.py".to_string(),
                 name: String::new(),
-                operation: Some(PlannerOperation::Create),
                 role: Some("tester".to_string()),
                 targets: vec!["tests/test_main.py".to_string()],
                 depends_on: vec!["impl".to_string()],
@@ -719,7 +688,6 @@ fn task_without_role_gets_no_worker_role() {
             id: "combined".to_string(),
             objective: "modify main.py and its tests".to_string(),
             name: String::new(),
-            operation: Some(PlannerOperation::Modify),
             role: None,
             targets: vec!["main.py".to_string(), "tests/test_main.py".to_string()],
             depends_on: vec![],
@@ -740,7 +708,6 @@ fn planner_dependencies_preserved() {
                 id: "tests".to_string(),
                 objective: "write tests".to_string(),
                 name: String::new(),
-                operation: Some(PlannerOperation::Modify),
                 role: None,
                 targets: vec!["tests.txt".to_string()],
                 depends_on: vec![],
@@ -749,7 +716,6 @@ fn planner_dependencies_preserved() {
                 id: "impl".to_string(),
                 objective: "implement".to_string(),
                 name: String::new(),
-                operation: Some(PlannerOperation::Modify),
                 role: None,
                 targets: vec!["impl.txt".to_string()],
                 depends_on: vec!["tests".to_string()],

@@ -211,7 +211,6 @@ impl IntegrationService {
                         let record = TaskRecord {
                             id: task_id.clone().unwrap_or_else(|| node_id.0.clone()),
                             objective: objective.clone(),
-                            targets: target_files.clone(),
                             commit: new_artifact.commit_sha.clone(),
                             completed_at: utc_now_iso8601(),
                             team: Some(team.clone()),
@@ -345,7 +344,6 @@ impl IntegrationService {
             .map(|task| TaskRecord {
                 id: task.id,
                 objective: task.objective,
-                targets: vec![],
                 commit: String::new(),
                 completed_at: completed_at.clone(),
                 team: Some(team.clone()),

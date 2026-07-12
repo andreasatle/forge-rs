@@ -26,14 +26,6 @@ pub struct PlannerTask {
     /// carry no `name` field at all, so their JSON never includes it.
     #[serde(default)]
     pub name: String,
-    /// Concrete artifact operation this task will perform, when the active
-    /// adapter's prompt schema asks for one.
-    ///
-    /// `None` under adapters whose prompt schema omits the field (e.g.
-    /// [`crate::project::DefaultProjectAdapter`]). Not read downstream —
-    /// kept as adapter-supplied metadata.
-    #[serde(default)]
-    pub operation: Option<PlannerOperation>,
     /// Worker role this task is assigned to, chosen by the planner from the
     /// adapter's configured worker roles.
     ///
@@ -49,18 +41,6 @@ pub struct PlannerTask {
     pub targets: Vec<String>,
     /// Ids of other tasks in the same output that must complete before this one.
     pub depends_on: Vec<String>,
-}
-
-/// Concrete artifact operation a planner task will perform.
-#[derive(Clone, Deserialize, Serialize, Debug, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum PlannerOperation {
-    /// Create one or more target files.
-    Create,
-    /// Modify one or more existing target files.
-    Modify,
-    /// Delete one or more target files.
-    Delete,
 }
 
 /// Whether a [`NodeKind::Plan`] parent's output's tasks become `Work`

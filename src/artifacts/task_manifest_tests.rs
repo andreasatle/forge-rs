@@ -92,7 +92,6 @@ fn sample_record(commit: &str) -> TaskRecord {
     TaskRecord {
         id: "node-1".to_string(),
         objective: "update file.txt".to_string(),
-        targets: vec!["file.txt".to_string()],
         commit: commit.to_string(),
         completed_at: "2026-07-10T00:00:00Z".to_string(),
         team: None,

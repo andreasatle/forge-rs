@@ -104,7 +104,6 @@ fn record(id: &str, objective: &str, team: &str) -> TaskRecord {
     TaskRecord {
         id: id.to_string(),
         objective: objective.to_string(),
-        targets: vec![],
         commit: String::new(),
         completed_at: String::new(),
         team: Some(team.to_string()),

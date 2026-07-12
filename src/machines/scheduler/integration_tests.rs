@@ -85,7 +85,6 @@ fn integrate_planner_tasks_creates_manifest_only_commit() {
         TaskRecord {
             id: "t1".to_string(),
             objective: "decompose alpha".to_string(),
-            targets: vec![],
             commit: String::new(),
             completed_at: "2026-07-10T00:00:00Z".to_string(),
             team: Some("planner".to_string()),
@@ -95,7 +94,6 @@ fn integrate_planner_tasks_creates_manifest_only_commit() {
         TaskRecord {
             id: "t2".to_string(),
             objective: "decompose beta".to_string(),
-            targets: vec![],
             commit: String::new(),
             completed_at: "2026-07-10T00:00:01Z".to_string(),
             team: Some("planner".to_string()),
@@ -144,7 +142,6 @@ fn integrate_planner_tasks_without_artifact_fails() {
     let records = vec![TaskRecord {
         id: "t1".to_string(),
         objective: "decompose alpha".to_string(),
-        targets: vec![],
         commit: String::new(),
         completed_at: "2026-07-10T00:00:00Z".to_string(),
         team: Some("planner".to_string()),
