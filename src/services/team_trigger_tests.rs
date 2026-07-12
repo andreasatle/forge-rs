@@ -7,8 +7,8 @@ fn completion(task_id: &str, team: &str) -> TaskCompletion {
     }
 }
 
-fn after_each(teams: &[&str]) -> Trigger {
-    Trigger::AfterEach(teams.iter().map(|t| t.to_string()).collect())
+fn after_teams(teams: &[&str]) -> Trigger {
+    Trigger::AfterTeams(teams.iter().map(|t| t.to_string()).collect())
 }
 
 /// `start` fires on an empty manifest: the team has no rows yet, so it has
@@ -37,10 +37,10 @@ fn start_ignores_other_teams_rows() {
     assert_eq!(decision, TriggerDecision::RunOnce { should_run: true });
 }
 
-/// `after_each(team)` fires for every task id that has a row from `team`.
+/// `after_teams(team)` fires for every task id that has a row from `team`.
 #[test]
-fn after_each_single_team_fires_for_each_of_its_task_ids() {
-    let trigger = after_each(&["planner"]);
+fn after_teams_single_team_fires_for_each_of_its_task_ids() {
+    let trigger = after_teams(&["planner"]);
     let completions = vec![completion("t1", "planner"), completion("t2", "planner")];
     let decision = evaluate_trigger(&trigger, "implement", &completions);
     assert_eq!(
@@ -52,8 +52,8 @@ fn after_each_single_team_fires_for_each_of_its_task_ids() {
 /// A task id is excluded once the calling team already has its own row for
 /// it, so re-running against a growing manifest never double-fires.
 #[test]
-fn after_each_excludes_ids_the_calling_team_already_acted_on() {
-    let trigger = after_each(&["planner"]);
+fn after_teams_excludes_ids_the_calling_team_already_acted_on() {
+    let trigger = after_teams(&["planner"]);
     let completions = vec![
         completion("t1", "planner"),
         completion("t2", "planner"),
@@ -63,11 +63,11 @@ fn after_each_excludes_ids_the_calling_team_already_acted_on() {
     assert_eq!(decision, TriggerDecision::ForTasks(vec!["t2".to_string()]));
 }
 
-/// `after_each(a, b)` only fires for a task id once every named team has a
+/// `after_teams(a, b)` only fires for a task id once every named team has a
 /// row for it — a row from just one of them is not enough.
 #[test]
-fn after_each_multi_team_requires_every_named_team() {
-    let trigger = after_each(&["implement", "create_test"]);
+fn after_teams_multi_team_requires_every_named_team() {
+    let trigger = after_teams(&["implement", "create_test"]);
     let completions = vec![
         completion("t1", "implement"),
         completion("t1", "create_test"),
@@ -80,8 +80,8 @@ fn after_each_multi_team_requires_every_named_team() {
 /// Multiple rows from the same required team for the same task id (e.g. a
 /// retry) must not produce duplicate entries in the result.
 #[test]
-fn after_each_dedups_repeated_rows_for_the_same_task_id() {
-    let trigger = after_each(&["planner"]);
+fn after_teams_dedups_repeated_rows_for_the_same_task_id() {
+    let trigger = after_teams(&["planner"]);
     let completions = vec![
         completion("t1", "planner"),
         completion("t1", "planner"),
@@ -94,18 +94,18 @@ fn after_each_dedups_repeated_rows_for_the_same_task_id() {
     );
 }
 
-/// An empty manifest satisfies no `after_each` trigger.
+/// An empty manifest satisfies no `after_teams` trigger.
 #[test]
-fn after_each_returns_empty_for_empty_manifest() {
-    let trigger = after_each(&["planner"]);
+fn after_teams_returns_empty_for_empty_manifest() {
+    let trigger = after_teams(&["planner"]);
     let decision = evaluate_trigger(&trigger, "implement", &[]);
     assert_eq!(decision, TriggerDecision::ForTasks(Vec::new()));
 }
 
 /// Rows from unrelated teams don't satisfy or interfere with the trigger.
 #[test]
-fn after_each_ignores_rows_from_teams_outside_the_trigger() {
-    let trigger = after_each(&["planner"]);
+fn after_teams_ignores_rows_from_teams_outside_the_trigger() {
+    let trigger = after_teams(&["planner"]);
     let completions = vec![
         completion("t1", "planner"),
         completion("t1", "some_other_team"),

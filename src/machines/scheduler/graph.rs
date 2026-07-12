@@ -184,7 +184,7 @@ pub struct Node {
     pub team: String,
     /// The manifest task id this node was spawned to act on, if any.
     ///
-    /// `Some` only for `AfterEach`-triggered nodes, carrying the completed
+    /// `Some` only for `AfterTeams`-triggered nodes, carrying the completed
     /// task id they were spawned for. Used to detect a node already exists
     /// for a given (team, task) pair without re-reading the manifest.
     #[serde(default)]

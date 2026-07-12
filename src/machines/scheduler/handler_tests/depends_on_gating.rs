@@ -145,7 +145,7 @@ impl Validator for BranchAdvancingValidator {
     }
 }
 
-/// A two-team (`planner` start-triggered, `worker` after_each(planner))
+/// A two-team (`planner` start-triggered, `worker` after_teams(planner))
 /// `forge.yaml` fixture, matching `multi_team.rs`'s shape.
 struct Fixture {
     _temp: TempDirectory,
@@ -237,7 +237,7 @@ teams:
     northstar: "{worker_northstar}"
     adapter: "{worker_adapter}"
     kind: work
-    trigger: after_each(planner)
+    trigger: after_teams(planner)
 "#,
         repo_path = repo_path.display(),
         telemetry_dir = temp.join("telemetry").display(),
@@ -257,7 +257,7 @@ teams:
         config.terminal_teams,
         vec!["worker".to_string()],
         "worker must be the sole terminal team: planner is referenced by worker's \
-         after_each, so depends_on gating is checked against worker completions"
+         after_teams, so depends_on gating is checked against worker completions"
     );
 
     let root_setup = ProjectRuntimeSetup::build(Path::new(&config.adapter), None)
@@ -374,7 +374,7 @@ fn second_task_never_spawns_while_its_dependency_never_completes() {
 
 /// Proves the positive half of `depends_on` gating: once `task-1` actually
 /// completes (records a `worker` completion row), the `worker` team's
-/// `after_each(planner)` trigger re-evaluates and `task-2` becomes eligible,
+/// `after_teams(planner)` trigger re-evaluates and `task-2` becomes eligible,
 /// spawning its own `Work` node — driven end-to-end through the real
 /// scheduler/dispatch loop, not constructed directly against `TaskRecord`s.
 #[test]

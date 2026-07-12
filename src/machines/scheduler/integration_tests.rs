@@ -134,7 +134,7 @@ fn integrate_planner_tasks_creates_manifest_only_commit() {
 /// A scheduler with no artifact wired (`IntegrationService::without_artifact`,
 /// as used by `SchedulerHandler::new`) cannot persist a planner-task
 /// manifest. It must fail loudly rather than silently reporting an empty
-/// task list — an empty `Ok` here would make `after_each(...)` team triggers
+/// task list — an empty `Ok` here would make `after_teams(...)` team triggers
 /// never fire, with nothing indicating why.
 #[test]
 fn integrate_planner_tasks_without_artifact_fails() {

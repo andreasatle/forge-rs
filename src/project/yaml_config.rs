@@ -13,7 +13,7 @@ pub use crate::roles::policy::RolePromptConfig;
 /// operates on the task graph itself rather than any single worker role.
 ///
 /// Defaults to empty prompts: an adapter whose teams never drive a `Plan`
-/// node (e.g. a Work-only adapter reached exclusively via `after_each`
+/// node (e.g. a Work-only adapter reached exclusively via `after_teams`
 /// triggers) may omit `planner` entirely.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]

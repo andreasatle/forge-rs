@@ -235,10 +235,10 @@ fn work_node_integration_records_task_manifest_in_same_commit() {
 }
 
 /// Two different teams' nodes spawned for the same manifest task (i.e. both
-/// carrying the same `Node::task_id`, as `AfterEach`-triggered nodes do) must
+/// carrying the same `Node::task_id`, as `AfterTeams`-triggered nodes do) must
 /// record manifest rows sharing that `id` — not each node's own id, which is
 /// freshly minted per node and unstable across retries. Without this, a
-/// downstream team's multi-team `AfterEach` trigger could never join rows
+/// downstream team's multi-team `AfterTeams` trigger could never join rows
 /// across teams for "the same" task.
 #[test]
 fn two_teams_completing_the_same_task_id_share_the_manifest_row_id() {

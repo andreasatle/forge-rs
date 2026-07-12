@@ -130,7 +130,7 @@ impl ProviderClient for RecordingScriptedProvider {
 }
 
 /// End-to-end: a `forge.yaml` fixture with a `planner` team (`trigger:
-/// start`) and a `worker` team (`trigger: after_each(planner)`), each with
+/// start`) and a `worker` team (`trigger: after_teams(planner)`), each with
 /// its own adapter and northstar, driven through the real
 /// `ForgeConfig::from_file` -> `SchedulerMachine` -> `SchedulerHandler` ->
 /// `DeliberatingNodeRunner` stack (the same wiring `RunSession::drive` uses),
@@ -138,7 +138,7 @@ impl ProviderClient for RecordingScriptedProvider {
 ///
 /// Proves: the `planner` team's Start trigger spawns its Plan node; once
 /// that node's tasks land in the manifest, the `worker` team's
-/// `after_each(planner)` trigger spawns a Work node for the resulting task;
+/// `after_teams(planner)` trigger spawns a Work node for the resulting task;
 /// and each spawned node's rendered prompt carries its own team's adapter
 /// marker (not the top-level adapter's, and not the other team's).
 #[test]
@@ -167,7 +167,7 @@ fn two_team_forge_yaml_drives_planner_then_worker_under_their_own_adapters() {
         commit_sha,
     };
 
-    // The worker team's Work node is spawned by `after_each(planner)`
+    // The worker team's Work node is spawned by `after_teams(planner)`
     // (`ForTasks`), which derives `target_files` from the matched task's
     // name via the worker adapter's `name_target_rules` — so the worker
     // adapter needs a plugin declaring a rule for the "worker_task" name
@@ -231,7 +231,7 @@ teams:
     northstar: "{worker_northstar}"
     adapter: "{worker_adapter}"
     kind: work
-    trigger: after_each(planner)
+    trigger: after_teams(planner)
 "#,
         repo_path = repo_path.display(),
         telemetry_dir = temp.join("telemetry").display(),
@@ -261,7 +261,7 @@ teams:
     //   2. Once root's tasks are integrated, the `planner` team's Start
     //      trigger spawns its Plan node, which emits its own task batch.
     //   3. Once the planner's task lands in the manifest with team
-    //      "planner", the `worker` team's `after_each(planner)` trigger
+    //      "planner", the `worker` team's `after_teams(planner)` trigger
     //      spawns a Work node for it. Because the run has a real artifact,
     //      the Work node goes through the tool-calling producer/critic/
     //      referee loop (write_file, then read_file twice).
@@ -323,7 +323,7 @@ teams:
     assert_eq!(
         worker_nodes.len(),
         1,
-        "worker team's after_each(planner) trigger must spawn exactly one node; graph: {graph:#?}"
+        "worker team's after_teams(planner) trigger must spawn exactly one node; graph: {graph:#?}"
     );
     assert_eq!(planner_nodes[0].kind, NodeKind::Plan);
     assert_eq!(worker_nodes[0].kind, NodeKind::Work);

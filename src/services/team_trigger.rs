@@ -2,8 +2,8 @@
 //! manifest.
 //!
 //! A manifest row is both a team's declaration and its completion record
-//! for a task id. `after_each(team)` is satisfied for a task id once that
-//! team has recorded a row for it; `after_each(a, b)` is satisfied once
+//! for a task id. `after_teams(team)` is satisfied for a task id once that
+//! team has recorded a row for it; `after_teams(a, b)` is satisfied once
 //! every named team has.
 
 use std::collections::HashSet;
@@ -41,7 +41,7 @@ pub enum TriggerDecision {
         /// should run; `false` if it already has.
         should_run: bool,
     },
-    /// `Trigger::AfterEach` fires once per task id that satisfies the
+    /// `Trigger::AfterTeams` fires once per task id that satisfies the
     /// trigger, excluding ids the calling team already has a row for.
     ForTasks(Vec<String>),
 }
@@ -65,7 +65,7 @@ pub fn evaluate_trigger(
                 should_run: !already_ran,
             }
         }
-        Trigger::AfterEach(required_teams) => {
+        Trigger::AfterTeams(required_teams) => {
             TriggerDecision::ForTasks(ready_task_ids(required_teams, team, completions))
         }
     }

@@ -161,7 +161,7 @@ teams:
     northstar: implementation.md
     adapter: coding.yaml
     kind: work
-    trigger: after_each(planner)
+    trigger: after_teams(planner)
 "#;
 
 #[test]
@@ -194,7 +194,7 @@ fn parses_teams() {
     assert_eq!(implement.kind, NodeKind::Work);
     assert_eq!(
         implement.trigger,
-        Trigger::AfterEach(vec!["planner".to_string()])
+        Trigger::AfterTeams(vec!["planner".to_string()])
     );
 }
 
@@ -257,17 +257,17 @@ teams:
     northstar: a.md
     adapter: coding.yaml
     kind: work
-    trigger: after_each(b)
+    trigger: after_teams(b)
   - name: b
     northstar: b.md
     adapter: coding.yaml
     kind: work
-    trigger: after_each(a)
+    trigger: after_teams(a)
 "#;
 
 #[test]
 fn team_trigger_cycle_fails_to_load() {
-    // Invariant: a team-trigger cycle (a's after_each chain transitively
+    // Invariant: a team-trigger cycle (a's after_teams chain transitively
     // refers back to a) must fail config load loudly, not silently produce a
     // team that can never be scheduled.
     let tmp = TempYaml::new(TEAM_TRIGGER_CYCLE_YAML);
@@ -300,17 +300,17 @@ teams:
     northstar: gather.md
     adapter: coding.yaml
     kind: work
-    trigger: after_each(a, b)
+    trigger: after_teams(a, b)
 "#;
 
 #[test]
-fn parses_after_each_with_multiple_teams() {
+fn parses_after_teams_with_multiple_teams() {
     let tmp = TempYaml::new(MULTI_AFTER_EACH_YAML);
     std::fs::write(tmp.dir().join("gather.md"), "gap: gather").unwrap();
     let config = ForgeConfig::from_file(tmp.path()).unwrap();
     assert_eq!(
         config.teams[0].trigger,
-        Trigger::AfterEach(vec!["a".to_string(), "b".to_string()])
+        Trigger::AfterTeams(vec!["a".to_string(), "b".to_string()])
     );
 }
 
@@ -365,13 +365,13 @@ teams:
     northstar: project.md
     adapter: coding.yaml
     kind: plan
-    trigger: after_each(other)
+    trigger: after_teams(other)
 "#;
 
 #[test]
-fn team_kind_plan_with_after_each_trigger_fails_at_config_load_time() {
+fn team_kind_plan_with_after_teams_trigger_fails_at_config_load_time() {
     // Invariant: `kind: plan` must pair with `trigger: start` — a team
-    // declaring itself a planner but triggered `after_each(...)` is a
+    // declaring itself a planner but triggered `after_teams(...)` is a
     // config error, not something the scheduler should silently resolve by
     // trusting one field over the other.
     let tmp = TempYaml::new(KIND_PLAN_WITH_AFTER_EACH_TRIGGER_YAML);
@@ -411,8 +411,8 @@ teams:
 
 #[test]
 fn team_kind_work_with_start_trigger_fails_at_config_load_time() {
-    // Invariant: `kind: work` must pair with `trigger: after_each(...)` —
-    // the reverse mismatch of `team_kind_plan_with_after_each_trigger_fails_at_config_load_time`.
+    // Invariant: `kind: work` must pair with `trigger: after_teams(...)` —
+    // the reverse mismatch of `team_kind_plan_with_after_teams_trigger_fails_at_config_load_time`.
     let tmp = TempYaml::new(KIND_WORK_WITH_START_TRIGGER_YAML);
     let err = ForgeConfig::from_file(tmp.path()).unwrap_err();
     let message = err.to_string();
@@ -421,7 +421,7 @@ fn team_kind_work_with_start_trigger_fails_at_config_load_time() {
         "error must name the mismatched team; got: {message}"
     );
     assert!(
-        message.contains("work") && message.contains("after_each"),
+        message.contains("work") && message.contains("after_teams"),
         "error must explain the kind/trigger mismatch; got: {message}"
     );
 }

@@ -10,7 +10,7 @@ use crate::validation::ValidationTargetRule;
 fn kind_for(trigger: &Trigger) -> NodeKind {
     match trigger {
         Trigger::Start => NodeKind::Plan,
-        Trigger::AfterEach(_) => NodeKind::Work,
+        Trigger::AfterTeams(_) => NodeKind::Work,
     }
 }
 
@@ -290,7 +290,7 @@ fn run_once_does_not_spawn_after_manifest_row_recorded() {
     );
 }
 
-/// `after_each(planner)` fires for a task id the planner has recorded once
+/// `after_teams(planner)` fires for a task id the planner has recorded once
 /// `implement` has no row of its own for that id yet, spawning a Work node
 /// with the completed task's original objective text.
 #[test]
@@ -300,7 +300,7 @@ fn for_tasks_spawns_work_node_with_original_objective() {
     };
     let config = run_config(vec![team_with_catchall_rule(
         "implement",
-        Trigger::AfterEach(vec!["planner".to_string()]),
+        Trigger::AfterTeams(vec!["planner".to_string()]),
     )]);
     let manifest = [named_record(
         "t1",
@@ -333,7 +333,10 @@ fn for_tasks_spawns_node_with_teams_declared_kind_not_inferred_from_trigger() {
     };
     let config = run_config(vec![TeamConfig {
         kind: NodeKind::Plan,
-        ..team_with_catchall_rule("implement", Trigger::AfterEach(vec!["planner".to_string()]))
+        ..team_with_catchall_rule(
+            "implement",
+            Trigger::AfterTeams(vec!["planner".to_string()]),
+        )
     }]);
     let manifest = [named_record(
         "t1",
@@ -364,7 +367,7 @@ fn for_tasks_spawns_node_with_target_files_derived_from_task_name() {
     };
     let config = run_config(vec![team_with_name_target_rules(
         "implement",
-        Trigger::AfterEach(vec!["planner".to_string()]),
+        Trigger::AfterTeams(vec!["planner".to_string()]),
         vec![NameTargetRule {
             pattern: "{name}".to_string(),
             target: "src/{name}.rs".to_string(),
@@ -401,7 +404,7 @@ fn for_tasks_fails_when_no_rule_matches_task_name() {
     };
     let config = run_config(vec![team(
         "implement",
-        Trigger::AfterEach(vec!["planner".to_string()]),
+        Trigger::AfterTeams(vec!["planner".to_string()]),
     )]);
     let manifest = [named_record(
         "t1",
@@ -427,7 +430,7 @@ fn for_tasks_spawns_node_with_team_adapter_and_northstar() {
     };
     let config = run_config(vec![team_with_adapter(
         "implement",
-        Trigger::AfterEach(vec!["planner".to_string()]),
+        Trigger::AfterTeams(vec!["planner".to_string()]),
         "adapters/implement.yaml",
         "northstars/implement.md",
     )]);
@@ -450,7 +453,7 @@ fn for_tasks_spawns_node_with_team_adapter_and_northstar() {
     assert_eq!(spawned[0].northstar, "northstars/implement.md");
 }
 
-/// Re-evaluating `after_each` while the spawned Work node is still Pending
+/// Re-evaluating `after_teams` while the spawned Work node is still Pending
 /// (no manifest row from `implement` yet) must not spawn a duplicate for the
 /// same task id.
 #[test]
@@ -460,7 +463,7 @@ fn for_tasks_does_not_duplicate_while_node_in_flight() {
     };
     let config = run_config(vec![team_with_catchall_rule(
         "implement",
-        Trigger::AfterEach(vec!["planner".to_string()]),
+        Trigger::AfterTeams(vec!["planner".to_string()]),
     )]);
     let manifest = [named_record(
         "t1",
@@ -495,7 +498,7 @@ fn for_tasks_excludes_ids_already_recorded_by_the_team() {
     };
     let config = run_config(vec![team(
         "implement",
-        Trigger::AfterEach(vec!["planner".to_string()]),
+        Trigger::AfterTeams(vec!["planner".to_string()]),
     )]);
     let manifest = [
         record("t1", "implement fibonacci(n: int)", "planner"),
@@ -541,7 +544,7 @@ fn for_tasks_respawns_after_prior_attempt_failed() {
 
     let config = run_config(vec![team_with_catchall_rule(
         "implement",
-        Trigger::AfterEach(vec!["planner".to_string()]),
+        Trigger::AfterTeams(vec!["planner".to_string()]),
     )]);
     let manifest = [named_record(
         "t1",
@@ -571,7 +574,7 @@ fn for_tasks_does_not_spawn_when_dependency_unsatisfied() {
     let config = run_config_with_terminal_teams(
         vec![team_with_catchall_rule(
             "implement",
-            Trigger::AfterEach(vec!["planner".to_string()]),
+            Trigger::AfterTeams(vec!["planner".to_string()]),
         )],
         vec!["implement"],
     );
@@ -611,7 +614,7 @@ fn for_tasks_spawns_once_all_terminal_teams_complete_dependency() {
     let config = run_config_with_terminal_teams(
         vec![team_with_catchall_rule(
             "implement",
-            Trigger::AfterEach(vec!["planner".to_string()]),
+            Trigger::AfterTeams(vec!["planner".to_string()]),
         )],
         vec!["implement"],
     );
@@ -652,7 +655,7 @@ fn for_tasks_unaffected_when_no_depends_on() {
     let config = run_config_with_terminal_teams(
         vec![team_with_catchall_rule(
             "implement",
-            Trigger::AfterEach(vec!["planner".to_string()]),
+            Trigger::AfterTeams(vec!["planner".to_string()]),
         )],
         vec!["implement"],
     );
@@ -685,7 +688,7 @@ fn for_tasks_spawns_node_with_required_validation_targets_from_team_language_plu
     };
     let config = run_config(vec![team_with_catchall_rule_and_validation_targets(
         "implement",
-        Trigger::AfterEach(vec!["planner".to_string()]),
+        Trigger::AfterTeams(vec!["planner".to_string()]),
     )]);
     let manifest = [named_record(
         "t1",
@@ -725,7 +728,7 @@ fn for_tasks_spawned_node_required_validation_target_is_enforced_by_the_gate() {
     };
     let config = run_config(vec![team_with_catchall_rule_and_validation_targets(
         "implement",
-        Trigger::AfterEach(vec!["planner".to_string()]),
+        Trigger::AfterTeams(vec!["planner".to_string()]),
     )]);
     let manifest = [named_record(
         "t1",

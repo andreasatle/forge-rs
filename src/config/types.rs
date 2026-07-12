@@ -25,7 +25,7 @@ pub struct ForgeConfig {
     /// northstar instead of the run's top-level one.
     #[serde(default)]
     pub teams: Vec<TeamConfig>,
-    /// Team names that no other team's `Trigger::AfterEach` list names —
+    /// Team names that no other team's `Trigger::AfterTeams` list names —
     /// i.e. teams nothing else is scheduled to run after. Computed once by
     /// [`compute_terminal_teams`] at config-load time (see
     /// `ForgeConfig::from_file`), not re-derived per trigger evaluation.
@@ -62,11 +62,11 @@ pub struct TeamConfig {
     pub adapter: String,
     /// Whether this team's spawned nodes are planning or execution nodes.
     /// Must agree with `trigger`: `Plan` pairs with `Trigger::Start`, `Work`
-    /// pairs with `Trigger::AfterEach`. Checked by `resolve_team_paths` at
+    /// pairs with `Trigger::AfterTeams`. Checked by `resolve_team_paths` at
     /// config-load time so the pairing can never silently diverge.
     pub kind: NodeKind,
     /// Parsed trigger expression, e.g. `start` or
-    /// `after_each(team_a, team_b)`.
+    /// `after_teams(team_a, team_b)`.
     pub trigger: Trigger,
     /// Name-to-target derivation rules merged from every language plugin
     /// this team's `adapter` declares, keyed by nothing (tried in plugin
@@ -95,7 +95,7 @@ pub enum Trigger {
     /// Runs once, when the forge run starts.
     Start,
     /// Runs after every named team has completed.
-    AfterEach(Vec<String>),
+    AfterTeams(Vec<String>),
 }
 
 impl TryFrom<String> for Trigger {
@@ -107,11 +107,11 @@ impl TryFrom<String> for Trigger {
             return Ok(Self::Start);
         }
         let Some(inner) = trimmed
-            .strip_prefix("after_each(")
+            .strip_prefix("after_teams(")
             .and_then(|rest| rest.strip_suffix(')'))
         else {
             return Err(format!(
-                "trigger must be 'start' or 'after_each(team[, team...])', got '{value}'"
+                "trigger must be 'start' or 'after_teams(team[, team...])', got '{value}'"
             ));
         };
         let teams = inner
@@ -120,14 +120,14 @@ impl TryFrom<String> for Trigger {
                 let s = s.trim();
                 if s.is_empty() {
                     Err(format!(
-                        "after_each(...) contains an empty team name in '{value}'"
+                        "after_teams(...) contains an empty team name in '{value}'"
                     ))
                 } else {
                     Ok(s.to_string())
                 }
             })
             .collect::<Result<Vec<String>, String>>()?;
-        Ok(Self::AfterEach(teams))
+        Ok(Self::AfterTeams(teams))
     }
 }
 
@@ -142,7 +142,7 @@ impl<'de> Deserialize<'de> for Trigger {
 }
 
 /// Mirrors the custom `Deserialize` impl (parsed from `"start"` /
-/// `"after_each(team[, team...])"`) so `Trigger` round-trips through
+/// `"after_teams(team[, team...])"`) so `Trigger` round-trips through
 /// checkpoint serialization as the same string form it was parsed from.
 impl Serialize for Trigger {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -151,7 +151,7 @@ impl Serialize for Trigger {
     {
         let rendered = match self {
             Trigger::Start => "start".to_string(),
-            Trigger::AfterEach(teams) => format!("after_each({})", teams.join(", ")),
+            Trigger::AfterTeams(teams) => format!("after_teams({})", teams.join(", ")),
         };
         serializer.serialize_str(&rendered)
     }
@@ -383,8 +383,8 @@ impl ForgeConfig {
     ///   lists.
     /// - any team's `northstar` is blank, or does not resolve to a readable
     ///   file.
-    /// - the team-trigger graph formed by `Trigger::AfterEach` references
-    ///   contains a cycle (a team whose `after_each` chain transitively
+    /// - the team-trigger graph formed by `Trigger::AfterTeams` references
+    ///   contains a cycle (a team whose `after_teams` chain transitively
     ///   refers back to itself).
     pub fn from_file(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
         let config_path = Path::new(path);
@@ -543,17 +543,17 @@ fn resolve_team_paths(
             return Err(format!("team '{}': northstar is required", team.name).into());
         }
         match (&team.kind, &team.trigger) {
-            (NodeKind::Plan, Trigger::Start) | (NodeKind::Work, Trigger::AfterEach(_)) => {}
-            (NodeKind::Plan, Trigger::AfterEach(_)) => {
+            (NodeKind::Plan, Trigger::Start) | (NodeKind::Work, Trigger::AfterTeams(_)) => {}
+            (NodeKind::Plan, Trigger::AfterTeams(_)) => {
                 return Err(format!(
-                    "team '{}': kind 'plan' requires trigger 'start', got 'after_each(...)'",
+                    "team '{}': kind 'plan' requires trigger 'start', got 'after_teams(...)'",
                     team.name
                 )
                 .into());
             }
             (NodeKind::Work, Trigger::Start) => {
                 return Err(format!(
-                    "team '{}': kind 'work' requires trigger 'after_each(...)', got 'start'",
+                    "team '{}': kind 'work' requires trigger 'after_teams(...)', got 'start'",
                     team.name
                 )
                 .into());
