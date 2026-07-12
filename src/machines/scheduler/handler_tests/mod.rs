@@ -334,6 +334,7 @@ impl Validator for MainPyValidator {
 }
 
 mod checkpoint;
+mod depends_on_gating;
 mod dispatch;
 mod integration;
 mod multi_team;
