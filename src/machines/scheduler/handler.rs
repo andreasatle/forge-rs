@@ -142,6 +142,7 @@ impl<R: NodeRunner> SchedulerHandler<R> {
                 model_tier,
                 attempt,
                 retry_feedback,
+                team,
                 adapter,
                 northstar,
             } => {
@@ -155,6 +156,7 @@ impl<R: NodeRunner> SchedulerHandler<R> {
                     model_tier,
                     attempt,
                     retry_feedback,
+                    team,
                     adapter,
                     northstar,
                 };

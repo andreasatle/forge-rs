@@ -231,6 +231,7 @@ impl SchedulerMachine {
                             model_tier,
                             attempt,
                             retry_feedback,
+                            team,
                             adapter,
                             northstar,
                         ) = {
@@ -244,6 +245,7 @@ impl SchedulerMachine {
                                 n.model_tier,
                                 n.attempt,
                                 n.retry_feedback.clone(),
+                                n.team.clone(),
                                 n.adapter.clone(),
                                 n.northstar.clone(),
                             )
@@ -258,6 +260,7 @@ impl SchedulerMachine {
                             model_tier,
                             attempt,
                             retry_feedback,
+                            team,
                             adapter,
                             northstar,
                         };

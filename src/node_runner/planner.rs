@@ -317,7 +317,13 @@ impl<'a> PlannerOutputProcessor<'a> {
     /// scheduler [`NodeKind`]. Its tasks are carried instead in
     /// [`PlanOutput::tasks`], which the scheduler records into
     /// `.forge/tasks.json` via `SchedulerEffect::IntegratePlannerTasks`.
-    pub(crate) fn into_plan(self, output: PlannerOutput) -> PlanOutput {
+    pub(crate) fn into_plan(
+        self,
+        output: PlannerOutput,
+        team: String,
+        adapter: String,
+        northstar: String,
+    ) -> PlanOutput {
         let child_kind = match output.kind {
             PlannerOutputKind::Work => NodeKind::Work,
             PlannerOutputKind::Plan => NodeKind::Plan,
@@ -345,10 +351,10 @@ impl<'a> PlannerOutputProcessor<'a> {
                 .map(|task| NodeRequest {
                     id: NodeId(task.id),
                     kind: child_kind.clone(),
-                    team: String::new(),
+                    team: team.clone(),
                     task_id: None,
-                    adapter: String::new(),
-                    northstar: String::new(),
+                    adapter: adapter.clone(),
+                    northstar: northstar.clone(),
                     worker_role: task.role,
                     objective: task.objective,
                     target_files: task.targets,

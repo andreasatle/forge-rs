@@ -48,6 +48,7 @@ fn temporary_workspace_removed_after_integration() {
             model_tier: ModelTier::Cheap,
             attempt: 0,
             retry_feedback: None,
+            team: String::new(),
             adapter: String::new(),
             northstar: String::new(),
         });

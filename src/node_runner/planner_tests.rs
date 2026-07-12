@@ -33,7 +33,12 @@ fn validate_planner_tests_required(
 }
 
 fn planner_output_to_plan_output(output: PlannerOutput) -> PlanOutput {
-    processor(&no_required_test_targets).into_plan(output)
+    processor(&no_required_test_targets).into_plan(
+        output,
+        String::new(),
+        String::new(),
+        String::new(),
+    )
 }
 
 // ── Direct planner response parsing ─────────────────────────────────────────
@@ -756,4 +761,41 @@ fn planner_dependencies_preserved() {
         plan.children[1].dependencies,
         vec![NodeId("tests".to_string())]
     );
+}
+
+#[test]
+fn plan_children_inherit_parent_team_adapter_northstar() {
+    // Invariant: a team-owned Plan node's recursive children inherit that
+    // node's own `team`/`adapter`/`northstar` (as carried by the request that
+    // produced this output), rather than the hardcoded empty single-team
+    // default. Otherwise recursive planning loses which team/adapter/
+    // northstar owns the newly spawned nodes.
+    let output = PlannerOutput {
+        kind: PlannerOutputKind::Plan,
+        tasks: vec![planner_task("sub-a", "decompose part a", &[], &[])],
+    };
+    let plan = processor(&no_required_test_targets).into_plan(
+        output,
+        "team-a".to_string(),
+        "adapters/team-a.yaml".to_string(),
+        "northstar/team-a.md".to_string(),
+    );
+    assert_eq!(plan.children[0].team, "team-a");
+    assert_eq!(plan.children[0].adapter, "adapters/team-a.yaml");
+    assert_eq!(plan.children[0].northstar, "northstar/team-a.md");
+}
+
+#[test]
+fn root_plan_children_get_empty_team_adapter_northstar() {
+    // Invariant: the single-team root/plan-expansion path carries empty
+    // team/adapter/northstar into `into_plan`, and children inherit that same
+    // emptiness — preserving today's behavior for runs with no team dispatch.
+    let output = PlannerOutput {
+        kind: PlannerOutputKind::Work,
+        tasks: vec![planner_task("task", "do something", &["task.txt"], &[])],
+    };
+    let plan = planner_output_to_plan_output(output);
+    assert_eq!(plan.children[0].team, "");
+    assert_eq!(plan.children[0].adapter, "");
+    assert_eq!(plan.children[0].northstar, "");
 }

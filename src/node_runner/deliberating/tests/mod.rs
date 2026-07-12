@@ -130,6 +130,7 @@ fn plan_request(objective: &str) -> NodeRunRequest {
         artifact_view: None,
         worker_role: None,
         work_attempt: None,
+        team: String::new(),
         adapter: String::new(),
         northstar: String::new(),
     }
@@ -147,6 +148,7 @@ fn work_request(objective: &str) -> NodeRunRequest {
         artifact_view: None,
         worker_role: None,
         work_attempt: None,
+        team: String::new(),
         adapter: String::new(),
         northstar: String::new(),
     }
@@ -164,6 +166,7 @@ fn strong_work_request(objective: &str) -> NodeRunRequest {
         artifact_view: None,
         worker_role: None,
         work_attempt: None,
+        team: String::new(),
         adapter: String::new(),
         northstar: String::new(),
     }
@@ -254,6 +257,7 @@ fn work_request_with_artifact(objective: &str, temp: &TempDir) -> NodeRunRequest
         artifact_view: Some(view.clone()),
         worker_role: None,
         work_attempt: Some(work_attempt_for_view(&view)),
+        team: String::new(),
         adapter: String::new(),
         northstar: String::new(),
     }
@@ -272,6 +276,7 @@ fn strong_work_request_with_artifact(objective: &str, temp: &TempDir) -> NodeRun
         artifact_view: Some(view.clone()),
         worker_role: None,
         work_attempt: Some(work_attempt_for_view(&view)),
+        team: String::new(),
         adapter: String::new(),
         northstar: String::new(),
     }

@@ -57,6 +57,7 @@ fn prepared_deliberation_keeps_canonical_objective_and_structured_context_separa
         artifact_view: Some(view),
         worker_role: None,
         work_attempt: None,
+        team: String::new(),
         adapter: String::new(),
         northstar: String::new(),
     };
@@ -121,6 +122,7 @@ fn artifact_view_context_is_visible_to_deliberation_prompt() {
         artifact_view: Some(view),
         worker_role: None,
         work_attempt: None,
+        team: String::new(),
         adapter: String::new(),
         northstar: String::new(),
     };
@@ -164,6 +166,7 @@ fn context_file_content_is_included_in_prompt_when_present() {
         artifact_view: Some(view),
         worker_role: None,
         work_attempt: None,
+        team: String::new(),
         adapter: String::new(),
         northstar: String::new(),
     };
@@ -208,6 +211,7 @@ fn absent_context_file_is_silently_omitted_from_prompt() {
         artifact_view: Some(view),
         worker_role: None,
         work_attempt: None,
+        team: String::new(),
         adapter: String::new(),
         northstar: String::new(),
     };
@@ -246,6 +250,7 @@ fn no_context_file_names_produces_no_extra_content() {
         artifact_view: Some(view),
         worker_role: None,
         work_attempt: None,
+        team: String::new(),
         adapter: String::new(),
         northstar: String::new(),
     };
@@ -290,6 +295,7 @@ fn api_summary_section_appears_in_plan_node_prompt_when_configured() {
         artifact_view: Some(view),
         worker_role: None,
         work_attempt: None,
+        team: String::new(),
         adapter: String::new(),
         northstar: String::new(),
     };
@@ -336,6 +342,7 @@ fn northstar_section_appears_in_plan_node_prompt_when_configured() {
         artifact_view: Some(view),
         worker_role: None,
         work_attempt: None,
+        team: String::new(),
         adapter: String::new(),
         northstar: String::new(),
     };
@@ -377,6 +384,7 @@ fn northstar_section_is_absent_for_work_nodes_even_when_configured() {
         artifact_view: Some(view),
         worker_role: None,
         work_attempt: None,
+        team: String::new(),
         adapter: String::new(),
         northstar: String::new(),
     };
@@ -418,6 +426,7 @@ fn api_summary_section_is_absent_for_work_nodes_even_when_configured() {
         artifact_view: Some(view),
         worker_role: None,
         work_attempt: None,
+        team: String::new(),
         adapter: String::new(),
         northstar: String::new(),
     };
@@ -464,6 +473,7 @@ fn language_plugin_matching_node_target_extension_appears_in_prompt() {
         artifact_view: Some(view),
         worker_role: None,
         work_attempt: None,
+        team: String::new(),
         adapter: String::new(),
         northstar: String::new(),
     };
@@ -512,6 +522,7 @@ fn language_plugin_is_absent_from_plan_node_prompt_even_with_target_files() {
         artifact_view: Some(view),
         worker_role: None,
         work_attempt: None,
+        team: String::new(),
         adapter: String::new(),
         northstar: String::new(),
     };
@@ -559,6 +570,7 @@ fn language_plugin_not_matching_node_target_extension_is_absent_from_prompt() {
         artifact_view: Some(view),
         worker_role: None,
         work_attempt: None,
+        team: String::new(),
         adapter: String::new(),
         northstar: String::new(),
     };

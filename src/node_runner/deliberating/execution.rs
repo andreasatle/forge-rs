@@ -30,7 +30,7 @@ pub(crate) fn run_with_provider<P: ProviderClient>(
     let (output, _) = run_machine_with_telemetry(machine, prepared.initial_state, &node_context);
     map_output(
         output,
-        request.kind,
+        request,
         context_config.required_test_targets_fn.as_ref(),
         &policy.worker_role_descriptions,
         telemetry,

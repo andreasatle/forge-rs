@@ -152,6 +152,7 @@ fn scheduler_handler_passes_artifact_view_to_node_runner() {
         model_tier: ModelTier::Cheap,
         attempt: 0,
         retry_feedback: None,
+        team: String::new(),
         adapter: String::new(),
         northstar: String::new(),
     });
@@ -572,6 +573,7 @@ fn run_node_does_not_commit_workspace_mutation() {
         model_tier: ModelTier::Cheap,
         attempt: 0,
         retry_feedback: None,
+        team: String::new(),
         adapter: String::new(),
         northstar: String::new(),
     });
@@ -605,6 +607,7 @@ fn integrate_work_commits_pending_workspace_mutation() {
         model_tier: ModelTier::Cheap,
         attempt: 0,
         retry_feedback: None,
+        team: String::new(),
         adapter: String::new(),
         northstar: String::new(),
     });

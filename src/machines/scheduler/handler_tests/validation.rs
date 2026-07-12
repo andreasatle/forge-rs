@@ -24,6 +24,7 @@ fn validation_pass_allows_commit() {
         model_tier: ModelTier::Cheap,
         attempt: 0,
         retry_feedback: None,
+        team: String::new(),
         adapter: String::new(),
         northstar: String::new(),
     });
@@ -76,6 +77,7 @@ fn validation_failure_blocks_commit() {
         model_tier: ModelTier::Cheap,
         attempt: 0,
         retry_feedback: None,
+        team: String::new(),
         adapter: String::new(),
         northstar: String::new(),
     });
@@ -194,6 +196,7 @@ fn validation_failure_telemetry_keeps_full_diagnostics() {
         model_tier: ModelTier::Cheap,
         attempt: 0,
         retry_feedback: None,
+        team: String::new(),
         adapter: String::new(),
         northstar: String::new(),
     });
@@ -254,6 +257,7 @@ fn validation_failure_records_attempt_evidence_before_cleanup() {
         model_tier: ModelTier::Cheap,
         attempt: 0,
         retry_feedback: None,
+        team: String::new(),
         adapter: String::new(),
         northstar: String::new(),
     });
@@ -332,6 +336,7 @@ fn validator_runs_after_workspace_mutation() {
         model_tier: ModelTier::Cheap,
         attempt: 0,
         retry_feedback: None,
+        team: String::new(),
         adapter: String::new(),
         northstar: String::new(),
     });
@@ -374,6 +379,7 @@ fn no_diff_fails_before_running_validator() {
         model_tier: ModelTier::Cheap,
         attempt: 0,
         retry_feedback: None,
+        team: String::new(),
         adapter: String::new(),
         northstar: String::new(),
     });
@@ -434,6 +440,7 @@ fn validation_pass_sets_validation_passed_true() {
         model_tier: ModelTier::Cheap,
         attempt: 0,
         retry_feedback: None,
+        team: String::new(),
         adapter: String::new(),
         northstar: String::new(),
     });
@@ -484,6 +491,7 @@ fn validation_failure_sets_validation_passed_false() {
         model_tier: ModelTier::Cheap,
         attempt: 0,
         retry_feedback: None,
+        team: String::new(),
         adapter: String::new(),
         northstar: String::new(),
     });
@@ -524,6 +532,7 @@ fn no_diff_leaves_validation_passed_none() {
         model_tier: ModelTier::Cheap,
         attempt: 0,
         retry_feedback: None,
+        team: String::new(),
         adapter: String::new(),
         northstar: String::new(),
     });
@@ -569,6 +578,7 @@ fn validation_passed_true_even_when_integration_conflicts() {
         model_tier: ModelTier::Cheap,
         attempt: 0,
         retry_feedback: None,
+        team: String::new(),
         adapter: String::new(),
         northstar: String::new(),
     });
@@ -635,6 +645,7 @@ fn timeout_blocks_commit() {
         model_tier: ModelTier::Cheap,
         attempt: 0,
         retry_feedback: None,
+        team: String::new(),
         adapter: String::new(),
         northstar: String::new(),
     });

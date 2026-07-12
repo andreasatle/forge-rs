@@ -7,19 +7,22 @@ use crate::node_runner::planner::{PlannerOutputProcessor, PlannerValidationError
 use crate::telemetry::{TelemetryEvent, TelemetryRecord, TelemetrySink};
 
 use crate::node_runner::classify::{classify_deliberation_failure, recovery_label};
-use crate::node_runner::types::{NodeRunResult, NodeRunWorkResult};
+use crate::node_runner::types::{NodeRunRequest, NodeRunResult, NodeRunWorkResult};
 
 pub(crate) fn map_output(
     output: DeliberationTerminalOutput,
-    kind: NodeKind,
+    request: NodeRunRequest,
     required_test_targets_fn: &TestTargetsFn,
     available_worker_roles: &[(String, String)],
     telemetry: &dyn TelemetrySink,
 ) -> NodeRunResult {
     match output {
-        DeliberationTerminalOutput::Complete(out) => match &kind {
+        DeliberationTerminalOutput::Complete(out) => match request.kind {
             NodeKind::Plan => map_plan_output(
                 out.content,
+                request.team,
+                request.adapter,
+                request.northstar,
                 required_test_targets_fn,
                 available_worker_roles,
                 telemetry,
@@ -63,6 +66,9 @@ pub(crate) fn map_output(
 ///   `PlannerOutputFallback` and returns `Failed` with `Terminal` recovery.
 fn map_plan_output(
     content: String,
+    team: String,
+    adapter: String,
+    northstar: String,
     required_test_targets_fn: &TestTargetsFn,
     available_worker_roles: &[(String, String)],
     telemetry: &dyn TelemetrySink,
@@ -82,7 +88,12 @@ fn map_plan_output(
                         dependency_count,
                     },
                 ));
-                NodeRunResult::PlanAccepted(processor.into_plan(planner_out))
+                NodeRunResult::PlanAccepted(processor.into_plan(
+                    planner_out,
+                    team,
+                    adapter,
+                    northstar,
+                ))
             }
             Err(e) => plan_validation_failed(e, telemetry),
         },
