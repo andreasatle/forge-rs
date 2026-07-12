@@ -1,10 +1,15 @@
 use super::*;
 
 fn team(name: &str, trigger: Trigger) -> TeamConfig {
+    let kind = match trigger {
+        Trigger::Start => NodeKind::Plan,
+        Trigger::AfterEach(_) => NodeKind::Work,
+    };
     TeamConfig {
         name: name.to_string(),
         northstar: String::new(),
         adapter: String::new(),
+        kind,
         trigger,
         name_target_rules: Vec::new(),
         language_plugins: std::collections::BTreeMap::new(),

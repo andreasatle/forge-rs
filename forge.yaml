@@ -33,16 +33,20 @@ teams:
   - name: planner
     northstar: northstar.md
     adapter: adapters/planner.yaml
+    kind: plan
     trigger: start
   - name: implement
     northstar: northstar.md
     adapter: adapters/implement.yaml
+    kind: work
     trigger: after_each(planner)
   - name: create_test
     northstar: northstar.md
     adapter: adapters/create_test.yaml
+    kind: work
     trigger: after_each(planner)
   - name: pass_tests
     northstar: northstar.md
     adapter: adapters/pass_tests.yaml
+    kind: work
     trigger: after_each(implement, create_test)

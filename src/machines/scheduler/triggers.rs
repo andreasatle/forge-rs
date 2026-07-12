@@ -12,7 +12,7 @@ use crate::language::derive_target_from_name;
 use crate::services::team_trigger::{TaskCompletion, TriggerDecision, evaluate_trigger};
 
 use super::config::RunConfig;
-use super::graph::{NodeId, NodeKind, NodeOrigin, RunGraph, new_node_id};
+use super::graph::{NodeId, NodeOrigin, RunGraph, new_node_id};
 use super::types::NodeRequest;
 
 /// Evaluates every configured team's trigger against `manifest_tasks` and
@@ -87,7 +87,7 @@ fn spawn_run_once(
     }
     let request = NodeRequest {
         id: new_node_id(),
-        kind: NodeKind::Plan,
+        kind: team.kind.clone(),
         team: team.name.clone(),
         task_id: None,
         adapter: team.adapter.clone(),
@@ -163,7 +163,7 @@ fn spawn_for_tasks(
                 crate::language::required_validation_targets(&team.language_plugins, &target_files);
             Ok(NodeRequest {
                 id: new_node_id(),
-                kind: NodeKind::Work,
+                kind: team.kind.clone(),
                 team: team.name.clone(),
                 task_id: Some(id),
                 adapter: team.adapter.clone(),

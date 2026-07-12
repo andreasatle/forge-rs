@@ -7,6 +7,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 use super::team_triggers;
 use crate::language::{LanguageSpec, NameTargetRule};
+use crate::machines::scheduler::NodeKind;
 
 /// Top-level configuration for a forge run.
 #[derive(Debug, Deserialize)]
@@ -59,6 +60,11 @@ pub struct TeamConfig {
     /// Path to this team's project adapter YAML file, resolved relative to
     /// the config file.
     pub adapter: String,
+    /// Whether this team's spawned nodes are planning or execution nodes.
+    /// Must agree with `trigger`: `Plan` pairs with `Trigger::Start`, `Work`
+    /// pairs with `Trigger::AfterEach`. Checked by `resolve_team_paths` at
+    /// config-load time so the pairing can never silently diverge.
+    pub kind: NodeKind,
     /// Parsed trigger expression, e.g. `start` or
     /// `after_each(team_a, team_b)`.
     pub trigger: Trigger,
@@ -535,6 +541,23 @@ fn resolve_team_paths(
         }
         if team.northstar.trim().is_empty() {
             return Err(format!("team '{}': northstar is required", team.name).into());
+        }
+        match (&team.kind, &team.trigger) {
+            (NodeKind::Plan, Trigger::Start) | (NodeKind::Work, Trigger::AfterEach(_)) => {}
+            (NodeKind::Plan, Trigger::AfterEach(_)) => {
+                return Err(format!(
+                    "team '{}': kind 'plan' requires trigger 'start', got 'after_each(...)'",
+                    team.name
+                )
+                .into());
+            }
+            (NodeKind::Work, Trigger::Start) => {
+                return Err(format!(
+                    "team '{}': kind 'work' requires trigger 'after_each(...)', got 'start'",
+                    team.name
+                )
+                .into());
+            }
         }
         if let Some(dir) = config_dir {
             team.adapter = resolve_relative(&team.adapter, dir);

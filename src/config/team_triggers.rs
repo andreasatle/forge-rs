@@ -8,6 +8,8 @@
 use std::collections::{HashMap, HashSet};
 
 use super::{TeamConfig, Trigger};
+#[cfg(test)]
+use crate::machines::scheduler::NodeKind;
 
 /// Computes the terminal teams among `teams`: those no other team's
 /// `Trigger::AfterEach` list names, i.e. teams nothing else is scheduled to

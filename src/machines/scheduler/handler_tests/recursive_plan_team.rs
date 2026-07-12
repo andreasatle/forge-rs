@@ -163,6 +163,7 @@ teams:
   - name: recursive
     northstar: "{recursive_northstar}"
     adapter: "{recursive_adapter}"
+    kind: plan
     trigger: start
 "#,
         repo_path = repo_path.display(),

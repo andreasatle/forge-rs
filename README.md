@@ -169,28 +169,36 @@ teams:
   - name: planner
     northstar: northstar.md
     adapter: adapters/planner.yaml
+    kind: plan
     trigger: start
   - name: implement
     northstar: northstar.md
     adapter: adapters/implement.yaml
+    kind: work
     trigger: after_each(planner)
   - name: create_test
     northstar: northstar.md
     adapter: adapters/create_test.yaml
+    kind: work
     trigger: after_each(planner)
   - name: pass_tests
     northstar: northstar.md
     adapter: adapters/pass_tests.yaml
+    kind: work
     trigger: after_each(implement, create_test)
 ```
 
-Each team has its own `name`, `northstar`, and `adapter`, and activates
-according to its `trigger`: either `start` (runs from the beginning) or
+Each team has its own `name`, `northstar`, `adapter`, `kind`, and `trigger`.
+`kind` (`plan` or `work`) says what the team's spawned nodes are — a `plan`
+team decomposes an objective into tasks, a `work` team executes one. `trigger`
+says when it activates: either `start` (runs from the beginning) or
 `after_each(team_a, team_b, ...)` (runs after every named team has produced a
-node). The built-in `planner.yaml`, `implement.yaml`, `create_test.yaml`, and
-`pass_tests.yaml` adapters are designed to be combined this way — a planner
-team fans out tasks, and separate implement/create_test/pass_tests teams
-each own one concern instead of one adapter owning all of them.
+node). `kind: plan` requires `trigger: start` and `kind: work` requires
+`trigger: after_each(...)`; a mismatch fails at config load. The built-in
+`planner.yaml`, `implement.yaml`, `create_test.yaml`, and `pass_tests.yaml`
+adapters are designed to be combined this way — a planner team fans out
+tasks, and separate implement/create_test/pass_tests teams each own one
+concern instead of one adapter owning all of them.
 
 At config load, Forge computes each team's **terminal** status from this
 trigger graph: a team is terminal if no other team's `after_each` names it

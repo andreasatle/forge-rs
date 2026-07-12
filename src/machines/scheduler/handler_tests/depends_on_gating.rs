@@ -231,10 +231,12 @@ teams:
   - name: planner
     northstar: "{planner_northstar}"
     adapter: "{planner_adapter}"
+    kind: plan
     trigger: start
   - name: worker
     northstar: "{worker_northstar}"
     adapter: "{worker_adapter}"
+    kind: work
     trigger: after_each(planner)
 "#,
         repo_path = repo_path.display(),

@@ -54,6 +54,7 @@ impl NodeId {
 ///   `Integrating` and an `IntegrateWork` effect is emitted. The node reaches
 ///   `Completed` only after `IntegrationSucceeded` arrives.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum NodeKind {
     /// A planning node. Decomposes an objective into child nodes and
     /// assigns worker roles and concrete file operations to each task.

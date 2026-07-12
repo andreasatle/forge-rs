@@ -155,10 +155,12 @@ teams:
   - name: planner
     northstar: project.md
     adapter: coding.yaml
+    kind: plan
     trigger: start
   - name: implement
     northstar: implementation.md
     adapter: coding.yaml
+    kind: work
     trigger: after_each(planner)
 "#;
 
@@ -179,6 +181,7 @@ fn parses_teams() {
         tmp.dir().join("project.md").to_string_lossy()
     );
     assert_eq!(planner.adapter, expected_adapter);
+    assert_eq!(planner.kind, NodeKind::Plan);
     assert_eq!(planner.trigger, Trigger::Start);
 
     let implement = &config.teams[1];
@@ -188,6 +191,7 @@ fn parses_teams() {
         tmp.dir().join("implementation.md").to_string_lossy()
     );
     assert_eq!(implement.adapter, expected_adapter);
+    assert_eq!(implement.kind, NodeKind::Work);
     assert_eq!(
         implement.trigger,
         Trigger::AfterEach(vec!["planner".to_string()])
@@ -252,10 +256,12 @@ teams:
   - name: a
     northstar: a.md
     adapter: coding.yaml
+    kind: work
     trigger: after_each(b)
   - name: b
     northstar: b.md
     adapter: coding.yaml
+    kind: work
     trigger: after_each(a)
 "#;
 
@@ -293,6 +299,7 @@ teams:
   - name: gather
     northstar: gather.md
     adapter: coding.yaml
+    kind: work
     trigger: after_each(a, b)
 "#;
 
@@ -325,6 +332,7 @@ teams:
   - name: bogus
     northstar: northstars/bogus.md
     adapter: adapters/bogus.yaml
+    kind: plan
     trigger: whenever()
 "#;
 
@@ -335,6 +343,86 @@ fn malformed_trigger_fails_fast_at_load() {
     assert!(
         err.to_string().contains("trigger must be"),
         "error must explain the trigger grammar; got: {err}"
+    );
+}
+
+const KIND_PLAN_WITH_AFTER_EACH_TRIGGER_YAML: &str = r#"
+objective: "test"
+artifact:
+  repo_path: ".forge/artifacts/main.git"
+  branch: "main"
+provider:
+  cheap:
+    unmanaged:
+      base_url: "http://localhost:8080"
+      model: "llama-test"
+      n_predict: 512
+telemetry:
+  directory: "runs"
+adapter: coding.yaml
+teams:
+  - name: planner
+    northstar: project.md
+    adapter: coding.yaml
+    kind: plan
+    trigger: after_each(other)
+"#;
+
+#[test]
+fn team_kind_plan_with_after_each_trigger_fails_at_config_load_time() {
+    // Invariant: `kind: plan` must pair with `trigger: start` — a team
+    // declaring itself a planner but triggered `after_each(...)` is a
+    // config error, not something the scheduler should silently resolve by
+    // trusting one field over the other.
+    let tmp = TempYaml::new(KIND_PLAN_WITH_AFTER_EACH_TRIGGER_YAML);
+    let err = ForgeConfig::from_file(tmp.path()).unwrap_err();
+    let message = err.to_string();
+    assert!(
+        message.contains("planner"),
+        "error must name the mismatched team; got: {message}"
+    );
+    assert!(
+        message.contains("plan") && message.contains("start"),
+        "error must explain the kind/trigger mismatch; got: {message}"
+    );
+}
+
+const KIND_WORK_WITH_START_TRIGGER_YAML: &str = r#"
+objective: "test"
+artifact:
+  repo_path: ".forge/artifacts/main.git"
+  branch: "main"
+provider:
+  cheap:
+    unmanaged:
+      base_url: "http://localhost:8080"
+      model: "llama-test"
+      n_predict: 512
+telemetry:
+  directory: "runs"
+adapter: coding.yaml
+teams:
+  - name: worker
+    northstar: project.md
+    adapter: coding.yaml
+    kind: work
+    trigger: start
+"#;
+
+#[test]
+fn team_kind_work_with_start_trigger_fails_at_config_load_time() {
+    // Invariant: `kind: work` must pair with `trigger: after_each(...)` —
+    // the reverse mismatch of `team_kind_plan_with_after_each_trigger_fails_at_config_load_time`.
+    let tmp = TempYaml::new(KIND_WORK_WITH_START_TRIGGER_YAML);
+    let err = ForgeConfig::from_file(tmp.path()).unwrap_err();
+    let message = err.to_string();
+    assert!(
+        message.contains("worker"),
+        "error must name the mismatched team; got: {message}"
+    );
+    assert!(
+        message.contains("work") && message.contains("after_each"),
+        "error must explain the kind/trigger mismatch; got: {message}"
     );
 }
 
@@ -366,6 +454,7 @@ teams:
   - name: planner
     northstar: project.md
     adapter: "   "
+    kind: plan
     trigger: start
 "#;
 
@@ -400,6 +489,7 @@ teams:
   - name: planner
     northstar: "   "
     adapter: coding.yaml
+    kind: plan
     trigger: start
 "#;
 
@@ -431,6 +521,7 @@ teams:
   - name: planner
     northstar: project.md
     adapter: bogus_team_adapter_that_does_not_exist.yaml
+    kind: plan
     trigger: start
 "#;
 
@@ -467,6 +558,7 @@ teams:
   - name: planner
     northstar: bogus_northstar_that_does_not_exist.md
     adapter: coding.yaml
+    kind: plan
     trigger: start
 "#;
 
@@ -549,6 +641,7 @@ teams:
   - name: planner
     northstar: project.md
     adapter: broken_team_adapter.yaml
+    kind: plan
     trigger: start
 "#;
 
