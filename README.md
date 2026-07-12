@@ -192,6 +192,18 @@ node). The built-in `planner.yaml`, `implement.yaml`, `create_test.yaml`, and
 team fans out tasks, and separate implement/create_test/pass_tests teams
 each own one concern instead of one adapter owning all of them.
 
+At config load, Forge computes each team's **terminal** status from this
+trigger graph: a team is terminal if no other team's `after_each` names it
+(erroring if the graph has a cycle). Terminal teams mark the point where a
+task is considered fully done.
+
+Planner tasks can declare `depends_on: [other_task_id, ...]` so that a task
+is not spawned as a Work node until its dependencies have completed. A
+dependency only counts as satisfied once *every* terminal team has recorded
+a completion row for it — e.g. with the trigger graph above, a task depended
+on for its implementation isn't considered done until both `implement` and
+`pass_tests` (the terminal teams) have completed it, not just `implement`.
+
 By default Forge connects to already-running provider servers. For llama.cpp,
 Forge can instead own a local `llama-server` process:
 
@@ -226,6 +238,7 @@ cargo run -- trace   forge.yaml --run ID   — trace a specific run
 cargo run -- trace   forge.yaml --summary  — show the flat chronological trace
 cargo run -- trace   forge.yaml --prompts  — show full role prompts
 cargo run -- trace   forge.yaml --failures — show failure-related events
+cargo run -- tasks   forge.yaml            — list tasks recorded in .forge/tasks.json
 ```
 
 ### Example session
