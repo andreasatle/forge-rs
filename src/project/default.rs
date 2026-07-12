@@ -30,10 +30,6 @@ mod tests {
         let expected = RolePolicy::default();
 
         assert_eq!(
-            policy.planner_producer_system,
-            expected.planner_producer_system
-        );
-        assert_eq!(
             policy.worker_producer_system,
             expected.worker_producer_system
         );

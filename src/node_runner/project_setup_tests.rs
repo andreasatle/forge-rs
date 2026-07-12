@@ -113,9 +113,9 @@ fn write_custom_adapter(dir: &Path, plugin_refs: &[&str]) -> PathBuf {
 fn runtime_selects_coding_adapter() {
     let policy = builder("coding.yaml", None).role_policy();
     assert!(
-        policy.planner_producer_system.contains("software planning"),
+        policy.planner_producer_base.contains("software planning"),
         "coding adapter must produce software-planning planner prompt; got:\n{}",
-        policy.planner_producer_system
+        policy.planner_producer_base
     );
     assert!(
         policy
@@ -131,10 +131,10 @@ fn runtime_selects_planner_adapter() {
     let policy = builder("planner.yaml", None).role_policy();
     assert!(
         policy
-            .planner_producer_system
+            .planner_producer_base
             .contains("further decomposition or a single, self-contained task"),
         "planner adapter must select the decomposition-or-task planner prompt; got:\n{}",
-        policy.planner_producer_system
+        policy.planner_producer_base
     );
 }
 

@@ -177,16 +177,6 @@ pub(crate) const WORK_PRODUCER_SYSTEM: &str = "Allowed final response:\n\
 Implement the requested change and return a summary describing what you did. \
 There is no rejected response — a valid summary means the work is done.";
 
-/// JSON protocol instructions for planner-style roles whose task schema has
-/// no `operation` field — targets alone describe the task.
-///
-/// Framework protocol, shared by every adapter that models tasks without
-/// concrete create/modify/delete operations — see
-/// [`PLANNER_PROTOCOL_FOOTER_WITH_OPERATION_AND_ROLES`].
-pub(crate) const PLANNER_PROTOCOL_FOOTER: &str = "PlannerOutput: `tasks` must be a non-empty array.\n\
-Each task requires `id`, `objective`, `targets`, and `depends_on`.\n\
-Each `targets` array must be non-empty and list exact files the task may create, modify, or delete.";
-
 /// Generic role-identity and task-decomposition instruction for the Plan-node
 /// Producer role.
 ///
@@ -376,8 +366,6 @@ pub struct WorkerRolePolicy {
 /// role is told to do without touching the surrounding prompt structure.
 #[derive(Clone)]
 pub struct RolePolicy {
-    /// System instruction for Plan-node Producer role.
-    pub planner_producer_system: String,
     /// System instruction for Work-node Producer role.
     pub worker_producer_system: String,
     /// System instruction for Plan-node Critic role.
@@ -388,9 +376,9 @@ pub struct RolePolicy {
     pub planner_referee_system: String,
     /// System instruction for Work-node Referee role.
     pub worker_referee_system: String,
-    /// `planner_producer_system` with the trailing protocol-schema footer
-    /// removed: role identity, adapter instructions/constraints, and the
-    /// generic JSON-format constraints, but no task-schema footer.
+    /// Role identity, adapter instructions/constraints, and the generic
+    /// JSON-format constraints for the Plan-node Producer, with no
+    /// task-schema footer.
     ///
     /// Combined with a node-kind-specific footer to build the
     /// [Plan-node](crate::machines::scheduler::NodeKind::Plan) Producer
@@ -423,7 +411,6 @@ impl Default for RolePolicy {
         let empty = RolePromptConfig::default();
         let planner_producer_base = render_role_prompt(generic, &empty, None);
         Self {
-            planner_producer_system: format!("{planner_producer_base}\n{PLANNER_PROTOCOL_FOOTER}"),
             worker_producer_system: format!(
                 "{}\n{WORK_PRODUCER_SYSTEM}",
                 render_role_prompt(generic, &empty, None)

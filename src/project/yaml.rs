@@ -8,7 +8,7 @@ use crate::language::LanguageSpec;
 use crate::roles::RolePolicy;
 use crate::roles::policy::{
     DEFAULT_SYSTEM, PLANNER_PRODUCER_IDENTITY, WORK_PRODUCER_SYSTEM, WORKER_PRODUCER_IDENTITY,
-    WorkerRolePolicy, generic_prompt, planner_protocol_schema_for, render_role_prompt,
+    WorkerRolePolicy, generic_prompt, render_role_prompt,
 };
 
 /// A [`ProjectAdapter`] whose role prompts and context files come from a
@@ -99,10 +99,6 @@ impl ProjectAdapter for YamlProjectAdapter {
         // panicking.
         let default_worker = WorkerRoleConfig::default();
         let worker = self.config.workers.first().unwrap_or(&default_worker);
-        // Adapters that define worker roles must have the planner assign one
-        // to every task, and only they may emit `kind: "work"` at all — see
-        // `planner_protocol_schema_for`.
-        let planner_protocol_footer = planner_protocol_schema_for(!self.config.workers.is_empty());
         let planner_producer_generic = RolePromptConfig {
             identity: format!("{PLANNER_PRODUCER_IDENTITY}\n{}", generic.identity),
             ..generic.clone()
@@ -114,7 +110,6 @@ impl ProjectAdapter for YamlProjectAdapter {
         let planner_producer_base =
             render_role_prompt(&planner_producer_generic, &planner.producer, None);
         RolePolicy {
-            planner_producer_system: format!("{planner_producer_base}\n{planner_protocol_footer}"),
             worker_producer_system: format!(
                 "{}\n{WORK_PRODUCER_SYSTEM}",
                 render_role_prompt(&worker_producer_generic, &worker.producer, None)
@@ -183,7 +178,6 @@ fn worker_role_policy(generic: &RolePromptConfig, worker: &WorkerRoleConfig) -> 
 mod tests {
     use super::*;
     use crate::project::yaml_config::{PlannerConfig, WorkerRoleConfig};
-    use crate::roles::policy::PLANNER_PROTOCOL_FOOTER_WITH_OPERATION_AND_ROLES;
 
     fn prompt(instructions: &str, constraints: &str) -> RolePromptConfig {
         RolePromptConfig {
@@ -280,8 +274,7 @@ mod tests {
         needles.push("# Constraints".to_string());
         needles.extend(bullets(&generic.constraints));
         needles.extend(bullets("plan bounds"));
-        needles.push(PLANNER_PROTOCOL_FOOTER_WITH_OPERATION_AND_ROLES.to_string());
-        assert_ordered_sections(&policy.planner_producer_system, &needles);
+        assert_ordered_sections(&policy.planner_producer_base, &needles);
 
         let mut needles = strings(&[
             "# Identity",
@@ -484,7 +477,7 @@ context_files:
         assert!(
             adapter
                 .role_policy()
-                .planner_producer_system
+                .planner_producer_base
                 .contains("plan it")
         );
         assert_eq!(adapter.context_file_names(), vec!["README.md".to_string()]);

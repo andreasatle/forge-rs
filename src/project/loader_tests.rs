@@ -63,7 +63,7 @@ workers:
 #[test]
 fn coding_adapter_loads_from_its_shipped_path() {
     let adapter = load_adapter(&repo_adapter("coding.yaml")).unwrap();
-    assert!(!adapter.role_policy().planner_producer_system.is_empty());
+    assert!(!adapter.role_policy().planner_producer_base.is_empty());
 }
 
 // ── user-defined adapters ────────────────────────────────────────────────
@@ -170,10 +170,10 @@ fn adapter_role_policy_never_carries_plugin_prompt_content() {
     let policy = load_adapter(&adapter_path).unwrap().role_policy();
     assert!(
         !policy
-            .planner_producer_system
+            .planner_producer_base
             .contains("custom plugin guidance"),
         "role_policy() must not carry any plugin's prompt content; got:\n{}",
-        policy.planner_producer_system
+        policy.planner_producer_base
     );
 }
 

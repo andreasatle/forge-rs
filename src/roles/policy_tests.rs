@@ -4,8 +4,13 @@ use super::*;
 fn default_system_prompts_have_expected_role_schemas() {
     let policy = RolePolicy::default();
 
+    let planner_producer_system = format!(
+        "{}\n{}",
+        policy.planner_producer_base,
+        planner_protocol_schema_for(false)
+    );
     assert_schema(
-        &policy.planner_producer_system,
+        &planner_producer_system,
         &["`tasks`"],
         &["`status`", "`summary`"],
     );
@@ -33,7 +38,6 @@ fn default_system_prompts_have_expected_role_schemas() {
 fn default_system_prompts_have_no_placeholder_values() {
     let policy = RolePolicy::default();
     for system in [
-        &policy.planner_producer_system,
         &policy.worker_producer_system,
         &policy.planner_critic_system,
         &policy.worker_critic_system,
@@ -65,22 +69,6 @@ fn assert_schema(system: &str, required: &[&str], forbidden: &[&str]) {
             "schema includes unexpected {field}: {system}"
         );
     }
-}
-
-#[test]
-fn planner_producer_base_plus_protocol_footer_reconstructs_producer_system() {
-    // Invariant: `planner_producer_system` is exactly `planner_producer_base`
-    // followed by the default `PLANNER_PROTOCOL_FOOTER` footer — callers rely
-    // on this to build fixed-schema variants for Decomposition/Plan nodes
-    // from the same base text.
-    let policy = RolePolicy::default();
-    assert_eq!(
-        policy.planner_producer_system,
-        format!(
-            "{}\n{PLANNER_PROTOCOL_FOOTER}",
-            policy.planner_producer_base
-        )
-    );
 }
 
 #[test]
