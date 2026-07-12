@@ -25,6 +25,13 @@ pub struct RunConfig {
     /// which teams should have new nodes spawned for them.
     #[serde(default)]
     pub teams: Vec<TeamConfig>,
+    /// Teams no other team's trigger names, per
+    /// `ForgeConfig::terminal_teams` (computed once at config-load time from
+    /// the team-trigger graph). A `ForTasks` candidate id's `depends_on`
+    /// tasks must each have a completion row from every one of these teams
+    /// before the candidate is eligible to spawn.
+    #[serde(default)]
+    pub terminal_teams: Vec<String>,
 }
 
 impl Default for RunConfig {
@@ -32,6 +39,7 @@ impl Default for RunConfig {
         RunConfig {
             has_strong_tier: true,
             teams: vec![],
+            terminal_teams: vec![],
         }
     }
 }

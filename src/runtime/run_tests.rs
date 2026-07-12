@@ -725,6 +725,7 @@ fn run_config_has_strong_tier_false_when_provider_strong_is_none() {
     let run_config = RunConfig {
         has_strong_tier: provider.strong.is_some(),
         teams: vec![],
+        terminal_teams: vec![],
     };
     let state = SchedulerMachine::initial_state(
         RunRequest {
@@ -768,6 +769,7 @@ fn run_config_has_strong_tier_true_when_provider_strong_is_some() {
     let run_config = RunConfig {
         has_strong_tier: provider.strong.is_some(),
         teams: vec![],
+        terminal_teams: vec![],
     };
     let state = SchedulerMachine::initial_state(
         RunRequest {

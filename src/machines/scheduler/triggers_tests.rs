@@ -73,6 +73,19 @@ fn named_record(id: &str, objective: &str, team: &str, name: &str) -> TaskRecord
     }
 }
 
+fn named_record_with_deps(
+    id: &str,
+    objective: &str,
+    team: &str,
+    name: &str,
+    depends_on: Vec<&str>,
+) -> TaskRecord {
+    TaskRecord {
+        depends_on: depends_on.into_iter().map(String::from).collect(),
+        ..named_record(id, objective, team, name)
+    }
+}
+
 fn root_node() -> Node {
     Node {
         id: NodeId("root".to_string()),
@@ -101,6 +114,15 @@ fn run_config(teams: Vec<TeamConfig>) -> RunConfig {
     RunConfig {
         has_strong_tier: true,
         teams,
+        terminal_teams: vec![],
+    }
+}
+
+fn run_config_with_terminal_teams(teams: Vec<TeamConfig>, terminal_teams: Vec<&str>) -> RunConfig {
+    RunConfig {
+        has_strong_tier: true,
+        teams,
+        terminal_teams: terminal_teams.into_iter().map(String::from).collect(),
     }
 }
 
@@ -428,4 +450,118 @@ fn for_tasks_respawns_after_prior_attempt_failed() {
         .filter(|n| n.team == "implement" && n.status == NodeStatus::Pending)
         .collect();
     assert_eq!(pending.len(), 1, "a new attempt must be spawned");
+}
+
+/// A `ForTasks` candidate whose `depends_on` names a task with no completion
+/// row yet from a terminal team must not spawn: `t2` depends on `t1`, and
+/// `implement` (the only terminal team) has not yet recorded `t1`.
+#[test]
+fn for_tasks_does_not_spawn_when_dependency_unsatisfied() {
+    let graph = RunGraph {
+        nodes: vec![root_node()],
+    };
+    let config = run_config_with_terminal_teams(
+        vec![team_with_catchall_rule(
+            "implement",
+            Trigger::AfterEach(vec!["planner".to_string()]),
+        )],
+        vec!["implement"],
+    );
+    let manifest = [
+        named_record("t1", "implement fibonacci(n: int)", "planner", "fibonacci"),
+        named_record_with_deps(
+            "t2",
+            "implement factorial(n: int)",
+            "planner",
+            "factorial",
+            vec!["t1"],
+        ),
+    ];
+    let graph = apply_team_triggers(graph, &NodeId("root".to_string()), &config, &manifest)
+        .expect("team triggers must apply cleanly");
+
+    let spawned_ids: Vec<Option<String>> = graph
+        .nodes
+        .iter()
+        .filter(|n| n.team == "implement")
+        .map(|n| n.task_id.clone())
+        .collect();
+    assert_eq!(
+        spawned_ids,
+        vec![Some("t1".to_string())],
+        "t2 must not spawn while its dependency t1 has no completion from the terminal team"
+    );
+}
+
+/// Once every terminal team has recorded a completion for `t1`, `t2` (which
+/// depends on it) becomes eligible and spawns.
+#[test]
+fn for_tasks_spawns_once_all_terminal_teams_complete_dependency() {
+    let graph = RunGraph {
+        nodes: vec![root_node()],
+    };
+    let config = run_config_with_terminal_teams(
+        vec![team_with_catchall_rule(
+            "implement",
+            Trigger::AfterEach(vec!["planner".to_string()]),
+        )],
+        vec!["implement"],
+    );
+    let manifest = [
+        named_record("t1", "implement fibonacci(n: int)", "planner", "fibonacci"),
+        record("t1", "implemented fibonacci", "implement"),
+        named_record_with_deps(
+            "t2",
+            "implement factorial(n: int)",
+            "planner",
+            "factorial",
+            vec!["t1"],
+        ),
+    ];
+    let graph = apply_team_triggers(graph, &NodeId("root".to_string()), &config, &manifest)
+        .expect("team triggers must apply cleanly");
+
+    let spawned_ids: Vec<Option<String>> = graph
+        .nodes
+        .iter()
+        .filter(|n| n.team == "implement")
+        .map(|n| n.task_id.clone())
+        .collect();
+    assert_eq!(
+        spawned_ids,
+        vec![Some("t2".to_string())],
+        "t2 must spawn once its dependency t1 has a completion from every terminal team"
+    );
+}
+
+/// A task with no `depends_on` is unaffected by `terminal_teams` being
+/// configured — today's no-dependency behavior is unchanged.
+#[test]
+fn for_tasks_unaffected_when_no_depends_on() {
+    let graph = RunGraph {
+        nodes: vec![root_node()],
+    };
+    let config = run_config_with_terminal_teams(
+        vec![team_with_catchall_rule(
+            "implement",
+            Trigger::AfterEach(vec!["planner".to_string()]),
+        )],
+        vec!["implement"],
+    );
+    let manifest = [named_record(
+        "t1",
+        "implement fibonacci(n: int)",
+        "planner",
+        "fibonacci",
+    )];
+    let graph = apply_team_triggers(graph, &NodeId("root".to_string()), &config, &manifest)
+        .expect("team triggers must apply cleanly");
+
+    let spawned: Vec<&Node> = graph
+        .nodes
+        .iter()
+        .filter(|n| n.team == "implement")
+        .collect();
+    assert_eq!(spawned.len(), 1);
+    assert_eq!(spawned[0].task_id, Some("t1".to_string()));
 }

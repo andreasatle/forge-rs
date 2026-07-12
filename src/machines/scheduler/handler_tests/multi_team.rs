@@ -299,6 +299,7 @@ teams:
         RunConfig {
             has_strong_tier: false,
             teams: config.teams.clone(),
+            terminal_teams: config.terminal_teams.clone(),
         },
     );
 

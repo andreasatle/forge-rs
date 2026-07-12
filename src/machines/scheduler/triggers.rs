@@ -30,6 +30,12 @@ use super::types::NodeRequest;
 /// graph check, a still-in-flight node (no manifest row yet) would be
 /// re-spawned on every unrelated completion.
 ///
+/// A `ForTasks` candidate id is further gated on its `depends_on`: it is not
+/// eligible to spawn until every id it depends on has a completion row from
+/// every team in `run_config.terminal_teams` (see
+/// [`retain_ids_with_satisfied_dependencies`]). `RunOnce` has no task or
+/// `depends_on` to gate on, so this only applies to `ForTasks`.
+///
 /// Returns `Err` with a diagnostic detail if a `ForTasks` spawn's target
 /// files could not be derived (see [`task_target_files`]); the caller is
 /// responsible for routing that into `FailureReason::TargetDerivationFailed`.
@@ -55,6 +61,12 @@ pub(super) fn apply_team_triggers(
                 spawn_run_once(graph, node_id, team, should_run)
             }
             TriggerDecision::ForTasks(ids) => {
+                let ids = retain_ids_with_satisfied_dependencies(
+                    ids,
+                    manifest_tasks,
+                    &run_config.terminal_teams,
+                    &completions,
+                );
                 spawn_for_tasks(graph, node_id, team, ids, manifest_tasks)?
             }
         };
@@ -88,6 +100,40 @@ fn spawn_run_once(
         validation_plan: None,
     };
     graph.insert_children(node_id, vec![request])
+}
+
+/// Filters `ids` (a `ForTasks` decision's candidate ids) down to those whose
+/// `depends_on` tasks have all completed, i.e. every id in `depends_on` has a
+/// completion row from every team in `terminal_teams`.
+///
+/// A candidate id always has a matching row in `manifest_tasks` (see
+/// [`spawn_for_tasks`]'s panic message for why), so a missing `depends_on` id
+/// entry in `manifest_tasks` (should never happen) is treated the same as
+/// "not yet completed" rather than panicking here.
+fn retain_ids_with_satisfied_dependencies(
+    ids: Vec<String>,
+    manifest_tasks: &[TaskRecord],
+    terminal_teams: &[String],
+    completions: &[TaskCompletion],
+) -> Vec<String> {
+    ids.into_iter()
+        .filter(|id| {
+            let record = manifest_tasks
+                .iter()
+                .find(|record| record.id == *id)
+                .expect(
+                    "a ForTasks id is only ever drawn from `completions`, which is built from \
+                     `manifest_tasks` itself, so a matching row must already exist",
+                );
+            record.depends_on.iter().all(|dep_id| {
+                terminal_teams.iter().all(|team| {
+                    completions
+                        .iter()
+                        .any(|c| c.task_id == *dep_id && &c.team == team)
+                })
+            })
+        })
+        .collect()
 }
 
 /// Spawns a `Work` node per qualifying task id, skipping ids that already

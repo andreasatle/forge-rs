@@ -48,6 +48,7 @@ impl ForgeRuntime {
             RunConfig {
                 has_strong_tier: config.provider.strong.is_some(),
                 teams: config.teams.clone(),
+                terminal_teams: config.terminal_teams.clone(),
             },
         );
 
@@ -66,17 +67,19 @@ impl ForgeRuntime {
     pub fn resume(config: ForgeConfig) -> Result<(), Box<dyn Error>> {
         let runs_root = PathBuf::from(&config.telemetry.directory);
         let (run_dir, initial_state) = find_resumable_run(&runs_root)?;
-        // Re-derive has_strong_tier and teams: they describe config as it is
-        // *now*, not run history, so stale or pre-fix checkpoints don't
-        // silently inherit the wrong value.
+        // Re-derive has_strong_tier, teams, and terminal_teams: they describe
+        // config as it is *now*, not run history, so stale or pre-fix
+        // checkpoints don't silently inherit the wrong value.
         let has_strong_tier = config.provider.strong.is_some();
         let teams = config.teams.clone();
+        let terminal_teams = config.terminal_teams.clone();
         let initial_state = match initial_state {
             SchedulerState::Active { graph, .. } => SchedulerState::Active {
                 graph,
                 run_config: RunConfig {
                     has_strong_tier,
                     teams,
+                    terminal_teams,
                 },
             },
             SchedulerState::Waiting { graph, .. } => SchedulerState::Waiting {
@@ -84,6 +87,7 @@ impl ForgeRuntime {
                 run_config: RunConfig {
                     has_strong_tier,
                     teams,
+                    terminal_teams,
                 },
             },
             other => other,
