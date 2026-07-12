@@ -7,9 +7,8 @@ use super::yaml_config::{ProjectAdapterConfig, RolePromptConfig, WorkerRoleConfi
 use crate::language::LanguageSpec;
 use crate::roles::RolePolicy;
 use crate::roles::policy::{
-    DEFAULT_SYSTEM, PLANNER_PRODUCER_IDENTITY, PLANNER_PROTOCOL_FOOTER_WITH_OPERATION,
-    PLANNER_PROTOCOL_FOOTER_WITH_OPERATION_AND_ROLES, WORK_PRODUCER_SYSTEM,
-    WORKER_PRODUCER_IDENTITY, WorkerRolePolicy, generic_prompt, render_role_prompt,
+    DEFAULT_SYSTEM, PLANNER_PRODUCER_IDENTITY, WORK_PRODUCER_SYSTEM, WORKER_PRODUCER_IDENTITY,
+    WorkerRolePolicy, generic_prompt, planner_protocol_schema_for, render_role_prompt,
 };
 
 /// A [`ProjectAdapter`] whose role prompts and context files come from a
@@ -101,13 +100,9 @@ impl ProjectAdapter for YamlProjectAdapter {
         let default_worker = WorkerRoleConfig::default();
         let worker = self.config.workers.first().unwrap_or(&default_worker);
         // Adapters that define worker roles must have the planner assign one
-        // to every task; the footer variant describes `role` as required
-        // rather than optional to match that expectation.
-        let planner_protocol_footer = if self.config.workers.is_empty() {
-            PLANNER_PROTOCOL_FOOTER_WITH_OPERATION
-        } else {
-            PLANNER_PROTOCOL_FOOTER_WITH_OPERATION_AND_ROLES
-        };
+        // to every task, and only they may emit `kind: "work"` at all — see
+        // `planner_protocol_schema_for`.
+        let planner_protocol_footer = planner_protocol_schema_for(!self.config.workers.is_empty());
         let planner_producer_generic = RolePromptConfig {
             identity: format!("{PLANNER_PRODUCER_IDENTITY}\n{}", generic.identity),
             ..generic.clone()

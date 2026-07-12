@@ -327,15 +327,66 @@ fn planner_accepts_valid_planner_output() {
 }
 
 #[test]
-fn planner_producer_grammar_and_footer_are_selected_by_node_kind() {
-    // Invariant: Plan nodes use the fixed with-operation, with-roles grammar
-    // and footer, regardless of the adapter's configured
-    // `planner_protocol_schema`.
+fn planner_producer_grammar_and_footer_forbid_work_without_worker_roles() {
+    // Invariant: a Plan node under an adapter with no worker roles (e.g. a
+    // pure decomposition adapter with no `workers:` configured) must never
+    // be offered `kind: "work"` — there is no role to assign a work task to,
+    // so only "plan"/"task" are grammar-legal, and `kind` must be stated
+    // explicitly rather than defaulting to "work".
+    use crate::roles::policy::PLANNER_GBNF_NO_WORK;
+
+    let response = r#"{"kind":"plan","tasks":[{"id":"t1","objective":"do the thing","operation":"modify","targets":["thing.txt"],"depends_on":[]}]}"#;
+    let provider = ScriptedProvider::from_strs(&[response]);
+    let runner = ProviderRoleRunner::new(&provider);
+    let request = RoleRequest {
+        node_kind: NodeKind::Plan,
+        ..plan_request("plan the work")
+    };
+
+    let output = runner.run_role(request, &crate::telemetry::NoopTelemetry);
+    assert!(
+        matches!(output.result, RoleResult::Accepted { .. }),
+        "valid PlannerOutput must be accepted; got {:?}",
+        output.result
+    );
+
+    let requests = provider.requests.borrow();
+    assert_eq!(
+        requests[0].output_schema,
+        Some(StructuredOutput::Grammar(PLANNER_GBNF_NO_WORK.to_string())),
+        "a workerless adapter must request the no-work grammar"
+    );
+    assert!(
+        requests[0]
+            .prompt
+            .contains("`kind: \"work\"` is not available"),
+        "prompt must tell the model kind: work is unavailable; got:\n{}",
+        requests[0].prompt
+    );
+    assert!(
+        !requests[0].prompt.contains("Required `role` field"),
+        "a workerless adapter's prompt must never mention assigning a role; got:\n{}",
+        requests[0].prompt
+    );
+}
+
+#[test]
+fn planner_producer_grammar_and_footer_offer_work_with_worker_roles() {
+    // Invariant: a Plan node under an adapter that defines worker roles
+    // keeps the with-operation, with-roles grammar and footer — `kind:
+    // "work"` remains available and `role` is required.
     use crate::roles::policy::PLANNER_GBNF_WITH_ROLES;
 
     let response = r#"{"tasks":[{"id":"t1","objective":"do the thing","operation":"modify","role":"implementer","targets":["thing.txt"],"depends_on":[]}]}"#;
     let provider = ScriptedProvider::from_strs(&[response]);
-    let runner = ProviderRoleRunner::new(&provider);
+    let policy = RolePolicy {
+        worker_role_descriptions: vec![(
+            "implementer".to_string(),
+            "Implements code changes.".to_string(),
+        )],
+        ..RolePolicy::default()
+    };
+    let runner = ProviderRoleRunner::new_with_policy(&provider, policy);
     let request = RoleRequest {
         node_kind: NodeKind::Plan,
         ..plan_request("plan the work")
@@ -354,7 +405,7 @@ fn planner_producer_grammar_and_footer_are_selected_by_node_kind() {
         Some(StructuredOutput::Grammar(
             PLANNER_GBNF_WITH_ROLES.to_string()
         )),
-        "must request the node-kind-specific grammar"
+        "an adapter with worker roles must request the with-roles grammar"
     );
     assert!(
         requests[0].prompt.contains("Required `role` field"),

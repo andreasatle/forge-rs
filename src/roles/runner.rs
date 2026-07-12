@@ -15,10 +15,8 @@ use crate::node_runner::planner::PlannerOutputProcessor;
 use crate::providers::{ProviderClient, ProviderErrorKind, ProviderRequest, StructuredOutput};
 use crate::roles::TargetView;
 use crate::roles::policy::{
-    PLANNER_GBNF, PLANNER_GBNF_WITH_ROLES, PLANNER_NO_OPERATION_GBNF,
-    PLANNER_PROTOCOL_FOOTER_WITH_OPERATION, PLANNER_PROTOCOL_FOOTER_WITH_OPERATION_AND_ROLES,
-    PRODUCER_GBNF, PRODUCER_TOOL_GBNF, REVIEWER_TOOL_GBNF, ROLE_GBNF, RolePolicy,
-    planner_protocol_schema_for, render_plugin_prompt,
+    PLANNER_GBNF_NO_WORK, PLANNER_GBNF_WITH_ROLES, PRODUCER_GBNF, PRODUCER_TOOL_GBNF,
+    REVIEWER_TOOL_GBNF, ROLE_GBNF, RolePolicy, planner_protocol_schema_for, render_plugin_prompt,
 };
 use crate::services::extract_json_object;
 use crate::telemetry::{TelemetryEvent, TelemetryRecord, TelemetrySink};
@@ -181,9 +179,11 @@ const MAX_RESPONSE_TOKENS: u32 = 1024;
 /// Select the GBNF grammar constraining a role's output to its exact
 /// response schema, rather than the generic JSON-object grammar.
 ///
-/// The `Plan` Producer's schema is resolved by [`planner_protocol_schema_for`]
-/// — the same resolution the retry prompt uses to show the model the correct
-/// schema variant.
+/// The `Plan` Producer's grammar depends on `has_worker_roles`, matching the
+/// footer text selected by [`planner_protocol_schema_for`] for the same
+/// flag: an adapter with at least one worker role gets the grammar that
+/// offers `kind: "work"`; an adapter with none never offers it, since there
+/// would be no role to assign a work task to.
 ///
 /// `tools_active` selects between the union tool-call-or-final-response
 /// grammar and the final-response-only grammar. It is `true` only while the
@@ -194,6 +194,7 @@ fn select_grammar(
     node_kind: &NodeKind,
     role: &DeliberationRole,
     tools_active: bool,
+    has_worker_roles: bool,
 ) -> &'static str {
     match role {
         DeliberationRole::Critic | DeliberationRole::Referee => {
@@ -212,13 +213,10 @@ fn select_grammar(
                 }
             }
             NodeKind::Plan => {
-                let schema = planner_protocol_schema_for();
-                if schema == PLANNER_PROTOCOL_FOOTER_WITH_OPERATION_AND_ROLES {
+                if has_worker_roles {
                     PLANNER_GBNF_WITH_ROLES
-                } else if schema == PLANNER_PROTOCOL_FOOTER_WITH_OPERATION {
-                    PLANNER_GBNF
                 } else {
-                    PLANNER_NO_OPERATION_GBNF
+                    PLANNER_GBNF_NO_WORK
                 }
             }
         },
@@ -281,7 +279,7 @@ pub(super) fn build_role_prompt(
         (NodeKind::Plan, DeliberationRole::Producer) => format!(
             "{}\n{}",
             policy.planner_producer_base,
-            planner_protocol_schema_for()
+            planner_protocol_schema_for(!policy.worker_role_descriptions.is_empty())
         ),
         (NodeKind::Plan, DeliberationRole::Critic) => policy.planner_critic_system.clone(),
         (NodeKind::Plan, DeliberationRole::Referee) => policy.planner_referee_system.clone(),
@@ -424,6 +422,7 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                 &request.node_kind,
                 &request.role,
                 has_tools && tools.allow_tool_call(),
+                !self.policy.worker_role_descriptions.is_empty(),
             );
 
             let response = match self.provider.call(ProviderRequest {
@@ -495,7 +494,8 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                     &no_required_test_targets,
                     &self.policy.worker_role_descriptions,
                 );
-                let planner_schema = planner_protocol_schema_for();
+                let planner_schema =
+                    planner_protocol_schema_for(!self.policy.worker_role_descriptions.is_empty());
                 // Direct PlannerOutput path: no status/content wrapper.
                 let outcome = match processor.parse_response(&response.content) {
                     Ok(out) => match processor.validate(&out) {

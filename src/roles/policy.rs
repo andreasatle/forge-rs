@@ -85,49 +85,11 @@ string ::=
 ws ::= ([ \t\n] ws)?"#;
 
 /// GBNF grammar constraining output to the `PlannerOutput` schema used by
-/// adapters that model tasks as concrete operations
-/// (`{"kind":"work|plan","tasks":[{"id":...,"objective":...,"operation":"create|modify|delete","role":...,"targets":[...],"depends_on":[...]}]}`).
-/// The top-level `kind` field is optional (grammar permits its omission,
-/// defaulting to `work` on the parsing side); `targets` may be empty since
-/// `kind: "plan"` tasks have no concrete files yet. `role` is optional
-/// (grammar permits its omission, defaulting to no assigned role on the
-/// parsing side).
-pub(crate) const PLANNER_GBNF: &str = r#"root ::= "{" ws (kind-field ws "," ws)? "\"tasks\"" ws ":" ws "[" ws task (ws "," ws task)* ws "]" ws "}" ws
-kind-field ::= "\"kind\"" ws ":" ws ("\"work\"" | "\"plan\"")
-task ::= "{" ws "\"id\"" ws ":" ws string ws "," ws "\"objective\"" ws ":" ws string ws "," ws "\"operation\"" ws ":" ws operation ws "," ws (role-field ws "," ws)? "\"targets\"" ws ":" ws string-array ws "," ws "\"depends_on\"" ws ":" ws string-array ws "}" ws
-operation ::= "\"create\"" | "\"modify\"" | "\"delete\""
-role-field ::= "\"role\"" ws ":" ws string
-string-array ::= "[" ws (string (ws "," ws string)*)? ws "]" ws
-
-string ::=
-  "\"" (
-    [^\\"\x7F\x00-\x1F] |
-    "\\" (["\\/bfnrt] | "u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F])
-  )* "\"" ws
-
-ws ::= ([ \t\n] ws)?"#;
-
-/// GBNF grammar constraining output to the `PlannerOutput` schema used by
-/// [`crate::project::DefaultProjectAdapter`], whose tasks have no `operation`
-/// field
-/// (`{"tasks":[{"id":...,"objective":...,"targets":[...],"depends_on":[...]}]}`).
-pub(crate) const PLANNER_NO_OPERATION_GBNF: &str = r#"root ::= "{" ws "\"tasks\"" ws ":" ws "[" ws task (ws "," ws task)* ws "]" ws "}" ws
-task ::= "{" ws "\"id\"" ws ":" ws string ws "," ws "\"objective\"" ws ":" ws string ws "," ws "\"targets\"" ws ":" ws string-array-nonempty ws "," ws "\"depends_on\"" ws ":" ws string-array ws "}" ws
-string-array-nonempty ::= "[" ws (string (ws "," ws string)*) ws "]" ws
-string-array ::= "[" ws (string (ws "," ws string)*)? ws "]" ws
-
-string ::=
-  "\"" (
-    [^\\"\x7F\x00-\x1F] |
-    "\\" (["\\/bfnrt] | "u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F])
-  )* "\"" ws
-
-ws ::= ([ \t\n] ws)?"#;
-
-/// GBNF grammar constraining output to the `PlannerOutput` schema used by
-/// adapters that define worker roles: identical to [`PLANNER_GBNF`] except
-/// `role` is a required field rather than an optional one, since the planner
-/// must assign every task to one of the adapter's configured worker roles.
+/// adapters that define worker roles: the top-level `kind` field is
+/// optional, defaulting to `work` on the parsing side when omitted, and
+/// `role` is a required field on every `work`/`plan` task, since the planner
+/// must assign every such task to one of the adapter's configured worker
+/// roles.
 ///
 /// Also accepts a third top-level `kind`: `"task"`, whose tasks are pure
 /// planner intent (see [`crate::node_runner::planner::PlannerOutputKind::Task`])
@@ -141,6 +103,32 @@ kind-field ::= "\"kind\"" ws ":" ws ("\"work\"" | "\"plan\"")
 task ::= "{" ws "\"id\"" ws ":" ws string ws "," ws "\"objective\"" ws ":" ws string ws "," ws "\"operation\"" ws ":" ws operation ws "," ws role-field ws "," ws "\"targets\"" ws ":" ws string-array ws "," ws "\"depends_on\"" ws ":" ws string-array ws "}" ws
 operation ::= "\"create\"" | "\"modify\"" | "\"delete\""
 role-field ::= "\"role\"" ws ":" ws string
+string-array ::= "[" ws (string (ws "," ws string)*)? ws "]" ws
+
+task-output ::= "{" ws "\"kind\"" ws ":" ws "\"task\"" ws "," ws "\"tasks\"" ws ":" ws "[" ws task-record (ws "," ws task-record)* ws "]" ws "}" ws
+task-record ::= "{" ws "\"id\"" ws ":" ws string ws "," ws "\"objective\"" ws ":" ws string ws "," ws "\"name\"" ws ":" ws string ws "," ws "\"depends_on\"" ws ":" ws string-array ws "}" ws
+
+string ::=
+  "\"" (
+    [^\\"\x7F\x00-\x1F] |
+    "\\" (["\\/bfnrt] | "u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F])
+  )* "\"" ws
+
+ws ::= ([ \t\n] ws)?"#;
+
+/// GBNF grammar constraining output to the `PlannerOutput` schema used by
+/// adapters that define **no** worker roles: there is no role to assign a
+/// work task to, so the top-level `kind` field is mandatory and restricted
+/// to `"plan"` or `"task"` — `"work"` is never grammar-legal, and cannot be
+/// reached by omitting `kind` either, since omission is not permitted by
+/// this grammar at all.
+///
+/// Per-task shape otherwise matches [`PLANNER_GBNF_WITH_ROLES`], minus the
+/// `role` field.
+pub(crate) const PLANNER_GBNF_NO_WORK: &str = r#"root ::= plan-output | task-output
+plan-output ::= "{" ws "\"kind\"" ws ":" ws "\"plan\"" ws "," ws "\"tasks\"" ws ":" ws "[" ws task (ws "," ws task)* ws "]" ws "}" ws
+task ::= "{" ws "\"id\"" ws ":" ws string ws "," ws "\"objective\"" ws ":" ws string ws "," ws "\"operation\"" ws ":" ws operation ws "," ws "\"targets\"" ws ":" ws string-array ws "," ws "\"depends_on\"" ws ":" ws string-array ws "}" ws
+operation ::= "\"create\"" | "\"modify\"" | "\"delete\""
 string-array ::= "[" ws (string (ws "," ws string)*)? ws "]" ws
 
 task-output ::= "{" ws "\"kind\"" ws ":" ws "\"task\"" ws "," ws "\"tasks\"" ws ":" ws "[" ws task-record (ws "," ws task-record)* ws "]" ws "}" ws
@@ -193,7 +181,8 @@ There is no rejected response — a valid summary means the work is done.";
 /// no `operation` field — targets alone describe the task.
 ///
 /// Framework protocol, shared by every adapter that models tasks without
-/// concrete create/modify/delete operations — see [`PLANNER_PROTOCOL_FOOTER_WITH_OPERATION`].
+/// concrete create/modify/delete operations — see
+/// [`PLANNER_PROTOCOL_FOOTER_WITH_OPERATION_AND_ROLES`].
 pub(crate) const PLANNER_PROTOCOL_FOOTER: &str = "PlannerOutput: `tasks` must be a non-empty array.\n\
 Each task requires `id`, `objective`, `targets`, and `depends_on`.\n\
 Each `targets` array must be non-empty and list exact files the task may create, modify, or delete.";
@@ -222,27 +211,9 @@ Implement the requested change precisely. Use available file tools to read, modi
 artifact files. Use tools before making assumptions about file contents — inspect files before \
 editing them.";
 
-/// JSON protocol instructions for planner-style roles whose task schema
-/// includes an explicit `operation` field (`create`/`modify`/`delete`)
-/// alongside `targets`.
-///
-/// Framework protocol, shared by every adapter that models tasks as
-/// concrete artifact operations — see [`DEFAULT_SYSTEM`].
-pub(crate) const PLANNER_PROTOCOL_FOOTER_WITH_OPERATION: &str = "PlannerOutput: `tasks` must be a non-empty array.\n\
-Each task requires `id`, `objective`, `operation`, `targets`, and `depends_on`.\n\
-`operation` must be \"create\", \"modify\", or \"delete\".\n\
-Each `targets` array must be non-empty and list exact files the task may create, modify, or delete.\n\
-Optional `role` field: the name of one of the available worker roles to assign this task to. \
-Omit `role` to leave the task unassigned.\n\
-Optional top-level `kind` field: \"work\" (default when omitted) or \"plan\". \
-When `kind` is \"plan\", every task becomes a further planning node instead of a work node, and `targets` may be empty. \
-All tasks in one PlannerOutput share the same kind — never mix work and plan tasks in one response.";
-
 /// JSON protocol instructions for planner-style roles under an adapter that
-/// defines worker roles: identical to
-/// [`PLANNER_PROTOCOL_FOOTER_WITH_OPERATION`] except `role` is described as
-/// required, since every task must be assigned to one of the worker roles
-/// listed earlier in the prompt rather than left unassigned.
+/// defines worker roles: every `work`/`plan` task must be assigned to one of
+/// the worker roles listed earlier in the prompt.
 pub(crate) const PLANNER_PROTOCOL_FOOTER_WITH_OPERATION_AND_ROLES: &str = "PlannerOutput: `tasks` must be a non-empty array.\n\
 Each task requires `id`, `objective`, `operation`, `role`, `targets`, and `depends_on`.\n\
 `operation` must be \"create\", \"modify\", or \"delete\".\n\
@@ -252,6 +223,21 @@ Every task must be assigned to one of those roles.\n\
 Optional top-level `kind` field: \"work\" (default when omitted), \"plan\", or \"task\". \
 When `kind` is \"plan\", every task becomes a further planning node instead of a work node, and `targets` may be empty. \
 When `kind` is \"task\", `kind` must be stated explicitly and each task requires only `id`, `objective`, `name`, and `depends_on` — no `operation`, `role`, or `targets`. \
+`name` must be a bare symbol or concept identifier (e.g. \"fibonacci\"), not a file path or location.\n\
+All tasks in one PlannerOutput share the same kind — never mix kinds in one response.";
+
+/// JSON protocol instructions for planner-style roles under an adapter that
+/// defines no worker roles: there is no role to assign a work task to, so
+/// `kind: "work"` is never offered — the planner must either escalate to
+/// further planning (`kind: "plan"`) or emit pure planner intent
+/// (`kind: "task"`), and must state `kind` explicitly since there is no
+/// `work` default to fall back on.
+pub(crate) const PLANNER_PROTOCOL_FOOTER_WITH_OPERATION_NO_WORK: &str = "PlannerOutput: `tasks` must be a non-empty array.\n\
+Required top-level `kind` field: \"plan\" or \"task\" — this adapter defines no worker roles, so `kind: \"work\"` is not available.\n\
+When `kind` is \"plan\", each task requires `id`, `objective`, `operation`, `targets`, and `depends_on`; \
+`operation` must be \"create\", \"modify\", or \"delete\"; \
+`targets` may be empty since the task escalates to further planning instead of naming concrete files yet.\n\
+When `kind` is \"task\", each task requires only `id`, `objective`, `name`, and `depends_on` — no `operation` or `targets`. \
 `name` must be a bare symbol or concept identifier (e.g. \"fibonacci\"), not a file path or location.\n\
 All tasks in one PlannerOutput share the same kind — never mix kinds in one response.";
 
@@ -468,15 +454,27 @@ impl Default for RolePolicy {
 /// The planner protocol footer — and therefore the task output schema — for
 /// a Plan Producer.
 ///
-/// The [Plan node](crate::machines::scheduler::NodeKind::Plan) always uses
-/// the fixed with-operation, with-roles schema: it is the point where tasks
-/// may be assigned worker roles and concrete file operations, or escalate to
-/// further planning. Callers only ever invoke this for a Plan node — the
-/// [Work node](crate::machines::scheduler::NodeKind::Work) builds its
-/// Producer system prompt from `worker_producer_system` instead.
-pub(crate) fn planner_protocol_schema_for() -> &'static str {
-    PLANNER_PROTOCOL_FOOTER_WITH_OPERATION_AND_ROLES
+/// The [Plan node](crate::machines::scheduler::NodeKind::Plan) is the point
+/// where tasks may be assigned worker roles and concrete file operations, or
+/// escalate to further planning. `has_worker_roles` must reflect whether the
+/// active adapter's [`RolePolicy::worker_role_descriptions`] is non-empty:
+/// `kind: "work"` is only offered when there is at least one worker role to
+/// assign a work task to — an adapter with none (e.g. a pure decomposition
+/// adapter with no `workers:` configured) can only escalate to further
+/// planning or emit pure planner intent. Callers only ever invoke this for a
+/// Plan node — the [Work node](crate::machines::scheduler::NodeKind::Work)
+/// builds its Producer system prompt from `worker_producer_system` instead.
+pub(crate) fn planner_protocol_schema_for(has_worker_roles: bool) -> &'static str {
+    if has_worker_roles {
+        PLANNER_PROTOCOL_FOOTER_WITH_OPERATION_AND_ROLES
+    } else {
+        PLANNER_PROTOCOL_FOOTER_WITH_OPERATION_NO_WORK
+    }
 }
+
+#[cfg(test)]
+#[path = "gbnf_check.rs"]
+pub(crate) mod gbnf_check;
 
 #[cfg(test)]
 #[path = "policy_tests.rs"]
