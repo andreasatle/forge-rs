@@ -308,6 +308,20 @@ fn compose_section(generic: &str, adapter: &str, plugin: Option<&str>) -> String
         .join("\n")
 }
 
+/// Render a composed section's lines as a markdown bullet list, one `-` item
+/// per line — each layer in `adapters/*.yaml` writes one sentence per line,
+/// so this preserves that structure instead of collapsing it into a single
+/// paragraph.
+fn to_bullets(section: &str) -> String {
+    section
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(|line| format!("- {line}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// Render a role prompt's identity, context, instructions, and constraints as
 /// separate labeled sections, composing the generic prompt layer, the
 /// adapter's role-specific layer, and the language plugin's layer (when
@@ -337,8 +351,10 @@ pub(crate) fn render_role_prompt(
         &adapter.constraints,
         plugin.map(|p| p.constraints.as_str()),
     );
+    let instructions = to_bullets(&instructions);
+    let constraints = to_bullets(&constraints);
     format!(
-        "Identity:\n{identity}\n\nContext:\n{context}\n\nInstructions:\n{instructions}\n\nConstraints:\n{constraints}"
+        "# Identity\n{identity}\n\n# Context\n{context}\n\n# Instructions\n{instructions}\n\n# Constraints\n{constraints}"
     )
 }
 

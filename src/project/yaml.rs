@@ -232,16 +232,32 @@ mod tests {
     /// without requiring the text between or around them to match exactly —
     /// so unrelated formatting changes to the framework constants being
     /// composed don't break the test.
-    fn assert_ordered_sections(haystack: &str, needles: &[&str]) {
+    fn assert_ordered_sections(haystack: &str, needles: &[String]) {
         let mut search_from = 0;
         for needle in needles {
-            let found_at = haystack[search_from..].find(needle).unwrap_or_else(|| {
+            let found_at = haystack[search_from..].find(needle.as_str()).unwrap_or_else(|| {
                 panic!(
                     "expected {needle:?} to appear at or after position {search_from} in:\n{haystack}"
                 )
             });
             search_from += found_at + needle.len();
         }
+    }
+
+    /// The Instructions/Constraints sections render as one markdown `-`
+    /// bullet per composed line, matching how `adapters/*.yaml` writes one
+    /// sentence per line — split `s` the same way so needles built from raw
+    /// config strings still line up with the rendered bullets.
+    fn bullets(s: &str) -> Vec<String> {
+        s.lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(|line| format!("- {line}"))
+            .collect()
+    }
+
+    fn strings(items: &[&str]) -> Vec<String> {
+        items.iter().map(|s| s.to_string()).collect()
     }
 
     #[test]
@@ -255,44 +271,40 @@ mod tests {
         let policy = adapter().role_policy();
         let generic = generic_prompt();
 
-        assert_ordered_sections(
-            &policy.planner_producer_system,
-            &[
-                "Identity:",
-                PLANNER_PRODUCER_IDENTITY,
-                &generic.identity,
-                "plan it identity",
-                "Context:",
-                &generic.context,
-                "plan it context",
-                "Instructions:",
-                &generic.instructions,
-                "plan it",
-                "Constraints:",
-                &generic.constraints,
-                "plan bounds",
-                PLANNER_PROTOCOL_FOOTER_WITH_OPERATION_AND_ROLES,
-            ],
-        );
-        assert_ordered_sections(
-            &policy.worker_producer_system,
-            &[
-                "Identity:",
-                WORKER_PRODUCER_IDENTITY,
-                &generic.identity,
-                "build it identity",
-                "Context:",
-                &generic.context,
-                "build it context",
-                "Instructions:",
-                &generic.instructions,
-                "build it",
-                "Constraints:",
-                &generic.constraints,
-                "build bounds",
-                WORK_PRODUCER_SYSTEM,
-            ],
-        );
+        let mut needles = strings(&[
+            "# Identity",
+            PLANNER_PRODUCER_IDENTITY,
+            &generic.identity,
+            "plan it identity",
+            "# Context",
+            &generic.context,
+            "plan it context",
+            "# Instructions",
+        ]);
+        needles.extend(bullets("plan it"));
+        needles.push("# Constraints".to_string());
+        needles.extend(bullets(&generic.constraints));
+        needles.extend(bullets("plan bounds"));
+        needles.push(PLANNER_PROTOCOL_FOOTER_WITH_OPERATION_AND_ROLES.to_string());
+        assert_ordered_sections(&policy.planner_producer_system, &needles);
+
+        let mut needles = strings(&[
+            "# Identity",
+            WORKER_PRODUCER_IDENTITY,
+            &generic.identity,
+            "build it identity",
+            "# Context",
+            &generic.context,
+            "build it context",
+            "# Instructions",
+        ]);
+        needles.extend(bullets("build it"));
+        needles.push("# Constraints".to_string());
+        needles.extend(bullets(&generic.constraints));
+        needles.extend(bullets("build bounds"));
+        needles.push(WORK_PRODUCER_SYSTEM.to_string());
+        assert_ordered_sections(&policy.worker_producer_system, &needles);
+
         for (system, instructions, constraints) in [
             (
                 &policy.planner_critic_system,
@@ -315,24 +327,21 @@ mod tests {
                 "decide work bounds",
             ),
         ] {
-            assert_ordered_sections(
-                system,
-                &[
-                    "Identity:",
-                    &generic.identity,
-                    &format!("{instructions} identity"),
-                    "Context:",
-                    &generic.context,
-                    &format!("{instructions} context"),
-                    "Instructions:",
-                    &generic.instructions,
-                    instructions,
-                    "Constraints:",
-                    &generic.constraints,
-                    constraints,
-                    DEFAULT_SYSTEM,
-                ],
-            );
+            let mut needles = strings(&[
+                "# Identity",
+                &generic.identity,
+                &format!("{instructions} identity"),
+                "# Context",
+                &generic.context,
+                &format!("{instructions} context"),
+                "# Instructions",
+            ]);
+            needles.extend(bullets(instructions));
+            needles.push("# Constraints".to_string());
+            needles.extend(bullets(&generic.constraints));
+            needles.extend(bullets(constraints));
+            needles.push(DEFAULT_SYSTEM.to_string());
+            assert_ordered_sections(system, &needles);
         }
     }
 
