@@ -2,14 +2,21 @@ use super::*;
 
 // ── artifact integration tests ────────────────────────────────────────────
 
-/// Records the artifact view received on each `run_node` call.
+/// Records the artifact view received on each `run_node` call. `Mutex`
+/// (rather than `RefCell`) is required only so the type is `Sync`, as the
+/// scheduler driver shares `&NodeRunner` across dispatch threads; every
+/// test here runs with `dispatch_cap: 1` (via `RunConfig::default()`), so
+/// at most one node is ever in flight.
 struct ViewCapturingRunner {
-    views: Rc<RefCell<Vec<Option<ArtifactView>>>>,
+    views: Arc<Mutex<Vec<Option<ArtifactView>>>>,
 }
 
 impl NodeRunner for ViewCapturingRunner {
     fn run_node(&self, request: NodeRunRequest, _telemetry: &dyn TelemetrySink) -> NodeRunResult {
-        self.views.borrow_mut().push(request.artifact_view);
+        self.views
+            .lock()
+            .expect("mutex poisoned")
+            .push(request.artifact_view);
         NodeRunResult::WorkAccepted(NodeRunWorkResult {
             work: WorkOutput {
                 summary: "captured".to_string(),
@@ -20,14 +27,14 @@ impl NodeRunner for ViewCapturingRunner {
 
 /// On the first call writes a file; on the second call records the received view.
 struct TwoStepRunner {
-    call_count: RefCell<u32>,
-    second_view: Rc<RefCell<Option<ArtifactView>>>,
+    call_count: Mutex<u32>,
+    second_view: Arc<Mutex<Option<ArtifactView>>>,
 }
 
 impl NodeRunner for TwoStepRunner {
     fn run_node(&self, request: NodeRunRequest, _telemetry: &dyn TelemetrySink) -> NodeRunResult {
         let count = {
-            let mut c = self.call_count.borrow_mut();
+            let mut c = self.call_count.lock().expect("mutex poisoned");
             *c += 1;
             *c
         };
@@ -48,7 +55,7 @@ impl NodeRunner for TwoStepRunner {
                 })
             }
             2 => {
-                *self.second_view.borrow_mut() = request.artifact_view;
+                *self.second_view.lock().expect("mutex poisoned") = request.artifact_view;
                 request
                     .work_attempt
                     .expect("work node must receive an attempt workspace")
@@ -69,7 +76,7 @@ impl NodeRunner for TwoStepRunner {
 }
 
 struct DirtyThenRetryRunner {
-    saw_clean_retry: Rc<RefCell<bool>>,
+    saw_clean_retry: Arc<Mutex<bool>>,
 }
 
 impl NodeRunner for DirtyThenRetryRunner {
@@ -95,7 +102,7 @@ impl NodeRunner for DirtyThenRetryRunner {
             });
         }
 
-        *self.saw_clean_retry.borrow_mut() = !dirty_path.exists();
+        *self.saw_clean_retry.lock().expect("mutex poisoned") = !dirty_path.exists();
         attempt
             .workspace
             .lock()
@@ -111,13 +118,13 @@ impl NodeRunner for DirtyThenRetryRunner {
 }
 
 struct SchedulerScriptedProvider {
-    responses: RefCell<std::collections::VecDeque<String>>,
+    responses: Mutex<std::collections::VecDeque<String>>,
 }
 
 impl SchedulerScriptedProvider {
     fn from_strs(responses: &[&str]) -> Self {
         Self {
-            responses: RefCell::new(responses.iter().map(|s| s.to_string()).collect()),
+            responses: Mutex::new(responses.iter().map(|s| s.to_string()).collect()),
         }
     }
 }
@@ -129,7 +136,8 @@ impl crate::providers::ProviderClient for SchedulerScriptedProvider {
     ) -> Result<crate::providers::ProviderResponse, crate::providers::ProviderError> {
         let content = self
             .responses
-            .borrow_mut()
+            .lock()
+            .expect("mutex poisoned")
             .pop_front()
             .expect("SchedulerScriptedProvider: responses exhausted");
         Ok(crate::providers::ProviderResponse {
@@ -144,7 +152,7 @@ fn scheduler_handler_passes_artifact_view_to_node_runner() {
     let (_temp, artifact) = fixture("passes-view");
     let expected_sha = artifact.commit_sha.clone();
 
-    let views = Rc::new(RefCell::new(Vec::new()));
+    let views = Arc::new(Mutex::new(Vec::new()));
     let runner = ViewCapturingRunner {
         views: views.clone(),
     };
@@ -165,7 +173,7 @@ fn scheduler_handler_passes_artifact_view_to_node_runner() {
         northstar: String::new(),
     });
 
-    let captured = views.borrow();
+    let captured = views.lock().expect("mutex poisoned");
     assert_eq!(captured.len(), 1, "runner must be called exactly once");
     let view = captured[0]
         .as_ref()
@@ -254,8 +262,8 @@ fn two_teams_completing_the_same_task_id_share_the_manifest_row_id() {
     let repo_path = artifact.repo_path.clone();
 
     let runner = TwoStepRunner {
-        call_count: RefCell::new(0),
-        second_view: Rc::new(RefCell::new(None)),
+        call_count: Mutex::new(0),
+        second_view: Arc::new(Mutex::new(None)),
     };
 
     let mut node_a = work_node_with_deps("A", "team-a does its part", &[]);
@@ -300,9 +308,9 @@ fn two_teams_completing_the_same_task_id_share_the_manifest_row_id() {
 fn second_work_node_sees_first_work_node_changes() {
     let (_temp, artifact) = fixture("second-sees-first");
 
-    let second_view = Rc::new(RefCell::new(None));
+    let second_view = Arc::new(Mutex::new(None));
     let runner = TwoStepRunner {
-        call_count: RefCell::new(0),
+        call_count: Mutex::new(0),
         second_view: second_view.clone(),
     };
 
@@ -317,7 +325,7 @@ fn second_work_node_sees_first_work_node_changes() {
     };
     run_scheduler(SchedulerHandler::with_artifact(runner, artifact), state);
 
-    let view = second_view.borrow();
+    let view = second_view.lock().expect("mutex poisoned");
     let view = view
         .as_ref()
         .expect("node B must receive Some(ArtifactView)");
@@ -362,7 +370,7 @@ fn work_node_without_update_preserves_commit() {
 fn rejected_work_attempt_records_evidence_and_retry_starts_clean() {
     let (_temp, artifact) = fixture("rejected-evidence-clean-retry");
     let telemetry = Arc::new(VecTelemetry::new());
-    let saw_clean_retry = Rc::new(RefCell::new(false));
+    let saw_clean_retry = Arc::new(Mutex::new(false));
     let runner = DirtyThenRetryRunner {
         saw_clean_retry: saw_clean_retry.clone(),
     };
@@ -384,7 +392,7 @@ fn rejected_work_attempt_records_evidence_and_retry_starts_clean() {
     assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
     assert_eq!(graph.nodes[1].status, NodeStatus::Completed);
     assert!(
-        *saw_clean_retry.borrow(),
+        *saw_clean_retry.lock().expect("mutex poisoned"),
         "retry must start from a clean worktree"
     );
 

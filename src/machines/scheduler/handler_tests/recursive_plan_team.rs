@@ -2,6 +2,7 @@ use super::*;
 
 use std::collections::VecDeque;
 use std::path::Path;
+use std::sync::Mutex;
 
 use crate::config::ForgeConfig;
 use crate::machines::scheduler::run_scheduler_with_telemetry;
@@ -43,30 +44,42 @@ plugins: []
 }
 
 /// Records every prompt it is called with and replays scripted responses in
-/// order. Identical in shape to `multi_team::RecordingScriptedProvider`.
+/// order. Identical in shape to `multi_team::RecordingScriptedProvider`;
+/// `Mutex` (rather than `RefCell`) is required only so the type is `Sync`,
+/// as the scheduler driver shares `&NodeRunner` across dispatch threads.
+/// This fixture runs with `dispatch_cap: 1`, so at most one node is ever in
+/// flight and the scripted queue is still consumed in a fixed order.
 struct RecordingScriptedProvider {
-    prompts: RefCell<Vec<String>>,
-    responses: RefCell<VecDeque<String>>,
+    prompts: Mutex<Vec<String>>,
+    responses: Mutex<VecDeque<String>>,
 }
 
 impl RecordingScriptedProvider {
     fn from_strs(responses: &[&str]) -> Self {
         Self {
-            prompts: RefCell::new(Vec::new()),
-            responses: RefCell::new(responses.iter().map(|s| s.to_string()).collect()),
+            prompts: Mutex::new(Vec::new()),
+            responses: Mutex::new(responses.iter().map(|s| s.to_string()).collect()),
         }
     }
 }
 
 impl ProviderClient for RecordingScriptedProvider {
     fn call(&self, request: ProviderRequest) -> Result<ProviderResponse, ProviderError> {
-        self.prompts.borrow_mut().push(request.prompt.clone());
-        let content = self.responses.borrow_mut().pop_front().unwrap_or_else(|| {
-            panic!(
-                "RecordingScriptedProvider: responses exhausted; prompt was:\n{}",
-                request.prompt
-            )
-        });
+        self.prompts
+            .lock()
+            .expect("mutex poisoned")
+            .push(request.prompt.clone());
+        let content = self
+            .responses
+            .lock()
+            .expect("mutex poisoned")
+            .pop_front()
+            .unwrap_or_else(|| {
+                panic!(
+                    "RecordingScriptedProvider: responses exhausted; prompt was:\n{}",
+                    request.prompt
+                )
+            });
         Ok(ProviderResponse {
             content,
             finish_reason: None,

@@ -269,7 +269,10 @@ pub struct ValidationCommandFailure {
 }
 
 /// Validates a workspace before artifact integration.
-pub trait Validator {
+///
+/// `Send + Sync`: `IntegrationService` holds this behind an `Arc` shared with
+/// the scheduler's concurrently dispatching node threads.
+pub trait Validator: Send + Sync {
     /// Inspect `workspace` and return whether it is safe to integrate.
     fn validate(&self, workspace: &Workspace) -> ValidationResult;
 }

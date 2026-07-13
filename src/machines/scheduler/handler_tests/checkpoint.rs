@@ -4,13 +4,13 @@ use super::*;
 
 /// Captures the workspace path and controls whether validation passes or fails.
 struct PathCapturingValidator {
-    captured: Rc<RefCell<Option<std::path::PathBuf>>>,
+    captured: Arc<Mutex<Option<std::path::PathBuf>>>,
     pass: bool,
 }
 
 impl Validator for PathCapturingValidator {
     fn validate(&self, workspace: &Workspace) -> ValidationResult {
-        *self.captured.borrow_mut() = Some(workspace.path().to_path_buf());
+        *self.captured.lock().expect("mutex poisoned") = Some(workspace.path().to_path_buf());
         ValidationResult {
             passed: self.pass,
             summary: "path-capturing validator".to_string(),
@@ -30,7 +30,7 @@ fn temporary_workspace_removed_after_integration() {
             path: "output.txt".to_string(),
             content: "hello\n".to_string(),
         };
-        let captured = Rc::new(RefCell::new(None));
+        let captured = Arc::new(Mutex::new(None));
         let validator = PathCapturingValidator {
             captured: captured.clone(),
             pass,
@@ -67,7 +67,8 @@ fn temporary_workspace_removed_after_integration() {
         });
 
         let path = captured
-            .borrow()
+            .lock()
+            .expect("mutex poisoned")
             .clone()
             .expect("validator must have been called");
         assert!(

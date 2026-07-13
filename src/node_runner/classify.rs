@@ -31,7 +31,8 @@ pub fn classify_deliberation_failure(kind: FailureKind, message: &str) -> Recove
         | FailureKind::ToolFailure
         | FailureKind::PlannerValidationFailure
         | FailureKind::IntegrationFailure
-        | FailureKind::UserTaskRejection => RecoveryAction::Terminal {
+        | FailureKind::UserTaskRejection
+        | FailureKind::DispatchPanic => RecoveryAction::Terminal {
             message: format!("unrecoverable failure: {message}"),
         },
     }
@@ -64,6 +65,7 @@ mod tests {
             FailureKind::DeliberationFailure,
             FailureKind::IntegrationFailure,
             FailureKind::UserTaskRejection,
+            FailureKind::DispatchPanic,
         ];
         for kind in kinds {
             let a = classify_deliberation_failure(kind, "original wording");

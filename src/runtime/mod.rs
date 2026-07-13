@@ -7,6 +7,7 @@ mod outcome;
 mod provider_stack;
 mod repo;
 mod reset;
+mod resource_gated_provider;
 mod resource_manager;
 pub mod resume;
 mod run;
@@ -19,6 +20,7 @@ mod trace;
 pub use history::run_history;
 pub use repo::load_or_create_artifact;
 pub use reset::run_reset;
+pub use resource_gated_provider::ResourceGatedProvider;
 pub use resource_manager::{ResourceManager, ResourcePermit};
 pub use run::ForgeRuntime;
 pub use run_info::{

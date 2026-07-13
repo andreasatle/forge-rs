@@ -117,7 +117,7 @@ fn validation_failure_blocks_commit() {
 fn retry_worker_receives_validation_diagnostics_and_can_fix_file() {
     let (_temp, artifact) = fixture("validation-retry-fixes-file");
     let repo_path = artifact.repo_path.clone();
-    let requests = Rc::new(RefCell::new(Vec::new()));
+    let requests = Arc::new(Mutex::new(Vec::new()));
     let runner = FixOnValidationRetryRunner {
         requests: requests.clone(),
     };
@@ -144,7 +144,7 @@ fn retry_worker_receives_validation_diagnostics_and_can_fix_file() {
     assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
     assert_eq!(graph.nodes[1].status, NodeStatus::Completed);
 
-    let captured = requests.borrow();
+    let captured = requests.lock().expect("mutex poisoned");
     assert_eq!(captured.len(), 2, "worker must run twice");
     assert_eq!(captured[0].attempt, 0);
     assert_eq!(captured[1].attempt, 1);
@@ -318,7 +318,7 @@ fn validator_runs_after_workspace_mutation() {
         content: "applied content\n".to_string(),
     };
 
-    let found = Rc::new(RefCell::new(false));
+    let found = Arc::new(Mutex::new(false));
     let validator = FileExistsValidator {
         path: "applied.txt".to_string(),
         found: found.clone(),
@@ -355,7 +355,7 @@ fn validator_runs_after_workspace_mutation() {
     });
 
     assert!(
-        *found.borrow(),
+        *found.lock().expect("mutex poisoned"),
         "validator must see applied.txt in the WorkAttempt workspace"
     );
 }

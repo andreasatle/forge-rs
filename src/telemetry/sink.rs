@@ -1,6 +1,6 @@
 //! Telemetry sink trait and built-in implementations.
 
-use std::cell::RefCell;
+use std::sync::Mutex;
 
 use super::event::{TelemetryEvent, TelemetryRecord};
 
@@ -9,7 +9,11 @@ use super::event::{TelemetryEvent, TelemetryRecord};
 /// Implementations decide how to handle events: discard, collect in memory,
 /// or write to files. All methods take `&self` so that a sink can be passed
 /// by shared reference while the runner owns the machine.
-pub trait TelemetrySink {
+///
+/// `Send + Sync`: the scheduler's concurrent dispatch spawns one thread per
+/// in-flight node, each recording into the same shared sink, so every sink
+/// must tolerate calls to `record` arriving from multiple threads at once.
+pub trait TelemetrySink: Send + Sync {
     /// Records a single sourced telemetry event.
     fn record(&self, record: TelemetryRecord);
 }
@@ -26,25 +30,27 @@ impl TelemetrySink for NoopTelemetry {
 
 /// A sink that collects events in memory for inspection in tests.
 pub struct VecTelemetry {
-    records: RefCell<Vec<TelemetryRecord>>,
+    records: Mutex<Vec<TelemetryRecord>>,
 }
 
 impl VecTelemetry {
     /// Creates an empty `VecTelemetry`.
     pub fn new() -> Self {
         Self {
-            records: RefCell::new(Vec::new()),
+            records: Mutex::new(Vec::new()),
         }
     }
 
-    /// Returns a borrow of the collected records.
-    pub fn records(&self) -> std::cell::Ref<'_, Vec<TelemetryRecord>> {
-        self.records.borrow()
+    /// Returns a guard granting read access to the collected records so far.
+    pub fn records(&self) -> std::sync::MutexGuard<'_, Vec<TelemetryRecord>> {
+        self.records.lock().expect("vec telemetry mutex poisoned")
     }
 
     /// Consumes the sink and returns the collected events.
     pub fn into_records(self) -> Vec<TelemetryRecord> {
-        self.records.into_inner()
+        self.records
+            .into_inner()
+            .expect("vec telemetry mutex poisoned")
     }
 }
 
@@ -56,7 +62,10 @@ impl Default for VecTelemetry {
 
 impl TelemetrySink for VecTelemetry {
     fn record(&self, record: TelemetryRecord) {
-        self.records.borrow_mut().push(record);
+        self.records
+            .lock()
+            .expect("vec telemetry mutex poisoned")
+            .push(record);
     }
 }
 
@@ -69,7 +78,7 @@ impl TelemetrySink for VecTelemetry {
 pub struct ConsoleTelemetry<'a> {
     inner: &'a dyn TelemetrySink,
     label: String,
-    last_role: RefCell<Option<String>>,
+    last_role: Mutex<Option<String>>,
 }
 
 impl<'a> ConsoleTelemetry<'a> {
@@ -80,7 +89,7 @@ impl<'a> ConsoleTelemetry<'a> {
         Self {
             inner,
             label: label.into(),
-            last_role: RefCell::new(None),
+            last_role: Mutex::new(None),
         }
     }
 }
@@ -91,7 +100,10 @@ impl<'a> TelemetrySink for ConsoleTelemetry<'a> {
             TelemetryEvent::RolePromptRendered { .. } => {
                 if let Some(subsource) = &record.subsource {
                     let role = role_progress_label(subsource);
-                    let mut last = self.last_role.borrow_mut();
+                    let mut last = self
+                        .last_role
+                        .lock()
+                        .expect("console telemetry mutex poisoned");
                     if last.as_deref() != Some(subsource.as_str()) {
                         *last = Some(subsource.clone());
                         eprintln!("{} {role} start", self.label);

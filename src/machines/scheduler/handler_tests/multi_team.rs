@@ -2,6 +2,7 @@ use super::*;
 
 use std::collections::VecDeque;
 use std::path::Path;
+use std::sync::Mutex;
 
 use crate::config::ForgeConfig;
 use crate::machines::scheduler::run_scheduler_with_telemetry;
@@ -95,33 +96,48 @@ name_target_rules:
 /// Records every prompt it is called with (so tests can assert which
 /// adapter's marker text reached the model) and replays scripted responses
 /// in order.
+///
+/// This single-team-at-a-time fixture's graph has a strict dependency chain
+/// (root plan -> planner plan -> worker work), so even under concurrent
+/// dispatch at most one node is ever in flight — the scripted response
+/// queue is still consumed in a fixed, predictable order. `Mutex` (rather
+/// than `RefCell`) is required only so the type is `Sync`, as the scheduler
+/// driver shares `&NodeRunner` across dispatch threads.
 struct RecordingScriptedProvider {
-    prompts: RefCell<Vec<String>>,
-    responses: RefCell<VecDeque<String>>,
+    prompts: Mutex<Vec<String>>,
+    responses: Mutex<VecDeque<String>>,
 }
 
 impl RecordingScriptedProvider {
     fn from_strs(responses: &[&str]) -> Self {
         Self {
-            prompts: RefCell::new(Vec::new()),
-            responses: RefCell::new(responses.iter().map(|s| s.to_string()).collect()),
+            prompts: Mutex::new(Vec::new()),
+            responses: Mutex::new(responses.iter().map(|s| s.to_string()).collect()),
         }
     }
 
     fn recorded_prompts(&self) -> Vec<String> {
-        self.prompts.borrow().clone()
+        self.prompts.lock().expect("mutex poisoned").clone()
     }
 }
 
 impl ProviderClient for RecordingScriptedProvider {
     fn call(&self, request: ProviderRequest) -> Result<ProviderResponse, ProviderError> {
-        self.prompts.borrow_mut().push(request.prompt.clone());
-        let content = self.responses.borrow_mut().pop_front().unwrap_or_else(|| {
-            panic!(
-                "RecordingScriptedProvider: responses exhausted; prompt was:\n{}",
-                request.prompt
-            )
-        });
+        self.prompts
+            .lock()
+            .expect("mutex poisoned")
+            .push(request.prompt.clone());
+        let content = self
+            .responses
+            .lock()
+            .expect("mutex poisoned")
+            .pop_front()
+            .unwrap_or_else(|| {
+                panic!(
+                    "RecordingScriptedProvider: responses exhausted; prompt was:\n{}",
+                    request.prompt
+                )
+            });
         Ok(ProviderResponse {
             content,
             finish_reason: None,

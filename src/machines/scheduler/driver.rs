@@ -1,147 +1,152 @@
-//! Bridges the pure [`SchedulerMachine`] and the impure [`SchedulerHandler`]
-//! into something [`crate::engine::run_machine`] can drive.
+//! Drives the scheduler machine to completion, dispatching `RunNode` effects
+//! concurrently.
 //!
-//! Mirrors the role `DeliberatingMachine` plays for the deliberation machine
-//! (in `node_runner::deliberating`): neither `SchedulerMachine` nor
-//! `SchedulerHandler` implements the generic [`Machine`](crate::engine::Machine)
-//! trait itself, so a small owning wrapper composes them for the engine's
-//! runner loop.
+//! Unlike `DeliberatingMachine` (a single, purely sequential consumer of
+//! `engine::run_machine`), a scheduler `Start` tick can emit more than one
+//! `RunNode` effect at once (`RunConfig::dispatch_cap`). Those dispatches are
+//! independent LLM/tool-call round trips, so this module runs its own
+//! driving loop instead of routing through the domain-blind
+//! `engine::run_machine`: every `RunNode` effect is spawned on its own
+//! scoped thread, and results are funneled back through an `mpsc` channel
+//! and fed into `SchedulerMachine::transition` one at a time on the main
+//! thread — `transition` itself always stays single-threaded and pure.
+//! `IntegrateWork`/`IntegratePlannerTasks` effects still run synchronously
+//! on the main thread immediately after the event that produced them, since
+//! artifact integration must be serialized against the shared artifact/git
+//! state.
+//!
+//! `std::thread::scope` is used (rather than `std::thread::spawn`) so
+//! dispatch threads can borrow `&SchedulerHandler<R>` directly: every
+//! spawned thread is guaranteed to finish before this module's functions
+//! return, so no `'static` bound is required on `R`.
 
-use std::sync::Mutex;
+use std::any::Any;
+use std::collections::VecDeque;
+use std::panic::{self, AssertUnwindSafe};
+use std::sync::mpsc;
+use std::thread;
 
-use crate::engine::{Machine, Transition, run_machine, run_machine_with_telemetry};
-use crate::telemetry::{TelemetryEvent, TelemetryRecord, TelemetrySink};
+use crate::node_runner::NodeRunner;
+use crate::telemetry::{NoopTelemetry, TelemetryEvent, TelemetryRecord, TelemetrySink};
 
 use super::effect::SchedulerEffect;
 use super::event::SchedulerEvent;
+use super::failure::FailureKind;
 use super::handler::SchedulerHandler;
 use super::machine::{SchedulerMachine, SchedulerTerminalOutput};
 use super::state::SchedulerState;
-use crate::node_runner::NodeRunner;
+use super::types::{NodeFailure, RecoveryAction};
 
-struct SchedulerDriver<'a, R> {
-    handler: SchedulerHandler<R>,
-    /// The effect emitted by the most recent `transition` call, if any.
-    ///
-    /// Captured here so [`EffectContextTelemetry`] can attach `node_id` and
-    /// `attempt` to the `EffectEmitted` record the generic engine loop emits
-    /// immediately afterwards, without the domain-blind engine needing to
-    /// know about either field.
-    pending_effect: &'a Mutex<Option<SchedulerEffect>>,
-}
-
-impl<'a, R: NodeRunner> Machine for SchedulerDriver<'a, R> {
-    type State = SchedulerState;
-    type Event = SchedulerEvent;
-    type Effect = SchedulerEffect;
-    type Output = SchedulerTerminalOutput;
-
-    fn name(&self) -> String {
-        "SchedulerMachine".to_string()
-    }
-
-    fn start_event(&self) -> SchedulerEvent {
-        SchedulerMachine.start_event()
-    }
-
-    fn transition(
-        &self,
-        state: SchedulerState,
-        event: SchedulerEvent,
-    ) -> Transition<SchedulerState, SchedulerEffect> {
-        let transition = self.handler.transition(state, event);
-        *self
-            .pending_effect
-            .lock()
-            .expect("pending effect mutex poisoned") = transition.effects.first().cloned();
-        transition
-    }
-
-    fn handle_effect(&self, effect: SchedulerEffect) -> SchedulerEvent {
-        self.handler.handle_effect(effect)
-    }
-
-    fn output(&self, state: &SchedulerState) -> Option<SchedulerTerminalOutput> {
-        SchedulerMachine.output(state)
-    }
-}
+const MACHINE_NAME: &str = "SchedulerMachine";
 
 /// Drive a scheduler run to completion, discarding telemetry.
-pub fn run_scheduler<R: NodeRunner>(
+pub fn run_scheduler<R: NodeRunner + Sync>(
     handler: SchedulerHandler<R>,
     state: SchedulerState,
 ) -> SchedulerTerminalOutput {
-    let pending_effect = Mutex::new(None);
-    run_machine(
-        SchedulerDriver {
-            handler,
-            pending_effect: &pending_effect,
-        },
-        state,
-    )
+    run_scheduler_with_telemetry(handler, state, &NoopTelemetry).0
 }
 
 /// Drive a scheduler run to completion, recording telemetry at each step.
 ///
 /// `StateEntered` and `EventReceived` carry no `node_id`/`attempt`: scheduler
-/// state is the whole run graph, not a single node. `EffectEmitted` gets both
-/// fields when the effect is `RunNode` or `IntegrateWork`.
-pub fn run_scheduler_with_telemetry<R: NodeRunner>(
+/// state is the whole run graph, not a single node. `EffectEmitted` gets
+/// both fields when the effect is `RunNode` or `IntegrateWork`.
+///
+/// `R: Sync` because every in-flight `RunNode` dispatch shares `&handler`
+/// (and therefore `&R`) with every other concurrently-running dispatch
+/// thread.
+pub fn run_scheduler_with_telemetry<R: NodeRunner + Sync>(
     handler: SchedulerHandler<R>,
-    state: SchedulerState,
+    mut state: SchedulerState,
     telemetry: &dyn TelemetrySink,
 ) -> (SchedulerTerminalOutput, SchedulerHandler<R>) {
-    let pending_effect = Mutex::new(None);
-    let node_context = EffectContextTelemetry::new(telemetry, &pending_effect);
-    let (output, driver) = run_machine_with_telemetry(
-        SchedulerDriver {
-            handler,
-            pending_effect: &pending_effect,
+    telemetry.record(TelemetryRecord::new(
+        MACHINE_NAME,
+        TelemetryEvent::MachineStarted {
+            machine: MACHINE_NAME.to_string(),
         },
-        state,
-        &node_context,
+    ));
+
+    let mut pending_effects: VecDeque<SchedulerEffect> = VecDeque::new();
+    let mut in_flight: usize = 0;
+    let (tx, rx) = mpsc::channel::<SchedulerEvent>();
+    let mut event = SchedulerMachine.start_event();
+
+    let output = thread::scope(|scope| {
+        loop {
+            telemetry.record(TelemetryRecord::new(
+                MACHINE_NAME,
+                TelemetryEvent::StateEntered {
+                    machine: MACHINE_NAME.to_string(),
+                    state: format!("{state:#?}"),
+                },
+            ));
+            telemetry.record(TelemetryRecord::new(
+                MACHINE_NAME,
+                TelemetryEvent::EventReceived {
+                    machine: MACHINE_NAME.to_string(),
+                    event: format!("{event:#?}"),
+                },
+            ));
+
+            let transition = handler.transition(state, event);
+            state = transition.state;
+
+            if let Some(output) = SchedulerMachine.output(&state) {
+                return output;
+            }
+
+            pending_effects.extend(transition.effects);
+
+            event = loop {
+                let Some(effect) = pending_effects.pop_front() else {
+                    if in_flight == 0 {
+                        break SchedulerMachine.start_event();
+                    }
+                    let event = rx.recv().expect(
+                        "a spawned node-dispatch thread dropped its sender without a result",
+                    );
+                    in_flight -= 1;
+                    break event;
+                };
+
+                record_effect_emitted(telemetry, &effect);
+
+                if matches!(effect, SchedulerEffect::RunNode { .. }) {
+                    in_flight += 1;
+                    let tx = tx.clone();
+                    let handler_ref = &handler;
+                    scope.spawn(move || {
+                        let event = dispatch_catching_panics(handler_ref, effect);
+                        let _ = tx.send(event);
+                    });
+                    continue;
+                }
+
+                break handler.handle_effect(effect);
+            };
+        }
+    });
+
+    (output, handler)
+}
+
+/// Stamps `node_id`/`attempt` onto an `EffectEmitted` record when the effect
+/// is a `RunNode` or `IntegrateWork` dispatch.
+fn record_effect_emitted(telemetry: &dyn TelemetrySink, effect: &SchedulerEffect) {
+    let mut record = TelemetryRecord::new(
+        MACHINE_NAME,
+        TelemetryEvent::EffectEmitted {
+            machine: MACHINE_NAME.to_string(),
+            effect: format!("{effect:#?}"),
+        },
     );
-    (output, driver.handler)
-}
-
-/// Stamps `node_id` and `attempt` onto an `EffectEmitted` record when the
-/// effect it describes is a `RunNode` or `IntegrateWork` dispatch.
-///
-/// Reads the effect captured by [`SchedulerDriver::transition`] just before
-/// the generic engine loop records `EffectEmitted`, so the enrichment happens
-/// without changing the domain-blind engine itself.
-struct EffectContextTelemetry<'a> {
-    inner: &'a dyn TelemetrySink,
-    pending_effect: &'a Mutex<Option<SchedulerEffect>>,
-}
-
-impl<'a> EffectContextTelemetry<'a> {
-    fn new(
-        inner: &'a dyn TelemetrySink,
-        pending_effect: &'a Mutex<Option<SchedulerEffect>>,
-    ) -> Self {
-        Self {
-            inner,
-            pending_effect,
-        }
+    if let Some((node_id, attempt)) = effect_node_context(effect) {
+        record.node_id = Some(node_id);
+        record.attempt = Some(attempt);
     }
-}
-
-impl<'a> TelemetrySink for EffectContextTelemetry<'a> {
-    fn record(&self, mut record: TelemetryRecord) {
-        if matches!(record.event, TelemetryEvent::EffectEmitted { .. })
-            && let Some(effect) = self
-                .pending_effect
-                .lock()
-                .expect("pending effect mutex poisoned")
-                .take()
-            && let Some((node_id, attempt)) = effect_node_context(&effect)
-        {
-            record.node_id = Some(node_id);
-            record.attempt = Some(attempt);
-        }
-        self.inner.record(record);
-    }
+    telemetry.record(record);
 }
 
 /// Extracts `(node_id, attempt)` from the effect variants that carry them.
@@ -156,3 +161,49 @@ fn effect_node_context(effect: &SchedulerEffect) -> Option<(String, u32)> {
         SchedulerEffect::IntegratePlannerTasks { .. } => None,
     }
 }
+
+/// Executes a `RunNode` effect, converting a panic into a `NodeFailed` event
+/// instead of unwinding across the dispatch thread — a bug in one node's
+/// dispatch must not silently strand the scheduler waiting for a result that
+/// will never arrive, nor take the rest of the run down with it.
+fn dispatch_catching_panics<R: NodeRunner>(
+    handler: &SchedulerHandler<R>,
+    effect: SchedulerEffect,
+) -> SchedulerEvent {
+    let node_id = match &effect {
+        SchedulerEffect::RunNode { node_id, .. } => node_id.clone(),
+        _ => unreachable!("dispatch_catching_panics is only called for RunNode effects"),
+    };
+    match panic::catch_unwind(AssertUnwindSafe(|| handler.handle_effect(effect))) {
+        Ok(event) => event,
+        Err(payload) => {
+            let message = format!(
+                "node dispatch thread panicked: {}",
+                panic_message(payload.as_ref())
+            );
+            SchedulerEvent::NodeFailed {
+                node_id,
+                failure: NodeFailure {
+                    kind: FailureKind::DispatchPanic,
+                    message: message.clone(),
+                    recovery: RecoveryAction::Terminal { message },
+                },
+            }
+        }
+    }
+}
+
+/// Best-effort extraction of a human-readable message from a panic payload.
+fn panic_message(payload: &(dyn Any + Send)) -> String {
+    if let Some(s) = payload.downcast_ref::<&str>() {
+        (*s).to_string()
+    } else if let Some(s) = payload.downcast_ref::<String>() {
+        s.clone()
+    } else {
+        "non-string panic payload".to_string()
+    }
+}
+
+#[cfg(test)]
+#[path = "driver_tests.rs"]
+mod tests;

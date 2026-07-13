@@ -19,7 +19,7 @@
 //! - `types.rs` — scheduler support payload and recovery vocabulary
 //! - `machine.rs` — `SchedulerMachine` (pure transition/output), `SchedulerTerminalOutput`, `RecoverySummary`, and graph helpers
 //! - `handler.rs` — `SchedulerHandler`, the impure effect executor
-//! - `driver.rs` — `run_scheduler`/`run_scheduler_with_telemetry`, composing `SchedulerMachine` and `SchedulerHandler` into a drivable `Machine`
+//! - `driver.rs` — `run_scheduler`/`run_scheduler_with_telemetry`, driving `SchedulerMachine` and `SchedulerHandler` with concurrent `RunNode` dispatch
 //!
 //! # Output classification
 //!

@@ -32,6 +32,9 @@ pub struct ProviderTierMetadata {
     pub timeout_seconds: u64,
     /// Which HTTP API dialect `base_url` speaks for this tier.
     pub backend: ProviderBackend,
+    /// Number of concurrent requests this tier's server can serve at once.
+    /// Sizes this tier's [`crate::runtime::ResourceManager`] permit pool.
+    pub parallel: usize,
     /// Whether Forge owns the provider server process for this tier.
     pub managed: bool,
     /// Managed server metadata when `managed` is true.

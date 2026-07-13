@@ -1,8 +1,7 @@
-use std::cell::RefCell;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::rc::Rc;
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::*;
@@ -247,13 +246,13 @@ impl Validator for AlwaysFailValidator {
 /// Reads a specific file from the workspace and asserts it exists.
 struct FileExistsValidator {
     path: String,
-    found: Rc<RefCell<bool>>,
+    found: Arc<Mutex<bool>>,
 }
 
 impl Validator for FileExistsValidator {
     fn validate(&self, workspace: &Workspace) -> ValidationResult {
         let exists = workspace.path().join(&self.path).exists();
-        *self.found.borrow_mut() = exists;
+        *self.found.lock().expect("mutex poisoned") = exists;
         ValidationResult {
             passed: true,
             summary: format!("checked {}", self.path),
@@ -278,7 +277,7 @@ struct CapturedRequest {
 }
 
 struct FixOnValidationRetryRunner {
-    requests: Rc<RefCell<Vec<CapturedRequest>>>,
+    requests: Arc<Mutex<Vec<CapturedRequest>>>,
 }
 
 impl NodeRunner for FixOnValidationRetryRunner {
@@ -297,11 +296,14 @@ impl NodeRunner for FixOnValidationRetryRunner {
             .expect("workspace mutex poisoned")
             .write_file("main.py", content)
             .expect("test runner must write main.py");
-        self.requests.borrow_mut().push(CapturedRequest {
-            objective: request.objective,
-            target_files: request.target_files,
-            attempt: request.attempt,
-        });
+        self.requests
+            .lock()
+            .expect("mutex poisoned")
+            .push(CapturedRequest {
+                objective: request.objective,
+                target_files: request.target_files,
+                attempt: request.attempt,
+            });
         NodeRunResult::WorkAccepted(NodeRunWorkResult {
             work: WorkOutput {
                 summary: "wrote main.py".to_string(),

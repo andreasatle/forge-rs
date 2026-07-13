@@ -809,6 +809,67 @@ fn provider_timeout_defaults_reasonably() {
     );
 }
 
+#[test]
+fn dispatch_cap_defaults_to_four_when_absent() {
+    let tmp = TempYaml::new(EXAMPLE_YAML);
+    let config = ForgeConfig::from_file(tmp.path()).unwrap();
+    assert_eq!(
+        config.dispatch_cap, 4,
+        "absent dispatch_cap must default to 4"
+    );
+}
+
+const DISPATCH_CAP_YAML: &str = r#"
+objective: "test"
+artifact:
+  repo_path: ".forge/artifacts/main.git"
+  branch: "main"
+provider:
+  cheap:
+    unmanaged:
+      base_url: "http://localhost:8080"
+      model: "llama-test"
+      n_predict: 512
+telemetry:
+  directory: "runs"
+adapter: coding.yaml
+dispatch_cap: 8
+"#;
+
+#[test]
+fn parses_explicit_dispatch_cap() {
+    let tmp = TempYaml::new(DISPATCH_CAP_YAML);
+    let config = ForgeConfig::from_file(tmp.path()).unwrap();
+    assert_eq!(config.dispatch_cap, 8);
+}
+
+const ZERO_DISPATCH_CAP_YAML: &str = r#"
+objective: "test"
+artifact:
+  repo_path: ".forge/artifacts/main.git"
+  branch: "main"
+provider:
+  cheap:
+    unmanaged:
+      base_url: "http://localhost:8080"
+      model: "llama-test"
+      n_predict: 512
+telemetry:
+  directory: "runs"
+adapter: coding.yaml
+dispatch_cap: 0
+"#;
+
+#[test]
+fn dispatch_cap_zero_fails_at_load_time() {
+    let tmp = TempYaml::new(ZERO_DISPATCH_CAP_YAML);
+    let err = ForgeConfig::from_file(tmp.path()).unwrap_err();
+    assert!(
+        err.to_string().contains("dispatch_cap"),
+        "error must mention dispatch_cap; got: {err}"
+    );
+}
+
 const PROVIDER_TIMEOUT_YAML: &str = r#"
 objective: "test"
 artifact:

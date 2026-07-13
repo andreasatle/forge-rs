@@ -14,15 +14,18 @@ use crate::providers::{LlamaCppProvider, OllamaProvider, ProviderClient, Retryin
 use crate::runtime::managed_provider::{
     ManagedLlamaCppRuntimeConfig, ManagedProviderServer, resolve_llama_cpp_config,
 };
-use crate::runtime::{ManagedProviderServerMetadata, ProviderRunMetadata, ProviderTierMetadata};
+use crate::runtime::resource_gated_provider::ResourceGatedProvider;
+use crate::runtime::{
+    ManagedProviderServerMetadata, ProviderRunMetadata, ProviderTierMetadata, ResourceManager,
+};
 
 /// The fully resolved provider stack for a run: metadata for the manifest,
 /// live provider handles for the node runner, and any managed server
 /// processes kept alive for the lifetime of the stack.
 pub struct ResolvedProviderStack {
     pub metadata: ProviderRunMetadata,
-    pub cheap: RetryingProvider<Box<dyn ProviderClient>>,
-    pub strong: RetryingProvider<Box<dyn ProviderClient>>,
+    pub cheap: RetryingProvider<Box<dyn ProviderClient + Send + Sync>>,
+    pub strong: RetryingProvider<Box<dyn ProviderClient + Send + Sync>>,
     pub cheap_tokens: u32,
     pub strong_tokens: u32,
     _servers: Vec<ManagedProviderServer>,
@@ -31,15 +34,21 @@ pub struct ResolvedProviderStack {
 /// Build the [`ProviderClient`] a tier's metadata dictates, dispatching on
 /// [`ProviderTierMetadata::backend`] since llama.cpp and Ollama speak
 /// different HTTP APIs against the same `base_url`/`model` shape.
-fn build_tier_client(tier: &ProviderTierMetadata) -> Box<dyn ProviderClient> {
+///
+/// Wraps the raw client in a [`ResourceGatedProvider`] sized to the tier's
+/// own `parallel` count, below [`RetryingProvider`] in the stack (see
+/// [`ResourceGatedProvider`]'s doc comment) so each individual HTTP call —
+/// not the whole node dispatch — holds a permit.
+fn build_tier_client(tier: &ProviderTierMetadata) -> Box<dyn ProviderClient + Send + Sync> {
+    let resource_manager = ResourceManager::new(tier.parallel);
     match tier.backend {
-        ProviderBackend::LlamaCpp => {
-            Box::new(LlamaCppProvider::new(&tier.base_url, tier.timeout_seconds))
-        }
-        ProviderBackend::Ollama => Box::new(OllamaProvider::new(
-            &tier.base_url,
-            &tier.model,
-            tier.timeout_seconds,
+        ProviderBackend::LlamaCpp => Box::new(ResourceGatedProvider::new(
+            LlamaCppProvider::new(&tier.base_url, tier.timeout_seconds),
+            resource_manager,
+        )),
+        ProviderBackend::Ollama => Box::new(ResourceGatedProvider::new(
+            OllamaProvider::new(&tier.base_url, &tier.model, tier.timeout_seconds),
+            resource_manager,
         )),
     }
 }
@@ -114,6 +123,7 @@ impl<'a> ProviderStackBuilder<'a> {
                 n_predict: config.n_predict,
                 timeout_seconds,
                 backend: config.backend,
+                parallel: config.parallel,
                 managed: false,
                 managed_server: None,
             },
@@ -125,6 +135,7 @@ impl<'a> ProviderStackBuilder<'a> {
                     n_predict: managed.llama_cpp.n_predict,
                     timeout_seconds,
                     backend: ProviderBackend::LlamaCpp,
+                    parallel: config.parallel,
                     managed: true,
                     managed_server: Some(self.managed_server_metadata(&config)),
                 }
@@ -199,6 +210,7 @@ mod tests {
                 model: model.to_string(),
                 n_predict,
                 backend: ProviderBackend::LlamaCpp,
+                parallel: 1,
             }),
             strong: None,
             timeout_seconds: 120,
@@ -248,12 +260,14 @@ mod tests {
                 model: "cheap-model".to_string(),
                 n_predict: 512,
                 backend: ProviderBackend::LlamaCpp,
+                parallel: 1,
             }),
             strong: Some(ProviderTierConfig::Unmanaged(UnmanagedProviderConfig {
                 base_url: "http://localhost:8081".to_string(),
                 model: "strong-model".to_string(),
                 n_predict: 1024,
                 backend: ProviderBackend::LlamaCpp,
+                parallel: 1,
             })),
             timeout_seconds: 120,
             strong_timeout_seconds: Some(180),
@@ -270,6 +284,7 @@ mod tests {
                     n_predict: 512,
                     timeout_seconds: 120,
                     backend: ProviderBackend::LlamaCpp,
+                    parallel: 1,
                     managed: false,
                     managed_server: None,
                 },
@@ -279,6 +294,7 @@ mod tests {
                     n_predict: 1024,
                     timeout_seconds: 180,
                     backend: ProviderBackend::LlamaCpp,
+                    parallel: 1,
                     managed: false,
                     managed_server: None,
                 },
@@ -311,6 +327,7 @@ mod tests {
             n_predict: 512,
             timeout_seconds: 120,
             backend: ProviderBackend::LlamaCpp,
+            parallel: 1,
             managed: true,
             managed_server: Some(ManagedProviderServerMetadata {
                 kind: "llama_cpp".to_string(),
@@ -338,6 +355,7 @@ mod tests {
                 model: "models/cheap.gguf".to_string(),
                 n_predict: 512,
                 backend: ProviderBackend::LlamaCpp,
+                parallel: 1,
             }),
             strong: Some(managed_tier(
                 "/opt/llama-server",
@@ -363,6 +381,7 @@ mod tests {
                     n_predict: 512,
                     timeout_seconds: 120,
                     backend: ProviderBackend::LlamaCpp,
+                    parallel: 1,
                     managed: false,
                     managed_server: None,
                 },
@@ -372,6 +391,7 @@ mod tests {
                     n_predict: 1024,
                     timeout_seconds: 180,
                     backend: ProviderBackend::LlamaCpp,
+                    parallel: 1,
                     managed: true,
                     managed_server: Some(ManagedProviderServerMetadata {
                         kind: "llama_cpp".to_string(),

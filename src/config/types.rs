@@ -46,6 +46,24 @@ pub struct ForgeConfig {
     /// config file, like `artifact.repo_path`.
     #[serde(default)]
     pub adapter: String,
+    /// Maximum number of nodes the scheduler may have `Running`/`Integrating`
+    /// at once (`RunConfig::dispatch_cap`).
+    ///
+    /// This is a separate knob from any one provider's `--parallel`/
+    /// `ResourceManager` capacity: a node can be in flight — spawned,
+    /// running local tool calls, or blocked waiting for a provider permit —
+    /// without consuming a provider slot at every instant, so keeping more
+    /// nodes in flight than any single provider's concurrent-call capacity
+    /// keeps that provider saturated whenever a permit frees up. Defaults to
+    /// 4, a fixed value chosen to give real overlap for typical
+    /// `--parallel 2-4` provider setups without spawning an unbounded
+    /// number of dispatch threads.
+    #[serde(default = "default_dispatch_cap")]
+    pub dispatch_cap: usize,
+}
+
+fn default_dispatch_cap() -> usize {
+    4
 }
 
 /// One team entry in `teams`. A team executes work under its own northstar
@@ -174,7 +192,7 @@ fn default_managed_startup_timeout_seconds() -> u64 {
     60
 }
 
-fn default_managed_parallel() -> usize {
+fn default_parallel() -> usize {
     1
 }
 
@@ -247,6 +265,12 @@ pub struct UnmanagedProviderConfig {
     /// the dialect every unmanaged config used before `ollama` existed.
     #[serde(default)]
     pub backend: ProviderBackend,
+    /// Number of concurrent requests this already-running provider server
+    /// can safely serve at once. Sizes this tier's
+    /// [`crate::runtime::ResourceManager`] permit pool. Defaults to 1,
+    /// matching prior single-request behavior.
+    #[serde(default = "default_parallel")]
+    pub parallel: usize,
 }
 
 /// HTTP API dialect an unmanaged (or managed) provider server speaks.
@@ -292,10 +316,9 @@ pub struct ManagedLlamaCppConfig {
     /// Maximum tokens to predict per completion call.
     pub n_predict: usize,
     /// Number of concurrent slots to request from `llama-server` via
-    /// `--parallel`. Should match the permit count configured for this
-    /// provider's [`crate::runtime::ResourceManager`]. Defaults to 1,
-    /// matching prior single-request behavior.
-    #[serde(default = "default_managed_parallel")]
+    /// `--parallel`. Sizes this tier's [`crate::runtime::ResourceManager`]
+    /// permit pool. Defaults to 1, matching prior single-request behavior.
+    #[serde(default = "default_parallel")]
     pub parallel: usize,
 }
 
@@ -426,6 +449,10 @@ impl ForgeConfig {
         }
 
         validate_provider_model_identity(&config.provider)?;
+
+        if config.dispatch_cap == 0 {
+            return Err("dispatch_cap must be at least 1".into());
+        }
 
         Ok(config)
     }

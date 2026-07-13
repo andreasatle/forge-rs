@@ -161,15 +161,19 @@ fn artifact_commit_still_succeeds_when_telemetry_fails() {
 
 // ── shared-trace tests ────────────────────────────────────────────────────
 
-/// Scripted provider for shared-trace tests.
+/// Scripted provider for shared-trace tests. `Mutex` (rather than
+/// `RefCell`) is required only so the type is `Sync`, as the scheduler
+/// driver shares `&NodeRunner` across dispatch threads; every test here
+/// runs a single node at a time so the scripted queue is still consumed in
+/// a fixed order.
 struct ScriptedProvider {
-    responses: RefCell<std::collections::VecDeque<String>>,
+    responses: Mutex<std::collections::VecDeque<String>>,
 }
 
 impl ScriptedProvider {
     fn from_strs(responses: &[&str]) -> Self {
         Self {
-            responses: RefCell::new(responses.iter().map(|s| s.to_string()).collect()),
+            responses: Mutex::new(responses.iter().map(|s| s.to_string()).collect()),
         }
     }
 }
@@ -181,7 +185,8 @@ impl crate::providers::ProviderClient for ScriptedProvider {
     ) -> Result<crate::providers::ProviderResponse, crate::providers::ProviderError> {
         let content = self
             .responses
-            .borrow_mut()
+            .lock()
+            .expect("mutex poisoned")
             .pop_front()
             .expect("ScriptedProvider: responses exhausted");
         Ok(crate::providers::ProviderResponse {

@@ -49,6 +49,7 @@ fn make_forge_config(repo_path: &Path, telemetry_path: &Path) -> ForgeConfig {
                 model: "llama-test".to_string(),
                 n_predict: 512,
                 backend: ProviderBackend::LlamaCpp,
+                parallel: 1,
             }),
             strong: None,
             timeout_seconds: 120,
@@ -64,6 +65,7 @@ fn make_forge_config(repo_path: &Path, telemetry_path: &Path) -> ForgeConfig {
             .to_str()
             .unwrap()
             .to_string(),
+        dispatch_cap: 1,
     }
 }
 
@@ -144,6 +146,7 @@ fn make_forge_config_with_language(
                 model: "llama-test".to_string(),
                 n_predict: 512,
                 backend: ProviderBackend::LlamaCpp,
+                parallel: 1,
             }),
             strong: None,
             timeout_seconds: 120,
@@ -154,6 +157,7 @@ fn make_forge_config_with_language(
         },
         validation: None,
         adapter: adapter_path.to_str().unwrap().to_string(),
+        dispatch_cap: 1,
     }
 }
 
@@ -400,6 +404,7 @@ fn reset_creates_configured_branch() {
                     model: "llama-test".to_string(),
                     n_predict: 512,
                     backend: ProviderBackend::LlamaCpp,
+                    parallel: 1,
                 }),
                 strong: None,
                 timeout_seconds: 120,
@@ -415,6 +420,7 @@ fn reset_creates_configured_branch() {
                 .to_str()
                 .unwrap()
                 .to_string(),
+            dispatch_cap: 1,
         }
     };
 

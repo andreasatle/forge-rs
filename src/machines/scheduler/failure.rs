@@ -30,6 +30,8 @@ pub enum FailureKind {
     IntegrationFailure,
     /// The user task was semantically rejected by the producing role.
     UserTaskRejection,
+    /// The node's dispatch thread panicked before returning a result.
+    DispatchPanic,
 }
 
 /// The recovery action that triggered an `AttemptsExhausted` failure.
