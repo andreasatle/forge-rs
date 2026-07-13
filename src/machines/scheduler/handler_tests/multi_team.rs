@@ -152,11 +152,14 @@ impl ProviderClient for RecordingScriptedProvider {
 /// `DeliberatingNodeRunner` stack (the same wiring `RunSession::drive` uses),
 /// with a scripted provider standing in for the LLM.
 ///
-/// Proves: the `planner` team's Start trigger spawns its Plan node; once
-/// that node's tasks land in the manifest, the `worker` team's
-/// `after_teams(planner)` trigger spawns a Work node for the resulting task;
-/// and each spawned node's rendered prompt carries its own team's adapter
-/// marker (not the top-level adapter's, and not the other team's).
+/// Proves: the root node *is* the `planner` team's `trigger: start` node
+/// (seeded with `planner`'s own team/adapter/northstar, since `planner` is
+/// the run's sole `Trigger::Start` team) rather than a separate blank-team
+/// bootstrap node; once its tasks land in the manifest correctly attributed
+/// to `planner`, the `worker` team's `after_teams(planner)` trigger spawns a
+/// Work node for the resulting task; and each spawned node's rendered prompt
+/// carries its own team's adapter marker (not the top-level/default
+/// adapter's, and not the other team's).
 #[test]
 fn two_team_forge_yaml_drives_planner_then_worker_under_their_own_adapters() {
     let temp = TempDirectory::new("multi-team-e2e");
@@ -271,26 +274,23 @@ teams:
         .expect("root adapter must load");
 
     // Response order, matching how the scheduler will actually dispatch:
-    //   1. root Plan node (team "", falls back to the root adapter) emits a
-    //      `"kind":"task"` batch so it completes without spawning its own
-    //      Work children.
-    //   2. Once root's tasks are integrated, the `planner` team's Start
-    //      trigger spawns its Plan node, which emits its own task batch.
-    //   3. Once the planner's task lands in the manifest with team
+    //   1. The root Plan node *is* the `planner` team's `trigger: start`
+    //      node (its team/adapter/northstar are seeded from `planner` at
+    //      `SchedulerMachine::initial_state`, since `planner` is the run's
+    //      sole `Trigger::Start` team), so it runs under the planner
+    //      adapter/northstar and emits its task batch directly — no
+    //      separate throwaway root pass.
+    //   2. Once the planner's task lands in the manifest with team
     //      "planner", the `worker` team's `after_teams(planner)` trigger
     //      spawns a Work node for it. Because the run has a real artifact,
     //      the Work node goes through the tool-calling producer/critic/
     //      referee loop (write_file, then read_file twice).
     let provider = RecordingScriptedProvider::from_strs(&[
-        // 1. root Plan node
-        r#"{"kind":"task","tasks":[{"id":"root-t1","objective":"decompose the objective","name":"root_t1","depends_on":[]}]}"#,
-        r#"{"status":"accepted","content":"root plan ok"}"#,
-        r#"{"status":"accepted","content":"root plan approved"}"#,
-        // 2. planner-team Plan node
+        // 1. root/planner-team Plan node
         r#"{"kind":"task","tasks":[{"id":"task-1","objective":"implement the worker task","name":"worker_task","depends_on":[]}]}"#,
         r#"{"status":"accepted","content":"planner critic ok"}"#,
         r#"{"status":"accepted","content":"planner referee approved"}"#,
-        // 3. worker-team Work node
+        // 2. worker-team Work node
         r#"{"tool":"write_file","path":"worker_output.txt","content":"done by worker team\n"}"#,
         r#"{"summary":"worker team finished task-1"}"#,
         r#"{"tool":"read_file","path":"worker_output.txt"}"#,
@@ -348,10 +348,10 @@ teams:
     assert_eq!(planner_nodes[0].status, NodeStatus::Completed);
 
     // Each spawned node ran under its own team's adapter/northstar, not the
-    // root adapter's and not the other team's — proven by which marker
-    // string reached the provider.
+    // root/default adapter's and not the other team's — proven by which
+    // marker string reached the provider.
     let prompts = provider.recorded_prompts();
-    let planner_prompt = &prompts[3]; // planner-team Plan node's producer call
+    let planner_prompt = &prompts[0]; // root/planner-team Plan node's producer call
     assert!(
         planner_prompt.contains("PLANNER-TEAM: planner producer"),
         "planner node's prompt must carry the planner team's adapter marker; got:\n{planner_prompt}"
@@ -362,13 +362,13 @@ teams:
     );
     assert!(
         !planner_prompt.contains("ROOT:") && !planner_prompt.contains("WORKER-TEAM"),
-        "planner node's prompt must not leak the root or worker team's wiring; got:\n{planner_prompt}"
+        "planner node's prompt must not leak the root/default or worker team's wiring; got:\n{planner_prompt}"
     );
 
     // Northstar is surfaced only to Plan-node prompts by design (see
     // `node_runner::deliberating::context`), so the Work node's prompt is
     // checked for the adapter marker only, not the northstar text.
-    let worker_prompt = &prompts[6]; // worker-team Work node's producer call
+    let worker_prompt = &prompts[3]; // worker-team Work node's producer call
     assert!(
         worker_prompt.contains("WORKER-TEAM: worker producer"),
         "worker node's prompt must carry the worker team's adapter marker; got:\n{worker_prompt}"

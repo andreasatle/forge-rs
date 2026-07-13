@@ -1,5 +1,9 @@
 use super::*;
 
+use std::collections::BTreeMap;
+
+use crate::config::{TeamConfig, Trigger};
+
 #[test]
 fn initial_state_creates_root_plan_node() {
     let request = RunRequest {
@@ -20,6 +24,54 @@ fn initial_state_creates_root_plan_node() {
     assert!(root.dependencies.is_empty());
     assert_eq!(root.attempt, 0);
     assert_eq!(root.model_tier, ModelTier::Cheap);
+    // Invariant: with no `Trigger::Start` team configured (the historical
+    // single-team/no-teams path), the root stays team-less.
+    assert_eq!(root.team, "");
+    assert_eq!(root.adapter, "");
+    assert_eq!(root.northstar, "");
+}
+
+/// When `run_config.teams` includes a `Trigger::Start` team, the root node
+/// must be seeded with *that* team's own `team`/`adapter`/`northstar`
+/// instead of blank ones. Without this, the root's real decomposition and
+/// the start-triggered team's own first node are two independent
+/// mechanisms racing to plan the same objective: `apply_team_triggers` sees
+/// the root as belonging to no team, cannot recognize its completed work as
+/// satisfying that team's `start` trigger, and spawns a second Plan node
+/// from scratch — discarding the root's work and recording it in the task
+/// manifest as `team: Some("")` instead of `Some("planner")`, which then
+/// hides it from any `after_teams(planner)` trigger too.
+#[test]
+fn initial_state_seeds_root_with_start_triggered_teams_identity() {
+    let request = RunRequest {
+        objective: "plan the project".to_string(),
+    };
+    let run_config = RunConfig {
+        teams: vec![TeamConfig {
+            name: "planner".to_string(),
+            northstar: "northstars/planner.md".to_string(),
+            adapter: "adapters/planner.yaml".to_string(),
+            kind: NodeKind::Plan,
+            trigger: Trigger::Start,
+            name_target_rules: vec![],
+            language_plugins: BTreeMap::new(),
+        }],
+        ..RunConfig::default()
+    };
+    let state = SchedulerMachine::initial_state(request, run_config);
+    let SchedulerState::Active { graph, .. } = state else {
+        panic!("expected Active");
+    };
+    assert_eq!(graph.nodes.len(), 1);
+    let root = &graph.nodes[0];
+    assert_eq!(root.team, "planner");
+    assert_eq!(root.adapter, "adapters/planner.yaml");
+    assert_eq!(root.northstar, "northstars/planner.md");
+    assert_eq!(
+        root.origin,
+        NodeOrigin::Root,
+        "identity unification does not change origin"
+    );
 }
 
 #[test]

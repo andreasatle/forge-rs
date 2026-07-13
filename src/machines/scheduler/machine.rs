@@ -10,6 +10,7 @@
 //! (SchedulerState, SchedulerEvent) -> (SchedulerState, SchedulerEffect)
 //! ```
 
+use crate::config::Trigger;
 use crate::engine::Transition;
 
 use super::RunConfig;
@@ -110,14 +111,42 @@ impl SchedulerMachine {
     /// node whose objective is taken from the request. The `run_config` is
     /// embedded in the state so `transition` is fully reproducible from
     /// `(state, event)`.
+    ///
+    /// When `run_config.teams` includes a `Trigger::Start` team (config
+    /// validation guarantees such a team is `kind: Plan`), the root node is
+    /// initialized as *that* team's node — carrying its `team`/`adapter`/
+    /// `northstar` — rather than a blank-identity bootstrap node. Without
+    /// this, the root's real decomposition and the start-triggered team's
+    /// own first node were two independent mechanisms racing to plan the
+    /// same objective: `apply_team_triggers` cannot recognize a blank-team
+    /// node as satisfying that team's trigger, so it always spawned a second
+    /// Plan node from scratch, discarding the root's completed work and
+    /// mis-attributing it in the task manifest (`team: Some("")` instead of
+    /// `Some(team.name)`), which in turn hid it from any `after_teams(...)`
+    /// trigger keyed on that team's name. Unifying the two makes the root
+    /// node the team's own `trigger: start` node, so there is only one
+    /// mechanism, not two. Configs with no `Trigger::Start` team (or no
+    /// teams at all) keep the historical blank-identity root.
     pub fn initial_state(request: RunRequest, run_config: RunConfig) -> SchedulerState {
+        let start_team = run_config
+            .teams
+            .iter()
+            .find(|team| team.trigger == Trigger::Start);
+        let (team, adapter, northstar) = match start_team {
+            Some(team) => (
+                team.name.clone(),
+                team.adapter.clone(),
+                team.northstar.clone(),
+            ),
+            None => (String::new(), String::new(), String::new()),
+        };
         let root = Node {
             id: graph::new_node_id(),
             kind: NodeKind::Plan,
-            team: String::new(),
+            team,
             task_id: None,
-            adapter: String::new(),
-            northstar: String::new(),
+            adapter,
+            northstar,
             worker_role: None,
             objective: request.objective,
             target_files: vec![],

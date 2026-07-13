@@ -105,8 +105,11 @@ impl ProviderClient for RecordingScriptedProvider {
 /// `into_plan` call recursing a second time through the real dispatch loop.
 ///
 /// Proves: every node in the `recursive` team's Plan -> Plan -> Plan chain —
-/// not just the first — carries the team's own `team`/`adapter`/`northstar`,
-/// not the root/default adapter's (empty) fields.
+/// including the root node itself, which `SchedulerMachine::initial_state`
+/// seeds with `recursive`'s own team/adapter/northstar since `recursive` is
+/// this run's sole `Trigger::Start` team — carries the team's own
+/// `team`/`adapter`/`northstar`, not the top-level/default adapter's (empty)
+/// fields.
 #[test]
 fn team_owned_plan_node_propagates_team_through_recursive_plan_children() {
     let temp = TempDirectory::new("recursive-plan-team-e2e");
@@ -140,10 +143,12 @@ fn team_owned_plan_node_propagates_team_through_recursive_plan_children() {
         commit_sha,
     };
 
-    // Fixture adapters and northstars: a distinct root/default adapter plus
-    // the `recursive` team's own, so a team-loss bug (children silently
-    // falling back to the root adapter's empty team/adapter/northstar) would
-    // be visible.
+    // Fixture adapters and northstars: a distinct top-level/default adapter
+    // (required by `ForgeConfig::from_file` but never actually dispatched to
+    // in this run, since `recursive` is the sole `Trigger::Start` team and
+    // the root node is seeded with its fields) plus the `recursive` team's
+    // own, so a team-loss bug (children silently falling back to the
+    // top-level adapter's empty team/adapter/northstar) would be visible.
     let root_adapter_path = temp.join("root_adapter.yaml");
     fs::write(&root_adapter_path, adapter_yaml("ROOT")).expect("write root adapter");
     let recursive_adapter_path = temp.join("recursive_adapter.yaml");
@@ -194,41 +199,39 @@ teams:
         .expect("forge.yaml fixture must load and validate");
     assert_eq!(config.teams.len(), 1);
 
-    // Wire the root/default adapter the same way `RunSession::drive` does.
+    // Wire the top-level/default adapter the same way `RunSession::drive`
+    // does. It is required by `ForgeConfig::from_file` and supplies the
+    // `DeliberatingNodeRunner`'s fallback wiring, but nothing in this run
+    // actually dispatches under it: the root node is seeded with
+    // `recursive`'s own team/adapter/northstar since `recursive` is the
+    // run's sole `Trigger::Start` team.
     let root_setup = ProjectRuntimeSetup::build(Path::new(&config.adapter), None)
         .expect("root adapter must load");
 
     // Response order, matching how the scheduler will actually dispatch —
     // every Plan-kind node (whether it produces children or a task batch)
     // goes through one producer/critic/referee cycle:
-    //   1. root Plan node (team "", falls back to the root adapter) emits a
-    //      trivial `"kind":"task"` batch so it completes without spawning
-    //      any children of its own.
-    //   2. Once root's tasks are integrated, the `recursive` team's Start
-    //      trigger spawns its own Plan node (depth 1), which emits
-    //      `"kind":"plan"` with one task, escalating to a further Plan child.
-    //   3. That Plan child (depth 2) itself emits `"kind":"plan"` with one
+    //   1. The root Plan node *is* the `recursive` team's own Plan node
+    //      (depth 0): it emits `"kind":"plan"` with one task, escalating to
+    //      a Plan child.
+    //   2. That Plan child (depth 1) itself emits `"kind":"plan"` with one
     //      task, escalating to a second Plan child.
-    //   4. That grandchild Plan node (depth 3) finally emits `"kind":"task"`,
+    //   3. That grandchild Plan node (depth 2) finally emits `"kind":"task"`,
     //      recording a real task row to the manifest with no further
     //      children.
     let provider = RecordingScriptedProvider::from_strs(&[
-        // 1. root Plan node
-        r#"{"kind":"task","tasks":[{"id":"root-t1","objective":"decompose the objective","name":"root_t1","depends_on":[]}]}"#,
-        r#"{"status":"accepted","content":"root plan ok"}"#,
-        r#"{"status":"accepted","content":"root plan approved"}"#,
-        // 2. recursive team's own Plan node (depth 1)
-        r#"{"kind":"plan","tasks":[{"id":"plan-depth-2","objective":"decompose further","depends_on":[]}]}"#,
+        // 1. root/recursive-team Plan node (depth 0)
+        r#"{"kind":"plan","tasks":[{"id":"plan-depth-1","objective":"decompose further","depends_on":[]}]}"#,
+        r#"{"status":"accepted","content":"depth 0 critic ok"}"#,
+        r#"{"status":"accepted","content":"depth 0 referee approved"}"#,
+        // 2. depth-1 Plan child
+        r#"{"kind":"plan","tasks":[{"id":"plan-depth-2","objective":"decompose once more","depends_on":[]}]}"#,
         r#"{"status":"accepted","content":"depth 1 critic ok"}"#,
         r#"{"status":"accepted","content":"depth 1 referee approved"}"#,
-        // 3. depth-2 Plan child
-        r#"{"kind":"plan","tasks":[{"id":"plan-depth-3","objective":"decompose once more","depends_on":[]}]}"#,
+        // 3. depth-2 Plan grandchild: finally produces a task batch
+        r#"{"kind":"task","tasks":[{"id":"leaf-task","objective":"do the leaf work","name":"leaf_task","depends_on":[]}]}"#,
         r#"{"status":"accepted","content":"depth 2 critic ok"}"#,
         r#"{"status":"accepted","content":"depth 2 referee approved"}"#,
-        // 4. depth-3 Plan grandchild: finally produces a task batch
-        r#"{"kind":"task","tasks":[{"id":"leaf-task","objective":"do the leaf work","name":"leaf_task","depends_on":[]}]}"#,
-        r#"{"status":"accepted","content":"depth 3 critic ok"}"#,
-        r#"{"status":"accepted","content":"depth 3 referee approved"}"#,
     ]);
 
     let runner = DeliberatingNodeRunner::new(&provider, &provider)
@@ -261,8 +264,8 @@ teams:
     };
 
     // The whole Plan -> Plan -> Plan chain was actually spawned under the
-    // "recursive" team: not just the team's own first node, but its child
-    // and grandchild as well.
+    // "recursive" team: the root node itself (the team's start-triggered
+    // node), plus its child and grandchild.
     let recursive_nodes: Vec<&Node> = graph
         .nodes
         .iter()
@@ -271,7 +274,7 @@ teams:
     assert_eq!(
         recursive_nodes.len(),
         3,
-        "the recursive team's start-triggered node plus its two escalated Plan \
+        "the recursive team's start-triggered root node plus its two escalated Plan \
          children must all appear in the graph; graph: {graph:#?}"
     );
     for node in &recursive_nodes {
@@ -301,21 +304,23 @@ teams:
         );
     }
 
-    // No node anywhere in the graph silently fell back to the root
-    // adapter's empty team/adapter/northstar except the root node itself.
-    let non_root_non_recursive: Vec<&Node> = graph
+    // No node anywhere in the graph — including the root node — silently
+    // fell back to the top-level/default adapter's empty team/adapter/
+    // northstar.
+    let non_recursive: Vec<&Node> = graph
         .nodes
         .iter()
-        .filter(|n| n.team != "recursive" && n.origin != NodeOrigin::Root)
+        .filter(|n| n.team != "recursive")
         .collect();
     assert!(
-        non_root_non_recursive.is_empty(),
-        "every non-root node must belong to the recursive team; graph: {graph:#?}"
+        non_recursive.is_empty(),
+        "every node, including the root bootstrap node, must belong to the recursive \
+         team once it is the run's sole start-triggered team; graph: {graph:#?}"
     );
 
     // The manifest committed to the artifact records the leaf task under the
-    // recursive team, proving depth-3's `"kind":"task"` output was integrated
-    // with the team it actually ran under, not the root's.
+    // recursive team, proving depth-2's `"kind":"task"` output was integrated
+    // with the team it actually ran under.
     let final_sha = git_output(&repo_path, &["rev-parse", "HEAD"]);
     let manifest = git_output(
         &repo_path,

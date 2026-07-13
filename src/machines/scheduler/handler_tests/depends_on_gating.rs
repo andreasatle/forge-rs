@@ -285,16 +285,14 @@ teams:
     }
 }
 
-/// The scripted responses for: (1) the always-spawned root Plan node, which
-/// emits a trivial single task so it completes without children, then (2)
-/// the `planner` team's Plan node, which emits two tasks — `task-1`
+/// The scripted responses for the root Plan node, which *is* the `planner`
+/// team's `trigger: start` node (seeded with `planner`'s own
+/// team/adapter/northstar, since `planner` is this fixture's sole
+/// `Trigger::Start` team). It emits two tasks directly — `task-1`
 /// (`task_one`, no dependencies) and `task-2` (`task_two`, `depends_on:
 /// ["task-1"]`).
 fn root_and_planner_responses() -> Vec<String> {
     [
-        r#"{"kind":"task","tasks":[{"id":"root-t1","objective":"decompose the objective","name":"root_t1","depends_on":[]}]}"#,
-        r#"{"status":"accepted","content":"root plan ok"}"#,
-        r#"{"status":"accepted","content":"root plan approved"}"#,
         r#"{"kind":"task","tasks":[{"id":"task-1","objective":"implement the first task","name":"task_one","depends_on":[]},{"id":"task-2","objective":"implement the second task, which depends on the first","name":"task_two","depends_on":["task-1"]}]}"#,
         r#"{"status":"accepted","content":"planner critic ok"}"#,
         r#"{"status":"accepted","content":"planner referee approved"}"#,

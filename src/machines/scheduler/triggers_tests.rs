@@ -292,6 +292,119 @@ fn run_once_does_not_spawn_after_manifest_row_recorded() {
     );
 }
 
+/// Proves the fix's central guarantee: once the root node is itself seeded
+/// with the `planner` team's identity (as `SchedulerMachine::initial_state`
+/// now does for a `Trigger::Start` team — see
+/// `machine_tests::planning::initial_state_seeds_root_with_start_triggered_teams_identity`),
+/// its own completed decomposition is recorded to the manifest correctly
+/// attributed to "planner" (the completing node's own `team` field, not the
+/// empty string a blank-identity root previously carried). `planner`'s
+/// `start` trigger then sees `should_run: false` and does not spawn a
+/// second Plan node from scratch, discarding the root's completed work.
+#[test]
+fn root_lineage_task_attributed_to_start_team_does_not_restart() {
+    let graph = RunGraph {
+        nodes: vec![Node {
+            team: "planner".to_string(),
+            adapter: "adapters/planner.yaml".to_string(),
+            northstar: "northstars/planner.md".to_string(),
+            ..root_node()
+        }],
+    };
+    let config = run_config(vec![team_with_adapter(
+        "planner",
+        Trigger::Start,
+        "adapters/planner.yaml",
+        "northstars/planner.md",
+    )]);
+    // The root node's own decomposition, correctly attributed to "planner"
+    // because the completing node's own `team` field is "planner" now.
+    let manifest = [named_record(
+        "root-t1",
+        "decompose the objective",
+        "planner",
+        "root_t1",
+    )];
+    let graph = apply_team_triggers(graph, &NodeId("root".to_string()), &config, &manifest)
+        .expect("team triggers must apply cleanly");
+
+    let planner_nodes: Vec<&Node> = graph.nodes.iter().filter(|n| n.team == "planner").collect();
+    assert_eq!(
+        planner_nodes.len(),
+        1,
+        "the root node's own decomposition already satisfies the planner team's start \
+         trigger; a second Plan node must not be spawned, discarding completed work; \
+         graph: {graph:#?}"
+    );
+    assert_eq!(
+        planner_nodes[0].id,
+        NodeId("root".to_string()),
+        "the sole planner-team node must be the root node itself, not a duplicate spawn; \
+         graph: {graph:#?}"
+    );
+}
+
+/// Parallel to the test above: once the root-lineage task is correctly
+/// attributed to "planner" in the manifest, a downstream
+/// `after_teams(planner)` trigger recognizes it as an ordinary planner
+/// completion and fires — proving the fix doesn't just silence the
+/// duplicate restart but threads the correct attribution through to teams
+/// that depend on it, which previously could never fire off a root-lineage
+/// task (it carried `team: Some("")`, not `Some("planner")`).
+#[test]
+fn implement_after_teams_planner_fires_off_root_lineage_task() {
+    let graph = RunGraph {
+        nodes: vec![Node {
+            team: "planner".to_string(),
+            adapter: "adapters/planner.yaml".to_string(),
+            northstar: "northstars/planner.md".to_string(),
+            ..root_node()
+        }],
+    };
+    let config = run_config(vec![
+        team_with_adapter(
+            "planner",
+            Trigger::Start,
+            "adapters/planner.yaml",
+            "northstars/planner.md",
+        ),
+        team_with_catchall_rule(
+            "implement",
+            Trigger::AfterTeams(vec!["planner".to_string()]),
+        ),
+    ]);
+    let manifest = [named_record(
+        "root-t1",
+        "implement fibonacci(n: int)",
+        "planner",
+        "fibonacci",
+    )];
+    let graph = apply_team_triggers(graph, &NodeId("root".to_string()), &config, &manifest)
+        .expect("team triggers must apply cleanly");
+
+    let planner_nodes: Vec<&Node> = graph.nodes.iter().filter(|n| n.team == "planner").collect();
+    assert_eq!(
+        planner_nodes.len(),
+        1,
+        "planner's own start trigger must not also re-fire in this same evaluation; \
+         graph: {graph:#?}"
+    );
+    let implement_nodes: Vec<&Node> = graph
+        .nodes
+        .iter()
+        .filter(|n| n.team == "implement")
+        .collect();
+    assert_eq!(
+        implement_nodes.len(),
+        1,
+        "implement's after_teams(planner) trigger must fire off the root-lineage task; \
+         graph: {graph:#?}"
+    );
+    assert_eq!(implement_nodes[0].kind, NodeKind::Work);
+    assert_eq!(implement_nodes[0].task_id, Some("root-t1".to_string()));
+    assert_eq!(implement_nodes[0].objective, "implement fibonacci(n: int)");
+}
+
 /// `after_teams(planner)` fires for a task id the planner has recorded once
 /// `implement` has no row of its own for that id yet, spawning a Work node
 /// with the completed task's original objective text.
