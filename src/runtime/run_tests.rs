@@ -27,9 +27,12 @@ fn artifact_config(path: &Path) -> ArtifactConfig {
 }
 
 fn test_provider_metadata() -> ProviderRunMetadata {
-    ResolvedProviderStack::build(&unmanaged_provider("provider", "llama-test", 512))
-        .expect("test provider stack must build")
-        .metadata
+    ResolvedProviderStack::build(
+        &unmanaged_provider("provider", "llama-test", 512),
+        &temp_path("provider-logs"),
+    )
+    .expect("test provider stack must build")
+    .metadata
 }
 
 fn unmanaged_provider(base_url: &str, model: &str, n_predict: usize) -> ProviderConfig {

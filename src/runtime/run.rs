@@ -30,7 +30,8 @@ impl ForgeRuntime {
     /// 5. Print a summary to stdout.
     pub fn run(config: ForgeConfig) -> Result<(), Box<dyn Error>> {
         let runs_root = PathBuf::from(&config.telemetry.directory);
-        let provider_stack = ResolvedProviderStack::build(&config.provider)?;
+        let provider_stack =
+            ResolvedProviderStack::build(&config.provider, &runs_root.join("logs"))?;
         let run_info = create_run(
             &runs_root,
             config.root_objective(),
@@ -118,7 +119,8 @@ impl ForgeRuntime {
             },
         ));
 
-        let provider_stack = ResolvedProviderStack::build(&config.provider)?;
+        let provider_stack =
+            ResolvedProviderStack::build(&config.provider, &runs_root.join("logs"))?;
 
         let run_info = crate::runtime::RunInfo {
             run_id,

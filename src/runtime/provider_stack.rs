@@ -5,6 +5,7 @@
 //! `resume` share one code path instead of duplicating it.
 
 use std::error::Error;
+use std::path::Path;
 
 use crate::config::{
     ManagedLlamaCppModelConfig, ManagedProviderConfig, ProviderBackend, ProviderConfig,
@@ -56,8 +57,11 @@ fn build_tier_client(tier: &ProviderTierMetadata) -> Box<dyn ProviderClient + Se
 impl ResolvedProviderStack {
     /// Resolve `provider` into metadata, start any managed servers it
     /// requires, and build the cheap/strong provider handles.
-    pub fn build(provider: &ProviderConfig) -> Result<Self, Box<dyn Error>> {
-        ProviderStackBuilder::new(provider).build()
+    ///
+    /// `log_dir` is where managed server stdout/stderr logs are written
+    /// (one file per tier); it is created if missing.
+    pub fn build(provider: &ProviderConfig, log_dir: &Path) -> Result<Self, Box<dyn Error>> {
+        ProviderStackBuilder::new(provider).build(log_dir)
     }
 }
 
@@ -70,9 +74,9 @@ impl<'a> ProviderStackBuilder<'a> {
         Self { provider }
     }
 
-    fn build(&self) -> Result<ResolvedProviderStack, Box<dyn Error>> {
+    fn build(&self, log_dir: &Path) -> Result<ResolvedProviderStack, Box<dyn Error>> {
         let metadata = self.run_metadata();
-        let servers = self.start_managed_servers()?;
+        let servers = self.start_managed_servers(log_dir)?;
 
         let cheap = RetryingProvider::new(build_tier_client(&metadata.cheap), 3);
         let strong = RetryingProvider::new(build_tier_client(&metadata.strong), 3);
@@ -163,16 +167,21 @@ impl<'a> ProviderStackBuilder<'a> {
         }
     }
 
-    fn start_managed_servers(&self) -> Result<Vec<ManagedProviderServer>, Box<dyn Error>> {
+    fn start_managed_servers(
+        &self,
+        log_dir: &Path,
+    ) -> Result<Vec<ManagedProviderServer>, Box<dyn Error>> {
         let mut servers = Vec::new();
         if let ProviderTierConfig::Managed(managed) = &self.provider.cheap {
             let config = self.resolve_managed_llama_cpp(managed);
-            servers.push(ManagedProviderServer::start_llama_cpp(&config)?);
+            let log_path = log_dir.join("cheap-llama-server.log");
+            servers.push(ManagedProviderServer::start_llama_cpp(&config, &log_path)?);
             self.log_managed_provider_started("cheap", &config);
         }
         if let Some(ProviderTierConfig::Managed(managed)) = &self.provider.strong {
             let config = self.resolve_managed_llama_cpp(managed);
-            servers.push(ManagedProviderServer::start_llama_cpp(&config)?);
+            let log_path = log_dir.join("strong-llama-server.log");
+            servers.push(ManagedProviderServer::start_llama_cpp(&config, &log_path)?);
             self.log_managed_provider_started("strong", &config);
         }
         Ok(servers)
