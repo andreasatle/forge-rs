@@ -111,16 +111,18 @@ provider:
       base_url: "http://localhost:8080"
       model: "qwen2.5-coder-7b-instruct"
       n_predict: 512
+      parallel: 1                # optional; default 1 concurrent request
   strong:                       # optional; fallback to cheap
     unmanaged:
       base_url: "http://localhost:8081"
       model: "qwen2.5-coder-14b-instruct"
       n_predict: 1024
-  timeout_seconds: 120          # optional; default 120
+  timeout_seconds: 300          # optional; default 300
   strong_timeout_seconds: 180   # optional; fallback to timeout_seconds
 telemetry:
   directory: "runs"
 adapter: adapters/coding.yaml  # required; path to a project adapter YAML file
+dispatch_cap: 4                 # optional; default 4 — see Concurrency below
 validation:                     # optional
   commands:
     - cargo fmt --check
@@ -161,8 +163,11 @@ nodes whose target files match no configured plugin.
 
 ### Multi-team configs
 
-A `forge.yaml` can run more than one team side by side instead of a single
-`adapter`/`northstar` pair, via a top-level `teams:` list:
+A `forge.yaml` can run more than one team side by side via a top-level
+`teams:` list. The top-level `adapter` field is still required (it is the
+fallback wiring `DeliberatingNodeRunner` builds from at startup), but every
+team-spawned node dispatches under its own team's `adapter`/`northstar`
+instead — there is no top-level `northstar` field for `teams:` to replace.
 
 ```yaml
 teams:
@@ -189,16 +194,33 @@ teams:
 ```
 
 Each team has its own `name`, `northstar`, `adapter`, `kind`, and `trigger`.
-`kind` (`plan` or `work`) says what the team's spawned nodes are — a `plan`
+`kind` (`plan` or `work`) says what the team's spawned nodes *are* — a `plan`
 team decomposes an objective into tasks, a `work` team executes one. `trigger`
-says when it activates: either `start` (runs from the beginning) or
+says *when it activates*: either `start` (runs from the beginning) or
 `after_teams(team_a, team_b, ...)` (runs after every named team has produced a
-node). `kind: plan` requires `trigger: start` and `kind: work` requires
+node). These are deliberately two separate fields rather than one: `kind` is
+the source of truth for what a team produces, `trigger` for when it runs, and
+collapsing them would make it impossible to express a future team shape where
+those two questions have different answers. Today's only valid pairing is
+`kind: plan` with `trigger: start`, and `kind: work` with
 `trigger: after_teams(...)`; a mismatch fails at config load. The built-in
 `planner.yaml`, `implement.yaml`, `create_test.yaml`, and `pass_tests.yaml`
 adapters are designed to be combined this way — a planner team fans out
 tasks, and separate implement/create_test/pass_tests teams each own one
 concern instead of one adapter owning all of them.
+
+Teams are symmetric — the planner is just another team, not a special case
+wired into the scheduler. Every team, including a `trigger: start` planner,
+has the same shape: a name, a northstar, an adapter, a kind, and a trigger.
+The graph's root node *is* the run's `Trigger::Start` team's own node —
+`SchedulerMachine::initial_state` seeds it with that team's `team`/`adapter`/
+`northstar` fields directly, rather than bootstrapping a second, blank-identity
+node that competes with it. (A config with no `Trigger::Start` team keeps the
+historical blank-identity root, since there is no team to seed it from.) This
+means the root node's task-manifest rows are correctly attributed to that
+team from the start, so an `after_teams(planner)` trigger keyed on its name
+sees them immediately instead of waiting on a redundant second decomposition
+pass.
 
 At config load, Forge computes each team's **terminal** status from this
 trigger graph: a team is terminal if no other team's `after_teams` names it
@@ -211,6 +233,37 @@ dependency only counts as satisfied once *every* terminal team has recorded
 a completion row for it — e.g. with the trigger graph above, a task depended
 on for its implementation isn't considered done until both `implement` and
 `pass_tests` (the terminal teams) have completed it, not just `implement`.
+
+### Task manifest
+
+Every completed node — Plan or Work, any team — appends a row to
+`.forge/tasks.json` inside the artifact, committed alongside that node's own
+changes. This manifest is what `trigger`/`depends_on` evaluation reads; teams'
+prompts never see it directly.
+
+```json
+{
+  "schema_version": 1,
+  "tasks": [
+    {
+      "id": "t1",
+      "objective": "Implement fibonacci(n: int)",
+      "commit": "e3f4a2b",
+      "completed_at": "2026-07-09T19:30:00Z",
+      "team": "implement",
+      "name": "fibonacci",
+      "depends_on": []
+    }
+  ]
+}
+```
+
+`team` is `None` only for nodes with no team (the single-team, no-`teams:`
+path, where no trigger evaluation depends on it). `name` and `depends_on` are
+carried from the planner task that produced this id and are absent for rows
+recorded when a `Work` node itself completes, since a `Work` node has no
+`name`/`depends_on` of its own. `forge tasks forge.yaml` lists this manifest's
+rows from the latest artifact commit.
 
 By default Forge connects to already-running provider servers. For llama.cpp,
 Forge can instead own a local `llama-server` process:
@@ -228,10 +281,54 @@ provider:
         context_size: 8192       # optional
         startup_timeout_seconds: 60 # optional; default 60
         n_predict: 512
+        parallel: 4               # optional; default 1 — passed to llama-server's --parallel
 ```
 
 Managed mode is explicit. If the configured endpoint is already reachable before
 Forge starts `llama-server`, Forge refuses to attach to it.
+
+### Concurrency
+
+Forge can run more than one node at once. Two independent knobs control this,
+and neither implies the other:
+
+- **`dispatch_cap`** (top-level `forge.yaml` field, default 4) — the maximum
+  number of nodes the scheduler may have `Running`/`Integrating` at once,
+  regardless of provider. A node can be in flight — spawned, running local
+  tool calls, or blocked waiting for a provider permit — without holding a
+  provider slot at every instant, so `dispatch_cap` is deliberately sized
+  above any one provider's own concurrency so that provider stays saturated
+  whenever a permit frees up.
+- **`parallel`** (per provider tier, under `unmanaged`/`managed.llama_cpp`,
+  default 1) — how many concurrent completions that tier's server can safely
+  serve. Forge sizes one `ResourceManager` (a `Mutex`+`Condvar` permit gate,
+  `src/runtime/resource_manager.rs`) per tier from this value; every call
+  through that tier — including each individual retry attempt, not just the
+  first — blocks until it acquires a permit. For a managed llama.cpp server,
+  `parallel` is also passed through as `llama-server --parallel`, so the
+  config value and the server's own concurrency stay in lockstep. For
+  `backend: ollama`, which is unmanaged-only, `parallel` only bounds forge's
+  own client-side concurrency — it has no path to the server's real
+  concurrency ceiling (`OLLAMA_NUM_PARALLEL`, set independently when the
+  Ollama process starts), so a mismatch doesn't error, it just means excess
+  requests queue server-side instead of running truly in parallel.
+
+Dispatch is **opportunistic, not wave-gated**: as soon as any in-flight node
+resolves and frees a slot below `dispatch_cap`, the scheduler re-scans and
+dispatches immediately, rather than waiting for the rest of the current batch
+to drain first. A fast node's freed slot gets backfilled right away even if a
+slower sibling dispatched alongside it is still running.
+
+Within that re-scan, ready nodes are chosen **depth-first**: `RunGraph::find_ready`
+prefers the most-recently-inserted ready node, and a Plan node's children are
+always appended right after it — so the scheduler drills all the way into a
+branch it just expanded before returning to an older, shallower sibling
+elsewhere in the graph. This trades fairness for depth: a large branch
+discovered early can keep winning dispatch over an older sibling for a
+while. That tradeoff is bounded, not eliminated — `MAX_PLAN_DEPTH` and
+`MAX_GRAPH_NODES` cap how deep or how large any one branch can grow — but a
+shallow, long-pending sibling has no dedicated fairness/aging tiebreak of its
+own; it simply becomes eligible again as soon as nothing deeper is ready.
 
 ## CLI
 
@@ -247,7 +344,17 @@ cargo run -- trace   forge.yaml --summary  — show the flat chronological trace
 cargo run -- trace   forge.yaml --prompts  — show full role prompts
 cargo run -- trace   forge.yaml --failures — show failure-related events
 cargo run -- tasks   forge.yaml            — list tasks recorded in .forge/tasks.json
+cargo run -- prompt-preview forge.yaml --node <plan|work> --role <producer|critic|referee> [--worker NAME]
+                                          — render a static role-prompt template without calling a provider
+cargo run -- vast    search --min-ram G --max-price P — list Vast.ai GPU offers, cheapest first
+cargo run -- vast    rent    OFFER_ID    — rent a Vast.ai instance from an offer
+cargo run -- vast    list                — list rented Vast.ai instances with SSH info
+cargo run -- vast    destroy INSTANCE_ID — destroy a rented Vast.ai instance
 ```
+
+`prompt-preview` always loads its adapter from the config's top-level `adapter`
+field, never from `teams:` — for a multi-team config, it only reaches the
+prompts of the team whose adapter happens to be the top-level one.
 
 ### Example session
 
@@ -281,24 +388,29 @@ side effects to smaller services.
 Responsibilities:
 
 - Graph execution and dependency ordering
-- Sequential node dispatch
+- Bounded-concurrency node dispatch, up to `dispatch_cap` in flight at once
 - Recovery classification and bounded recovery growth
 - Graph and protocol validation
 - Checkpointable progress through explicit states and events
 
 States:
 
-- `Active` — validate the graph and dispatch the first ready node.
-- `Waiting` — one node is executing or its work is integrating.
+- `Active` — validate the graph and dispatch into any free capacity below `dispatch_cap`.
+- `Waiting` — `dispatch_cap` nodes are in flight (executing or integrating), or nothing is currently ready.
 - `Complete` — all graph activity reached a terminal status.
 - `Failed` — the run cannot continue; graph and failure reason are retained.
 
 Events: `Start`, `PlanAccepted`, `WorkAccepted`, `NodeFailed`,
-`IntegrationSucceeded`, `IntegrationFailed`.
+`IntegrationSucceeded`, `IntegrationFailed`, `PlannerTasksIntegrated`,
+`PlannerTasksIntegrationFailed`.
 
 Effects: `RunNode`, `IntegrateWork`.
 
-Node execution is sequential. The scheduler selects one pending node whose dependencies are all completed, marks it running, emits `RunNode`, and enters `Waiting`. It does not dispatch another node until the active one finishes.
+Node dispatch is bounded-concurrent, not sequential: the scheduler may have
+up to `dispatch_cap` nodes `Running`/`Integrating` at once (default 4), each
+driven on its own thread by `SchedulerDriver`. See [Concurrency](#concurrency)
+above for `dispatch_cap` vs. per-provider `parallel`, opportunistic
+re-dispatch, and depth-first traversal order.
 
 Node lifecycle:
 
@@ -360,11 +472,54 @@ Plan nodes produce structured planner JSON. `PlannerOutputProcessor` owns the
 planner schema boundary: parsing provider content, validating task structure,
 enforcing explicit target constraints, preventing accidental recreation of
 existing files, deriving required test targets, and converting valid planner
-output into scheduler `NodeRequest`s.
+output into scheduler `NodeRequest`s. There is no pattern-matched shortcut
+that skips the provider for simple-looking objectives — every Plan node goes
+through the same Producer/Critic/Referee pipeline as any other node.
 
-For simple plan objectives that explicitly name exactly one source file,
-`DeliberatingNodeRunner` can use the processor's fast path to create a work
-node, plus required test nodes when configured, without calling the provider.
+A `kind: "plan"` output that decomposes into fewer than two tasks never
+actually split anything, regardless of wording, so `into_plan` treats it as a
+no-op and short-circuits it into a terminal `kind: "task"` output instead of
+recursing into another Plan node. Because any task in such a batch can end up
+becoming that terminal row, `name` is required (and validated non-blank) on
+`kind: "plan"` tasks the same way it already was on `kind: "task"` tasks —
+`EmptyName` validation fires for any kind except `Work`.
+
+Every Plan-node decomposition is judged against **MECE** — mutually exclusive
+(no two sibling tasks or sub-objectives cover overlapping ground) and
+collectively exhaustive (the siblings together cover everything the
+decomposed objective asked for, with nothing dropped). This guidance lives
+once, in the generic prompt layer's planner-only block
+(`adapters/generic.yaml`, merged in only for Plan-node Producer/Critic/Referee
+composition via `GenericPromptConfig::for_planner`), so every plan-capable
+adapter inherits both halves without its own copy, and it never reaches a
+Work node's rendered prompt.
+
+### Role terminology
+
+Three different concepts are all commonly called "role" in this codebase.
+They compose, but they answer different questions:
+
+- **Deliberation role** (`DeliberationRole`: `Producer`/`Critic`/`Referee`) —
+  *which stage of the pipeline is running.* Every node, Plan or Work, goes
+  through all three. This is a fixed, framework-level enum; it never varies
+  by project or adapter.
+- **`plugin_role`** (`WorkerRoleConfig::plugin_role`, e.g. `"tester"`,
+  `"implementer"`) — *which worker specialization a Work node is.* Set on an
+  adapter's `workers:` entries and matched against a language plugin's own
+  `plugin_roles` list (`LanguageRoleConfig::plugin_role`) to pick that role's
+  validation overrides and name-target rules. Optional when the adapter
+  declares no language plugins at all (nothing to match against); required
+  otherwise, enforced at config-load time.
+- **`identity`** (`RolePromptConfig::identity`) — *the persona text inside one
+  deliberation role's prompt*, e.g. the Producer's own description of who it
+  is. Every deliberation role, and every worker role, has its own `identity`
+  string, layered generic → adapter → worker-role at render time.
+
+Concretely: a Work node dispatched under the `create_test` team runs all
+three deliberation roles (Producer, Critic, Referee); its `plugin_role` is
+`"tester"` (matched against `plugins/python.yaml`'s `tester` entry); and each
+of those three deliberation roles' prompts carries its own `identity` text
+describing that role specifically.
 
 ## Artifact data plane
 
@@ -546,7 +701,7 @@ When `validation` is absent, all changes pass automatically.
 Implemented providers:
 
 - `LlamaCppProvider` — calls a local llama-server `/completion` endpoint. HTTP timeout is enforced per-request.
-- `OllamaProvider` — calls a local Ollama `/api/generate` endpoint (available but not wired into `ForgeRuntime` by default).
+- `OllamaProvider` — calls a local Ollama `/api/generate` endpoint. Selected per unmanaged tier via `backend: ollama` (default `llama_cpp`); the two dialects are not wire-compatible, so `backend` picks which `ProviderClient` implementation talks to that tier's `base_url`.
 - `RetryingProvider` — wraps any provider and retries on `Retryable` errors.
 
 `HttpProviderErrorClassifier` centralizes HTTP status and transport error
