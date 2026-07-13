@@ -56,7 +56,7 @@ planner:
     instructions: "referee instructions"
     constraints: "referee constraints"
 workers:
-  - role: implementer
+  - plugin_role: implementer
     description: "Implements code."
     producer:
       identity: "impl identity"
@@ -73,7 +73,7 @@ workers:
       context: "impl referee context"
       instructions: "impl referee instructions"
       constraints: "impl referee constraints"
-  - role: tester
+  - plugin_role: tester
     description: "Writes tests."
     producer:
       identity: "test identity"
@@ -169,8 +169,8 @@ fn unknown_plugin_fails_loudly() {
 #[test]
 fn adapter_role_missing_from_plugin_roles_fails_loudly() {
     // Invariant: every worker role the adapter defines must have a matching
-    // entry in every declared plugin's `roles` list — a plugin that only
-    // covers some of the adapter's roles is a hard error at config load
+    // entry in every declared plugin's `plugin_roles` list — a plugin that
+    // only covers some of the adapter's roles is a hard error at config load
     // time, regardless of which plugin ends up selected for a given node.
     let dir = test_dir("missing-role");
     std::fs::write(
@@ -181,8 +181,8 @@ init:
   commands: []
 validation:
   commands: []
-roles:
-  - role: implementer
+plugin_roles:
+  - plugin_role: implementer
     validation:
       commands: []
 "#,
@@ -196,7 +196,67 @@ roles:
     };
     assert_eq!(
         err,
-        "adapter role 'tester' is not defined in the plugin for extension 'zz'"
+        "adapter plugin_role 'tester' is not defined in the plugin's plugin_roles for extension 'zz'"
+    );
+}
+
+#[test]
+fn worker_missing_plugin_role_fails_loudly_when_adapter_declares_plugins() {
+    // Invariant: once an adapter declares any plugins, every worker entry
+    // must name a `plugin_role` — there is no other way to select that
+    // role's per-plugin validation override.
+    let dir = test_dir("missing-plugin-role");
+    std::fs::write(
+        dir.join("plugin.yaml"),
+        r#"
+extensions: [zz]
+init:
+  commands: []
+validation:
+  commands: []
+plugin_roles:
+  - plugin_role: implementer
+    validation:
+      commands: []
+  - plugin_role: tester
+    validation:
+      commands: []
+"#,
+    )
+    .unwrap();
+    let mut yaml = CUSTOM_ADAPTER_YAML.replace("  - plugin_role: implementer\n", "  - \n");
+    yaml.push_str("plugins:\n  - plugin.yaml\n");
+    let adapter = dir.join("adapter.yaml");
+    std::fs::write(&adapter, yaml).unwrap();
+
+    let err = match ProjectRuntimeSetupBuilder::new(&adapter, None) {
+        Ok(_) => panic!("worker entry missing plugin_role must be a hard error"),
+        Err(e) => e.to_string(),
+    };
+    assert!(
+        err.contains("plugin_role"),
+        "error must mention the missing plugin_role; got: {err}"
+    );
+    assert!(
+        err.contains("Implements code."),
+        "error must identify which worker entry is missing plugin_role; got: {err}"
+    );
+}
+
+#[test]
+fn worker_missing_plugin_role_is_fine_when_adapter_declares_no_plugins() {
+    // Invariant: an adapter with no plugins at all has nothing for
+    // `plugin_role` to match against, so its worker entries may omit it
+    // entirely.
+    let dir = test_dir("missing-plugin-role-no-plugins");
+    let yaml = CUSTOM_ADAPTER_YAML.replace("  - plugin_role: implementer\n", "  - \n");
+    let adapter = dir.join("adapter.yaml");
+    std::fs::write(&adapter, yaml).unwrap();
+
+    let result = ProjectRuntimeSetupBuilder::new(&adapter, None);
+    assert!(
+        result.is_ok(),
+        "worker entry missing plugin_role must load fine with no plugins declared"
     );
 }
 

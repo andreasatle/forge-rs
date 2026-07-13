@@ -38,8 +38,17 @@ pub struct PlannerConfig {
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkerRoleConfig {
-    /// The worker role name (e.g. `"tester"`, `"implementer"`).
-    pub role: String,
+    /// The worker role name (e.g. `"tester"`, `"implementer"`), matched
+    /// against a language plugin's own `plugin_role` entries.
+    ///
+    /// Required whenever the adapter declares any language plugins — see
+    /// [`crate::node_runner::project_setup::validate_worker_roles`], which
+    /// enforces this at config-load time since there is no other way to
+    /// select this role's per-plugin validation override. May be omitted
+    /// entirely when the adapter declares no plugins at all (e.g. a
+    /// document-writing adapter with no language plugin to match against).
+    #[serde(default)]
+    pub plugin_role: Option<String>,
     /// Human-readable description of what this role is responsible for.
     pub description: String,
     /// System instruction for this role's Producer.
@@ -108,7 +117,7 @@ planner:
     instructions: "decide the plan"
     constraints: "decide plan bounds"
 workers:
-  - role: implementer
+  - plugin_role: implementer
     description: "Implements code changes."
     producer:
       identity: "build identity"
@@ -152,7 +161,7 @@ workers:
         let config: ProjectAdapterConfig = serde_yaml::from_str(MINIMAL_YAML).unwrap();
         assert_eq!(config.workers.len(), 1);
         let implementer = &config.workers[0];
-        assert_eq!(implementer.role, "implementer");
+        assert_eq!(implementer.plugin_role.as_deref(), Some("implementer"));
         assert_eq!(implementer.description, "Implements code changes.");
         assert_eq!(implementer.producer.identity, "build identity");
         assert_eq!(implementer.producer.context, "build context");
@@ -165,13 +174,45 @@ workers:
     }
 
     #[test]
+    fn plugin_role_defaults_to_none_when_omitted() {
+        // Invariant: `plugin_role` is optional at the schema level — an
+        // adapter with no plugins to match against may omit it entirely.
+        // Whether it's actually required (because the adapter declares
+        // plugins) is enforced separately by
+        // `node_runner::project_setup::validate_worker_roles`, not by
+        // parsing.
+        let yaml = r#"
+workers:
+  - description: "Implements code changes."
+    producer:
+      identity: "build identity"
+      context: "build context"
+      instructions: "build it"
+      constraints: "build bounds"
+    critic:
+      identity: "build critic identity"
+      context: "build critic context"
+      instructions: "review the work"
+      constraints: "review work bounds"
+    referee:
+      identity: "build referee identity"
+      context: "build referee context"
+      instructions: "decide the work"
+      constraints: "decide work bounds"
+"#;
+        let config: ProjectAdapterConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.workers.len(), 1);
+        assert_eq!(config.workers[0].plugin_role, None);
+    }
+
+    #[test]
     fn multiple_worker_roles_all_parse() {
         let yaml = format!(
-            "{MINIMAL_YAML}\n  - role: tester\n    description: \"Writes tests.\"\n    producer:\n      identity: \"test identity\"\n      context: \"test context\"\n      instructions: \"test it\"\n      constraints: \"test bounds\"\n    critic:\n      identity: \"test critic identity\"\n      context: \"test critic context\"\n      instructions: \"review the tests\"\n      constraints: \"review test bounds\"\n    referee:\n      identity: \"test referee identity\"\n      context: \"test referee context\"\n      instructions: \"decide the tests\"\n      constraints: \"decide test bounds\"\n"
+            "{MINIMAL_YAML}\n  - plugin_role: tester\n    description: \"Writes tests.\"\n    producer:\n      identity: \"test identity\"\n      context: \"test context\"\n      instructions: \"test it\"\n      constraints: \"test bounds\"\n    critic:\n      identity: \"test critic identity\"\n      context: \"test critic context\"\n      instructions: \"review the tests\"\n      constraints: \"review test bounds\"\n    referee:\n      identity: \"test referee identity\"\n      context: \"test referee context\"\n      instructions: \"decide the tests\"\n      constraints: \"decide test bounds\"\n"
         );
         let config: ProjectAdapterConfig = serde_yaml::from_str(&yaml).unwrap();
         assert_eq!(config.workers.len(), 2);
-        assert_eq!(config.workers[1].role, "tester");
+        assert_eq!(config.workers[1].plugin_role.as_deref(), Some("tester"));
     }
 
     #[test]
@@ -216,7 +257,7 @@ planner:
     instructions: "decide the plan"
     constraints: "decide plan bounds"
 workers:
-  - role: implementer
+  - plugin_role: implementer
     description: "Implements code changes."
     producer:
       identity: "build identity"
@@ -331,7 +372,7 @@ planner:
 "#;
         let work_only = r#"
 workers:
-  - role: implementer
+  - plugin_role: implementer
     description: "Implements code changes."
     producer:
       identity: "build identity"

@@ -54,7 +54,7 @@ planner:
       Never verify implementation details or test coverage.
       Do not reject solely for unstated preferences about style, algorithm, architecture, or performance.
 workers:
-  - role: implementer
+  - plugin_role: implementer
     description: |-
       Implements code changes, including the tests that verify them.
     producer:

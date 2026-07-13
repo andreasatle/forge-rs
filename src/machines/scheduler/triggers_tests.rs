@@ -80,7 +80,7 @@ fn rs_plugin_requiring_tests() -> LanguageSpec {
                 target: "{stem}_test.rs".to_string(),
             }],
         },
-        roles: vec![],
+        plugin_roles: vec![],
         api_summary: None,
         name_target_rules: vec![],
     }

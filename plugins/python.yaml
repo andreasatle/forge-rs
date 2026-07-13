@@ -47,8 +47,8 @@ validation:
   validation_targets:
     - pattern: "{stem}.py"
       target: "tests/test_{stem}.py"
-roles:
-  - role: tester
+plugin_roles:
+  - plugin_role: tester
     validation:
       runs_tests: false
       commands:
@@ -58,7 +58,7 @@ roles:
     name_target_rules:
       - pattern: "{name}"
         target: "tests/test_{name}.py"
-  - role: implementer
+  - plugin_role: implementer
     validation:
       runs_tests: true
       commands:

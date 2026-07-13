@@ -36,8 +36,8 @@ validation:
   validation_targets:
     - pattern: "{stem}.rs"
       target: "{stem}_test.rs"
-roles:
-  - role: tester
+plugin_roles:
+  - plugin_role: tester
     validation:
       runs_tests: false
       commands:
@@ -47,7 +47,7 @@ roles:
     name_target_rules:
       - pattern: "{name}"
         target: "src/{name}_test.rs"
-  - role: implementer
+  - plugin_role: implementer
     validation:
       runs_tests: true
       commands:

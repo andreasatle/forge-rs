@@ -574,7 +574,7 @@ fn unknown_team_northstar_path_fails_at_config_load_time() {
 }
 
 /// A minimal team adapter declaring a worker role (`tester`) that the
-/// paired plugin below deliberately omits from its `roles:` list.
+/// paired plugin below deliberately omits from its `plugin_roles:` list.
 const TEAM_ADAPTER_WITH_UNKNOWN_ROLE_YAML: &str = r#"
 planner:
   producer:
@@ -593,7 +593,7 @@ planner:
     instructions: "referee instructions"
     constraints: "referee constraints"
 workers:
-  - role: tester
+  - plugin_role: tester
     description: "Writes tests."
     producer:
       identity: "test identity"
@@ -620,7 +620,7 @@ init:
   commands: []
 validation:
   commands: []
-roles: []
+plugin_roles: []
 "#;
 
 const TEAM_WITH_UNKNOWN_WORKER_ROLE_YAML: &str = r#"
@@ -675,6 +675,102 @@ fn team_worker_role_missing_from_plugin_fails_at_config_load_time() {
     assert!(
         message.contains("tester") && message.contains("zz"),
         "error must name the missing role and the plugin extension; got: {message}"
+    );
+}
+
+/// A minimal team adapter declaring a plugin, but whose sole worker entry
+/// omits `plugin_role` entirely — invalid, since the declared plugin has
+/// nothing else to select this role's validation override by.
+const TEAM_ADAPTER_WITH_MISSING_PLUGIN_ROLE_YAML: &str = r#"
+planner:
+  producer:
+    identity: "planner identity"
+    context: "planner context"
+    instructions: "planner instructions"
+    constraints: "planner constraints"
+  critic:
+    identity: "critic identity"
+    context: "critic context"
+    instructions: "critic instructions"
+    constraints: "critic constraints"
+  referee:
+    identity: "referee identity"
+    context: "referee context"
+    instructions: "referee instructions"
+    constraints: "referee constraints"
+workers:
+  - description: "Writes tests."
+    producer:
+      identity: "test identity"
+      context: "test context"
+      instructions: "test instructions"
+      constraints: "test constraints"
+    critic:
+      identity: "test critic identity"
+      context: "test critic context"
+      instructions: "test critic instructions"
+      constraints: "test critic constraints"
+    referee:
+      identity: "test referee identity"
+      context: "test referee context"
+      instructions: "test referee instructions"
+      constraints: "test referee constraints"
+plugins:
+  - broken_plugin.yaml
+"#;
+
+const TEAM_WITH_MISSING_PLUGIN_ROLE_YAML: &str = r#"
+objective: "test"
+artifact:
+  repo_path: ".forge/artifacts/main.git"
+  branch: "main"
+provider:
+  cheap:
+    unmanaged:
+      base_url: "http://localhost:8080"
+      model: "llama-test"
+      n_predict: 512
+telemetry:
+  directory: "runs"
+adapter: coding.yaml
+teams:
+  - name: planner
+    northstar: project.md
+    adapter: broken_team_adapter.yaml
+    kind: plan
+    trigger: start
+"#;
+
+#[test]
+fn team_worker_role_missing_plugin_role_fails_at_config_load_time() {
+    // Invariant: a worker entry with no `plugin_role` is only valid when its
+    // adapter declares no plugins at all (see
+    // `plugin_role_defaults_to_none_when_omitted` in `yaml_config.rs`'s own
+    // tests). Once a plugin is declared, every worker entry must name a
+    // `plugin_role` — omitting it must fail `from_file` itself, naming the
+    // team, not surface later at that team's first dispatch.
+    let tmp = TempYaml::new(TEAM_WITH_MISSING_PLUGIN_ROLE_YAML);
+    std::fs::write(tmp.dir().join("project.md"), "gap: project").unwrap();
+    std::fs::write(
+        tmp.dir().join("broken_team_adapter.yaml"),
+        TEAM_ADAPTER_WITH_MISSING_PLUGIN_ROLE_YAML,
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.dir().join("broken_plugin.yaml"),
+        PLUGIN_MISSING_TESTER_ROLE_YAML,
+    )
+    .unwrap();
+
+    let err = ForgeConfig::from_file(tmp.path()).unwrap_err();
+    let message = err.to_string();
+    assert!(
+        message.contains("planner"),
+        "error must name the team whose adapter has the worker role missing plugin_role; got: {message}"
+    );
+    assert!(
+        message.contains("plugin_role"),
+        "error must mention the missing plugin_role; got: {message}"
     );
 }
 

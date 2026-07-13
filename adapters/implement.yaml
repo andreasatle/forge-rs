@@ -1,5 +1,5 @@
 workers:
-  - role: implementer
+  - plugin_role: implementer
     description: |-
       Implements the source changes that satisfy the tests the tester role already wrote.
     producer:

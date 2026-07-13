@@ -32,14 +32,15 @@ pub struct LanguageSpec {
     /// Commands run once to initialize a new project workspace.
     pub init: LanguageInitSpec,
     /// Commands run to validate a workspace before integration. Used as the
-    /// default for any worker role without an entry in `roles`.
+    /// default for any worker role without an entry in `plugin_roles`.
     pub validation: LanguageValidationSpec,
     /// Per-worker-role validation overrides, keyed by role name (e.g.
     /// `"tester"`, `"implementer"`) to match a
-    /// [`crate::project::WorkerRoleConfig::role`] defined by the project
-    /// adapter. A role without an entry here falls back to `validation`.
+    /// [`crate::project::WorkerRoleConfig::plugin_role`] defined by the
+    /// project adapter. A role without an entry here falls back to
+    /// `validation`.
     #[serde(default)]
-    pub roles: Vec<LanguageRoleConfig>,
+    pub plugin_roles: Vec<LanguageRoleConfig>,
     /// Command that extracts a readable API summary (signatures, docstrings)
     /// from a single file. Run per file in the artifact workspace with the
     /// file path as the last argument; its stdout is the file's summary.
@@ -50,7 +51,7 @@ pub struct LanguageSpec {
     /// target file of their own to select a plugin or validation rule from.
     ///
     /// Used as the default for any worker role without its own override in
-    /// `roles` (see [`Self::name_target_rules_for_role`]).
+    /// `plugin_roles` (see [`Self::name_target_rules_for_role`]).
     #[serde(default)]
     pub name_target_rules: Vec<NameTargetRule>,
 }
@@ -64,17 +65,17 @@ impl LanguageSpec {
         self.validation.runs_tests
     }
 
-    /// Name-target rules that apply for `role`, mirroring how `roles`
+    /// Name-target rules that apply for `role`, mirroring how `plugin_roles`
     /// overrides `validation`: a role with its own non-empty
     /// `name_target_rules` uses those instead of the plugin-level default —
     /// e.g. a `tester` role deriving `tests/test_{name}.py` while the
     /// plugin's own default derives `src/{name}.py` for every other role.
     ///
     /// Falls back to the plugin-level [`Self::name_target_rules`] when `role`
-    /// is `None`, matches no entry in `roles`, or that entry has no
+    /// is `None`, matches no entry in `plugin_roles`, or that entry has no
     /// `name_target_rules` of its own.
     pub fn name_target_rules_for_role(&self, role: Option<&str>) -> &[NameTargetRule] {
-        role.and_then(|role| self.roles.iter().find(|r| r.role == role))
+        role.and_then(|role| self.plugin_roles.iter().find(|r| r.plugin_role == role))
             .map(|r| r.name_target_rules.as_slice())
             .filter(|rules| !rules.is_empty())
             .unwrap_or(&self.name_target_rules)
@@ -142,7 +143,7 @@ pub fn derive_target_from_name(rules: &[NameTargetRule], name: &str) -> Option<S
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LanguageRoleConfig {
     /// The worker role name this override applies to (e.g. `"tester"`).
-    pub role: String,
+    pub plugin_role: String,
     /// Validation spec used for nodes assigned this role, replacing the
     /// language's default `validation` spec entirely.
     pub validation: LanguageValidationSpec,
@@ -208,7 +209,7 @@ mod tests {
                 commands: vec![],
                 validation_targets: vec![],
             },
-            roles: vec![],
+            plugin_roles: vec![],
             api_summary: None,
             name_target_rules: vec![],
         };
@@ -240,7 +241,7 @@ mod tests {
                 }],
                 validation_targets: vec![],
             },
-            roles: vec![],
+            plugin_roles: vec![],
             api_summary: None,
             name_target_rules: vec![],
         };
@@ -347,7 +348,7 @@ validation:
   commands: []
 "#;
         let spec: LanguageSpec = serde_yaml::from_str(yaml).expect("spec without roles must parse");
-        assert!(spec.roles.is_empty());
+        assert!(spec.plugin_roles.is_empty());
     }
 
     #[test]
@@ -364,8 +365,8 @@ validation:
   commands:
     - program: "full"
       args: []
-roles:
-  - role: tester
+plugin_roles:
+  - plugin_role: tester
     validation:
       runs_tests: false
       commands:
@@ -373,10 +374,13 @@ roles:
           args: []
 "#;
         let spec: LanguageSpec = serde_yaml::from_str(yaml).expect("spec with roles must parse");
-        assert_eq!(spec.roles.len(), 1);
-        assert_eq!(spec.roles[0].role, "tester");
-        assert!(!spec.roles[0].validation.runs_tests);
-        assert_eq!(spec.roles[0].validation.commands[0].program, "reduced");
+        assert_eq!(spec.plugin_roles.len(), 1);
+        assert_eq!(spec.plugin_roles[0].plugin_role, "tester");
+        assert!(!spec.plugin_roles[0].validation.runs_tests);
+        assert_eq!(
+            spec.plugin_roles[0].validation.commands[0].program,
+            "reduced"
+        );
         assert!(spec.validation.runs_tests);
         assert_eq!(spec.validation.commands[0].program, "full");
     }
@@ -495,8 +499,8 @@ name_target_rules:
                 commands: vec![],
                 validation_targets: vec![],
             },
-            roles: vec![LanguageRoleConfig {
-                role: "implementer".to_string(),
+            plugin_roles: vec![LanguageRoleConfig {
+                plugin_role: "implementer".to_string(),
                 validation: LanguageValidationSpec {
                     runs_tests: true,
                     commands: vec![],
@@ -542,8 +546,8 @@ name_target_rules:
                 commands: vec![],
                 validation_targets: vec![],
             },
-            roles: vec![LanguageRoleConfig {
-                role: "tester".to_string(),
+            plugin_roles: vec![LanguageRoleConfig {
+                plugin_role: "tester".to_string(),
                 validation: LanguageValidationSpec {
                     runs_tests: false,
                     commands: vec![],

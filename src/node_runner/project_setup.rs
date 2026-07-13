@@ -16,7 +16,7 @@ use std::time::Duration;
 use crate::config::ValidationConfig;
 use crate::language::select_plugin;
 use crate::language::spec::{LanguageInitSpec, LanguageSpec};
-use crate::project::{ProjectAdapter, load_adapter};
+use crate::project::{ProjectAdapter, YamlProjectAdapter, load_adapter};
 use crate::roles::RolePolicy;
 use crate::validation::{
     AlwaysPassValidator, CommandSpec, CommandValidator, ValidationPlan, ValidationScope,
@@ -60,27 +60,48 @@ impl ProjectRuntimeSetup {
 }
 
 /// Every worker role the adapter defines must have a matching entry in each
-/// configured plugin's `roles` list, so a missing per-role validation
+/// configured plugin's `plugin_roles` list, so a missing per-role validation
 /// override is a hard error at config load time rather than a silent
 /// fallback to that plugin's default validation at run time — regardless of
 /// which plugin ends up selected for a given node.
+///
+/// Also: whenever the adapter declares any plugins at all, every worker
+/// entry must actually name a `plugin_role` — there is no other way to
+/// select that role's per-plugin validation override. An adapter with no
+/// plugins declared has nothing to match against, so its worker entries may
+/// omit `plugin_role` entirely (see [`crate::project::WorkerRoleConfig::plugin_role`]).
 ///
 /// Shared by [`ProjectRuntimeSetupBuilder::new`] (the run's top-level
 /// adapter) and `resolve_team_paths` (each team's adapter), so both fail
 /// fast at config-load time rather than one of them deferring to first
 /// dispatch.
 pub(crate) fn validate_worker_roles(
-    adapter: &dyn ProjectAdapter,
+    adapter: &YamlProjectAdapter,
     plugins: &BTreeMap<String, LanguageSpec>,
 ) -> Result<(), Box<dyn Error>> {
+    if !plugins.is_empty() {
+        for worker in adapter.worker_roles() {
+            if worker.plugin_role.is_none() {
+                return Err(format!(
+                    "worker role '{}' has no plugin_role, but this adapter declares plugins; plugin_role is required for every worker role",
+                    worker.description
+                )
+                .into());
+            }
+        }
+    }
+
     let worker_roles = adapter.role_policy().worker_role_descriptions;
     for (extension, spec) in plugins {
-        let plugin_roles: std::collections::HashSet<&str> =
-            spec.roles.iter().map(|role| role.role.as_str()).collect();
+        let plugin_roles: std::collections::HashSet<&str> = spec
+            .plugin_roles
+            .iter()
+            .map(|role| role.plugin_role.as_str())
+            .collect();
         for (role, _) in &worker_roles {
             if !plugin_roles.contains(role.as_str()) {
                 return Err(format!(
-                    "adapter role '{role}' is not defined in the plugin for extension '{extension}'"
+                    "adapter plugin_role '{role}' is not defined in the plugin's plugin_roles for extension '{extension}'"
                 )
                 .into());
             }
@@ -154,10 +175,10 @@ impl<'a> ProjectRuntimeSetupBuilder<'a> {
     /// node at plan-expansion time, keyed by the node's target files (to
     /// select the matching plugin) and its assigned worker role.
     ///
-    /// A role present in the selected plugin's `roles` list gets that role's
-    /// own `validation.commands`; every other role (including no role at
-    /// all) falls back to the plugin's default `validation.commands`. When no
-    /// plugin matches the node's target files, falls back to the explicit
+    /// A role present in the selected plugin's `plugin_roles` list gets that
+    /// role's own `validation.commands`; every other role (including no role
+    /// at all) falls back to the plugin's default `validation.commands`. When
+    /// no plugin matches the node's target files, falls back to the explicit
     /// `validation:` config, when present.
     fn validation_plan_for_role_fn(&self) -> Arc<ValidationPlanForRoleFn> {
         let plugins = self.language_plugins.clone();
@@ -167,7 +188,7 @@ impl<'a> ProjectRuntimeSetupBuilder<'a> {
                 return fallback_plan.clone();
             };
             let commands = role
-                .and_then(|name| spec.roles.iter().find(|r| r.role == name))
+                .and_then(|name| spec.plugin_roles.iter().find(|r| r.plugin_role == name))
                 .map(|r| &r.validation.commands)
                 .unwrap_or(&spec.validation.commands);
             Some(Self::plan_from_commands(commands))

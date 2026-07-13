@@ -379,7 +379,7 @@ impl ForgeConfig {
     ///   plugin it declares fails to load.
     /// - any team's `adapter` is blank, or does not resolve to a loadable
     ///   adapter YAML file (or plugin it declares fails to load), or declares
-    ///   a worker role that is missing from one of its plugins' `roles`
+    ///   a worker role that is missing from one of its plugins' `plugin_roles`
     ///   lists.
     /// - any team's `northstar` is blank, or does not resolve to a readable
     ///   file.
@@ -529,7 +529,7 @@ fn resolve_relative(path_str: &str, base: &Path) -> String {
 /// Resolves and validates each team's `adapter`/`northstar` in place, the
 /// same way `ForgeConfig::from_file` resolves and validates the top-level
 /// `adapter` field — including the worker-role/plugin check, so a team with
-/// a worker role missing from its plugins' `roles` lists fails here rather
+/// a worker role missing from its plugins' `plugin_roles` lists fails here rather
 /// than at first dispatch.
 fn resolve_team_paths(
     teams: &mut [TeamConfig],

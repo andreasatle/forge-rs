@@ -44,7 +44,7 @@ planner:
     instructions: ""
     constraints: ""
 workers:
-  - role: implementer
+  - plugin_role: implementer
     description: "Implements assigned tasks."
     producer:
       identity: "{marker}: worker producer"
@@ -80,8 +80,8 @@ init:
 validation:
   runs_tests: false
   commands: []
-roles:
-  - role: implementer
+plugin_roles:
+  - plugin_role: implementer
     validation:
       runs_tests: false
       commands: []

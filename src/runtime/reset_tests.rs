@@ -89,7 +89,7 @@ planner:
     instructions: "instructions"
     constraints: "constraints"
 workers:
-  - role: implementer
+  - plugin_role: implementer
     description: "Implements code."
     producer:
       identity: "identity"
@@ -233,8 +233,8 @@ fn register_fake_language(dir: &Path, label: &str) -> String {
                 commands: vec![],
                 validation_targets: vec![],
             },
-            roles: vec![crate::language::spec::LanguageRoleConfig {
-                role: "implementer".to_string(),
+            plugin_roles: vec![crate::language::spec::LanguageRoleConfig {
+                plugin_role: "implementer".to_string(),
                 validation: LanguageValidationSpec {
                     runs_tests: false,
                     commands: vec![],

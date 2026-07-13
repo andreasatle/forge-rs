@@ -34,7 +34,7 @@ fn plugin_spec(extension: &str, instructions: &str) -> LanguageSpec {
             commands: vec![],
             validation_targets: vec![],
         },
-        roles: vec![],
+        plugin_roles: vec![],
         api_summary: None,
         name_target_rules: vec![],
     }

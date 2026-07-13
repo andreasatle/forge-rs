@@ -1,5 +1,5 @@
 workers:
-  - role: tester
+  - plugin_role: tester
     description: |-
       Writes the test files that pin down expected behavior before the implementation exists.
     producer:
