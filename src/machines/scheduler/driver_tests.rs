@@ -129,9 +129,10 @@ impl NodeRunner for TimestampingRunner {
 }
 
 // Invariant: dispatch is opportunistic, not wave-gated. With `dispatch_cap`
-// 2 and three ready nodes, A and B dispatch immediately and C stays Pending
-// (no free slot). Once A (fast) completes, its freed slot must be backfilled
-// with C right away — C must not sit idle until B (slow) also completes.
+// 2 and three ready nodes, the two most-recently-inserted (A and B) dispatch
+// immediately and the oldest (C) stays Pending (no free slot). Once A (fast)
+// completes, its freed slot must be backfilled with C right away — C must
+// not sit idle until B (slow) also completes.
 #[test]
 fn freed_slot_is_backfilled_as_soon_as_the_fast_node_completes_not_waiting_for_the_slow_one() {
     let fast = Duration::from_millis(150);
@@ -149,9 +150,12 @@ fn freed_slot_is_backfilled_as_soon_as_the_fast_node_completes_not_waiting_for_t
         dispatch_starts: Arc::clone(&dispatch_starts),
     };
 
+    // `find_ready` prefers the most-recently-inserted ready node, so C (the
+    // node meant to be held back) is placed first in the vec and A/B (meant
+    // to dispatch immediately) after it.
     let state = SchedulerState::Active {
         graph: RunGraph {
-            nodes: vec![work_node("A"), work_node("B"), work_node("C")],
+            nodes: vec![work_node("C"), work_node("A"), work_node("B")],
         },
         run_config: RunConfig {
             dispatch_cap: 2,

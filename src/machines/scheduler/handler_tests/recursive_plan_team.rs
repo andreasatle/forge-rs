@@ -48,7 +48,8 @@ plugins: []
 /// `Mutex` (rather than `RefCell`) is required only so the type is `Sync`,
 /// as the scheduler driver shares `&NodeRunner` across dispatch threads.
 /// This fixture runs with `dispatch_cap: 1`, so at most one node is ever in
-/// flight and the scripted queue is still consumed in a fixed order.
+/// flight and the scripted queue is still consumed in a fixed, predictable
+/// order — just not FIFO-by-insertion (see the dispatch-order comment below).
 struct RecordingScriptedProvider {
     prompts: Mutex<Vec<String>>,
     responses: Mutex<VecDeque<String>>,
@@ -215,46 +216,47 @@ teams:
 
     // Response order, matching how the scheduler will actually dispatch.
     // `dispatch_cap: 1` means exactly one node is ever in flight, and
-    // `RunGraph::find_ready` preserves graph insertion order (see
-    // `RunGraph::insert_children`), so siblings dispatch strictly in the
-    // order their parent listed them, and a subtree is only descended into
-    // once every earlier-inserted sibling elsewhere in the graph has
-    // finished. Every Plan-kind node goes through one producer/critic/
-    // referee cycle:
+    // `RunGraph::find_ready` scans for the *most recently inserted* ready
+    // node first (see `RunGraph::insert_children`), so within a batch of
+    // siblings the last-listed child dispatches first, and the scheduler
+    // drills all the way into whatever branch it just expanded before ever
+    // returning to an earlier-inserted sibling. Every Plan-kind node goes
+    // through one producer/critic/referee cycle:
     //   1. The root Plan node *is* the `recursive` team's own Plan node: it
     //      emits `"kind":"plan"` with two tasks ("plan-a", "plan-b") — a
     //      real decomposition, so both become Plan children.
-    //   2. "plan-a" is dispatched next (inserted before "plan-b"'s own
-    //      children could exist). It itself emits `"kind":"plan"` with two
+    //   2. "plan-b" is dispatched next: it was listed second, so it's the
+    //      more-recently-inserted of the two and wins over "plan-a". It
+    //      emits `"kind":"task"`, terminating immediately.
+    //   3. "plan-a" is dispatched next — the only node left ready once
+    //      "plan-b" completes. It itself emits `"kind":"plan"` with two
     //      tasks ("leaf-a1", "leaf-a2"), proving a Plan node created by a
     //      *previous* recursive `into_plan` call still propagates the
     //      team's fields when it plans again.
-    //   3. "plan-b" is dispatched next — it was inserted into the graph
-    //      before "plan-a"'s children, so it comes before them in dispatch
-    //      order. It emits `"kind":"task"`, terminating immediately.
-    //   4. "leaf-a1" and "leaf-a2" are dispatched last, each emitting
+    //   4. "leaf-a2" is dispatched next (listed second, so more recently
+    //      inserted than "leaf-a1"), then "leaf-a1" last — both emitting
     //      `"kind":"task"` to terminate.
     let provider = RecordingScriptedProvider::from_strs(&[
         // 1. root/recursive-team Plan node
         r#"{"kind":"plan","tasks":[{"id":"plan-a","objective":"decompose branch a","name":"branch_a","depends_on":[]},{"id":"plan-b","objective":"decompose branch b","name":"branch_b","depends_on":[]}]}"#,
         r#"{"status":"accepted","content":"root critic ok"}"#,
         r#"{"status":"accepted","content":"root referee approved"}"#,
-        // 2. "plan-a" Plan child: decomposes further
-        r#"{"kind":"plan","tasks":[{"id":"leaf-a1","objective":"decompose leaf a1","name":"leaf_a1_plan","depends_on":[]},{"id":"leaf-a2","objective":"decompose leaf a2","name":"leaf_a2_plan","depends_on":[]}]}"#,
-        r#"{"status":"accepted","content":"plan-a critic ok"}"#,
-        r#"{"status":"accepted","content":"plan-a referee approved"}"#,
-        // 3. "plan-b" Plan child: terminates immediately
+        // 2. "plan-b" Plan child: terminates immediately
         r#"{"kind":"task","tasks":[{"id":"leaf-b","objective":"do the leaf b work","name":"leaf_b","depends_on":[]}]}"#,
         r#"{"status":"accepted","content":"plan-b critic ok"}"#,
         r#"{"status":"accepted","content":"plan-b referee approved"}"#,
-        // 4. "leaf-a1" Plan grandchild: terminates immediately
-        r#"{"kind":"task","tasks":[{"id":"leaf-a1-task","objective":"do the leaf a1 work","name":"leaf_a1","depends_on":[]}]}"#,
-        r#"{"status":"accepted","content":"leaf-a1 critic ok"}"#,
-        r#"{"status":"accepted","content":"leaf-a1 referee approved"}"#,
-        // 5. "leaf-a2" Plan grandchild: terminates immediately
+        // 3. "plan-a" Plan child: decomposes further
+        r#"{"kind":"plan","tasks":[{"id":"leaf-a1","objective":"decompose leaf a1","name":"leaf_a1_plan","depends_on":[]},{"id":"leaf-a2","objective":"decompose leaf a2","name":"leaf_a2_plan","depends_on":[]}]}"#,
+        r#"{"status":"accepted","content":"plan-a critic ok"}"#,
+        r#"{"status":"accepted","content":"plan-a referee approved"}"#,
+        // 4. "leaf-a2" Plan grandchild: terminates immediately
         r#"{"kind":"task","tasks":[{"id":"leaf-a2-task","objective":"do the leaf a2 work","name":"leaf_a2","depends_on":[]}]}"#,
         r#"{"status":"accepted","content":"leaf-a2 critic ok"}"#,
         r#"{"status":"accepted","content":"leaf-a2 referee approved"}"#,
+        // 5. "leaf-a1" Plan grandchild: terminates immediately
+        r#"{"kind":"task","tasks":[{"id":"leaf-a1-task","objective":"do the leaf a1 work","name":"leaf_a1","depends_on":[]}]}"#,
+        r#"{"status":"accepted","content":"leaf-a1 critic ok"}"#,
+        r#"{"status":"accepted","content":"leaf-a1 referee approved"}"#,
     ]);
 
     let runner = DeliberatingNodeRunner::new(&provider, &provider)

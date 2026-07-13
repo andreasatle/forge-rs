@@ -114,6 +114,7 @@ fn do_transition(
 mod checkpoint;
 mod completion;
 mod concurrent_dispatch;
+mod dispatch_order;
 mod graph_limits;
 mod integration;
 mod node_ids;

@@ -58,9 +58,11 @@ fn start_dispatches_up_to_cap_ready_nodes_at_once() {
             other => panic!("expected RunNode effects only, got {other:#?}"),
         })
         .collect();
+    // find_ready scans most-recently-inserted first, so B (the later
+    // sibling) is dispatched before A even though both fit under the cap.
     assert_eq!(
         dispatched,
-        vec![&NodeId("A".to_string()), &NodeId("B".to_string())]
+        vec![&NodeId("B".to_string()), &NodeId("A".to_string())]
     );
 }
 
@@ -87,13 +89,15 @@ fn start_respects_cap_when_more_ready_nodes_exist_than_capacity() {
     let SchedulerState::Waiting { graph, .. } = t.state else {
         panic!("expected Waiting, got {:#?}", t.state);
     };
-    assert_eq!(graph.nodes[0].status, NodeStatus::Running);
-    assert_eq!(graph.nodes[1].status, NodeStatus::Running);
+    // Most-recently-inserted first: C and B (the two newest) fill the cap;
+    // A, the oldest, stays Pending until a slot frees up.
     assert_eq!(
-        graph.nodes[2].status,
+        graph.nodes[0].status,
         NodeStatus::Pending,
-        "the third ready node must not be dispatched past the cap"
+        "the oldest ready node must not be dispatched past the cap"
     );
+    assert_eq!(graph.nodes[1].status, NodeStatus::Running);
+    assert_eq!(graph.nodes[2].status, NodeStatus::Running);
     assert_eq!(t.effects.len(), 2);
 }
 
@@ -116,8 +120,10 @@ fn default_run_config_still_dispatches_serially() {
     let SchedulerState::Waiting { graph, .. } = t.state else {
         panic!("expected Waiting, got {:#?}", t.state);
     };
-    assert_eq!(graph.nodes[0].status, NodeStatus::Running);
-    assert_eq!(graph.nodes[1].status, NodeStatus::Pending);
+    // Most-recently-inserted first: B dispatches, A (the older sibling)
+    // stays Pending.
+    assert_eq!(graph.nodes[0].status, NodeStatus::Pending);
+    assert_eq!(graph.nodes[1].status, NodeStatus::Running);
     assert_eq!(t.effects.len(), 1);
 }
 

@@ -276,8 +276,10 @@ pub struct Node {
 /// for debugging and audit.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RunGraph {
-    /// All nodes, in insertion order. The ordering has no semantic meaning;
-    /// the scheduler scans the vec when computing ready sets.
+    /// All nodes, in insertion order. `find_ready` scans in reverse, so the
+    /// most recently inserted nodes are preferred for dispatch — this
+    /// produces depth-first traversal, since a plan node's children are
+    /// always appended after it, right where the scan looks first.
     pub nodes: Vec<Node>,
 }
 
@@ -293,6 +295,15 @@ pub(super) const MAX_PLAN_DEPTH: usize = 10;
 // ── graph queries ──────────────────────────────────────────────────────────────
 
 impl RunGraph {
+    /// Ready nodes, most-recently-inserted first.
+    ///
+    /// Scanning in reverse means a plan node's just-inserted children —
+    /// appended to the end of `nodes` by `insert_children` — are preferred
+    /// over older, still-pending siblings elsewhere in the graph. Combined
+    /// with opportunistic slot backfill, this drives the scheduler
+    /// depth-first: it keeps drilling into the branch it just expanded
+    /// until that branch bottoms out, instead of fanning out breadth-first
+    /// across every sibling first.
     pub(super) fn find_ready(&self) -> Vec<NodeId> {
         let completed: HashSet<&NodeId> = self
             .nodes
@@ -303,6 +314,7 @@ impl RunGraph {
 
         self.nodes
             .iter()
+            .rev()
             .filter(|n| {
                 n.status == NodeStatus::Pending
                     && n.dependencies.iter().all(|dep| completed.contains(dep))
