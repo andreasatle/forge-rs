@@ -214,18 +214,23 @@ editing them.";
 /// JSON protocol instructions for planner-style roles under an adapter that
 /// defines worker roles: every `work`/`plan` task must be assigned to one of
 /// the worker roles listed earlier in the prompt.
-pub(crate) const PLANNER_PROTOCOL_FOOTER_WITH_OPERATION_AND_ROLES: &str = "PlannerOutput: `tasks` must be a non-empty array.\n\
-Each task requires `id`, `objective`, `operation`, `role`, `targets`, and `depends_on`.\n\
-`operation` must be \"create\", \"modify\", or \"delete\".\n\
-Each `targets` array must be non-empty and list exact files the task may create, modify, or delete.\n\
-Required `role` field: the name of one of the available worker roles listed above. \
-Every task must be assigned to one of those roles.\n\
-Optional top-level `kind` field: \"work\" (default when omitted), \"plan\", or \"task\". \
-When `kind` is \"plan\", every task becomes a further planning node instead of a work node, `targets` may be empty, \
-and each task additionally requires `name` (a bare symbol or concept identifier, e.g. \"fibonacci\", not a file path or location). \
-When `kind` is \"task\", `kind` must be stated explicitly and each task requires only `id`, `objective`, `name`, and `depends_on` — no `operation`, `role`, or `targets`. \
-`name` must be a bare symbol or concept identifier (e.g. \"fibonacci\"), not a file path or location.\n\
-All tasks in one PlannerOutput share the same kind — never mix kinds in one response.";
+pub(crate) const PLANNER_PROTOCOL_FOOTER_WITH_OPERATION_AND_ROLES: &str = "# PlannerOutput Schema\n\
+- `tasks` must be a non-empty array.\n\
+- Each task requires `id`, `objective`, `operation`, `role`, `targets`, and `depends_on`.\n\
+- `operation` must be \"create\", \"modify\", or \"delete\".\n\
+- Each `targets` array must be non-empty and list exact files the task may create, modify, or delete.\n\
+- Required `role` field: the name of one of the available worker roles listed above — every task must be assigned to one of those roles.\n\
+- Optional top-level `kind` field: \"work\" (default when omitted), \"plan\", or \"task\".\n\
+\n\
+**When `kind` is \"plan\":** every task becomes a further planning node instead of a work node.\n\
+- `targets` may be empty.\n\
+- Each task additionally requires `name` — a bare symbol or concept identifier (e.g. \"fibonacci\"), not a file path or location.\n\
+\n\
+**When `kind` is \"task\":** `kind` must be stated explicitly.\n\
+- Each task requires only `id`, `objective`, `name`, and `depends_on` — no `operation`, `role`, or `targets`.\n\
+- `name` must be a bare symbol or concept identifier (e.g. \"fibonacci\"), not a file path or location.\n\
+\n\
+- All tasks in one PlannerOutput share the same kind — never mix kinds in one response.";
 
 /// JSON protocol instructions for planner-style roles under an adapter that
 /// defines no worker roles: there is no role to assign a work task to, so
@@ -233,15 +238,19 @@ All tasks in one PlannerOutput share the same kind — never mix kinds in one re
 /// further planning (`kind: "plan"`) or emit pure planner intent
 /// (`kind: "task"`), and must state `kind` explicitly since there is no
 /// `work` default to fall back on.
-pub(crate) const PLANNER_PROTOCOL_FOOTER_WITH_OPERATION_NO_WORK: &str = "PlannerOutput: `tasks` must be a non-empty array.\n\
-Required top-level `kind` field: \"plan\" or \"task\" — this adapter defines no worker roles, so `kind: \"work\"` is not available.\n\
-When `kind` is \"plan\", each task requires `id`, `objective`, `name`, `operation`, `targets`, and `depends_on`; \
-`operation` must be \"create\", \"modify\", or \"delete\"; \
-`targets` may be empty since the task escalates to further planning instead of naming concrete files yet; \
-`name` must be a bare symbol or concept identifier (e.g. \"fibonacci\"), not a file path or location.\n\
-When `kind` is \"task\", each task requires only `id`, `objective`, `name`, and `depends_on` — no `operation` or `targets`. \
-`name` must be a bare symbol or concept identifier (e.g. \"fibonacci\"), not a file path or location.\n\
-All tasks in one PlannerOutput share the same kind — never mix kinds in one response.";
+pub(crate) const PLANNER_PROTOCOL_FOOTER_WITH_OPERATION_NO_WORK: &str = "# PlannerOutput Schema\n\
+- `tasks` must be a non-empty array.\n\
+- Required top-level `kind` field: \"plan\" or \"task\" — this adapter defines no worker roles, so `kind: \"work\"` is not available.\n\
+\n\
+**When `kind` is \"plan\":** each task requires `id`, `objective`, `name`, `operation`, `targets`, and `depends_on`.\n\
+- `operation` must be \"create\", \"modify\", or \"delete\".\n\
+- `targets` may be empty, since the task escalates to further planning instead of naming concrete files yet.\n\
+- `name` must be a bare symbol or concept identifier (e.g. \"fibonacci\"), not a file path or location.\n\
+\n\
+**When `kind` is \"task\":** each task requires only `id`, `objective`, `name`, and `depends_on` — no `operation` or `targets`.\n\
+- `name` must be a bare symbol or concept identifier (e.g. \"fibonacci\"), not a file path or location.\n\
+\n\
+- All tasks in one PlannerOutput share the same kind — never mix kinds in one response.";
 
 /// A role prompt split into four explicit sections.
 ///

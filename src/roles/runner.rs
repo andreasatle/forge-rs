@@ -276,7 +276,7 @@ pub(super) fn build_role_prompt(
     // `planner_producer_base` — see `planner_protocol_schema_for`.
     let system: String = match (&request.node_kind, &request.role) {
         (NodeKind::Plan, DeliberationRole::Producer) => format!(
-            "{}\n{}",
+            "{}\n\n{}",
             policy.planner_producer_base,
             planner_protocol_schema_for(!policy.worker_role_descriptions.is_empty())
         ),
