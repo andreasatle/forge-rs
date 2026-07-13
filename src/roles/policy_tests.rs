@@ -98,10 +98,16 @@ fn planner_gbnf_no_work_rejects_kind_work_but_accepts_plan_and_task() {
         "no-work grammar must reject an omitted kind field"
     );
 
-    let plan = r#"{"kind":"plan","tasks":[{"id":"t1","objective":"decompose it","operation":"modify","targets":[],"depends_on":[]}]}"#;
+    let plan = r#"{"kind":"plan","tasks":[{"id":"t1","objective":"decompose it","name":"fibonacci","operation":"modify","targets":[],"depends_on":[]}]}"#;
     assert!(
         grammar.accepts(plan),
         "no-work grammar must accept kind: \"plan\""
+    );
+
+    let plan_missing_name = r#"{"kind":"plan","tasks":[{"id":"t1","objective":"decompose it","operation":"modify","targets":[],"depends_on":[]}]}"#;
+    assert!(
+        !grammar.accepts(plan_missing_name),
+        "no-work grammar must reject a kind: \"plan\" task missing the now-required name field"
     );
 
     let task = r#"{"kind":"task","tasks":[{"id":"t1","objective":"do it","name":"fibonacci","depends_on":[]}]}"#;
@@ -130,6 +136,37 @@ fn planner_gbnf_with_roles_still_accepts_kind_work() {
     assert!(
         grammar.accepts(omitted),
         "with-roles grammar must still accept an omitted kind (defaults to work)"
+    );
+
+    // `kind: "work"` tasks never become a terminal task row, so `name` stays
+    // grammar-illegal for them — only `plan`/`task` require it.
+    let work_with_name = r#"{"kind":"work","tasks":[{"id":"t1","objective":"do it","name":"fibonacci","operation":"modify","role":"implementer","targets":["a.txt"],"depends_on":[]}]}"#;
+    assert!(
+        !grammar.accepts(work_with_name),
+        "with-roles grammar must reject a name field on a kind: \"work\" task"
+    );
+}
+
+#[test]
+fn planner_gbnf_with_roles_requires_name_on_kind_plan() {
+    // Invariant: a `kind: "plan"` batch can collapse into a terminal task row
+    // via the single-task short-circuit
+    // (`PlannerOutputProcessor::into_plan`), so the with-roles grammar must
+    // require `name` on every `kind: "plan"` task, same as `kind: "task"`.
+    use super::gbnf_check::Grammar;
+
+    let grammar = Grammar::parse(PLANNER_GBNF_WITH_ROLES);
+
+    let plan = r#"{"kind":"plan","tasks":[{"id":"t1","objective":"decompose it","name":"fibonacci","operation":"modify","role":"implementer","targets":[],"depends_on":[]}]}"#;
+    assert!(
+        grammar.accepts(plan),
+        "with-roles grammar must accept kind: \"plan\" with a name"
+    );
+
+    let plan_missing_name = r#"{"kind":"plan","tasks":[{"id":"t1","objective":"decompose it","operation":"modify","role":"implementer","targets":[],"depends_on":[]}]}"#;
+    assert!(
+        !grammar.accepts(plan_missing_name),
+        "with-roles grammar must reject a kind: \"plan\" task missing the now-required name field"
     );
 }
 

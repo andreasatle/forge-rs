@@ -188,21 +188,24 @@ fn spawn_for_tasks(
 /// its adapter's language plugins at config-load time — see
 /// [`TeamConfig::name_target_rules`]).
 ///
-/// `record` is always the planner `Task` row this id was decomposed from: a
+/// `record` is always a planner-produced task row this id was decomposed
+/// from — either a `kind: "task"` row, or a `kind: "plan"` row that
+/// `PlannerOutputProcessor::into_plan` short-circuited into a terminal task
+/// (see [`crate::node_runner::planner::PlannerOutputKind::Plan`]): a
 /// `ForTasks` id only ever exists because a manifest row with that id and a
-/// team already does, and the first such row for any id is always a planner
-/// row (a `Work`-node completion for the id can only be recorded *after* the
-/// planner row that gave rise to it). `EmptyName` validation guarantees a
-/// planner `Task` row's `name` is never empty. Failing to match it against
-/// any configured rule — including when `team` has no language plugins at
-/// all, i.e. `name_target_rules` is empty — is `Err`, never a guessed
-/// fallback: the caller must fail the run rather than spawn a node that can
-/// touch no file.
+/// team already does, and the first such row for any id is always one of
+/// these two planner rows (a `Work`-node completion for the id can only be
+/// recorded *after* the planner row that gave rise to it). `EmptyName`
+/// validation covers both row kinds and guarantees `name` is never empty for
+/// either. Failing to match it against any configured rule — including when
+/// `team` has no language plugins at all, i.e. `name_target_rules` is empty
+/// — is `Err`, never a guessed fallback: the caller must fail the run rather
+/// than spawn a node that can touch no file.
 fn task_target_files(team: &TeamConfig, record: &TaskRecord) -> Result<Vec<String>, String> {
     let name = record
         .name
         .as_deref()
-        .expect("a ForTasks-matched record is always a planner Task row, which EmptyName validation guarantees carries a name");
+        .expect("a ForTasks-matched record is always a planner task row (kind: \"task\" or a short-circuited kind: \"plan\"), which EmptyName validation guarantees carries a name");
     derive_target_from_name(&team.name_target_rules, name)
         .map(|target| vec![target])
         .ok_or_else(|| {

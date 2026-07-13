@@ -91,16 +91,25 @@ ws ::= ([ \t\n] ws)?"#;
 /// must assign every such task to one of the adapter's configured worker
 /// roles.
 ///
+/// `kind: "plan"` tasks additionally require `name`, matching `kind: "task"`
+/// below: a single-task `"plan"` output collapses into a terminal task row
+/// (see [`crate::node_runner::planner::PlannerOutputProcessor::into_plan`]),
+/// so any task in a `"plan"` batch may end up needing a name — the schema
+/// asks for it unconditionally rather than only when the batch happens to
+/// contain just one task. `kind: "work"` tasks never become a terminal task
+/// row, so they carry no `name` field.
+///
 /// Also accepts a third top-level `kind`: `"task"`, whose tasks are pure
 /// planner intent (see [`crate::node_runner::planner::PlannerOutputKind::Task`])
 /// and use a distinct, narrower task-record shape —
 /// `{"id":...,"objective":...,"name":...,"depends_on":[...]}` — with no
 /// `operation`, `role`, or `targets`. Unlike `work`/`plan`, `kind: "task"`
 /// must be stated explicitly; it has no default.
-pub(crate) const PLANNER_GBNF_WITH_ROLES: &str = r#"root ::= work-plan-output | task-output
-work-plan-output ::= "{" ws (kind-field ws "," ws)? "\"tasks\"" ws ":" ws "[" ws task (ws "," ws task)* ws "]" ws "}" ws
-kind-field ::= "\"kind\"" ws ":" ws ("\"work\"" | "\"plan\"")
-task ::= "{" ws "\"id\"" ws ":" ws string ws "," ws "\"objective\"" ws ":" ws string ws "," ws "\"operation\"" ws ":" ws operation ws "," ws role-field ws "," ws "\"targets\"" ws ":" ws string-array ws "," ws "\"depends_on\"" ws ":" ws string-array ws "}" ws
+pub(crate) const PLANNER_GBNF_WITH_ROLES: &str = r#"root ::= work-output | plan-output | task-output
+work-output ::= "{" ws ("\"kind\"" ws ":" ws "\"work\"" ws "," ws)? "\"tasks\"" ws ":" ws "[" ws work-task (ws "," ws work-task)* ws "]" ws "}" ws
+plan-output ::= "{" ws "\"kind\"" ws ":" ws "\"plan\"" ws "," ws "\"tasks\"" ws ":" ws "[" ws plan-task (ws "," ws plan-task)* ws "]" ws "}" ws
+work-task ::= "{" ws "\"id\"" ws ":" ws string ws "," ws "\"objective\"" ws ":" ws string ws "," ws "\"operation\"" ws ":" ws operation ws "," ws role-field ws "," ws "\"targets\"" ws ":" ws string-array ws "," ws "\"depends_on\"" ws ":" ws string-array ws "}" ws
+plan-task ::= "{" ws "\"id\"" ws ":" ws string ws "," ws "\"objective\"" ws ":" ws string ws "," ws "\"name\"" ws ":" ws string ws "," ws "\"operation\"" ws ":" ws operation ws "," ws role-field ws "," ws "\"targets\"" ws ":" ws string-array ws "," ws "\"depends_on\"" ws ":" ws string-array ws "}" ws
 operation ::= "\"create\"" | "\"modify\"" | "\"delete\""
 role-field ::= "\"role\"" ws ":" ws string
 string-array ::= "[" ws (string (ws "," ws string)*)? ws "]" ws
@@ -124,10 +133,11 @@ ws ::= ([ \t\n] ws)?"#;
 /// this grammar at all.
 ///
 /// Per-task shape otherwise matches [`PLANNER_GBNF_WITH_ROLES`], minus the
-/// `role` field.
+/// `role` field — including `plan-task` requiring `name`, for the same
+/// terminal-short-circuit reason documented there.
 pub(crate) const PLANNER_GBNF_NO_WORK: &str = r#"root ::= plan-output | task-output
-plan-output ::= "{" ws "\"kind\"" ws ":" ws "\"plan\"" ws "," ws "\"tasks\"" ws ":" ws "[" ws task (ws "," ws task)* ws "]" ws "}" ws
-task ::= "{" ws "\"id\"" ws ":" ws string ws "," ws "\"objective\"" ws ":" ws string ws "," ws "\"operation\"" ws ":" ws operation ws "," ws "\"targets\"" ws ":" ws string-array ws "," ws "\"depends_on\"" ws ":" ws string-array ws "}" ws
+plan-output ::= "{" ws "\"kind\"" ws ":" ws "\"plan\"" ws "," ws "\"tasks\"" ws ":" ws "[" ws plan-task (ws "," ws plan-task)* ws "]" ws "}" ws
+plan-task ::= "{" ws "\"id\"" ws ":" ws string ws "," ws "\"objective\"" ws ":" ws string ws "," ws "\"name\"" ws ":" ws string ws "," ws "\"operation\"" ws ":" ws operation ws "," ws "\"targets\"" ws ":" ws string-array ws "," ws "\"depends_on\"" ws ":" ws string-array ws "}" ws
 operation ::= "\"create\"" | "\"modify\"" | "\"delete\""
 string-array ::= "[" ws (string (ws "," ws string)*)? ws "]" ws
 
@@ -211,7 +221,8 @@ Each `targets` array must be non-empty and list exact files the task may create,
 Required `role` field: the name of one of the available worker roles listed above. \
 Every task must be assigned to one of those roles.\n\
 Optional top-level `kind` field: \"work\" (default when omitted), \"plan\", or \"task\". \
-When `kind` is \"plan\", every task becomes a further planning node instead of a work node, and `targets` may be empty. \
+When `kind` is \"plan\", every task becomes a further planning node instead of a work node, `targets` may be empty, \
+and each task additionally requires `name` (a bare symbol or concept identifier, e.g. \"fibonacci\", not a file path or location). \
 When `kind` is \"task\", `kind` must be stated explicitly and each task requires only `id`, `objective`, `name`, and `depends_on` — no `operation`, `role`, or `targets`. \
 `name` must be a bare symbol or concept identifier (e.g. \"fibonacci\"), not a file path or location.\n\
 All tasks in one PlannerOutput share the same kind — never mix kinds in one response.";
@@ -224,9 +235,10 @@ All tasks in one PlannerOutput share the same kind — never mix kinds in one re
 /// `work` default to fall back on.
 pub(crate) const PLANNER_PROTOCOL_FOOTER_WITH_OPERATION_NO_WORK: &str = "PlannerOutput: `tasks` must be a non-empty array.\n\
 Required top-level `kind` field: \"plan\" or \"task\" — this adapter defines no worker roles, so `kind: \"work\"` is not available.\n\
-When `kind` is \"plan\", each task requires `id`, `objective`, `operation`, `targets`, and `depends_on`; \
+When `kind` is \"plan\", each task requires `id`, `objective`, `name`, `operation`, `targets`, and `depends_on`; \
 `operation` must be \"create\", \"modify\", or \"delete\"; \
-`targets` may be empty since the task escalates to further planning instead of naming concrete files yet.\n\
+`targets` may be empty since the task escalates to further planning instead of naming concrete files yet; \
+`name` must be a bare symbol or concept identifier (e.g. \"fibonacci\"), not a file path or location.\n\
 When `kind` is \"task\", each task requires only `id`, `objective`, `name`, and `depends_on` — no `operation` or `targets`. \
 `name` must be a bare symbol or concept identifier (e.g. \"fibonacci\"), not a file path or location.\n\
 All tasks in one PlannerOutput share the same kind — never mix kinds in one response.";

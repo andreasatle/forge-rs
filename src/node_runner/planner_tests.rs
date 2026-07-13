@@ -311,10 +311,11 @@ fn plan_kind_task_missing_role_skips_role_validation() {
     // same as target validation — escalated tasks have no concrete targets
     // or role yet.
     let roles = [("implementer".to_string(), "Implements code.".to_string())];
-    let output = PlannerOutput {
+    let mut output = PlannerOutput {
         kind: PlannerOutputKind::Plan,
         tasks: vec![planner_task("sub-plan", "decompose this further", &[], &[])],
     };
+    output.tasks[0].name = "sub_plan".to_string();
     assert!(
         processor_with_roles(&no_required_test_targets, &roles)
             .validate(&output)
@@ -327,10 +328,11 @@ fn plan_kind_task_missing_role_skips_role_validation() {
 fn plan_kind_task_with_empty_targets_passes_structural_validation() {
     // Invariant: `kind: "plan"` tasks have no concrete files yet, so an empty
     // `targets` array must not trigger `EmptyTargets`.
-    let output = PlannerOutput {
+    let mut output = PlannerOutput {
         kind: PlannerOutputKind::Plan,
         tasks: vec![planner_task("sub-plan", "decompose this further", &[], &[])],
     };
+    output.tasks[0].name = "sub_plan".to_string();
     assert!(
         validate_planner_output(&output).is_ok(),
         "plan-kind task with empty targets must pass validation"
@@ -406,7 +408,7 @@ fn plan_kind_skips_tests_required_check() {
         vec!["tests/test_main.py".to_string()]
     }
 
-    let output = PlannerOutput {
+    let mut output = PlannerOutput {
         kind: PlannerOutputKind::Plan,
         tasks: vec![planner_task(
             "sub-plan",
@@ -415,6 +417,7 @@ fn plan_kind_skips_tests_required_check() {
             &[],
         )],
     };
+    output.tasks[0].name = "sub_plan".to_string();
     let processor = PlannerOutputProcessor::new(&required_test_targets, &[]);
     assert!(
         processor.validate(&output).is_ok(),
@@ -662,6 +665,71 @@ fn plan_kind_output_with_single_task_becomes_terminal_task() {
     assert_eq!(plan.tasks[0].id, "sub-a");
     assert_eq!(plan.tasks[0].objective, "decompose part a");
     assert_eq!(plan.tasks[0].name, "sub_a");
+}
+
+#[test]
+fn plan_kind_task_with_blank_name_fails_validation() {
+    // Invariant: `EmptyName` validation covers `kind: "plan"` tasks, not just
+    // `kind: "task"` — a `kind: "plan"` batch can collapse into a terminal
+    // task row via the single-task short-circuit (see
+    // `plan_kind_output_with_single_task_becomes_terminal_task`), so a blank
+    // name must be caught here, at validation time, rather than surfacing
+    // later as a `name_target_rules` match failure or a downstream `.expect()`
+    // panic (`triggers::task_target_files`).
+    let output = PlannerOutput {
+        kind: PlannerOutputKind::Plan,
+        tasks: vec![PlannerTask {
+            id: "sub-a".to_string(),
+            objective: "decompose part a".to_string(),
+            name: "  ".to_string(),
+            role: None,
+            targets: vec![],
+            depends_on: vec![],
+        }],
+    };
+    assert_eq!(
+        validate_planner_output(&output),
+        Err(PlannerValidationError::EmptyName("sub-a".to_string()))
+    );
+}
+
+#[test]
+fn short_circuited_single_task_plan_output_gets_a_name_that_matches_a_name_target_rule() {
+    // Invariant: end-to-end, a single-task `kind: "plan"` output that
+    // validates successfully and is short-circuited into a terminal task by
+    // `into_plan` carries a real, non-blank `name` all the way through —
+    // exactly the value a team's `name_target_rules` matches against in
+    // `triggers::task_target_files` once the row lands in the manifest.
+    let output = PlannerOutput {
+        kind: PlannerOutputKind::Plan,
+        tasks: vec![PlannerTask {
+            id: "sub-a".to_string(),
+            objective: "decompose part a".to_string(),
+            name: "fibonacci".to_string(),
+            role: None,
+            targets: vec![],
+            depends_on: vec![],
+        }],
+    };
+    assert!(
+        validate_planner_output(&output).is_ok(),
+        "a single-task plan output with a non-blank name must pass validation"
+    );
+    let plan = planner_output_to_plan_output(output);
+    assert!(plan.children.is_empty());
+    assert_eq!(plan.tasks.len(), 1);
+    assert_eq!(plan.tasks[0].name, "fibonacci");
+
+    let rules = [crate::language::NameTargetRule {
+        pattern: "{name}".to_string(),
+        target: "src/{name}.rs".to_string(),
+    }];
+    let target = crate::language::derive_target_from_name(&rules, &plan.tasks[0].name);
+    assert_eq!(
+        target,
+        Some("src/fibonacci.rs".to_string()),
+        "the short-circuited task's name must successfully match a name_target_rule"
+    );
 }
 
 #[test]

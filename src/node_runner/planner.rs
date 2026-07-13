@@ -20,10 +20,14 @@ pub struct PlannerTask {
     /// Bare symbol or concept identifier for this task (e.g. `fibonacci`) —
     /// not a file path or location.
     ///
-    /// Required (and validated non-blank) for [`PlannerOutputKind::Task`]
-    /// output, whose grammar and protocol footer ask the planner for it.
-    /// `#[serde(default)]` stays in place because `work`/`plan` task schemas
-    /// carry no `name` field at all, so their JSON never includes it.
+    /// Required (and validated non-blank) for [`PlannerOutputKind::Task`] and
+    /// [`PlannerOutputKind::Plan`] output, whose grammar and protocol footer
+    /// ask the planner for it in both cases: a `kind: "plan"` batch may
+    /// collapse into a terminal task row just like `kind: "task"` (see
+    /// [`PlannerOutputProcessor::into_plan`]), so any task in such a batch
+    /// may need a name. `#[serde(default)]` stays in place because `work`
+    /// task schemas carry no `name` field at all — `Work` tasks never become
+    /// a terminal task row — so their JSON never includes it.
     #[serde(default)]
     pub name: String,
     /// Worker role this task is assigned to, chosen by the planner from the
@@ -99,7 +103,9 @@ pub enum PlannerValidationError {
     DuplicateId(String),
     /// A task has an empty (or whitespace-only) objective.
     EmptyObjective(String),
-    /// A `kind: "task"` task has an empty (or whitespace-only) name.
+    /// A `kind: "task"` or `kind: "plan"` task has an empty (or
+    /// whitespace-only) name. `kind: "work"` tasks are exempt: they never
+    /// become a terminal task row, so they carry no `name` at all.
     EmptyName(String),
     /// A work task does not declare any concrete target files.
     EmptyTargets(String),
@@ -216,7 +222,7 @@ impl<'a> PlannerOutputProcessor<'a> {
             if task.objective.trim().is_empty() {
                 return Err(PlannerValidationError::EmptyObjective(task.id.clone()));
             }
-            if output.kind == PlannerOutputKind::Task && task.name.trim().is_empty() {
+            if output.kind != PlannerOutputKind::Work && task.name.trim().is_empty() {
                 return Err(PlannerValidationError::EmptyName(task.id.clone()));
             }
             if output.kind == PlannerOutputKind::Work {

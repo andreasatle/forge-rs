@@ -236,11 +236,11 @@ teams:
     //      `"kind":"task"` to terminate.
     let provider = RecordingScriptedProvider::from_strs(&[
         // 1. root/recursive-team Plan node
-        r#"{"kind":"plan","tasks":[{"id":"plan-a","objective":"decompose branch a","depends_on":[]},{"id":"plan-b","objective":"decompose branch b","depends_on":[]}]}"#,
+        r#"{"kind":"plan","tasks":[{"id":"plan-a","objective":"decompose branch a","name":"branch_a","depends_on":[]},{"id":"plan-b","objective":"decompose branch b","name":"branch_b","depends_on":[]}]}"#,
         r#"{"status":"accepted","content":"root critic ok"}"#,
         r#"{"status":"accepted","content":"root referee approved"}"#,
         // 2. "plan-a" Plan child: decomposes further
-        r#"{"kind":"plan","tasks":[{"id":"leaf-a1","objective":"decompose leaf a1","depends_on":[]},{"id":"leaf-a2","objective":"decompose leaf a2","depends_on":[]}]}"#,
+        r#"{"kind":"plan","tasks":[{"id":"leaf-a1","objective":"decompose leaf a1","name":"leaf_a1_plan","depends_on":[]},{"id":"leaf-a2","objective":"decompose leaf a2","name":"leaf_a2_plan","depends_on":[]}]}"#,
         r#"{"status":"accepted","content":"plan-a critic ok"}"#,
         r#"{"status":"accepted","content":"plan-a referee approved"}"#,
         // 3. "plan-b" Plan child: terminates immediately
