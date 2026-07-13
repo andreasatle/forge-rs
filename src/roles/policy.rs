@@ -172,11 +172,16 @@ Referee accepts approval or rejects with revision feedback.";
 
 /// JSON protocol instructions for the Work-node Producer role.
 ///
-/// The Work-node Producer's job is to implement — it never rejects, so its
-/// response is a single `{"summary": "..."}` object with no `status` tag to
-/// discriminate. This is a different schema from [`DEFAULT_SYSTEM`], not a
-/// restricted view of it; the `status`/`content`/`reason` fields must never
-/// appear anywhere in a prompt the Work-node Producer can receive.
+/// The Work-node Producer never rejects, so its response is a single
+/// `{"summary": "..."}` object with no `status` tag to discriminate. This is
+/// a different schema from [`DEFAULT_SYSTEM`], not a restricted view of it;
+/// the `status`/`content`/`reason` fields must never appear anywhere in a
+/// prompt the Work-node Producer can receive.
+///
+/// Shared byte-for-byte across every worker role — it must not assert what
+/// completing the task means (e.g. "implement"), since that would contradict
+/// non-implementer roles like `tester` or `pass_tests`, whose own
+/// Identity/Instructions define the work in their own terms.
 ///
 /// Framework protocol, shared across adapters — see [`DEFAULT_SYSTEM`].
 /// The "execution failures are handled by the framework" note this used to
@@ -184,7 +189,7 @@ Referee accepts approval or rejects with revision feedback.";
 /// [`generic_prompt`].
 pub(crate) const WORK_PRODUCER_SYSTEM: &str = "Allowed final response:\n\
 `summary` must be a non-empty task-specific string describing what you did.\n\
-Implement the requested change and return a summary describing what you did. \
+Complete the work this task requires and return a summary describing what you did. \
 There is no rejected response — a valid summary means the work is done.";
 
 /// Generic role-identity and task-decomposition instruction for the Plan-node

@@ -56,6 +56,34 @@ fn default_system_prompts_have_no_placeholder_values() {
     }
 }
 
+#[test]
+fn work_producer_system_does_not_assert_role_specific_action() {
+    // Invariant: WORK_PRODUCER_SYSTEM is shared byte-for-byte across every
+    // worker role (implementer, tester, pass_tests, ...), so it must not
+    // assert what completing the task means — asserting "implement" would
+    // contradict non-implementer roles, whose own Identity/Instructions
+    // define the work in their own terms (tester writes tests, pass_tests
+    // debugs an existing implementation against existing tests).
+    assert!(
+        !WORK_PRODUCER_SYSTEM.to_lowercase().contains("implement"),
+        "shared Work-node Producer response contract must not hardcode \
+         implementer-specific wording: {WORK_PRODUCER_SYSTEM}"
+    );
+}
+
+#[test]
+fn default_system_does_not_assert_role_specific_action() {
+    // Invariant: DEFAULT_SYSTEM backs every Critic/Referee response contract
+    // across every worker role, so — same as WORK_PRODUCER_SYSTEM above — it
+    // must stay role-neutral rather than asserting implementer-specific
+    // wording that would contradict a non-implementer role's own Identity.
+    assert!(
+        !DEFAULT_SYSTEM.to_lowercase().contains("implement"),
+        "shared Critic/Referee response contract must not hardcode \
+         implementer-specific wording: {DEFAULT_SYSTEM}"
+    );
+}
+
 fn assert_schema(system: &str, required: &[&str], forbidden: &[&str]) {
     for field in required {
         assert!(
