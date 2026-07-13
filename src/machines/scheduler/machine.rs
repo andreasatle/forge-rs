@@ -196,10 +196,23 @@ impl SchedulerMachine {
         match (state, event) {
             // Scan the graph, then in the same tick either complete, fail, or dispatch.
             //
-            // Three outcomes:
+            // Four outcomes:
             //   1. All nodes are terminal → enter Complete and stop.
-            //   2. Some nodes are Pending but none are ready → deadlock; enter Failed.
-            //   3. At least one node is ready → mark it Running, emit RunNode, move to Waiting.
+            //   2. No dispatch slot is free, or none of the ready nodes fit in
+            //      one → stay Waiting; nodes still in flight may free a slot
+            //      or unblock a dependent later.
+            //   3. A slot is free but nothing is ready and nothing is in
+            //      flight to ever make anything ready → deadlock; enter Failed.
+            //   4. At least one node is ready and a slot is free → mark as
+            //      many as fit Running, emit one RunNode per one, move to
+            //      Waiting.
+            //
+            // `active_count` may be greater than zero here: `resuming`
+            // returns `Active` as soon as any dispatch slot frees up, even
+            // while sibling nodes from the same original batch are still
+            // `Running`/`Integrating`, so this tick can opportunistically
+            // back-fill that slot instead of waiting for the whole batch to
+            // drain.
             (SchedulerState::Active { graph, run_config }, SchedulerEvent::Start) => {
                 if let Err(detail) = graph.validate_graph_invariants() {
                     return Transition {
@@ -210,11 +223,11 @@ impl SchedulerMachine {
                         effects: vec![],
                     };
                 }
-                let active = graph.active_nodes();
-                if let Some(node) = active.first() {
+                let cap = run_config.dispatch_cap.max(1);
+                let active_count = graph.active_nodes().len();
+                if active_count > cap {
                     let detail = format!(
-                        "invalid running state: node {} is {:?}",
-                        node.id.0, node.status
+                        "invalid running state: {active_count} nodes in flight exceeds dispatch_cap {cap}"
                     );
                     return recovery::failed_transition(
                         graph,
@@ -240,17 +253,28 @@ impl SchedulerMachine {
                     }
                 } else {
                     let ready = graph.find_ready();
-                    if ready.is_empty() {
-                        let detail = graph.diagnose_no_ready();
-                        Transition {
-                            state: SchedulerState::Failed {
-                                graph: graph.clone(),
-                                reason: FailureReason::Deadlock(detail),
-                            },
-                            effects: vec![],
+                    let available = cap - active_count;
+                    let dispatch_count = ready.len().min(available);
+                    if dispatch_count == 0 {
+                        if active_count == 0 {
+                            let detail = graph.diagnose_no_ready();
+                            Transition {
+                                state: SchedulerState::Failed {
+                                    graph: graph.clone(),
+                                    reason: FailureReason::Deadlock(detail),
+                                },
+                                effects: vec![],
+                            }
+                        } else {
+                            // No spare capacity, or nothing new is ready
+                            // right now; the nodes still in flight may free a
+                            // slot or unblock a dependent when they resolve.
+                            Transition {
+                                state: SchedulerState::Waiting { graph, run_config },
+                                effects: vec![],
+                            }
                         }
                     } else {
-                        let dispatch_count = ready.len().min(run_config.dispatch_cap.max(1));
                         let mut graph = graph;
                         let mut effects = Vec::with_capacity(dispatch_count);
                         for node_id in &ready[..dispatch_count] {

@@ -356,33 +356,32 @@ fn waiting_with_running_node_still_works() {
     ));
 }
 
-// ── Serial active-node invariant tests ───────────────────────────────────
+// ── Active-node-at-cap invariant tests ───────────────────────────────────
 //
-// Invariant: Start requires that no node is already Running or Integrating;
-// either pre-existing status is rejected as a ProtocolViolation naming the
-// node id and its actual status.
+// Invariant: `Start` tolerates active (Running/Integrating) nodes coexisting
+// with `Active` — that's exactly the opportunistic-backfill case, where a
+// freed slot triggers a re-scan while siblings are still in flight. What's
+// still rejected as a ProtocolViolation is more nodes in flight than
+// `dispatch_cap` physically allows.
 
 #[test]
-fn active_state_rejects_preexisting_active_node() {
+fn active_state_with_node_already_at_cap_stays_waiting_without_dispatch() {
     struct Case {
         status: NodeStatus,
-        expected_detail: &'static str,
     }
 
     let cases = vec![
         Case {
             status: NodeStatus::Running,
-            expected_detail: "invalid running state: node A is Running",
         },
         Case {
             status: NodeStatus::Integrating,
-            expected_detail: "invalid running state: node A is Integrating",
         },
     ];
 
     for case in cases {
         let mut graph = single_work_graph();
-        graph.nodes[0].status = case.status;
+        graph.nodes[0].status = case.status.clone();
 
         let t = do_transition(
             SchedulerState::Active {
@@ -392,8 +391,40 @@ fn active_state_rejects_preexisting_active_node() {
             SchedulerEvent::Start,
         );
 
-        assert_protocol_violation(&t, case.expected_detail);
+        let SchedulerState::Waiting { graph, .. } = t.state else {
+            panic!(
+                "expected Waiting (no spare capacity under cap 1), got {:#?}",
+                t.state
+            );
+        };
+        assert_eq!(
+            graph.nodes[0].status, case.status,
+            "the already-active node must be untouched"
+        );
+        assert!(t.effects.is_empty(), "no capacity to dispatch anything new");
     }
+}
+
+#[test]
+fn active_state_rejects_more_active_nodes_than_cap() {
+    let mut graph = RunGraph {
+        nodes: vec![work_node("A", "do a", &[]), work_node("B", "do b", &[])],
+    };
+    graph.nodes[0].status = NodeStatus::Running;
+    graph.nodes[1].status = NodeStatus::Running;
+
+    let t = do_transition(
+        SchedulerState::Active {
+            graph,
+            run_config: RunConfig::default(), // dispatch_cap: 1
+        },
+        SchedulerEvent::Start,
+    );
+
+    assert_protocol_violation(
+        &t,
+        "invalid running state: 2 nodes in flight exceeds dispatch_cap 1",
+    );
 }
 
 #[test]

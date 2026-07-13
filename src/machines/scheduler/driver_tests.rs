@@ -1,7 +1,8 @@
 use super::*;
 
-use std::sync::Arc;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::machines::scheduler::{
@@ -104,6 +105,88 @@ fn two_nodes_with_dispatch_cap_two_run_concurrently_not_serially() {
     assert!(
         elapsed < delay * 3 / 2,
         "two concurrent {delay:?} dispatches should take about one delay, took {elapsed:?}"
+    );
+}
+
+/// Records, per node id, the elapsed time (since a shared `start`) at which
+/// its dispatch began, then sleeps for that node's configured delay.
+struct TimestampingRunner {
+    start: Instant,
+    delays: HashMap<String, Duration>,
+    dispatch_starts: Arc<Mutex<HashMap<String, Duration>>>,
+}
+
+impl NodeRunner for TimestampingRunner {
+    fn run_node(&self, request: NodeRunRequest, _telemetry: &dyn TelemetrySink) -> NodeRunResult {
+        let elapsed = self.start.elapsed();
+        self.dispatch_starts
+            .lock()
+            .unwrap()
+            .insert(request.node_id.0.clone(), elapsed);
+        std::thread::sleep(self.delays[&request.node_id.0]);
+        work_accepted()
+    }
+}
+
+// Invariant: dispatch is opportunistic, not wave-gated. With `dispatch_cap`
+// 2 and three ready nodes, A and B dispatch immediately and C stays Pending
+// (no free slot). Once A (fast) completes, its freed slot must be backfilled
+// with C right away — C must not sit idle until B (slow) also completes.
+#[test]
+fn freed_slot_is_backfilled_as_soon_as_the_fast_node_completes_not_waiting_for_the_slow_one() {
+    let fast = Duration::from_millis(150);
+    let slow = Duration::from_millis(600);
+    let start = Instant::now();
+    let dispatch_starts = Arc::new(Mutex::new(HashMap::new()));
+    let delays = HashMap::from([
+        ("A".to_string(), fast),
+        ("B".to_string(), slow),
+        ("C".to_string(), fast),
+    ]);
+    let runner = TimestampingRunner {
+        start,
+        delays,
+        dispatch_starts: Arc::clone(&dispatch_starts),
+    };
+
+    let state = SchedulerState::Active {
+        graph: RunGraph {
+            nodes: vec![work_node("A"), work_node("B"), work_node("C")],
+        },
+        run_config: RunConfig {
+            dispatch_cap: 2,
+            ..RunConfig::default()
+        },
+    };
+
+    let output = run_scheduler(SchedulerHandler::new(runner), state);
+    assert!(
+        matches!(output, SchedulerTerminalOutput::Complete { .. }),
+        "expected Complete, got {output:#?}"
+    );
+
+    let starts = dispatch_starts.lock().unwrap();
+    let a_start = starts["A"];
+    let b_start = starts["B"];
+    let c_start = *starts
+        .get("C")
+        .expect("C must have been dispatched at some point");
+
+    assert!(
+        a_start < Duration::from_millis(100) && b_start < Duration::from_millis(100),
+        "A and B must both dispatch immediately at the start of the run: \
+         a_start={a_start:?}, b_start={b_start:?}"
+    );
+    assert!(
+        c_start >= a_start + fast,
+        "C must not start before A actually completes: c_start={c_start:?}, \
+         a_start={a_start:?}, fast={fast:?}"
+    );
+    assert!(
+        c_start < b_start + slow / 2,
+        "C must be backfilled into A's freed slot well before B completes, \
+         not wait for the whole batch to drain: c_start={c_start:?}, \
+         b_start={b_start:?}, slow={slow:?}"
     );
 }
 

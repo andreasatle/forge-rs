@@ -15,6 +15,14 @@
 //! artifact integration must be serialized against the shared artifact/git
 //! state.
 //!
+//! Dispatch is opportunistic, not wave-gated: as soon as any in-flight node
+//! resolves and frees a slot below `dispatch_cap`, `SchedulerState::resuming`
+//! reports `Active` and this loop emits a fresh `Start` immediately — it does
+//! not wait for the rest of the original dispatch batch to drain first. The
+//! `state` variant returned by `SchedulerMachine::transition` is the sole
+//! signal for whether to re-scan (`Active`) or block for the next completion
+//! (`Waiting`); no separate in-flight counter is kept here.
+//!
 //! `std::thread::scope` is used (rather than `std::thread::spawn`) so
 //! dispatch threads can borrow `&SchedulerHandler<R>` directly: every
 //! spawned thread is guaranteed to finish before this module's functions
@@ -69,7 +77,6 @@ pub fn run_scheduler_with_telemetry<R: NodeRunner + Sync>(
     ));
 
     let mut pending_effects: VecDeque<SchedulerEffect> = VecDeque::new();
-    let mut in_flight: usize = 0;
     let (tx, rx) = mpsc::channel::<SchedulerEvent>();
     let mut event = SchedulerMachine.start_event();
 
@@ -101,20 +108,24 @@ pub fn run_scheduler_with_telemetry<R: NodeRunner + Sync>(
 
             event = loop {
                 let Some(effect) = pending_effects.pop_front() else {
-                    if in_flight == 0 {
+                    // `Active` means a dispatch slot is free and the machine
+                    // wants to re-scan for ready work now — emit `Start`
+                    // immediately rather than waiting for every other
+                    // in-flight node to drain first, so a freed slot gets
+                    // opportunistically back-filled. `Waiting` means the cap
+                    // is saturated (or nothing is ready yet): block for the
+                    // next completion instead.
+                    if matches!(state, SchedulerState::Active { .. }) {
                         break SchedulerMachine.start_event();
                     }
-                    let event = rx.recv().expect(
+                    break rx.recv().expect(
                         "a spawned node-dispatch thread dropped its sender without a result",
                     );
-                    in_flight -= 1;
-                    break event;
                 };
 
                 record_effect_emitted(telemetry, &effect);
 
                 if matches!(effect, SchedulerEffect::RunNode { .. }) {
-                    in_flight += 1;
                     let tx = tx.clone();
                     let handler_ref = &handler;
                     scope.spawn(move || {

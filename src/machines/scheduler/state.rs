@@ -100,15 +100,18 @@ impl SchedulerState {
     /// Builds the state to resume with once a single node's (or
     /// integration's) outcome has been fully resolved.
     ///
-    /// With a `dispatch_cap` of more than one, resolving one in-flight node
-    /// does not necessarily mean the scheduler is free to re-scan for new
-    /// ready work — other dispatched nodes may still be `Running` or
-    /// `Integrating`. Returns `Waiting` while any are, so their eventual
-    /// return events keep being delivered to `Waiting` (see
-    /// `RunGraph::resolve_in_flight`); returns `Active` only once none are,
-    /// matching the historical cap-of-one behaviour exactly.
+    /// Returns `Active` whenever a dispatch slot is free (fewer nodes are
+    /// `Running`/`Integrating` than `dispatch_cap` allows), so the next
+    /// `Start` tick can opportunistically back-fill that slot with newly
+    /// ready work instead of waiting for the rest of the original batch to
+    /// drain. Returns `Waiting` only when the cap is already saturated, so
+    /// return events for the remaining in-flight nodes keep being delivered
+    /// to `Waiting` (see `RunGraph::resolve_in_flight`). With a `dispatch_cap`
+    /// of one this reduces to the historical behaviour exactly: `Active` once
+    /// the sole in-flight node is resolved.
     pub(super) fn resuming(graph: RunGraph, run_config: RunConfig) -> SchedulerState {
-        if graph.active_nodes().is_empty() {
+        let cap = run_config.dispatch_cap.max(1);
+        if graph.active_nodes().len() < cap {
             SchedulerState::Active { graph, run_config }
         } else {
             SchedulerState::Waiting { graph, run_config }

@@ -162,9 +162,10 @@ fn work_accepted_routes_to_the_matching_node_among_several_in_flight() {
 }
 
 // Invariant: recovery for a failing in-flight node applies only to that
-// node — a sibling still in flight is left running, and the resulting state
-// stays Waiting (not Active) so the sibling's own return event can still be
-// delivered.
+// node — a sibling still in flight is left running, untouched by A's
+// failure/recovery. Since A's slot is now free (1 of 2 in flight), the
+// state returns to Active so the freed slot can be backfilled (e.g. with
+// the freshly-inserted retry replacement) without waiting for B too.
 #[test]
 fn node_failed_routes_recovery_to_the_matching_node_among_several_in_flight() {
     let graph = running_all(
@@ -191,11 +192,13 @@ fn node_failed_routes_recovery_to_the_matching_node_among_several_in_flight() {
         },
     );
 
-    // B is still Running, so recovering A must not jump to Active: B's
-    // eventual return event still needs a Waiting state to land in.
-    let SchedulerState::Waiting { graph, .. } = t.state else {
+    // B is still Running, but A's slot is now free, so the machine returns
+    // to Active to allow backfill — the driver's next Start tick will
+    // re-enter Waiting (with B still in flight) before B's own return event
+    // can arrive.
+    let SchedulerState::Active { graph, .. } = t.state else {
         panic!(
-            "expected Waiting (node B is still in flight), got {:#?}",
+            "expected Active (A's slot freed even though B is still in flight), got {:#?}",
             t.state
         );
     };
@@ -216,18 +219,27 @@ fn node_failed_routes_recovery_to_the_matching_node_among_several_in_flight() {
     assert!(t.effects.is_empty());
 }
 
-// Invariant: once the *last* in-flight node resolves, the state returns to
-// Active so the scheduler can re-scan for newly ready work.
+// Invariant: as soon as any one in-flight node fully resolves and frees a
+// dispatch slot, the machine returns to Active — and the very next Start
+// tick backfills that freed slot with the next ready node, without waiting
+// for the rest of the original batch (here, B) to drain first.
 #[test]
-fn resolving_the_last_in_flight_node_returns_to_active() {
+fn resolving_one_in_flight_node_backfills_the_freed_slot_without_waiting_for_siblings() {
+    // C is Pending and immediately ready, but has no free slot to dispatch
+    // into: dispatch_cap is 2 and A/B already occupy both.
     let graph = running_all(
         RunGraph {
-            nodes: vec![work_node("A", "do a", &[]), work_node("B", "do b", &[])],
+            nodes: vec![
+                work_node("A", "do a", &[]),
+                work_node("B", "do b", &[]),
+                work_node("C", "do c", &[]),
+            ],
         },
         &["A", "B"],
     );
 
-    // Resolve A first (still Waiting, since B remains in flight).
+    // Resolve A first (still Waiting, since the cap is still saturated with
+    // B running and A now Integrating).
     let t = do_transition(
         SchedulerState::Waiting {
             graph,
@@ -244,8 +256,7 @@ fn resolving_the_last_in_flight_node_returns_to_active() {
         panic!("expected Waiting, got {:#?}", t.state);
     };
 
-    // A is now Integrating (still counted in-flight); resolve its
-    // integration next.
+    // A's integration succeeds, freeing its slot for the first time.
     let t = do_transition(
         SchedulerState::Waiting { graph, run_config },
         SchedulerEvent::IntegrationSucceeded {
@@ -256,10 +267,11 @@ fn resolving_the_last_in_flight_node_returns_to_active() {
             manifest_tasks: vec![],
         },
     );
-    // B is still Running, so this must still be Waiting.
-    let SchedulerState::Waiting { graph, run_config } = t.state else {
+    // B is still Running (1 of 2 slots occupied), but that's still below
+    // cap, so the machine returns to Active instead of waiting for B too.
+    let SchedulerState::Active { graph, run_config } = t.state else {
         panic!(
-            "expected Waiting (node B is still in flight), got {:#?}",
+            "expected Active (a slot freed even though B is still in flight), got {:#?}",
             t.state
         );
     };
@@ -268,20 +280,32 @@ fn resolving_the_last_in_flight_node_returns_to_active() {
         NodeStatus::Completed
     );
 
-    // Now resolve B, the last node in flight.
+    // The next Start tick backfills the freed slot with C — B never had to
+    // resolve for this dispatch to happen.
     let t = do_transition(
-        SchedulerState::Waiting { graph, run_config },
-        SchedulerEvent::WorkAccepted {
-            node_id: NodeId("B".to_string()),
-            work: WorkOutput {
-                summary: "b done".to_string(),
-            },
-        },
+        SchedulerState::Active { graph, run_config },
+        SchedulerEvent::Start,
     );
-    assert!(
-        matches!(t.state, SchedulerState::Waiting { .. }),
-        "B itself moves to Integrating, which still counts as in flight"
+    let SchedulerState::Waiting { graph, .. } = t.state else {
+        panic!(
+            "expected Waiting after backfilling the freed slot, got {:#?}",
+            t.state
+        );
+    };
+    assert_eq!(
+        graph.nodes.iter().find(|n| n.id.0 == "B").unwrap().status,
+        NodeStatus::Running,
+        "B must remain untouched and in flight"
     );
+    assert_eq!(
+        graph.nodes.iter().find(|n| n.id.0 == "C").unwrap().status,
+        NodeStatus::Running,
+        "C must be backfilled into the slot A freed"
+    );
+    assert!(matches!(
+        t.effects.as_slice(),
+        [SchedulerEffect::RunNode { node_id, .. }] if node_id.0 == "C"
+    ));
 }
 
 // Invariant: a return event for a node id that exists but isn't among two or
