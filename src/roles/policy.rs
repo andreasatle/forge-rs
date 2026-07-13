@@ -257,15 +257,76 @@ pub struct RolePromptConfig {
     pub constraints: String,
 }
 
+/// The framework's generic prompt layer's shape: `identity`/`context`/
+/// `instructions`/`constraints` apply to every role in every adapter, and
+/// `planner` is an additional layer merged only into Plan-node Producer/
+/// Critic/Referee composition — see [`GenericPromptConfig::shared`] and
+/// [`GenericPromptConfig::for_planner`].
+///
+/// A Work node isn't decomposing anything, so `planner`-only guidance (e.g.
+/// MECE decomposition review) would be irrelevant noise there; it must never
+/// reach a Work-node prompt.
+#[derive(Debug, Clone, Default, PartialEq, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GenericPromptConfig {
+    /// Who every role is, applied to Plan and Work nodes alike.
+    pub identity: String,
+    /// Ambient background every role needs, applied to Plan and Work nodes
+    /// alike.
+    pub context: String,
+    /// What every role must do, applied to Plan and Work nodes alike.
+    pub instructions: String,
+    /// Prohibitions and boundaries every role must respect, applied to Plan
+    /// and Work nodes alike.
+    pub constraints: String,
+    /// Guidance merged only into the Plan-node Producer/Critic/Referee —
+    /// decomposition-specific review criteria that a Work node has no use
+    /// for.
+    #[serde(default)]
+    pub planner: RolePromptConfig,
+}
+
+impl GenericPromptConfig {
+    /// The shared fields alone, applied to every role — Plan and Work alike.
+    pub(crate) fn shared(&self) -> RolePromptConfig {
+        RolePromptConfig {
+            identity: self.identity.clone(),
+            context: self.context.clone(),
+            instructions: self.instructions.clone(),
+            constraints: self.constraints.clone(),
+        }
+    }
+
+    /// The shared fields with the `planner` addition appended to each
+    /// section — used to compose Plan-node Producer/Critic/Referee prompts
+    /// only, never a Work-node prompt.
+    pub(crate) fn for_planner(&self) -> RolePromptConfig {
+        RolePromptConfig {
+            identity: append_layer(&self.identity, &self.planner.identity),
+            context: append_layer(&self.context, &self.planner.context),
+            instructions: append_layer(&self.instructions, &self.planner.instructions),
+            constraints: append_layer(&self.constraints, &self.planner.constraints),
+        }
+    }
+}
+
+/// Append `addition` after `base`, separated by a newline; either side may be
+/// empty without leaving a stray blank line.
+fn append_layer(base: &str, addition: &str) -> String {
+    match (base.is_empty(), addition.is_empty()) {
+        (_, true) => base.to_string(),
+        (true, false) => addition.to_string(),
+        (false, false) => format!("{base}\n{addition}"),
+    }
+}
+
 /// The framework's generic prompt layer, embedded from `adapters/generic.yaml`
 /// at compile time.
 ///
-/// Content here applies to every role in every adapter, regardless of project
-/// or language: it is always loaded, never optional, and requires no
-/// per-adapter or per-plugin opt-in. Parsed once and cached for the life of
-/// the process.
-pub(crate) fn generic_prompt() -> &'static RolePromptConfig {
-    static GENERIC: std::sync::LazyLock<RolePromptConfig> = std::sync::LazyLock::new(|| {
+/// Always loaded, never optional, and requires no per-adapter or per-plugin
+/// opt-in. Parsed once and cached for the life of the process.
+pub(crate) fn generic_prompt() -> &'static GenericPromptConfig {
+    static GENERIC: std::sync::LazyLock<GenericPromptConfig> = std::sync::LazyLock::new(|| {
         const GENERIC_YAML: &str = include_str!("../../adapters/generic.yaml");
         serde_yaml::from_str(GENERIC_YAML).expect("adapters/generic.yaml must parse")
     });
@@ -406,30 +467,34 @@ impl Default for RolePolicy {
     fn default() -> Self {
         // No adapter or plugin configured: every role prompt is the generic
         // layer alone, composed the same way [`crate::project::yaml::YamlProjectAdapter`]
-        // composes it, just with empty adapter/plugin layers.
+        // composes it, just with empty adapter/plugin layers. Plan-node
+        // roles additionally pick up the generic layer's `planner` addition;
+        // Work-node roles use the shared fields only.
         let generic = generic_prompt();
+        let shared = generic.shared();
+        let for_planner = generic.for_planner();
         let empty = RolePromptConfig::default();
-        let planner_producer_base = render_role_prompt(generic, &empty, None);
+        let planner_producer_base = render_role_prompt(&for_planner, &empty, None);
         Self {
             worker_producer_system: format!(
                 "{}\n{WORK_PRODUCER_SYSTEM}",
-                render_role_prompt(generic, &empty, None)
+                render_role_prompt(&shared, &empty, None)
             ),
             planner_critic_system: format!(
                 "{}\n{DEFAULT_SYSTEM}",
-                render_role_prompt(generic, &empty, None)
+                render_role_prompt(&for_planner, &empty, None)
             ),
             worker_critic_system: format!(
                 "{}\n{DEFAULT_SYSTEM}",
-                render_role_prompt(generic, &empty, None)
+                render_role_prompt(&shared, &empty, None)
             ),
             planner_referee_system: format!(
                 "{}\n{DEFAULT_SYSTEM}",
-                render_role_prompt(generic, &empty, None)
+                render_role_prompt(&for_planner, &empty, None)
             ),
             worker_referee_system: format!(
                 "{}\n{DEFAULT_SYSTEM}",
-                render_role_prompt(generic, &empty, None)
+                render_role_prompt(&shared, &empty, None)
             ),
             planner_producer_base,
             worker_role_descriptions: Vec::new(),

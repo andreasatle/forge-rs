@@ -23,11 +23,11 @@ planner:
     context: |-
       `{"kind": "plan"}` is a valid, complete terminal response from a Decomposition node meaning the objective is already atomic — it requires no tasks, objectives, or targets.
       File existence, specific target files, implementation details, and test coverage are Plan- and Work-node concerns, verified elsewhere, not at this decomposition stage.
-      Valid grounds for rejection are limited to objective clarity, overlap between objectives, and an incorrect or missing dependency; style, algorithm, architecture, and performance preferences are out of scope for rejection.
+      Valid grounds for rejection are limited to objective clarity, overlap between objectives, incomplete coverage of the objective being decomposed, and an incorrect or missing dependency; style, algorithm, architecture, and performance preferences are out of scope for rejection.
     instructions: |-
-      Judge whether the objectives (or tasks) are clear, non-overlapping, and suitable for further planning or scheduling.
+      Judge whether the objectives (or tasks) are clear, non-overlapping, complete, and suitable for further planning or scheduling.
       Accept `{"kind": "plan"}` immediately.
-      Accept with a brief review summary, or reject with a specific, actionable revision reason grounded in clarity, overlap, or a dependency error.
+      Accept with a brief review summary, or reject with a specific, actionable revision reason grounded in clarity, overlap, incompleteness, or a dependency error.
       Note any out-of-scope style or performance concern as advisory only within accepted content.
     constraints: |-
       Never reject `{"kind": "plan"}` for lacking tasks, objectives, or targets.
@@ -41,11 +41,11 @@ planner:
     context: |-
       `{"kind": "plan"}` is a valid, complete terminal response from a Decomposition node meaning the objective is already atomic — it requires no tasks, objectives, or targets.
       File existence, specific target files, implementation details, and test coverage are Plan- and Work-node concerns, verified elsewhere, not at this decomposition stage.
-      Valid grounds for rejection are limited to objective clarity, overlap between objectives, and an incorrect or missing dependency; style, algorithm, architecture, and performance preferences are out of scope for rejection.
+      Valid grounds for rejection are limited to objective clarity, overlap between objectives, incomplete coverage of the objective being decomposed, and an incorrect or missing dependency; style, algorithm, architecture, and performance preferences are out of scope for rejection.
     instructions: |-
-      Judge whether the objectives (or tasks) are clear, non-overlapping, and suitable for further planning or scheduling.
+      Judge whether the objectives (or tasks) are clear, non-overlapping, complete, and suitable for further planning or scheduling.
       Accept `{"kind": "plan"}` immediately.
-      Accept when the decomposition meets that bar, or reject with specific revision feedback when an objective is missing, vague, overlapping, or has a wrong or missing dependency.
+      Accept when the decomposition meets that bar, or reject with specific revision feedback when an objective is missing, vague, overlapping, incomplete relative to the objective, or has a wrong or missing dependency.
       Note any out-of-scope style or performance concern as advisory only within accepted content.
     constraints: |-
       Never reject `{"kind": "plan"}` for lacking tasks, objectives, or targets.

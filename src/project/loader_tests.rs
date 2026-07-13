@@ -211,6 +211,48 @@ fn create_test_worker_producer_prompt_requires_importing_functions_under_test() 
 }
 
 #[test]
+fn generic_planner_guidance_reaches_plan_nodes_but_not_work_nodes() {
+    // Invariant: MECE decomposition-review guidance lives once in the
+    // generic layer's `planner` block (adapters/generic.yaml) so every
+    // Plan-capable adapter inherits it without its own copy, and it never
+    // reaches a Work-node's rendered prompt. Exercised through the real
+    // bundled adapter files, not synthetic fixtures.
+    let mece_context = &crate::roles::policy::generic_prompt().planner.context;
+    assert!(
+        !mece_context.is_empty(),
+        "adapters/generic.yaml must define non-empty planner-only MECE guidance"
+    );
+
+    let planner_policy = load_adapter(&repo_adapter("planner.yaml"))
+        .unwrap()
+        .role_policy();
+    for (label, system) in [
+        ("planner producer", &planner_policy.planner_producer_base),
+        ("planner critic", &planner_policy.planner_critic_system),
+        ("planner referee", &planner_policy.planner_referee_system),
+    ] {
+        assert!(
+            system.contains(mece_context.as_str()),
+            "{label} (planner.yaml) must include generic MECE guidance; got:\n{system}"
+        );
+    }
+
+    let worker_policy = load_adapter(&repo_adapter("create_test.yaml"))
+        .unwrap()
+        .role_policy();
+    for (label, system) in [
+        ("worker producer", &worker_policy.worker_producer_system),
+        ("worker critic", &worker_policy.worker_critic_system),
+        ("worker referee", &worker_policy.worker_referee_system),
+    ] {
+        assert!(
+            !system.contains(mece_context.as_str()),
+            "{label} (create_test.yaml) must not include planner-only MECE guidance; got:\n{system}"
+        );
+    }
+}
+
+#[test]
 fn bundled_adapters_context_file_names_include_readme() {
     for name in [
         "coding.yaml",
