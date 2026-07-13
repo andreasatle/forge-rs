@@ -636,6 +636,35 @@ fn plan_kind_output_produces_plan_children_with_no_worker_role() {
 }
 
 #[test]
+fn plan_kind_output_with_single_task_becomes_terminal_task() {
+    // Invariant: a `kind: "plan"` output that decomposes into fewer than two
+    // tasks never actually decomposed anything — a single task, whether its
+    // objective is identical to the parent's or reworded, must be treated as
+    // a terminal `kind: "task"` output (no scheduler `Plan` child, no
+    // recursion), not honored as another `Plan` node.
+    let output = PlannerOutput {
+        kind: PlannerOutputKind::Plan,
+        tasks: vec![PlannerTask {
+            id: "sub-a".to_string(),
+            objective: "decompose part a".to_string(),
+            name: "sub_a".to_string(),
+            role: None,
+            targets: vec![],
+            depends_on: vec![],
+        }],
+    };
+    let plan = planner_output_to_plan_output(output);
+    assert!(
+        plan.children.is_empty(),
+        "single-task plan output must not produce a scheduler Plan child"
+    );
+    assert_eq!(plan.tasks.len(), 1);
+    assert_eq!(plan.tasks[0].id, "sub-a");
+    assert_eq!(plan.tasks[0].objective, "decompose part a");
+    assert_eq!(plan.tasks[0].name, "sub_a");
+}
+
+#[test]
 fn task_role_becomes_node_request_worker_role() {
     // Invariant: the planner now assigns worker roles explicitly per task —
     // `task.role` is carried straight through to `NodeRequest::worker_role`,
@@ -738,7 +767,10 @@ fn plan_children_inherit_parent_team_adapter_northstar() {
     // northstar owns the newly spawned nodes.
     let output = PlannerOutput {
         kind: PlannerOutputKind::Plan,
-        tasks: vec![planner_task("sub-a", "decompose part a", &[], &[])],
+        tasks: vec![
+            planner_task("sub-a", "decompose part a", &[], &[]),
+            planner_task("sub-b", "decompose part b", &[], &[]),
+        ],
     };
     let plan = processor(&no_required_test_targets).into_plan(
         output,

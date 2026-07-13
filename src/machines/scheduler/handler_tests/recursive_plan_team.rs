@@ -88,11 +88,16 @@ impl ProviderClient for RecordingScriptedProvider {
 }
 
 /// End-to-end: a `forge.yaml` fixture with a single `recursive` team
-/// (`trigger: start`), whose adapter's planner recurses through two levels of
-/// `"kind":"plan"` output before finally emitting `"kind":"task"`, driven
-/// through the real `ForgeConfig::from_file` -> `SchedulerMachine` ->
-/// `SchedulerHandler` -> `DeliberatingNodeRunner` stack, with a scripted
-/// provider standing in for the LLM.
+/// (`trigger: start`), whose adapter's planner recurses through real
+/// multi-task `"kind":"plan"` decompositions — each level splits into two
+/// tasks, since a single-task `"kind":"plan"` output is a no-op decomposition
+/// that `PlannerOutputProcessor::into_plan` now short-circuits into a
+/// terminal `"kind":"task"` output rather than a further `Plan` node (see
+/// `plan_kind_output_with_single_task_becomes_terminal_task` in
+/// `node_runner::planner::tests`) — before branches finally emit
+/// `"kind":"task"`, driven through the real `ForgeConfig::from_file` ->
+/// `SchedulerMachine` -> `SchedulerHandler` -> `DeliberatingNodeRunner`
+/// stack, with a scripted provider standing in for the LLM.
 ///
 /// This targets the exact mechanism behind a real team-loss bug: a
 /// team-owned `Plan` node's children must inherit that team's
@@ -104,10 +109,10 @@ impl ProviderClient for RecordingScriptedProvider {
 /// `PlannerOutput`, which cannot exercise a node created from a *previous*
 /// `into_plan` call recursing a second time through the real dispatch loop.
 ///
-/// Proves: every node in the `recursive` team's Plan -> Plan -> Plan chain —
-/// including the root node itself, which `SchedulerMachine::initial_state`
-/// seeds with `recursive`'s own team/adapter/northstar since `recursive` is
-/// this run's sole `Trigger::Start` team — carries the team's own
+/// Proves: every node in the `recursive` team's Plan tree — including the
+/// root node itself, which `SchedulerMachine::initial_state` seeds with
+/// `recursive`'s own team/adapter/northstar since `recursive` is this run's
+/// sole `Trigger::Start` team — carries the team's own
 /// `team`/`adapter`/`northstar`, not the top-level/default adapter's (empty)
 /// fields.
 #[test]
@@ -208,30 +213,48 @@ teams:
     let root_setup = ProjectRuntimeSetup::build(Path::new(&config.adapter), None)
         .expect("root adapter must load");
 
-    // Response order, matching how the scheduler will actually dispatch —
-    // every Plan-kind node (whether it produces children or a task batch)
-    // goes through one producer/critic/referee cycle:
-    //   1. The root Plan node *is* the `recursive` team's own Plan node
-    //      (depth 0): it emits `"kind":"plan"` with one task, escalating to
-    //      a Plan child.
-    //   2. That Plan child (depth 1) itself emits `"kind":"plan"` with one
-    //      task, escalating to a second Plan child.
-    //   3. That grandchild Plan node (depth 2) finally emits `"kind":"task"`,
-    //      recording a real task row to the manifest with no further
-    //      children.
+    // Response order, matching how the scheduler will actually dispatch.
+    // `dispatch_cap: 1` means exactly one node is ever in flight, and
+    // `RunGraph::find_ready` preserves graph insertion order (see
+    // `RunGraph::insert_children`), so siblings dispatch strictly in the
+    // order their parent listed them, and a subtree is only descended into
+    // once every earlier-inserted sibling elsewhere in the graph has
+    // finished. Every Plan-kind node goes through one producer/critic/
+    // referee cycle:
+    //   1. The root Plan node *is* the `recursive` team's own Plan node: it
+    //      emits `"kind":"plan"` with two tasks ("plan-a", "plan-b") — a
+    //      real decomposition, so both become Plan children.
+    //   2. "plan-a" is dispatched next (inserted before "plan-b"'s own
+    //      children could exist). It itself emits `"kind":"plan"` with two
+    //      tasks ("leaf-a1", "leaf-a2"), proving a Plan node created by a
+    //      *previous* recursive `into_plan` call still propagates the
+    //      team's fields when it plans again.
+    //   3. "plan-b" is dispatched next — it was inserted into the graph
+    //      before "plan-a"'s children, so it comes before them in dispatch
+    //      order. It emits `"kind":"task"`, terminating immediately.
+    //   4. "leaf-a1" and "leaf-a2" are dispatched last, each emitting
+    //      `"kind":"task"` to terminate.
     let provider = RecordingScriptedProvider::from_strs(&[
-        // 1. root/recursive-team Plan node (depth 0)
-        r#"{"kind":"plan","tasks":[{"id":"plan-depth-1","objective":"decompose further","depends_on":[]}]}"#,
-        r#"{"status":"accepted","content":"depth 0 critic ok"}"#,
-        r#"{"status":"accepted","content":"depth 0 referee approved"}"#,
-        // 2. depth-1 Plan child
-        r#"{"kind":"plan","tasks":[{"id":"plan-depth-2","objective":"decompose once more","depends_on":[]}]}"#,
-        r#"{"status":"accepted","content":"depth 1 critic ok"}"#,
-        r#"{"status":"accepted","content":"depth 1 referee approved"}"#,
-        // 3. depth-2 Plan grandchild: finally produces a task batch
-        r#"{"kind":"task","tasks":[{"id":"leaf-task","objective":"do the leaf work","name":"leaf_task","depends_on":[]}]}"#,
-        r#"{"status":"accepted","content":"depth 2 critic ok"}"#,
-        r#"{"status":"accepted","content":"depth 2 referee approved"}"#,
+        // 1. root/recursive-team Plan node
+        r#"{"kind":"plan","tasks":[{"id":"plan-a","objective":"decompose branch a","depends_on":[]},{"id":"plan-b","objective":"decompose branch b","depends_on":[]}]}"#,
+        r#"{"status":"accepted","content":"root critic ok"}"#,
+        r#"{"status":"accepted","content":"root referee approved"}"#,
+        // 2. "plan-a" Plan child: decomposes further
+        r#"{"kind":"plan","tasks":[{"id":"leaf-a1","objective":"decompose leaf a1","depends_on":[]},{"id":"leaf-a2","objective":"decompose leaf a2","depends_on":[]}]}"#,
+        r#"{"status":"accepted","content":"plan-a critic ok"}"#,
+        r#"{"status":"accepted","content":"plan-a referee approved"}"#,
+        // 3. "plan-b" Plan child: terminates immediately
+        r#"{"kind":"task","tasks":[{"id":"leaf-b","objective":"do the leaf b work","name":"leaf_b","depends_on":[]}]}"#,
+        r#"{"status":"accepted","content":"plan-b critic ok"}"#,
+        r#"{"status":"accepted","content":"plan-b referee approved"}"#,
+        // 4. "leaf-a1" Plan grandchild: terminates immediately
+        r#"{"kind":"task","tasks":[{"id":"leaf-a1-task","objective":"do the leaf a1 work","name":"leaf_a1","depends_on":[]}]}"#,
+        r#"{"status":"accepted","content":"leaf-a1 critic ok"}"#,
+        r#"{"status":"accepted","content":"leaf-a1 referee approved"}"#,
+        // 5. "leaf-a2" Plan grandchild: terminates immediately
+        r#"{"kind":"task","tasks":[{"id":"leaf-a2-task","objective":"do the leaf a2 work","name":"leaf_a2","depends_on":[]}]}"#,
+        r#"{"status":"accepted","content":"leaf-a2 critic ok"}"#,
+        r#"{"status":"accepted","content":"leaf-a2 referee approved"}"#,
     ]);
 
     let runner = DeliberatingNodeRunner::new(&provider, &provider)
@@ -263,9 +286,10 @@ teams:
         panic!("expected the run to complete, got: {output:#?}");
     };
 
-    // The whole Plan -> Plan -> Plan chain was actually spawned under the
-    // "recursive" team: the root node itself (the team's start-triggered
-    // node), plus its child and grandchild.
+    // The whole Plan tree was actually spawned under the "recursive" team:
+    // the root node itself (the team's start-triggered node), its two
+    // children ("plan-a", "plan-b"), and "plan-a"'s two further children
+    // ("leaf-a1", "leaf-a2").
     let recursive_nodes: Vec<&Node> = graph
         .nodes
         .iter()
@@ -273,9 +297,9 @@ teams:
         .collect();
     assert_eq!(
         recursive_nodes.len(),
-        3,
-        "the recursive team's start-triggered root node plus its two escalated Plan \
-         children must all appear in the graph; graph: {graph:#?}"
+        5,
+        "the recursive team's start-triggered root node plus its four escalated Plan \
+         descendants must all appear in the graph; graph: {graph:#?}"
     );
     for node in &recursive_nodes {
         assert_eq!(
@@ -318,26 +342,29 @@ teams:
          team once it is the run's sole start-triggered team; graph: {graph:#?}"
     );
 
-    // The manifest committed to the artifact records the leaf task under the
-    // recursive team, proving depth-2's `"kind":"task"` output was integrated
-    // with the team it actually ran under.
+    // The manifest committed to the artifact records the leaf tasks under
+    // the recursive team, proving each branch's `"kind":"task"` output was
+    // integrated with the team it actually ran under.
     let final_sha = git_output(&repo_path, &["rev-parse", "HEAD"]);
     let manifest = git_output(
         &repo_path,
         &["show", &format!("{final_sha}:.forge/tasks.json")],
     );
     let manifest: serde_json::Value = serde_json::from_str(&manifest).unwrap();
-    let leaf_task = manifest["tasks"]
+    let manifest_tasks = manifest["tasks"]
         .as_array()
-        .expect("manifest tasks must be an array")
-        .iter()
-        .find(|t| t["id"] == "leaf-task")
-        .expect("manifest must have a row for the leaf task");
-    assert_eq!(
-        leaf_task["team"], "recursive",
-        "the leaf task's manifest row must record the recursive team, not the root's; \
-         manifest: {manifest:#?}"
-    );
+        .expect("manifest tasks must be an array");
+    for task_id in ["leaf-b", "leaf-a1-task", "leaf-a2-task"] {
+        let task = manifest_tasks
+            .iter()
+            .find(|t| t["id"] == task_id)
+            .unwrap_or_else(|| panic!("manifest must have a row for {task_id}"));
+        assert_eq!(
+            task["team"], "recursive",
+            "{task_id}'s manifest row must record the recursive team, not the root's; \
+             manifest: {manifest:#?}"
+        );
+    }
 
     let _ = handler; // handler retained only to keep the artifact alive for the git reads above
 }

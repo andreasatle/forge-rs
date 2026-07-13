@@ -306,8 +306,13 @@ impl<'a> PlannerOutputProcessor<'a> {
     ) -> PlanOutput {
         let child_kind = match output.kind {
             PlannerOutputKind::Work => NodeKind::Work,
-            PlannerOutputKind::Plan => NodeKind::Plan,
-            PlannerOutputKind::Task => {
+            // A "plan" that yields fewer than two tasks never actually
+            // decomposed anything, regardless of whether the lone task's
+            // objective matches the parent's verbatim or is reworded. Treat
+            // it as a terminal Task output instead of recursing through
+            // another Plan round.
+            PlannerOutputKind::Plan if output.tasks.len() >= 2 => NodeKind::Plan,
+            PlannerOutputKind::Plan | PlannerOutputKind::Task => {
                 return PlanOutput {
                     children: vec![],
                     tasks: output
