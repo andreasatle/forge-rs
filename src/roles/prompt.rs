@@ -502,10 +502,10 @@ pub(super) fn render_node_review_contract(contract: &NodeReviewContract) -> Stri
                 .to_string(),
         );
         if !contract.required_validation_targets.is_empty() {
-            lines.push(format!(
-                "Required validation target files are also available for read-only inspection via read_file, even when they are not part of this node's own target files: {}",
-                contract.required_validation_targets.join(", ")
-            ));
+            lines.push(
+                "The adapter-required test targets listed above are also available for read-only inspection via read_file, even when they are not part of this node's own target files."
+                    .to_string(),
+            );
         }
     }
 

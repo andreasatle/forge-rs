@@ -242,7 +242,14 @@ fn run_prompt_preview(
     let adapter = forge_rs::project::load_adapter(std::path::Path::new(&config.adapter))?;
     let policy = adapter.role_policy();
 
-    if let Some(worker_role) = &worker {
+    // `--worker` only ever affects rendering for `--node work` (see
+    // `build_role_prompt`); a Plan-node prompt never selects a worker role,
+    // so validating the flag against the adapter's worker-role list here
+    // would reject adapters with no `workers:` section even though the flag
+    // is meaningless for this node kind either way.
+    if node_kind == NodeKind::Work
+        && let Some(worker_role) = &worker
+    {
         let known = policy
             .worker_role_descriptions
             .iter()

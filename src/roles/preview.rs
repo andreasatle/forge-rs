@@ -19,8 +19,10 @@ const OBJECTIVE_PLACEHOLDER: &str = "{OBJECTIVE: task objective from planner}";
 const PROJECT_STATE_PLACEHOLDER: &str = "{PROJECT_STATE: northstar + current artifact API summary}";
 const TARGET_STATE_PLACEHOLDER: &str =
     "{TARGET_STATE_VIEW: current file contents for target files}";
-const REVIEW_CONTRACT_PLACEHOLDER: &str =
-    "{NODE_REVIEW_CONTRACT: required test targets and coverage}";
+const REVIEW_CONTRACT_COVERED_PLACEHOLDER: &str =
+    "{NODE_REVIEW_CONTRACT: required test target covered by declared follow-up work}";
+const REVIEW_CONTRACT_MISSING_PLACEHOLDER: &str =
+    "{NODE_REVIEW_CONTRACT: required test target not covered by declared follow-up work}";
 const PRODUCER_CONTENT_PLACEHOLDER: &str = "{PRIOR_PRODUCER_CONTENT: producer summary}";
 const CRITIC_CONTENT_PLACEHOLDER: &str = "{PRIOR_CRITIC_CONTENT: critic review}";
 const REVISION_FEEDBACK_PLACEHOLDER: &str = "{REVISION_FEEDBACK: previous rejection reasons}";
@@ -68,13 +70,23 @@ pub fn render_prompt_preview(
         vec![]
     };
 
+    // Two distinct targets, one planned and one not, so the preview actually
+    // demonstrates the covered/missing split a real run's Node Review
+    // Contract can show, rather than collapsing both branches into one.
     let test_plan_context = TestPlanContext {
         required_validation_targets: if has_tools {
-            vec![REVIEW_CONTRACT_PLACEHOLDER.to_string()]
+            vec![
+                REVIEW_CONTRACT_COVERED_PLACEHOLDER.to_string(),
+                REVIEW_CONTRACT_MISSING_PLACEHOLDER.to_string(),
+            ]
         } else {
             vec![]
         },
-        planned_test_targets: vec![],
+        planned_test_targets: if has_tools {
+            vec![REVIEW_CONTRACT_COVERED_PLACEHOLDER.to_string()]
+        } else {
+            vec![]
+        },
     };
 
     // Producer never sees prior producer/critic content — it is the role
