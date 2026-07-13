@@ -7,6 +7,7 @@ mod outcome;
 mod provider_stack;
 mod repo;
 mod reset;
+mod resource_manager;
 pub mod resume;
 mod run;
 mod run_info;
@@ -18,6 +19,7 @@ mod trace;
 pub use history::run_history;
 pub use repo::load_or_create_artifact;
 pub use reset::run_reset;
+pub use resource_manager::{ResourceManager, ResourcePermit};
 pub use run::ForgeRuntime;
 pub use run_info::{
     ManagedProviderServerMetadata, ProviderRunMetadata, ProviderTierMetadata, RunInfo, create_run,

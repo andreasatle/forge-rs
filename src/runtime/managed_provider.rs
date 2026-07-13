@@ -23,6 +23,8 @@ pub struct ManagedLlamaCppRuntimeConfig {
     pub context_size: Option<usize>,
     /// Readiness timeout after process spawn.
     pub startup_timeout_seconds: u64,
+    /// Number of concurrent slots passed to `--parallel`.
+    pub parallel: usize,
 }
 
 /// Owned managed provider server process.
@@ -49,6 +51,8 @@ impl ManagedProviderServer {
             .arg(&config.host)
             .arg("--port")
             .arg(config.port.to_string())
+            .arg("--parallel")
+            .arg(config.parallel.to_string())
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
@@ -116,6 +120,7 @@ pub fn resolve_llama_cpp_config(config: &ManagedLlamaCppConfig) -> ManagedLlamaC
         port: config.port,
         context_size: config.context_size,
         startup_timeout_seconds: config.startup_timeout_seconds,
+        parallel: config.parallel,
     }
 }
 
@@ -153,6 +158,7 @@ mod tests {
             context_size: Some(4096),
             startup_timeout_seconds: 10,
             n_predict: 512,
+            parallel: 2,
         }
     }
 
@@ -175,6 +181,7 @@ mod tests {
             assert_eq!(resolved.host, host);
             assert_eq!(resolved.port, 18080);
             assert_eq!(resolved.context_size, Some(4096));
+            assert_eq!(resolved.parallel, 2);
         }
     }
 

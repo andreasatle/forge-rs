@@ -174,6 +174,10 @@ fn default_managed_startup_timeout_seconds() -> u64 {
     60
 }
 
+fn default_managed_parallel() -> usize {
+    1
+}
+
 /// LLM provider configuration.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -287,6 +291,12 @@ pub struct ManagedLlamaCppConfig {
     pub startup_timeout_seconds: u64,
     /// Maximum tokens to predict per completion call.
     pub n_predict: usize,
+    /// Number of concurrent slots to request from `llama-server` via
+    /// `--parallel`. Should match the permit count configured for this
+    /// provider's [`crate::runtime::ResourceManager`]. Defaults to 1,
+    /// matching prior single-request behavior.
+    #[serde(default = "default_managed_parallel")]
+    pub parallel: usize,
 }
 
 /// Managed llama.cpp model source.

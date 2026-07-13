@@ -224,6 +224,7 @@ mod tests {
                 context_size,
                 startup_timeout_seconds,
                 n_predict,
+                parallel: 1,
             },
         })
     }
