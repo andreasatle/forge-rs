@@ -84,6 +84,23 @@ fn default_system_does_not_assert_role_specific_action() {
     );
 }
 
+#[test]
+fn worker_producer_identity_does_not_assert_role_specific_action() {
+    // Invariant: WORKER_PRODUCER_IDENTITY is shared byte-for-byte across
+    // every worker role, rendered immediately above each role's own Identity
+    // sentence — same as WORK_PRODUCER_SYSTEM above, it must not assert what
+    // completing the task means, since that would contradict non-implementer
+    // roles, whose own Identity/Instructions define the work in their own
+    // terms.
+    assert!(
+        !WORKER_PRODUCER_IDENTITY
+            .to_lowercase()
+            .contains("implement"),
+        "shared Work-node Producer identity must not hardcode \
+         implementer-specific wording: {WORKER_PRODUCER_IDENTITY}"
+    );
+}
+
 fn assert_schema(system: &str, required: &[&str], forbidden: &[&str]) {
     for field in required {
         assert!(

@@ -211,10 +211,15 @@ framework can schedule.";
 /// Not specific to any project adapter or language: it establishes the role
 /// and that file tools exist and should be used before assuming file
 /// contents, without reference to coding conventions like tests.
-pub(crate) const WORKER_PRODUCER_IDENTITY: &str = "You are a software implementation agent. \
-Implement the requested change precisely. Use available file tools to read, modify, and write \
-artifact files. Use tools before making assumptions about file contents — inspect files before \
-editing them.";
+///
+/// Shared byte-for-byte across every worker role, rendered immediately above
+/// each role's own Identity sentence — it must not assert what completing the
+/// task means (e.g. "implement"), since that would contradict non-implementer
+/// roles like `tester` or `pass_tests`, whose own Identity/Instructions define
+/// the work in their own terms.
+pub(crate) const WORKER_PRODUCER_IDENTITY: &str = "You are a software agent completing an \
+assigned task precisely. Use available file tools to read, modify, and write artifact files. \
+Use tools before making assumptions about file contents — inspect files before editing them.";
 
 /// JSON protocol instructions for planner-style roles under an adapter that
 /// defines worker roles: every `work`/`plan` task must be assigned to one of
