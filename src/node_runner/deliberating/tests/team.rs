@@ -95,7 +95,7 @@ fn team_adapter_and_northstar_override_the_top_level_ones() {
     assert!(!prompts.is_empty(), "provider must have received prompts");
     let first = &prompts[0];
     assert!(
-        first.contains("Northstar:\nTeam: ship the widget CLI."),
+        first.contains("## Northstar\nTeam: ship the widget CLI."),
         "plan prompt must include the team's northstar; got:\n{first}"
     );
     assert!(

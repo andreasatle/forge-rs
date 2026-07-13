@@ -305,7 +305,7 @@ fn api_summary_section_appears_in_plan_node_prompt_when_configured() {
     assert!(!prompts.is_empty(), "provider must have received prompts");
     let first = &prompts[0];
     assert!(
-        first.contains("Current artifact state:"),
+        first.contains("## Current Artifact State"),
         "plan prompt must include the artifact state section; got:\n{first}"
     );
     assert!(
@@ -317,7 +317,7 @@ fn api_summary_section_appears_in_plan_node_prompt_when_configured() {
 #[test]
 fn northstar_section_appears_in_plan_node_prompt_when_configured() {
     // Invariant: when a northstar is configured, Plan node prompts must
-    // surface it as a "Northstar:" section alongside the API summary so the
+    // surface it as a "## Northstar" section alongside the API summary so the
     // producer can plan the gap between the two.
     let temp = TempDir::new("northstar-plan");
     let view = make_artifact_view(&temp, "main.py", "def f():\n    pass\n");
@@ -352,7 +352,7 @@ fn northstar_section_appears_in_plan_node_prompt_when_configured() {
     assert!(!prompts.is_empty(), "provider must have received prompts");
     let first = &prompts[0];
     assert!(
-        first.contains("Northstar:\nShip a fibonacci CLI."),
+        first.contains("## Northstar\nShip a fibonacci CLI."),
         "plan prompt must include the northstar section; got:\n{first}"
     );
 }
@@ -394,7 +394,7 @@ fn northstar_section_is_absent_for_work_nodes_even_when_configured() {
     assert!(!prompts.is_empty(), "provider must have received prompts");
     let first = &prompts[0];
     assert!(
-        !first.contains("Northstar:"),
+        !first.contains("## Northstar"),
         "work node prompt must not include the northstar section; got:\n{first}"
     );
 }
@@ -436,7 +436,7 @@ fn api_summary_section_is_absent_for_work_nodes_even_when_configured() {
     assert!(!prompts.is_empty(), "provider must have received prompts");
     let first = &prompts[0];
     assert!(
-        !first.contains("Current artifact state:"),
+        !first.contains("## Current Artifact State"),
         "work node prompt must not include the artifact state section; got:\n{first}"
     );
 }

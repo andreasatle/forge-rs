@@ -36,7 +36,7 @@ fn producer_prompt_for_targets(
 
 fn target_state_section(prompt: &str) -> &str {
     let start = prompt
-        .find("Target state view")
+        .find("# Target State View")
         .expect("prompt must include a target-state view");
     let end = prompt[start..]
         .find("\nProducer returns")
@@ -202,7 +202,7 @@ fn prompt_wording_does_not_control_allowed_paths() {
 
     let prompt = &provider.requests.borrow()[0].prompt;
     assert!(
-        prompt.contains("Target files: main.py"),
+        prompt.contains("## Target Files\nmain.py"),
         "prompt should render structured targets; got:\n{prompt}"
     );
     assert!(

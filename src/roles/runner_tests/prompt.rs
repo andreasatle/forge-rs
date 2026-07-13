@@ -164,7 +164,7 @@ fn worker_role_descriptions_render_for_plan_producer_only() {
         let prompt = provider.requests.borrow()[0].prompt.clone();
         if expects_worker_roles {
             assert!(
-                prompt.contains("Available worker roles:")
+                prompt.contains("# Available Worker Roles")
                     && prompt.contains("- tester: Writes test files.")
                     && prompt.contains("- implementer: Writes source code."),
                 "{label} prompt must list worker role descriptions; got:\n{prompt}"
@@ -272,7 +272,7 @@ fn test_plan_context() -> TestPlanContext {
 }
 
 fn has_review_contract(prompt: &str) -> bool {
-    prompt.contains("Node review contract")
+    prompt.contains("# Node Review Contract")
 }
 
 fn assert_fields(label: &str, prompt: &str, required: &[&str], forbidden: &[&str]) {

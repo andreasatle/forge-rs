@@ -351,10 +351,10 @@ pub(super) fn render_role_prompt_with_test_plan_context(input: RolePromptRender<
             DeliberationRole::Critic | DeliberationRole::Referee
         );
     if let Some(context) = render_deliberation_context(input.context, !renders_review_contract) {
-        parts.push(format!("Project State:\n{context}"));
+        parts.push(format!("# Project State\n{context}"));
     }
-    parts.push(format!("Objective: {}", input.objective));
-    parts.push(format!("Role: {:?}", input.role));
+    parts.push(format!("# Objective\n{}", input.objective));
+    parts.push(format!("# Role\n{:?}", input.role));
     if !input.target_views.is_empty() {
         parts.push(render_target_state_view(input.target_views));
     }
@@ -370,14 +370,18 @@ pub(super) fn render_role_prompt_with_test_plan_context(input: RolePromptRender<
         parts.push(render_test_plan_context(input.test_plan_context));
     }
     if let Some(pc) = input.producer_content {
-        parts.push(format!("Producer content: {pc}"));
+        parts.push(format!("# Producer Content\n{pc}"));
     }
     if let Some(cc) = input.critic_content {
-        parts.push(format!("Critic content: {cc}"));
+        parts.push(format!("# Critic Content\n{cc}"));
     }
     if !input.feedback.is_empty() {
-        let reasons: Vec<&str> = input.feedback.iter().map(|f| f.reason.as_str()).collect();
-        parts.push(format!("Revision feedback: {}", reasons.join("; ")));
+        let reasons: Vec<String> = input
+            .feedback
+            .iter()
+            .map(|f| format!("- {}", f.reason))
+            .collect();
+        parts.push(format!("# Revision Feedback\n{}", reasons.join("\n")));
     }
     if !input.worker_role_descriptions.is_empty() {
         parts.push(render_worker_role_descriptions(
@@ -385,13 +389,13 @@ pub(super) fn render_role_prompt_with_test_plan_context(input: RolePromptRender<
         ));
     }
     parts.push(input.system.to_string());
-    parts.join("\n")
+    parts.join("\n\n")
 }
 
 /// Renders the "Available worker roles" section shown to the Plan-node
 /// Producer so it can assign roles explicitly to each task.
 fn render_worker_role_descriptions(roles: &[(String, String)]) -> String {
-    let mut lines = vec!["Available worker roles:".to_string()];
+    let mut lines = vec!["# Available Worker Roles".to_string()];
     for (role, description) in roles {
         lines.push(format!("- {role}: {description}"));
     }
@@ -404,7 +408,7 @@ fn render_deliberation_context(
 ) -> Option<String> {
     let mut parts = Vec::new();
     if let Some(northstar) = &context.northstar {
-        parts.push(format!("Northstar:\n{northstar}"));
+        parts.push(format!("## Northstar\n{northstar}"));
     }
     if let Some(artifact) = &context.artifact {
         parts.push(render_artifact_context(artifact));
@@ -413,7 +417,10 @@ fn render_deliberation_context(
         parts.push(requirement.clone());
     }
     if include_target_files && !context.target_files.is_empty() {
-        parts.push(format!("Target files: {}", context.target_files.join(", ")));
+        parts.push(format!(
+            "## Target Files\n{}",
+            context.target_files.join(", ")
+        ));
     }
     if parts.is_empty() {
         None
@@ -430,12 +437,13 @@ fn render_artifact_context(context: &ArtifactContext) -> String {
         .map(|path| format!("  {path}"))
         .collect();
     parts.push(format!(
-        "Existing project files (already initialized — do not create tasks to recreate \
-         or reinitialize these files unless the objective explicitly names them as targets):\n{}",
+        "## Existing Project Files\n\
+         Already initialized — do not create tasks to recreate or reinitialize these files \
+         unless the objective explicitly names them as targets:\n{}",
         listing.join("\n")
     ));
     if let Some(api_summary) = &context.api_summary {
-        parts.push(format!("Current artifact state:\n{api_summary}"));
+        parts.push(format!("## Current Artifact State\n{api_summary}"));
     }
     for file in &context.selected_files {
         parts.push(format!("{}:\n{}", file.path, file.content));
@@ -445,8 +453,9 @@ fn render_artifact_context(context: &ArtifactContext) -> String {
 
 pub(super) fn render_node_review_contract(contract: &NodeReviewContract) -> String {
     let mut lines = vec![
-        "Node review contract (typed role-boundary metadata):".to_string(),
-        "Evaluate the current node contract, not the entire project state.".to_string(),
+        "# Node Review Contract".to_string(),
+        "Typed role-boundary metadata. Evaluate the current node contract, not the entire project state."
+            .to_string(),
         format!(
             "Current node target files: {}",
             render_list_or_none(&contract.target_files)
@@ -537,8 +546,10 @@ pub(super) fn render_test_plan_context(context: &TestPlanContext) -> String {
         .collect::<Vec<_>>();
 
     let mut lines = vec![
-        "Test target plan context (built from structured target/dependency metadata):".to_string(),
-        "Review scope: judge the current node's declared deliverables, while accounting for declared follow-up work.".to_string(),
+        "# Test Target Plan Context".to_string(),
+        "Built from structured target/dependency metadata. Review scope: judge the current \
+         node's declared deliverables, while accounting for declared follow-up work."
+            .to_string(),
         format!("Adapter-required test targets for the current node's target files: {required}"),
     ];
     if context.planned_test_targets.is_empty() {
@@ -577,8 +588,9 @@ pub(super) fn render_test_plan_context(context: &TestPlanContext) -> String {
 
 pub(super) fn render_target_state_view(views: &[TargetView]) -> String {
     let mut lines = vec![
-        "Target state view (built from structured target_files):".to_string(),
-        "This view is prompt context only; file tools remain the source of operational access."
+        "# Target State View".to_string(),
+        "Built from structured target_files. This view is prompt context only; file tools \
+         remain the source of operational access."
             .to_string(),
     ];
     for view in views {
