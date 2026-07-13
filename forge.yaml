@@ -6,6 +6,7 @@ artifact:
   repo_path: ".forge/artifacts/main.git"
   branch: "main"
 provider:
+  timeout_seconds: 900
   cheap:
     managed:
       llama_cpp:
@@ -16,16 +17,8 @@ provider:
         port: 8080
         startup_timeout_seconds: 120
         n_predict: 4096
-  strong:
-    managed:
-      llama_cpp:
-        command: "llama-server"
-        model:
-          hf: "lm-kit/qwen-3-14b-instruct-gguf:Q4_K_M"
-        host: "127.0.0.1"
-        port: 8081
-        startup_timeout_seconds: 120
-        n_predict: 4096
+        parallel: 4
+        context_size: 32768
 telemetry:
   directory: "runs"
 adapter: adapters/planner.yaml
