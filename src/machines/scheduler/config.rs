@@ -32,6 +32,20 @@ pub struct RunConfig {
     /// before the candidate is eligible to spawn.
     #[serde(default)]
     pub terminal_teams: Vec<String>,
+    /// Maximum number of nodes the scheduler may have `Running`/`Integrating`
+    /// at once.
+    ///
+    /// A `Start` tick dispatches up to this many ready nodes in a single
+    /// transition. `serde(default)` and the `Default` impl both pin this to
+    /// `1`, matching the strictly serial dispatch behaviour every existing
+    /// checkpoint and test assumes; only tests that explicitly raise it
+    /// exercise concurrent in-flight tracking.
+    #[serde(default = "default_dispatch_cap")]
+    pub dispatch_cap: usize,
+}
+
+fn default_dispatch_cap() -> usize {
+    1
 }
 
 impl Default for RunConfig {
@@ -40,6 +54,7 @@ impl Default for RunConfig {
             has_strong_tier: true,
             teams: vec![],
             terminal_teams: vec![],
+            dispatch_cap: default_dispatch_cap(),
         }
     }
 }

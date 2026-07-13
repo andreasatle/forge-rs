@@ -80,7 +80,7 @@ fn integrate_planner_tasks_creates_manifest_only_commit() {
     let repo_path = artifact.repo_path.clone();
     let original_sha = artifact.commit_sha.clone();
 
-    let service = IntegrationService::with_artifact(artifact, Rc::new(NoopTelemetry));
+    let service = IntegrationService::with_artifact(artifact, Arc::new(NoopTelemetry));
     let records = vec![
         TaskRecord {
             id: "t1".to_string(),
@@ -138,7 +138,7 @@ fn integrate_planner_tasks_creates_manifest_only_commit() {
 /// never fire, with nothing indicating why.
 #[test]
 fn integrate_planner_tasks_without_artifact_fails() {
-    let service = IntegrationService::without_artifact(Rc::new(NoopTelemetry));
+    let service = IntegrationService::without_artifact(Arc::new(NoopTelemetry));
     let records = vec![TaskRecord {
         id: "t1".to_string(),
         objective: "decompose alpha".to_string(),
@@ -166,7 +166,7 @@ fn integrate_planner_tasks_without_artifact_fails() {
 #[test]
 fn integrate_plan_tasks_returns_planner_tasks_integrated_event() {
     let (_temp, artifact) = fixture("plan-tasks-event");
-    let service = IntegrationService::with_artifact(artifact, Rc::new(NoopTelemetry));
+    let service = IntegrationService::with_artifact(artifact, Arc::new(NoopTelemetry));
 
     let event = service.integrate_plan_tasks(
         NodeId("P".to_string()),

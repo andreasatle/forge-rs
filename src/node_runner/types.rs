@@ -1,7 +1,6 @@
 //! Request and result types for the NodeRunner boundary.
 
-use std::cell::RefCell;
-use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 use crate::artifacts::{ArtifactView, Workspace};
 use crate::machines::scheduler::{
@@ -62,7 +61,7 @@ pub struct WorkAttempt {
     /// Zero-based scheduler attempt number this workspace belongs to.
     pub attempt: u32,
     /// Mutable checkout owned by the attempt.
-    pub workspace: Rc<RefCell<Workspace>>,
+    pub workspace: Arc<Mutex<Workspace>>,
 }
 
 /// The output of a completed work node.

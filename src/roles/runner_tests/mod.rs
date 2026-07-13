@@ -1,8 +1,8 @@
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::path::PathBuf;
-use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 use super::*;
 use crate::artifacts::{Artifact, ArtifactView, WorkspaceFactory};
@@ -217,7 +217,7 @@ fn with_tool_context(mut request: RoleRequest, view: ArtifactView) -> RoleReques
             branch: "main".to_string(),
             commit_sha: view.commit_sha.clone(),
         };
-        Some(Rc::new(RefCell::new(
+        Some(Arc::new(Mutex::new(
             WorkspaceFactory::new(&artifact)
                 .create_temporary_workspace()
                 .expect("failed to create test workspace"),

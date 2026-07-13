@@ -1,8 +1,7 @@
 //! Artifact update staging and integration for scheduler work nodes.
 
-use std::cell::RefCell;
 use std::collections::HashMap;
-use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 use crate::artifacts::{
     Artifact, TaskRecord, Workspace, WorkspaceFactory, integrate, record_planner_tasks, record_task,
@@ -21,7 +20,7 @@ use crate::validation::{AlwaysPassValidator, ValidationPlan, ValidationResult, V
 use super::validation::validation_retry_message;
 
 type AttemptKey = (NodeId, u32);
-type AttemptWorkspace = Rc<RefCell<Workspace>>;
+type AttemptWorkspace = Arc<Mutex<Workspace>>;
 
 /// Parameters for integrating a completed `Work` node's changes.
 ///
@@ -40,51 +39,57 @@ pub(crate) struct WorkIntegration {
 }
 
 pub(crate) struct IntegrationService {
-    artifact: RefCell<Option<Artifact>>,
-    pending_attempts: RefCell<HashMap<AttemptKey, AttemptWorkspace>>,
-    failed_attempts: RefCell<HashMap<AttemptKey, String>>,
-    validator: Rc<dyn Validator>,
-    last_validation_passed: RefCell<Option<bool>>,
-    telemetry: Rc<dyn TelemetrySink>,
+    artifact: Mutex<Option<Artifact>>,
+    pending_attempts: Mutex<HashMap<AttemptKey, AttemptWorkspace>>,
+    failed_attempts: Mutex<HashMap<AttemptKey, String>>,
+    validator: Arc<dyn Validator>,
+    last_validation_passed: Mutex<Option<bool>>,
+    telemetry: Arc<dyn TelemetrySink>,
 }
 
 impl IntegrationService {
-    pub(crate) fn without_artifact(telemetry: Rc<dyn TelemetrySink>) -> Self {
+    pub(crate) fn without_artifact(telemetry: Arc<dyn TelemetrySink>) -> Self {
         Self {
-            artifact: RefCell::new(None),
-            pending_attempts: RefCell::new(HashMap::new()),
-            failed_attempts: RefCell::new(HashMap::new()),
-            validator: Rc::new(AlwaysPassValidator),
-            last_validation_passed: RefCell::new(None),
+            artifact: Mutex::new(None),
+            pending_attempts: Mutex::new(HashMap::new()),
+            failed_attempts: Mutex::new(HashMap::new()),
+            validator: Arc::new(AlwaysPassValidator),
+            last_validation_passed: Mutex::new(None),
             telemetry,
         }
     }
 
-    pub(crate) fn with_artifact(artifact: Artifact, telemetry: Rc<dyn TelemetrySink>) -> Self {
+    pub(crate) fn with_artifact(artifact: Artifact, telemetry: Arc<dyn TelemetrySink>) -> Self {
         Self {
-            artifact: RefCell::new(Some(artifact)),
-            pending_attempts: RefCell::new(HashMap::new()),
-            failed_attempts: RefCell::new(HashMap::new()),
-            validator: Rc::new(AlwaysPassValidator),
-            last_validation_passed: RefCell::new(None),
+            artifact: Mutex::new(Some(artifact)),
+            pending_attempts: Mutex::new(HashMap::new()),
+            failed_attempts: Mutex::new(HashMap::new()),
+            validator: Arc::new(AlwaysPassValidator),
+            last_validation_passed: Mutex::new(None),
             telemetry,
         }
     }
 
-    pub(crate) fn with_validator(self, validator: Rc<dyn Validator>) -> Self {
+    pub(crate) fn with_validator(self, validator: Arc<dyn Validator>) -> Self {
         Self { validator, ..self }
     }
 
-    pub(crate) fn with_telemetry(self, telemetry: Rc<dyn TelemetrySink>) -> Self {
+    pub(crate) fn with_telemetry(self, telemetry: Arc<dyn TelemetrySink>) -> Self {
         Self { telemetry, ..self }
     }
 
     pub(crate) fn artifact(&self) -> Option<Artifact> {
-        self.artifact.borrow().clone()
+        self.artifact
+            .lock()
+            .expect("artifact mutex poisoned")
+            .clone()
     }
 
     pub(crate) fn validation_passed(&self) -> Option<bool> {
-        *self.last_validation_passed.borrow()
+        *self
+            .last_validation_passed
+            .lock()
+            .expect("last validation passed mutex poisoned")
     }
 
     pub(crate) fn prepare_work_attempt(
@@ -92,7 +97,11 @@ impl IntegrationService {
         node_id: NodeId,
         attempt: u32,
     ) -> Option<WorkAttempt> {
-        let artifact = self.artifact.borrow().clone()?;
+        let artifact = self
+            .artifact
+            .lock()
+            .expect("artifact mutex poisoned")
+            .clone()?;
         let workspace = match WorkspaceFactory::new(&artifact).create_temporary_workspace() {
             Ok(workspace) => workspace,
             Err(err) => {
@@ -105,10 +114,11 @@ impl IntegrationService {
                 return None;
             }
         };
-        let workspace = Rc::new(RefCell::new(workspace));
+        let workspace = Arc::new(Mutex::new(workspace));
         self.pending_attempts
-            .borrow_mut()
-            .insert((node_id, attempt), Rc::clone(&workspace));
+            .lock()
+            .expect("pending attempts mutex poisoned")
+            .insert((node_id, attempt), Arc::clone(&workspace));
         Some(WorkAttempt { attempt, workspace })
     }
 
@@ -120,13 +130,20 @@ impl IntegrationService {
     ) {
         let workspace = self
             .pending_attempts
-            .borrow_mut()
+            .lock()
+            .expect("pending attempts mutex poisoned")
             .remove(&(node_id.clone(), attempt));
         if let Some(workspace) = workspace {
-            self.record_attempt_evidence(node_id, attempt, &workspace.borrow(), reason);
+            self.record_attempt_evidence(
+                node_id,
+                attempt,
+                &workspace.lock().expect("workspace mutex poisoned"),
+                reason,
+            );
         }
         self.failed_attempts
-            .borrow_mut()
+            .lock()
+            .expect("failed attempts mutex poisoned")
             .remove(&(node_id.clone(), attempt));
     }
 
@@ -137,7 +154,8 @@ impl IntegrationService {
         error: String,
     ) {
         self.failed_attempts
-            .borrow_mut()
+            .lock()
+            .expect("failed attempts mutex poisoned")
             .insert((node_id.clone(), attempt), error);
     }
 
@@ -156,7 +174,8 @@ impl IntegrationService {
 
         let failed_attempt = self
             .failed_attempts
-            .borrow_mut()
+            .lock()
+            .expect("failed attempts mutex poisoned")
             .remove(&(node_id.clone(), attempt));
         if let Some(error) = failed_attempt {
             self.discard_work_attempt_with_reason(&node_id, attempt, error.clone());
@@ -168,13 +187,24 @@ impl IntegrationService {
 
         let pending_workspace = self
             .pending_attempts
-            .borrow_mut()
+            .lock()
+            .expect("pending attempts mutex poisoned")
             .remove(&(node_id.clone(), attempt));
-        let artifact_snapshot = self.artifact.borrow().clone();
+        let artifact_snapshot = self
+            .artifact
+            .lock()
+            .expect("artifact mutex poisoned")
+            .clone();
         let mut manifest_tasks: Vec<TaskRecord> = Vec::new();
 
         if let (Some(workspace), Some(artifact)) = (pending_workspace, artifact_snapshot) {
-            let changed_files = changed_paths(&workspace.borrow());
+            // Lock once and reuse the guard for the whole integration pass: a
+            // `match`/`if` scrutinee's temporaries live until the end of the
+            // enclosing block, so re-locking this same mutex inside an arm
+            // (as a naive per-call `.lock()` would) self-deadlocks — `Mutex`,
+            // unlike the `RefCell` this replaced, has no reentrant borrow.
+            let ws = workspace.lock().expect("workspace mutex poisoned");
+            let changed_files = changed_paths(&ws);
             if changed_files.is_empty() {
                 return SchedulerEvent::IntegrationFailed {
                     node_id,
@@ -192,21 +222,24 @@ impl IntegrationService {
                 TelemetryEvent::ValidationStarted,
             ));
             let result = run_validation(
-                &workspace.borrow(),
+                &ws,
                 validation_plan.as_ref(),
                 &*self.validator,
                 &target_files,
                 &changed_files,
             );
             if result.passed {
-                *self.last_validation_passed.borrow_mut() = Some(true);
+                *self
+                    .last_validation_passed
+                    .lock()
+                    .expect("last validation passed mutex poisoned") = Some(true);
                 self.telemetry.record(TelemetryRecord::new(
                     "Integration",
                     TelemetryEvent::ValidationPassed {
                         summary: result.summary,
                     },
                 ));
-                match integrate(&artifact, &workspace.borrow()) {
+                match integrate(&artifact, &ws) {
                     Ok(new_artifact) => {
                         let record = TaskRecord {
                             id: task_id.clone().unwrap_or_else(|| node_id.0.clone()),
@@ -217,28 +250,21 @@ impl IntegrationService {
                             name: None,
                             depends_on: vec![],
                         };
-                        let (recorded, tasks) =
-                            record_task(&new_artifact, &workspace.borrow(), record).unwrap_or_else(
-                                |err| {
-                                    eprintln!(
-                                        "[integration] task manifest update failed for {}: {}",
-                                        node_id.short(),
-                                        err
-                                    );
-                                    (new_artifact, Vec::new())
-                                },
-                            );
-                        *self.artifact.borrow_mut() = Some(recorded);
+                        let (recorded, tasks) = record_task(&new_artifact, &ws, record)
+                            .unwrap_or_else(|err| {
+                                eprintln!(
+                                    "[integration] task manifest update failed for {}: {}",
+                                    node_id.short(),
+                                    err
+                                );
+                                (new_artifact, Vec::new())
+                            });
+                        *self.artifact.lock().expect("artifact mutex poisoned") = Some(recorded);
                         manifest_tasks = tasks;
                     }
                     Err(err) => {
                         let message = err.to_string();
-                        self.record_attempt_evidence(
-                            &node_id,
-                            attempt,
-                            &workspace.borrow(),
-                            message.clone(),
-                        );
+                        self.record_attempt_evidence(&node_id, attempt, &ws, message.clone());
                         return SchedulerEvent::IntegrationFailed {
                             node_id,
                             failure: integration_failure(message),
@@ -246,7 +272,10 @@ impl IntegrationService {
                     }
                 }
             } else {
-                *self.last_validation_passed.borrow_mut() = Some(false);
+                *self
+                    .last_validation_passed
+                    .lock()
+                    .expect("last validation passed mutex poisoned") = Some(false);
                 let diagnostic_message =
                     validation_retry_message(&result.summary, result.failure.as_ref());
                 self.telemetry.record(TelemetryRecord::new(
@@ -271,12 +300,7 @@ impl IntegrationService {
                             .map(|failure| failure.stderr.clone()),
                     },
                 ));
-                self.record_attempt_evidence(
-                    &node_id,
-                    attempt,
-                    &workspace.borrow(),
-                    diagnostic_message.clone(),
-                );
+                self.record_attempt_evidence(&node_id, attempt, &ws, diagnostic_message.clone());
                 return SchedulerEvent::IntegrationFailed {
                     node_id,
                     failure: IntegrationFailure {
@@ -310,7 +334,12 @@ impl IntegrationService {
         &self,
         records: Vec<TaskRecord>,
     ) -> Result<Vec<TaskRecord>, String> {
-        let Some(artifact) = self.artifact.borrow().clone() else {
+        let Some(artifact) = self
+            .artifact
+            .lock()
+            .expect("artifact mutex poisoned")
+            .clone()
+        else {
             return Err(
                 "cannot integrate planner tasks: scheduler has no artifact wired (constructed \
                  via SchedulerHandler::new instead of ::with_artifact)"
@@ -322,7 +351,7 @@ impl IntegrationService {
             .map_err(|err| format!("worktree creation failed: {err}"))?;
         let (recorded, tasks) =
             record_planner_tasks(&artifact, &workspace, records).map_err(|err| err.to_string())?;
-        *self.artifact.borrow_mut() = Some(recorded);
+        *self.artifact.lock().expect("artifact mutex poisoned") = Some(recorded);
         Ok(tasks)
     }
 

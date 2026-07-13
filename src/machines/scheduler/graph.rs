@@ -618,16 +618,26 @@ impl RunGraph {
         Ok(())
     }
 
-    pub(super) fn active_node(&self) -> Result<&Node, String> {
+    /// Confirms that `node_id` is one of the graph's in-flight (`Running` or
+    /// `Integrating`) nodes, given a dispatch `cap`.
+    ///
+    /// `event_label` names the kind of return event being validated (e.g.
+    /// `"result"`, `"integration result"`) so the error message reads
+    /// naturally regardless of call site.
+    ///
+    /// Returns `Err` when:
+    /// - more nodes are in flight than `cap` allows (a dispatch-protocol bug),
+    /// - no node is in flight, or
+    /// - `node_id` names a node that exists but isn't among the in-flight set.
+    pub(super) fn resolve_in_flight(
+        &self,
+        cap: usize,
+        node_id: &NodeId,
+        event_label: &str,
+    ) -> Result<(), String> {
         let active = self.active_nodes();
 
-        if active.is_empty() {
-            return Err(
-                "invalid waiting state: expected exactly one active node; found none".to_string(),
-            );
-        }
-
-        if active.len() > 1 {
+        if active.len() > cap {
             let ids: Vec<String> = active.iter().map(|n| n.id.0.clone()).collect();
             return Err(format!(
                 "invalid waiting state: multiple active nodes: {}",
@@ -635,7 +645,29 @@ impl RunGraph {
             ));
         }
 
-        Ok(active[0])
+        if active.is_empty() {
+            return Err(
+                "invalid waiting state: expected exactly one active node; found none".to_string(),
+            );
+        }
+
+        if active.iter().any(|n| &n.id == node_id) {
+            return Ok(());
+        }
+
+        if let [only] = active.as_slice() {
+            Err(format!(
+                "expected {event_label} for node {} but received {}",
+                only.id.0, node_id.0
+            ))
+        } else {
+            let ids: Vec<String> = active.iter().map(|n| n.id.0.clone()).collect();
+            Err(format!(
+                "expected {event_label} for one of nodes [{}] but received {}",
+                ids.join(", "),
+                node_id.0
+            ))
+        }
     }
 
     pub(super) fn diagnose_no_ready(&self) -> String {

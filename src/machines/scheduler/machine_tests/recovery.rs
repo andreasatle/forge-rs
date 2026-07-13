@@ -579,6 +579,7 @@ fn single_tier_elevate_falls_back_to_retry() {
                 has_strong_tier: false,
                 teams: vec![],
                 terminal_teams: vec![],
+                dispatch_cap: 1,
             },
         },
         SchedulerEvent::NodeFailed {
@@ -626,6 +627,7 @@ fn single_tier_elevate_exhausted_gives_clear_terminal_failure() {
                 has_strong_tier: false,
                 teams: vec![],
                 terminal_teams: vec![],
+                dispatch_cap: 1,
             },
         },
         SchedulerEvent::NodeFailed {

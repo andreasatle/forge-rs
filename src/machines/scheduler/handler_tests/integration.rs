@@ -37,7 +37,8 @@ impl NodeRunner for TwoStepRunner {
                     .work_attempt
                     .expect("work node must receive an attempt workspace")
                     .workspace
-                    .borrow_mut()
+                    .lock()
+                    .expect("workspace mutex poisoned")
                     .write_file("step1.txt", "written by node one\n")
                     .expect("test runner must write step1.txt");
                 NodeRunResult::WorkAccepted(NodeRunWorkResult {
@@ -52,7 +53,8 @@ impl NodeRunner for TwoStepRunner {
                     .work_attempt
                     .expect("work node must receive an attempt workspace")
                     .workspace
-                    .borrow_mut()
+                    .lock()
+                    .expect("workspace mutex poisoned")
                     .write_file("step2.txt", "written by node two\n")
                     .expect("test runner must write step2.txt");
                 NodeRunResult::WorkAccepted(NodeRunWorkResult {
@@ -75,7 +77,12 @@ impl NodeRunner for DirtyThenRetryRunner {
         let attempt = request
             .work_attempt
             .expect("work node must receive an attempt workspace");
-        let dirty_path = attempt.workspace.borrow().path().join("dirty.txt");
+        let dirty_path = attempt
+            .workspace
+            .lock()
+            .expect("workspace mutex poisoned")
+            .path()
+            .join("dirty.txt");
         if request.attempt == 0 {
             fs::write(&dirty_path, "failed attempt contents\n")
                 .expect("failed to dirty attempt workspace");
@@ -91,7 +98,8 @@ impl NodeRunner for DirtyThenRetryRunner {
         *self.saw_clean_retry.borrow_mut() = !dirty_path.exists();
         attempt
             .workspace
-            .borrow_mut()
+            .lock()
+            .expect("workspace mutex poisoned")
             .write_file("clean.txt", "clean retry contents\n")
             .expect("retry attempt must write clean.txt");
         NodeRunResult::WorkAccepted(NodeRunWorkResult {
@@ -353,7 +361,7 @@ fn work_node_without_update_preserves_commit() {
 #[test]
 fn rejected_work_attempt_records_evidence_and_retry_starts_clean() {
     let (_temp, artifact) = fixture("rejected-evidence-clean-retry");
-    let telemetry = Rc::new(VecTelemetry::new());
+    let telemetry = Arc::new(VecTelemetry::new());
     let saw_clean_retry = Rc::new(RefCell::new(false));
     let runner = DirtyThenRetryRunner {
         saw_clean_retry: saw_clean_retry.clone(),
@@ -406,7 +414,7 @@ fn revision_exhaustion_records_final_work_attempt_evidence_before_cleanup() {
     let (_temp, artifact) = fixture("revision-exhaustion-evidence");
     let original_sha = artifact.commit_sha.clone();
     let repo_path = artifact.repo_path.clone();
-    let telemetry = Rc::new(VecTelemetry::new());
+    let telemetry = Arc::new(VecTelemetry::new());
     let provider = SchedulerScriptedProvider::from_strs(&[
         // Round 1: write v1, review it, and request a revision.
         r#"{"tool":"write_file","path":"output.txt","content":"draft v1\n"}"#,

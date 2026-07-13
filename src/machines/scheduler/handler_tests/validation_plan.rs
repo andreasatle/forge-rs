@@ -41,7 +41,7 @@ fn integration_executes_nodes_passing_validation_plan() {
     // Use PanicOnCallValidator: integration must NOT fall back to the global
     // validator when a ValidationPlan is present.
     let h = SchedulerHandler::with_artifact(runner, artifact)
-        .with_validator(Rc::new(PanicOnCallValidator));
+        .with_validator(Arc::new(PanicOnCallValidator));
 
     h.handle_effect(SchedulerEffect::RunNode {
         node_id: NodeId("W".to_string()),

@@ -1,6 +1,5 @@
-use std::cell::RefCell;
 use std::path::PathBuf;
-use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 use serde::Deserialize;
 
@@ -120,7 +119,7 @@ pub enum FileToolResponse {
 /// and writes to a WorkAttempt workspace when mutation is allowed.
 pub struct FileToolExecutor {
     view: Box<dyn ArtifactRead>,
-    workspace: Option<Rc<RefCell<Workspace>>>,
+    workspace: Option<Arc<Mutex<Workspace>>>,
     policy: FileToolPolicy,
     changed: bool,
 }
@@ -147,7 +146,7 @@ impl FileToolExecutor {
     /// Creates an executor that writes directly into an attempt workspace.
     pub fn with_workspace(
         view: impl ArtifactRead + 'static,
-        workspace: Rc<RefCell<Workspace>>,
+        workspace: Arc<Mutex<Workspace>>,
         policy: FileToolPolicy,
     ) -> Self {
         Self {
@@ -160,14 +159,20 @@ impl FileToolExecutor {
 
     fn read_content(&self, path: &str) -> Result<String, ArtifactError> {
         if let Some(workspace) = &self.workspace {
-            return workspace.borrow().read_file(path);
+            return workspace
+                .lock()
+                .expect("workspace mutex poisoned")
+                .read_file(path);
         }
         self.view.read_file(path)
     }
 
     fn list_files(&self) -> Result<Vec<PathBuf>, ArtifactError> {
         if let Some(workspace) = &self.workspace {
-            return Ok(workspace.borrow().list_files());
+            return Ok(workspace
+                .lock()
+                .expect("workspace mutex poisoned")
+                .list_files());
         }
         self.view.list_files()
     }
@@ -260,7 +265,11 @@ impl FileToolExecutor {
                 }
                 let description = format!("write {path}");
                 if let Some(workspace) = &self.workspace {
-                    match workspace.borrow_mut().write_file(&path, &content) {
+                    match workspace
+                        .lock()
+                        .expect("workspace mutex poisoned")
+                        .write_file(&path, &content)
+                    {
                         Ok(()) => self.changed = true,
                         Err(e) => {
                             return FileToolResponse::Failed {
@@ -324,7 +333,11 @@ impl FileToolExecutor {
                 updated.push_str(&content[start + old.len()..]);
                 let description = format!("replace text in {path}");
                 if let Some(workspace) = &self.workspace {
-                    match workspace.borrow_mut().write_file(&path, &updated) {
+                    match workspace
+                        .lock()
+                        .expect("workspace mutex poisoned")
+                        .write_file(&path, &updated)
+                    {
                         Ok(()) => self.changed = true,
                         Err(e) => {
                             return FileToolResponse::Failed {
@@ -351,7 +364,11 @@ impl FileToolExecutor {
                 }
                 let description = format!("delete {path}");
                 if let Some(workspace) = &self.workspace {
-                    match workspace.borrow_mut().delete_file(&path) {
+                    match workspace
+                        .lock()
+                        .expect("workspace mutex poisoned")
+                        .delete_file(&path)
+                    {
                         Ok(()) => self.changed = true,
                         Err(e) => {
                             return FileToolResponse::Failed {

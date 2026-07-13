@@ -36,7 +36,7 @@ fn temporary_workspace_removed_after_integration() {
             pass,
         };
         let h =
-            SchedulerHandler::with_artifact(runner, artifact).with_validator(Rc::new(validator));
+            SchedulerHandler::with_artifact(runner, artifact).with_validator(Arc::new(validator));
 
         h.handle_effect(SchedulerEffect::RunNode {
             node_id: NodeId("W".to_string()),

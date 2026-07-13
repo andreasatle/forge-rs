@@ -263,6 +263,7 @@ fn split_depth_limit_with_no_strong_tier_falls_back_to_retry() {
                 has_strong_tier: false,
                 teams: vec![],
                 terminal_teams: vec![],
+                dispatch_cap: 1,
             },
         },
         SchedulerEvent::NodeFailed {

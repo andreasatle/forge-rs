@@ -101,7 +101,7 @@ impl RecoveryApplicator {
                     let run_config = self.run_config.clone();
                     let graph = self.apply_retry(&message);
                     Transition {
-                        state: SchedulerState::Active { graph, run_config },
+                        state: SchedulerState::resuming(graph, run_config),
                         effects: vec![],
                     }
                 }
@@ -133,7 +133,7 @@ impl RecoveryApplicator {
                     let run_config = self.run_config.clone();
                     let graph = self.apply_split(message);
                     Transition {
-                        state: SchedulerState::Active { graph, run_config },
+                        state: SchedulerState::resuming(graph, run_config),
                         effects: vec![],
                     }
                 }
@@ -197,7 +197,7 @@ impl RecoveryApplicator {
                 let run_config = self.run_config.clone();
                 let graph = self.apply_retry("");
                 Transition {
-                    state: SchedulerState::Active { graph, run_config },
+                    state: SchedulerState::resuming(graph, run_config),
                     effects: vec![],
                 }
             }
@@ -227,7 +227,7 @@ impl RecoveryApplicator {
             let run_config = self.run_config.clone();
             let graph = self.apply_elevate();
             Transition {
-                state: SchedulerState::Active { graph, run_config },
+                state: SchedulerState::resuming(graph, run_config),
                 effects: vec![],
             }
         }

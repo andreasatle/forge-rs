@@ -65,7 +65,7 @@ fn validation_failure_blocks_commit() {
         content: "hello\n".to_string(),
     };
     let h = SchedulerHandler::with_artifact(runner, artifact)
-        .with_validator(Rc::new(AlwaysFailValidator));
+        .with_validator(Arc::new(AlwaysFailValidator));
 
     h.handle_effect(SchedulerEffect::RunNode {
         node_id: NodeId("W".to_string()),
@@ -122,7 +122,7 @@ fn retry_worker_receives_validation_diagnostics_and_can_fix_file() {
         requests: requests.clone(),
     };
     let handler =
-        SchedulerHandler::with_artifact(runner, artifact).with_validator(Rc::new(MainPyValidator));
+        SchedulerHandler::with_artifact(runner, artifact).with_validator(Arc::new(MainPyValidator));
     let mut node = work_node("W", "make main.py valid");
     node.target_files = vec!["main.py".to_string()];
     let state = SchedulerState::Active {
@@ -177,13 +177,13 @@ fn retry_worker_receives_validation_diagnostics_and_can_fix_file() {
 #[test]
 fn validation_failure_telemetry_keeps_full_diagnostics() {
     let (_temp, artifact) = fixture("validation-fail-telemetry");
-    let telemetry = Rc::new(VecTelemetry::new());
+    let telemetry = Arc::new(VecTelemetry::new());
     let runner = FileWritingRunner {
         path: "output.txt".to_string(),
         content: "hello\n".to_string(),
     };
     let h = SchedulerHandler::with_artifact(runner, artifact)
-        .with_validator(Rc::new(AlwaysFailValidator))
+        .with_validator(Arc::new(AlwaysFailValidator))
         .with_telemetry(telemetry.clone());
 
     h.handle_effect(SchedulerEffect::RunNode {
@@ -238,13 +238,13 @@ fn validation_failure_telemetry_keeps_full_diagnostics() {
 #[test]
 fn validation_failure_records_attempt_evidence_before_cleanup() {
     let (_temp, artifact) = fixture("validation-fail-evidence");
-    let telemetry = Rc::new(VecTelemetry::new());
+    let telemetry = Arc::new(VecTelemetry::new());
     let runner = FileWritingRunner {
         path: "output.txt".to_string(),
         content: "hello from failed attempt\n".to_string(),
     };
     let h = SchedulerHandler::with_artifact(runner, artifact)
-        .with_validator(Rc::new(AlwaysFailValidator))
+        .with_validator(Arc::new(AlwaysFailValidator))
         .with_telemetry(telemetry.clone());
 
     h.handle_effect(SchedulerEffect::RunNode {
@@ -324,7 +324,7 @@ fn validator_runs_after_workspace_mutation() {
         found: found.clone(),
     };
 
-    let h = SchedulerHandler::with_artifact(runner, artifact).with_validator(Rc::new(validator));
+    let h = SchedulerHandler::with_artifact(runner, artifact).with_validator(Arc::new(validator));
 
     h.handle_effect(SchedulerEffect::RunNode {
         node_id: NodeId("W".to_string()),
@@ -367,7 +367,7 @@ fn no_diff_fails_before_running_validator() {
     let repo_path = artifact.repo_path.clone();
 
     let h = SchedulerHandler::with_artifact(StaticNodeRunner, artifact)
-        .with_validator(Rc::new(PanicOnCallValidator));
+        .with_validator(Arc::new(PanicOnCallValidator));
 
     h.handle_effect(SchedulerEffect::RunNode {
         node_id: NodeId("W".to_string()),
@@ -479,7 +479,7 @@ fn validation_failure_sets_validation_passed_false() {
         content: "hello\n".to_string(),
     };
     let h = SchedulerHandler::with_artifact(runner, artifact)
-        .with_validator(Rc::new(AlwaysFailValidator));
+        .with_validator(Arc::new(AlwaysFailValidator));
 
     h.handle_effect(SchedulerEffect::RunNode {
         node_id: NodeId("W".to_string()),
@@ -633,7 +633,7 @@ fn timeout_blocks_commit() {
         }],
         Duration::from_secs(1),
     );
-    let h = SchedulerHandler::with_artifact(runner, artifact).with_validator(Rc::new(validator));
+    let h = SchedulerHandler::with_artifact(runner, artifact).with_validator(Arc::new(validator));
 
     h.handle_effect(SchedulerEffect::RunNode {
         node_id: NodeId("W".to_string()),

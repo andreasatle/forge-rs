@@ -9,7 +9,6 @@
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::path::Path;
-use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -32,7 +31,7 @@ pub struct ProjectRuntimeSetup {
     pub context_file_names: Vec<String>,
     pub required_test_targets_fn: Arc<TestTargetsFn>,
     pub validation_plan_for_role_fn: Arc<ValidationPlanForRoleFn>,
-    pub validator: Rc<dyn Validator>,
+    pub validator: Arc<dyn Validator>,
     pub api_summary_command: Option<CommandSpec>,
     /// Init commands for the adapter's first declared language plugin
     /// (ordered by extension), used to bootstrap a brand-new artifact
@@ -242,7 +241,7 @@ impl<'a> ProjectRuntimeSetupBuilder<'a> {
     /// per-node `validation_plan` (e.g. no plugin matched their target files
     /// at plan-expansion time). Prefers the explicit `validation:` config
     /// when present, otherwise the first configured plugin's commands.
-    fn validator(&self) -> Rc<dyn Validator> {
+    fn validator(&self) -> Arc<dyn Validator> {
         if let Some(v) = self.validation
             && !v.commands.is_empty()
         {
@@ -257,18 +256,18 @@ impl<'a> ProjectRuntimeSetupBuilder<'a> {
                     scope: ValidationScope::Workspace,
                 })
                 .collect();
-            return Rc::new(CommandValidator::new(specs, timeout));
+            return Arc::new(CommandValidator::new(specs, timeout));
         }
 
         match self.first_plugin() {
             Some(spec) => {
                 let timeout = Duration::from_secs(120);
-                Rc::new(CommandValidator::new(
+                Arc::new(CommandValidator::new(
                     spec.validation.commands.clone(),
                     timeout,
                 ))
             }
-            None => Rc::new(AlwaysPassValidator),
+            None => Arc::new(AlwaysPassValidator),
         }
     }
 }

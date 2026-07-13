@@ -1,7 +1,7 @@
 //! Checkpoint persistence for scheduler progress.
 
 use std::path::PathBuf;
-use std::rc::Rc;
+use std::sync::Arc;
 
 use crate::machines::scheduler::state::SchedulerState;
 use crate::runtime::checkpoint::save_checkpoint;
@@ -9,11 +9,11 @@ use crate::telemetry::{TelemetryEvent, TelemetryRecord, TelemetrySink};
 
 pub(crate) struct CheckpointService {
     dir: Option<PathBuf>,
-    telemetry: Rc<dyn TelemetrySink>,
+    telemetry: Arc<dyn TelemetrySink>,
 }
 
 impl CheckpointService {
-    pub(crate) fn disabled(telemetry: Rc<dyn TelemetrySink>) -> Self {
+    pub(crate) fn disabled(telemetry: Arc<dyn TelemetrySink>) -> Self {
         Self {
             dir: None,
             telemetry,
@@ -27,7 +27,7 @@ impl CheckpointService {
         }
     }
 
-    pub(crate) fn with_telemetry(self, telemetry: Rc<dyn TelemetrySink>) -> Self {
+    pub(crate) fn with_telemetry(self, telemetry: Arc<dyn TelemetrySink>) -> Self {
         Self { telemetry, ..self }
     }
 

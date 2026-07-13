@@ -2,7 +2,7 @@
 
 use std::error::Error;
 use std::path::PathBuf;
-use std::rc::Rc;
+use std::sync::Arc;
 
 #[cfg(test)]
 use std::path::Path;
@@ -38,8 +38,8 @@ impl ForgeRuntime {
             &provider_stack.metadata,
         )?;
         eprintln!("[run] started {}", run_info.run_id);
-        let sink: Rc<dyn TelemetrySink> =
-            Rc::new(FileTelemetry::new(run_info.telemetry_dir.clone()));
+        let sink: Arc<dyn TelemetrySink> =
+            Arc::new(FileTelemetry::new(run_info.telemetry_dir.clone()));
 
         let initial_state = SchedulerMachine::initial_state(
             RunRequest {
@@ -49,6 +49,7 @@ impl ForgeRuntime {
                 has_strong_tier: config.provider.strong.is_some(),
                 teams: config.teams.clone(),
                 terminal_teams: config.terminal_teams.clone(),
+                dispatch_cap: 1,
             },
         );
 
@@ -80,6 +81,7 @@ impl ForgeRuntime {
                     has_strong_tier,
                     teams,
                     terminal_teams,
+                    dispatch_cap: 1,
                 },
             },
             SchedulerState::Waiting { graph, .. } => SchedulerState::Waiting {
@@ -88,6 +90,7 @@ impl ForgeRuntime {
                     has_strong_tier,
                     teams,
                     terminal_teams,
+                    dispatch_cap: 1,
                 },
             },
             other => other,
@@ -99,7 +102,7 @@ impl ForgeRuntime {
             .into_owned();
         eprintln!("[run] resumed {run_id}");
 
-        let sink: Rc<dyn TelemetrySink> = Rc::new(FileTelemetry::new(run_dir.join("telemetry")));
+        let sink: Arc<dyn TelemetrySink> = Arc::new(FileTelemetry::new(run_dir.join("telemetry")));
 
         let graph = match &initial_state {
             SchedulerState::Active { graph, .. } => graph,

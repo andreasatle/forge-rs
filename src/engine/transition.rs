@@ -12,7 +12,8 @@ pub struct Transition<S, E> {
     /// The machine's new durable state after the transition.
     pub state: S,
     /// Side-effect commands produced by this transition.
-    /// The runner enforces exactly zero or one effect per tick; emitting two or
-    /// more effects is a bug and causes an immediate panic.
+    /// The runner queues these and dispatches them one at a time, feeding each
+    /// effect's resulting event back through `transition` before dispatching
+    /// the next; a machine may emit any number of effects per tick.
     pub effects: Vec<E>,
 }

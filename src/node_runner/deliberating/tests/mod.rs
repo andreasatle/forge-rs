@@ -2,8 +2,8 @@ use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 use super::*;
 use crate::artifacts::{Artifact, ArtifactView, WorkspaceFactory};
@@ -293,7 +293,7 @@ fn work_attempt_for_view(view: &ArtifactView) -> WorkAttempt {
         .expect("test artifact view must create a temporary WorkAttempt workspace");
     WorkAttempt {
         attempt: 0,
-        workspace: Rc::new(RefCell::new(workspace)),
+        workspace: Arc::new(Mutex::new(workspace)),
     }
 }
 

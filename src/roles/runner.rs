@@ -4,8 +4,7 @@
 //! parse JSON, retry on protocol failure. The deliberation layer above sees only
 //! `RoleRequest` in and `RoleResult` out.
 
-use std::cell::RefCell;
-use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 use crate::artifacts::{ArtifactRead, Workspace};
 use crate::machines::deliberation::DeliberationContext;
@@ -41,7 +40,7 @@ pub struct RoleToolContext {
     /// roles see producer writes directly.
     pub artifact_view: Box<dyn ArtifactRead>,
     /// Optional live workspace for artifact-producing Work attempts.
-    pub writable_workspace: Option<Rc<RefCell<Workspace>>>,
+    pub writable_workspace: Option<Arc<Mutex<Workspace>>>,
 }
 
 impl std::fmt::Debug for RoleToolContext {

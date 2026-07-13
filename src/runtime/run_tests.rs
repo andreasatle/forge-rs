@@ -293,7 +293,8 @@ fn runtime_summary_uses_post_integration_artifact_commit() {
                         .work_attempt
                         .expect("artifact Work must receive a WorkAttempt")
                         .workspace
-                        .borrow_mut()
+                        .lock()
+                        .expect("workspace mutex poisoned")
                         .write_file("result.txt", "generated\n")
                         .expect("test runner must write result.txt");
                     NodeRunResult::WorkAccepted(NodeRunWorkResult {
@@ -484,7 +485,8 @@ fn successful_validated_run_sets_validation_passed_true() {
                         .work_attempt
                         .expect("artifact Work must receive a WorkAttempt")
                         .workspace
-                        .borrow_mut()
+                        .lock()
+                        .expect("workspace mutex poisoned")
                         .write_file("result.txt", "generated\n")
                         .expect("test runner must write result.txt");
                     NodeRunResult::WorkAccepted(NodeRunWorkResult {
@@ -573,7 +575,8 @@ fn validation_failure_sets_validation_passed_false_in_manifest() {
                         .work_attempt
                         .expect("artifact Work must receive a WorkAttempt")
                         .workspace
-                        .borrow_mut()
+                        .lock()
+                        .expect("workspace mutex poisoned")
                         .write_file("result.txt", "generated\n")
                         .expect("test runner must write result.txt");
                     NodeRunResult::WorkAccepted(NodeRunWorkResult {
@@ -602,7 +605,7 @@ fn validation_failure_sets_validation_passed_false_in_manifest() {
 
     let run_info = create_run(&runs_root, "test", "repo", &test_provider_metadata()).unwrap();
     let handler = SchedulerHandler::with_artifact(FileWritingRunner, artifact)
-        .with_validator(Rc::new(AlwaysFailValidator));
+        .with_validator(Arc::new(AlwaysFailValidator));
     let initial_state = SchedulerMachine::initial_state(
         RunRequest {
             objective: "generate a file".to_string(),
@@ -726,6 +729,7 @@ fn run_config_has_strong_tier_false_when_provider_strong_is_none() {
         has_strong_tier: provider.strong.is_some(),
         teams: vec![],
         terminal_teams: vec![],
+        dispatch_cap: 1,
     };
     let state = SchedulerMachine::initial_state(
         RunRequest {
@@ -770,6 +774,7 @@ fn run_config_has_strong_tier_true_when_provider_strong_is_some() {
         has_strong_tier: provider.strong.is_some(),
         teams: vec![],
         terminal_teams: vec![],
+        dispatch_cap: 1,
     };
     let state = SchedulerMachine::initial_state(
         RunRequest {

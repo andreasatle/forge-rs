@@ -171,6 +171,7 @@ fn run_config(teams: Vec<TeamConfig>) -> RunConfig {
         has_strong_tier: true,
         teams,
         terminal_teams: vec![],
+        dispatch_cap: 1,
     }
 }
 
@@ -179,6 +180,7 @@ fn run_config_with_terminal_teams(teams: Vec<TeamConfig>, terminal_teams: Vec<&s
         has_strong_tier: true,
         teams,
         terminal_teams: terminal_teams.into_iter().map(String::from).collect(),
+        dispatch_cap: 1,
     }
 }
 

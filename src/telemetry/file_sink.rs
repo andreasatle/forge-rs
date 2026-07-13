@@ -1,7 +1,7 @@
 //! File-backed telemetry sink.
 
-use std::cell::RefCell;
 use std::path::PathBuf;
+use std::sync::Mutex;
 
 use super::event::TelemetryRecord;
 use super::sink::TelemetrySink;
@@ -40,9 +40,9 @@ use super::sink::TelemetrySink;
 pub struct FileTelemetry {
     /// `None` when the root directory could not be created (sink disabled).
     root: Option<PathBuf>,
-    counter: RefCell<u64>,
+    counter: Mutex<u64>,
     /// Count of events that could not be written due to I/O errors.
-    telemetry_failures: RefCell<usize>,
+    telemetry_failures: Mutex<usize>,
 }
 
 impl FileTelemetry {
@@ -58,8 +58,8 @@ impl FileTelemetry {
         };
         Self {
             root: enabled_root,
-            counter: RefCell::new(0),
-            telemetry_failures: RefCell::new(0),
+            counter: Mutex::new(0),
+            telemetry_failures: Mutex::new(0),
         }
     }
 }
@@ -70,7 +70,10 @@ impl TelemetrySink for FileTelemetry {
             return;
         };
 
-        let mut n = self.counter.borrow_mut();
+        let mut n = self
+            .counter
+            .lock()
+            .expect("telemetry counter mutex poisoned");
         *n += 1;
         let filename = match &record.subsource {
             Some(sub) => format!(
@@ -89,7 +92,10 @@ impl TelemetrySink for FileTelemetry {
         };
         let path = root.join(filename);
         if let Err(err) = std::fs::write(path, record.file_content()) {
-            *self.telemetry_failures.borrow_mut() += 1;
+            *self
+                .telemetry_failures
+                .lock()
+                .expect("telemetry failures mutex poisoned") += 1;
             eprintln!("telemetry write failed: {err}");
         }
     }

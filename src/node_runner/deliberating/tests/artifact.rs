@@ -33,7 +33,8 @@ fn deliberating_artifact_work_writes_work_attempt_workspace() {
         "summary must be the accepted content, not the tool request"
     );
     let content = workspace
-        .borrow()
+        .lock()
+        .expect("workspace mutex poisoned")
         .read_file("result.txt")
         .expect("result.txt must be written into the WorkAttempt workspace");
     assert_eq!(content, "done");
@@ -77,7 +78,8 @@ fn reviewer_can_read_work_attempt_target_file_with_relative_path() {
         panic!("expected WorkAccepted");
     };
     let content = workspace
-        .borrow()
+        .lock()
+        .expect("workspace mutex poisoned")
         .read_file("main.py")
         .expect("main.py must be readable from WorkAttempt workspace");
     assert_eq!(content, "print('new')\n");

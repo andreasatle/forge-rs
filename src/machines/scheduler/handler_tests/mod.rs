@@ -2,6 +2,7 @@ use std::cell::RefCell;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::*;
@@ -177,7 +178,8 @@ impl NodeRunner for FileWritingRunner {
             .expect("artifact Work tests must receive a WorkAttempt workspace");
         attempt
             .workspace
-            .borrow_mut()
+            .lock()
+            .expect("workspace mutex poisoned")
             .write_file(&self.path, &self.content)
             .expect("test runner must write attempt workspace");
         NodeRunResult::WorkAccepted(NodeRunWorkResult {
@@ -291,7 +293,8 @@ impl NodeRunner for FixOnValidationRetryRunner {
             .as_ref()
             .expect("validation retry work must receive a workspace")
             .workspace
-            .borrow_mut()
+            .lock()
+            .expect("workspace mutex poisoned")
             .write_file("main.py", content)
             .expect("test runner must write main.py");
         self.requests.borrow_mut().push(CapturedRequest {

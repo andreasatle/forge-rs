@@ -333,7 +333,7 @@ fn second_task_never_spawns_while_its_dependency_never_completes() {
         .with_validation_plan_for_role_fn(fixture.root_setup.validation_plan_for_role_fn);
 
     let handler = SchedulerHandler::with_artifact(runner, fixture.artifact).with_validator(
-        Rc::new(BranchAdvancingValidator {
+        Arc::new(BranchAdvancingValidator {
             repo_path: fixture.repo_path.clone(),
         }),
     );
@@ -347,6 +347,7 @@ fn second_task_never_spawns_while_its_dependency_never_completes() {
             has_strong_tier: false,
             teams: fixture.config.teams.clone(),
             terminal_teams: fixture.config.terminal_teams.clone(),
+            dispatch_cap: 1,
         },
     );
 
@@ -406,6 +407,7 @@ fn second_task_spawns_once_its_dependency_completes_for_every_terminal_team() {
             has_strong_tier: false,
             teams: fixture.config.teams.clone(),
             terminal_teams: fixture.config.terminal_teams.clone(),
+            dispatch_cap: 1,
         },
     );
 

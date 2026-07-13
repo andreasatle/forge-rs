@@ -7,7 +7,7 @@
 //! trait itself, so a small owning wrapper composes them for the engine's
 //! runner loop.
 
-use std::cell::RefCell;
+use std::sync::Mutex;
 
 use crate::engine::{Machine, Transition, run_machine, run_machine_with_telemetry};
 use crate::telemetry::{TelemetryEvent, TelemetryRecord, TelemetrySink};
@@ -27,7 +27,7 @@ struct SchedulerDriver<'a, R> {
     /// `attempt` to the `EffectEmitted` record the generic engine loop emits
     /// immediately afterwards, without the domain-blind engine needing to
     /// know about either field.
-    pending_effect: &'a RefCell<Option<SchedulerEffect>>,
+    pending_effect: &'a Mutex<Option<SchedulerEffect>>,
 }
 
 impl<'a, R: NodeRunner> Machine for SchedulerDriver<'a, R> {
@@ -50,7 +50,10 @@ impl<'a, R: NodeRunner> Machine for SchedulerDriver<'a, R> {
         event: SchedulerEvent,
     ) -> Transition<SchedulerState, SchedulerEffect> {
         let transition = self.handler.transition(state, event);
-        *self.pending_effect.borrow_mut() = transition.effects.first().cloned();
+        *self
+            .pending_effect
+            .lock()
+            .expect("pending effect mutex poisoned") = transition.effects.first().cloned();
         transition
     }
 
@@ -68,7 +71,7 @@ pub fn run_scheduler<R: NodeRunner>(
     handler: SchedulerHandler<R>,
     state: SchedulerState,
 ) -> SchedulerTerminalOutput {
-    let pending_effect = RefCell::new(None);
+    let pending_effect = Mutex::new(None);
     run_machine(
         SchedulerDriver {
             handler,
@@ -88,7 +91,7 @@ pub fn run_scheduler_with_telemetry<R: NodeRunner>(
     state: SchedulerState,
     telemetry: &dyn TelemetrySink,
 ) -> (SchedulerTerminalOutput, SchedulerHandler<R>) {
-    let pending_effect = RefCell::new(None);
+    let pending_effect = Mutex::new(None);
     let node_context = EffectContextTelemetry::new(telemetry, &pending_effect);
     let (output, driver) = run_machine_with_telemetry(
         SchedulerDriver {
@@ -109,13 +112,13 @@ pub fn run_scheduler_with_telemetry<R: NodeRunner>(
 /// without changing the domain-blind engine itself.
 struct EffectContextTelemetry<'a> {
     inner: &'a dyn TelemetrySink,
-    pending_effect: &'a RefCell<Option<SchedulerEffect>>,
+    pending_effect: &'a Mutex<Option<SchedulerEffect>>,
 }
 
 impl<'a> EffectContextTelemetry<'a> {
     fn new(
         inner: &'a dyn TelemetrySink,
-        pending_effect: &'a RefCell<Option<SchedulerEffect>>,
+        pending_effect: &'a Mutex<Option<SchedulerEffect>>,
     ) -> Self {
         Self {
             inner,
@@ -127,7 +130,11 @@ impl<'a> EffectContextTelemetry<'a> {
 impl<'a> TelemetrySink for EffectContextTelemetry<'a> {
     fn record(&self, mut record: TelemetryRecord) {
         if matches!(record.event, TelemetryEvent::EffectEmitted { .. })
-            && let Some(effect) = self.pending_effect.borrow_mut().take()
+            && let Some(effect) = self
+                .pending_effect
+                .lock()
+                .expect("pending effect mutex poisoned")
+                .take()
             && let Some((node_id, attempt)) = effect_node_context(&effect)
         {
             record.node_id = Some(node_id);

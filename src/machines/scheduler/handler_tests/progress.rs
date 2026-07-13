@@ -85,7 +85,7 @@ fn telemetry_failure_does_not_change_scheduler_behavior() {
     // Create the sink, then delete the directory so all writes fail.
     let sink = FileTelemetry::new(dir.clone());
     let _ = fs::remove_dir_all(&dir);
-    let shared: Rc<dyn TelemetrySink> = Rc::new(sink);
+    let shared: Arc<dyn TelemetrySink> = Arc::new(sink);
 
     let state = SchedulerState::Active {
         graph: RunGraph {
@@ -94,7 +94,7 @@ fn telemetry_failure_does_not_change_scheduler_behavior() {
         run_config: RunConfig::default(),
     };
     let output = run_scheduler_with_telemetry(
-        SchedulerHandler::new(StaticNodeRunner).with_telemetry(Rc::clone(&shared)),
+        SchedulerHandler::new(StaticNodeRunner).with_telemetry(Arc::clone(&shared)),
         state,
         shared.as_ref(),
     );
@@ -123,7 +123,7 @@ fn artifact_commit_still_succeeds_when_telemetry_fails() {
     // Create the sink, then delete the directory so all writes fail.
     let sink = FileTelemetry::new(dir.clone());
     let _ = fs::remove_dir_all(&dir);
-    let shared: Rc<dyn TelemetrySink> = Rc::new(sink);
+    let shared: Arc<dyn TelemetrySink> = Arc::new(sink);
 
     let runner = FileWritingRunner {
         path: "result.txt".to_string(),
@@ -136,7 +136,7 @@ fn artifact_commit_still_succeeds_when_telemetry_fails() {
         run_config: RunConfig::default(),
     };
     let (output, handler) = run_scheduler_with_telemetry(
-        SchedulerHandler::with_artifact(runner, artifact).with_telemetry(Rc::clone(&shared)),
+        SchedulerHandler::with_artifact(runner, artifact).with_telemetry(Arc::clone(&shared)),
         state,
         shared.as_ref(),
     );
@@ -197,8 +197,8 @@ fn scheduler_and_deliberation_share_one_trace() {
     use crate::node_runner::DeliberatingNodeRunner;
     use crate::telemetry::{TelemetryEvent, VecTelemetry};
 
-    let vec_tel = Rc::new(VecTelemetry::new());
-    let shared: Rc<dyn TelemetrySink> = vec_tel.clone();
+    let vec_tel = Arc::new(VecTelemetry::new());
+    let shared: Arc<dyn TelemetrySink> = vec_tel.clone();
 
     // Root Decomposition node (atomic, escalates to one Plan child) + Plan
     // node + work node, each requiring 3 provider calls (producer, critic,
@@ -222,7 +222,7 @@ fn scheduler_and_deliberation_share_one_trace() {
         RunConfig::default(),
     );
 
-    let handler = SchedulerHandler::new(runner).with_telemetry(Rc::clone(&shared));
+    let handler = SchedulerHandler::new(runner).with_telemetry(Arc::clone(&shared));
     let _ = run_scheduler_with_telemetry(handler, initial_state, shared.as_ref());
 
     let records = vec_tel.records();
@@ -250,8 +250,8 @@ fn nested_machine_events_preserve_order() {
     use crate::node_runner::DeliberatingNodeRunner;
     use crate::telemetry::{TelemetryEvent, VecTelemetry};
 
-    let vec_tel = Rc::new(VecTelemetry::new());
-    let shared: Rc<dyn TelemetrySink> = vec_tel.clone();
+    let vec_tel = Arc::new(VecTelemetry::new());
+    let shared: Arc<dyn TelemetrySink> = vec_tel.clone();
 
     // Root Decomposition node (atomic, escalates to one Plan child) + Plan
     // node + work node, each requiring 3 provider calls (producer, critic,
@@ -275,7 +275,7 @@ fn nested_machine_events_preserve_order() {
         RunConfig::default(),
     );
 
-    let handler = SchedulerHandler::new(runner).with_telemetry(Rc::clone(&shared));
+    let handler = SchedulerHandler::new(runner).with_telemetry(Arc::clone(&shared));
     let _ = run_scheduler_with_telemetry(handler, initial_state, shared.as_ref());
 
     let records = vec_tel.records();
@@ -340,8 +340,8 @@ fn scheduler_effect_emitted_carries_node_context_for_run_node() {
     use crate::node_runner::DeliberatingNodeRunner;
     use crate::telemetry::{TelemetryEvent, VecTelemetry};
 
-    let vec_tel = Rc::new(VecTelemetry::new());
-    let shared: Rc<dyn TelemetrySink> = vec_tel.clone();
+    let vec_tel = Arc::new(VecTelemetry::new());
+    let shared: Arc<dyn TelemetrySink> = vec_tel.clone();
 
     // Root Decomposition node (atomic, escalates to one Plan child) + Plan
     // node + work node, each requiring 3 provider calls (producer, critic,
@@ -365,7 +365,7 @@ fn scheduler_effect_emitted_carries_node_context_for_run_node() {
         RunConfig::default(),
     );
 
-    let handler = SchedulerHandler::new(runner).with_telemetry(Rc::clone(&shared));
+    let handler = SchedulerHandler::new(runner).with_telemetry(Arc::clone(&shared));
     let _ = run_scheduler_with_telemetry(handler, initial_state, shared.as_ref());
 
     let records = vec_tel.records();

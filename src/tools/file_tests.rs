@@ -1,8 +1,7 @@
-use std::cell::RefCell;
 use std::fs;
 use std::path::PathBuf;
-use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 use crate::artifacts::{Artifact, ArtifactView, WorkspaceFactory};
 
@@ -134,7 +133,7 @@ fn workspace_executor(view: &ArtifactView, policy: FileToolPolicy) -> FileToolEx
     let workspace = WorkspaceFactory::new(&artifact)
         .create_temporary_workspace()
         .unwrap();
-    let workspace = Rc::new(RefCell::new(workspace));
+    let workspace = Arc::new(Mutex::new(workspace));
     FileToolExecutor::with_workspace(view.clone(), workspace, policy)
 }
 

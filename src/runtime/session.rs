@@ -6,7 +6,7 @@
 
 use std::error::Error;
 use std::path::Path;
-use std::rc::Rc;
+use std::sync::Arc;
 
 use crate::config::ForgeConfig;
 use crate::machines::scheduler::{SchedulerHandler, SchedulerState, run_scheduler_with_telemetry};
@@ -23,7 +23,7 @@ use crate::telemetry::TelemetrySink;
 pub struct RunSession {
     config: ForgeConfig,
     run_info: RunInfo,
-    sink: Rc<dyn TelemetrySink>,
+    sink: Arc<dyn TelemetrySink>,
     provider_stack: ResolvedProviderStack,
 }
 
@@ -31,7 +31,7 @@ impl RunSession {
     pub fn new(
         config: ForgeConfig,
         run_info: RunInfo,
-        sink: Rc<dyn TelemetrySink>,
+        sink: Arc<dyn TelemetrySink>,
         provider_stack: ResolvedProviderStack,
     ) -> Self {
         Self {
@@ -63,7 +63,7 @@ impl RunSession {
                 .with_language_plugins(setup.language_plugins)
                 .with_validation_plan_for_role_fn(setup.validation_plan_for_role_fn);
         let handler = SchedulerHandler::with_artifact(runner, artifact)
-            .with_telemetry(Rc::clone(&self.sink))
+            .with_telemetry(Arc::clone(&self.sink))
             .with_validator(setup.validator)
             .with_checkpoint_dir(self.run_info.run_dir.clone());
 

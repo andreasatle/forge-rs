@@ -73,15 +73,18 @@ fn short_type_name<T: ?Sized>() -> String {
 /// 3. Record StateEntered and EventReceived.
 /// 4. transition(state, event)  →  next_state + effects
 /// 5. If output(next_state) is Some, return it — the machine is done.
-/// 6. If effects is non-empty, record EffectEmitted, dispatch through
-///    handle_effect to get the next event; otherwise re-send start_event.
+/// 6. Queue effects; pop the front of the queue, record EffectEmitted, and
+///    dispatch through handle_effect to get the next event. If the queue is
+///    empty, re-send start_event instead.
 /// 7. Repeat from step 3.
 /// ```
 ///
 /// # Engine invariant
 ///
-/// A transition may emit **zero or one** effect per tick. Emitting two or more
-/// effects is treated as a bug and causes an immediate panic.
+/// A transition may emit any number of effects per tick. Effects are queued
+/// in emission order and dispatched one at a time: each effect's resulting
+/// event is run through `transition` (which may itself enqueue further
+/// effects) before the next queued effect is dispatched.
 pub fn run_machine_with_telemetry<M>(
     machine: M,
     mut state: M::State,
@@ -102,6 +105,8 @@ where
     ));
 
     let mut event = machine.start_event();
+    let mut pending_effects: std::collections::VecDeque<M::Effect> =
+        std::collections::VecDeque::new();
 
     loop {
         telemetry.record(TelemetryRecord::new(
@@ -126,13 +131,10 @@ where
             return (output, machine);
         }
 
-        let mut effects = transition.effects.into_iter();
-        event = match effects.next() {
+        pending_effects.extend(transition.effects);
+
+        event = match pending_effects.pop_front() {
             Some(effect) => {
-                assert!(
-                    effects.next().is_none(),
-                    "Machine emitted multiple effects but the engine currently supports exactly one effect per transition."
-                );
                 telemetry.record(TelemetryRecord::new(
                     &machine_name,
                     TelemetryEvent::EffectEmitted {
@@ -171,8 +173,11 @@ mod tests {
     use crate::telemetry::{FileTelemetry, VecTelemetry};
     use std::path::PathBuf;
 
-    // Minimal machine that emits two effects on the first tick, then halts.
-    struct MultiEffectMachine;
+    // Minimal machine that emits two effects on the first tick, then halts
+    // once both have been individually dispatched through handle_effect.
+    struct MultiEffectMachine {
+        handled: std::cell::RefCell<Vec<&'static str>>,
+    }
 
     #[derive(Clone, Copy, Debug)]
     enum MeState {
@@ -184,7 +189,7 @@ mod tests {
         type State = MeState;
         type Event = ();
         type Effect = &'static str;
-        type Output = ();
+        type Output = Vec<&'static str>;
 
         fn start_event(&self) {}
 
@@ -201,20 +206,27 @@ mod tests {
             }
         }
 
-        fn handle_effect(&self, _effect: &'static str) {}
+        fn handle_effect(&self, effect: &'static str) {
+            self.handled.borrow_mut().push(effect);
+        }
 
-        fn output(&self, state: &MeState) -> Option<()> {
+        fn output(&self, state: &MeState) -> Option<Vec<&'static str>> {
             match state {
-                MeState::Done => None, // never reached after panic
-                MeState::Start => None,
+                MeState::Done if self.handled.borrow().len() >= 2 => {
+                    Some(self.handled.borrow().clone())
+                }
+                _ => None,
             }
         }
     }
 
     #[test]
-    #[should_panic(expected = "multiple effects")]
-    fn run_machine_panics_on_multiple_effects() {
-        run_machine(MultiEffectMachine, MeState::Start);
+    fn run_machine_dispatches_multiple_effects_without_panicking() {
+        let machine = MultiEffectMachine {
+            handled: std::cell::RefCell::new(Vec::new()),
+        };
+        let handled = run_machine(machine, MeState::Start);
+        assert_eq!(handled, vec!["effect-one", "effect-two"]);
     }
 
     // Minimal two-step machine: Start emits one effect, Done is terminal.

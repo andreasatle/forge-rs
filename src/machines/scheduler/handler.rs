@@ -8,7 +8,7 @@
 //! [`crate::engine::run_machine`] can drive.
 
 use std::path::PathBuf;
-use std::rc::Rc;
+use std::sync::Arc;
 
 use crate::artifacts::Artifact;
 use crate::engine::Transition;
@@ -37,17 +37,17 @@ pub struct SchedulerHandler<R> {
     runner: R,
     integration: IntegrationService,
     checkpoint: CheckpointService,
-    telemetry: Rc<dyn TelemetrySink>,
+    telemetry: Arc<dyn TelemetrySink>,
 }
 
 impl<R: NodeRunner> SchedulerHandler<R> {
     /// Create a new handler backed by the given [`NodeRunner`], with no artifact.
     pub fn new(runner: R) -> Self {
-        let telemetry: Rc<dyn TelemetrySink> = Rc::new(NoopTelemetry);
+        let telemetry: Arc<dyn TelemetrySink> = Arc::new(NoopTelemetry);
         Self {
             runner,
-            integration: IntegrationService::without_artifact(Rc::clone(&telemetry)),
-            checkpoint: CheckpointService::disabled(Rc::clone(&telemetry)),
+            integration: IntegrationService::without_artifact(Arc::clone(&telemetry)),
+            checkpoint: CheckpointService::disabled(Arc::clone(&telemetry)),
             telemetry,
         }
     }
@@ -55,20 +55,20 @@ impl<R: NodeRunner> SchedulerHandler<R> {
     /// Create a handler that owns an [`Artifact`] and keeps it current across
     /// work node integrations.
     pub fn with_artifact(runner: R, artifact: Artifact) -> Self {
-        let telemetry: Rc<dyn TelemetrySink> = Rc::new(NoopTelemetry);
+        let telemetry: Arc<dyn TelemetrySink> = Arc::new(NoopTelemetry);
         Self {
             runner,
-            integration: IntegrationService::with_artifact(artifact, Rc::clone(&telemetry)),
-            checkpoint: CheckpointService::disabled(Rc::clone(&telemetry)),
+            integration: IntegrationService::with_artifact(artifact, Arc::clone(&telemetry)),
+            checkpoint: CheckpointService::disabled(Arc::clone(&telemetry)),
             telemetry,
         }
     }
 
     /// Attach a shared telemetry sink so node runs record into the same trace.
-    pub fn with_telemetry(self, telemetry: Rc<dyn TelemetrySink>) -> Self {
+    pub fn with_telemetry(self, telemetry: Arc<dyn TelemetrySink>) -> Self {
         Self {
-            integration: self.integration.with_telemetry(Rc::clone(&telemetry)),
-            checkpoint: self.checkpoint.with_telemetry(Rc::clone(&telemetry)),
+            integration: self.integration.with_telemetry(Arc::clone(&telemetry)),
+            checkpoint: self.checkpoint.with_telemetry(Arc::clone(&telemetry)),
             telemetry,
             ..self
         }
@@ -76,7 +76,7 @@ impl<R: NodeRunner> SchedulerHandler<R> {
 
     /// Replace the default [`crate::validation::AlwaysPassValidator`] with a
     /// custom validator.
-    pub fn with_validator(self, validator: Rc<dyn Validator>) -> Self {
+    pub fn with_validator(self, validator: Arc<dyn Validator>) -> Self {
         Self {
             integration: self.integration.with_validator(validator),
             ..self

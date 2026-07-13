@@ -221,53 +221,57 @@ impl SchedulerMachine {
                             effects: vec![],
                         }
                     } else {
-                        let node_id = ready[0].clone();
-                        let (
-                            kind,
-                            worker_role,
-                            objective,
-                            target_files,
-                            test_plan_context,
-                            model_tier,
-                            attempt,
-                            retry_feedback,
-                            team,
-                            adapter,
-                            northstar,
-                        ) = {
-                            let n = graph.get_node(&node_id);
-                            (
-                                n.kind.clone(),
-                                n.worker_role.clone(),
-                                n.objective.clone(),
-                                n.target_files.clone(),
-                                graph.test_plan_context_for_node(&node_id),
-                                n.model_tier,
-                                n.attempt,
-                                n.retry_feedback.clone(),
-                                n.team.clone(),
-                                n.adapter.clone(),
-                                n.northstar.clone(),
-                            )
-                        };
-                        let effect = SchedulerEffect::RunNode {
-                            node_id: node_id.clone(),
-                            worker_role,
-                            kind,
-                            objective,
-                            target_files,
-                            test_plan_context,
-                            model_tier,
-                            attempt,
-                            retry_feedback,
-                            team,
-                            adapter,
-                            northstar,
-                        };
-                        let graph = graph.mark_node(&node_id, NodeStatus::Running);
+                        let dispatch_count = ready.len().min(run_config.dispatch_cap.max(1));
+                        let mut graph = graph;
+                        let mut effects = Vec::with_capacity(dispatch_count);
+                        for node_id in &ready[..dispatch_count] {
+                            let (
+                                kind,
+                                worker_role,
+                                objective,
+                                target_files,
+                                test_plan_context,
+                                model_tier,
+                                attempt,
+                                retry_feedback,
+                                team,
+                                adapter,
+                                northstar,
+                            ) = {
+                                let n = graph.get_node(node_id);
+                                (
+                                    n.kind.clone(),
+                                    n.worker_role.clone(),
+                                    n.objective.clone(),
+                                    n.target_files.clone(),
+                                    graph.test_plan_context_for_node(node_id),
+                                    n.model_tier,
+                                    n.attempt,
+                                    n.retry_feedback.clone(),
+                                    n.team.clone(),
+                                    n.adapter.clone(),
+                                    n.northstar.clone(),
+                                )
+                            };
+                            effects.push(SchedulerEffect::RunNode {
+                                node_id: node_id.clone(),
+                                worker_role,
+                                kind,
+                                objective,
+                                target_files,
+                                test_plan_context,
+                                model_tier,
+                                attempt,
+                                retry_feedback,
+                                team,
+                                adapter,
+                                northstar,
+                            });
+                            graph = graph.mark_node(node_id, NodeStatus::Running);
+                        }
                         Transition {
                             state: SchedulerState::Waiting { graph, run_config },
-                            effects: vec![effect],
+                            effects,
                         }
                     }
                 }
@@ -285,21 +289,9 @@ impl SchedulerMachine {
                 | SchedulerEvent::NodeFailed { .. }),
             ) => {
                 let node_id = node_event_id(&event).clone();
-                let active_node = match graph.active_node() {
-                    Ok(node) => node.id.clone(),
-                    Err(detail) => {
-                        return recovery::failed_transition(
-                            graph,
-                            FailureReason::ProtocolViolation(detail),
-                        );
-                    }
-                };
-
-                if active_node != node_id {
-                    let detail = format!(
-                        "expected result for node {} but received {}",
-                        active_node.0, node_id.0
-                    );
+                if let Err(detail) =
+                    graph.resolve_in_flight(run_config.dispatch_cap, &node_id, "result")
+                {
                     return recovery::failed_transition(
                         graph,
                         FailureReason::ProtocolViolation(detail),
@@ -372,7 +364,7 @@ impl SchedulerMachine {
                                     let graph = graph.mark_node(&node_id, NodeStatus::Completed);
                                     let graph = graph.insert_children(&node_id, plan.children);
                                     Transition {
-                                        state: SchedulerState::Active { graph, run_config },
+                                        state: SchedulerState::resuming(graph, run_config),
                                         effects: vec![],
                                     }
                                 } else {
@@ -446,21 +438,9 @@ impl SchedulerMachine {
                 | SchedulerEvent::IntegrationFailed { .. }),
             ) => {
                 let node_id = integration_event_id(&event).clone();
-                let active_node = match graph.active_node() {
-                    Ok(node) => node.id.clone(),
-                    Err(detail) => {
-                        return recovery::failed_transition(
-                            graph,
-                            FailureReason::ProtocolViolation(detail),
-                        );
-                    }
-                };
-
-                if active_node != node_id {
-                    let detail = format!(
-                        "expected integration result for node {} but received {}",
-                        active_node.0, node_id.0
-                    );
+                if let Err(detail) =
+                    graph.resolve_in_flight(run_config.dispatch_cap, &node_id, "integration result")
+                {
                     return recovery::failed_transition(
                         graph,
                         FailureReason::ProtocolViolation(detail),
@@ -494,7 +474,7 @@ impl SchedulerMachine {
                             &manifest_tasks,
                         ) {
                             Ok(graph) => Transition {
-                                state: SchedulerState::Active { graph, run_config },
+                                state: SchedulerState::resuming(graph, run_config),
                                 effects: vec![],
                             },
                             Err(detail) => Transition {
@@ -530,21 +510,11 @@ impl SchedulerMachine {
                 | SchedulerEvent::PlannerTasksIntegrationFailed { .. }),
             ) => {
                 let node_id = planner_task_event_id(&event).clone();
-                let active_node = match graph.active_node() {
-                    Ok(node) => node.id.clone(),
-                    Err(detail) => {
-                        return recovery::failed_transition(
-                            graph,
-                            FailureReason::ProtocolViolation(detail),
-                        );
-                    }
-                };
-
-                if active_node != node_id {
-                    let detail = format!(
-                        "expected planner-task integration result for node {} but received {}",
-                        active_node.0, node_id.0
-                    );
+                if let Err(detail) = graph.resolve_in_flight(
+                    run_config.dispatch_cap,
+                    &node_id,
+                    "planner-task integration result",
+                ) {
                     return recovery::failed_transition(
                         graph,
                         FailureReason::ProtocolViolation(detail),
@@ -572,7 +542,7 @@ impl SchedulerMachine {
                             &manifest_tasks,
                         ) {
                             Ok(graph) => Transition {
-                                state: SchedulerState::Active { graph, run_config },
+                                state: SchedulerState::resuming(graph, run_config),
                                 effects: vec![],
                             },
                             Err(detail) => Transition {

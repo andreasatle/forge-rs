@@ -1,6 +1,5 @@
-use std::cell::RefCell;
 use std::path::PathBuf;
-use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 use super::Workspace;
 use super::artifact::ArtifactView;
@@ -37,12 +36,14 @@ impl ArtifactRead for ArtifactView {
     }
 }
 
-impl ArtifactRead for Rc<RefCell<Workspace>> {
+impl ArtifactRead for Arc<Mutex<Workspace>> {
     fn read_file(&self, path: &str) -> Result<String, ArtifactError> {
-        self.borrow().read_file(path)
+        self.lock()
+            .expect("workspace mutex poisoned")
+            .read_file(path)
     }
 
     fn list_files(&self) -> Result<Vec<PathBuf>, ArtifactError> {
-        Ok(self.borrow().list_files())
+        Ok(self.lock().expect("workspace mutex poisoned").list_files())
     }
 }
