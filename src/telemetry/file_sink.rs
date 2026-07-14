@@ -51,17 +51,42 @@ impl FileTelemetry {
     /// The directory (and any missing ancestors) is created immediately. If
     /// that fails the sink is silently disabled: `record` becomes a no-op so
     /// telemetry failure never aborts a run.
+    ///
+    /// If `root` already contains telemetry files (e.g. from a run being
+    /// resumed after a crash), the sequence counter continues from the
+    /// highest existing file number instead of restarting at zero, so
+    /// resumed runs never overwrite pre-crash telemetry.
     pub fn new(root: PathBuf) -> Self {
         let enabled_root = match std::fs::create_dir_all(&root) {
             Ok(()) => Some(root),
             Err(_) => None,
         };
+        let start = enabled_root
+            .as_ref()
+            .map(|root| highest_sequence_number(root))
+            .unwrap_or(0);
         Self {
             root: enabled_root,
-            counter: Mutex::new(0),
+            counter: Mutex::new(start),
             telemetry_failures: Mutex::new(0),
         }
     }
+}
+
+/// Scans `root` for existing telemetry files and returns the highest
+/// six-digit sequence number found, or `0` if none exist or the directory
+/// cannot be read.
+fn highest_sequence_number(root: &std::path::Path) -> u64 {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return 0;
+    };
+    entries
+        .filter_map(|entry| entry.ok())
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .filter_map(|name| name.split("--").next().map(str::to_string))
+        .filter_map(|prefix| prefix.parse::<u64>().ok())
+        .max()
+        .unwrap_or(0)
 }
 
 impl TelemetrySink for FileTelemetry {
@@ -321,6 +346,47 @@ mod tests {
                 machine: "Test".into(),
             },
         ));
+    }
+
+    #[test]
+    fn file_telemetry_resumes_sequence_from_existing_files() {
+        let dir = fresh_dir("resume-sequence");
+        let sink = FileTelemetry::new(dir.clone());
+        sink.record(TelemetryRecord::new(
+            "A",
+            TelemetryEvent::MachineStarted {
+                machine: "A".into(),
+            },
+        ));
+        sink.record(TelemetryRecord::new(
+            "A",
+            TelemetryEvent::MachineStarted {
+                machine: "A".into(),
+            },
+        ));
+        drop(sink);
+
+        // Simulate resuming into the same telemetry directory after a crash.
+        let resumed = FileTelemetry::new(dir.clone());
+        resumed.record(TelemetryRecord::new(
+            "A",
+            TelemetryEvent::MachineStarted {
+                machine: "A".into(),
+            },
+        ));
+
+        assert!(
+            dir.join("000001--a--machine-started.txt").exists(),
+            "pre-crash file 000001 must survive resume"
+        );
+        assert!(
+            dir.join("000002--a--machine-started.txt").exists(),
+            "pre-crash file 000002 must survive resume"
+        );
+        assert!(
+            dir.join("000003--a--machine-started.txt").exists(),
+            "resumed sink must continue numbering from 000003, not restart at 000001"
+        );
     }
 
     #[test]
