@@ -27,7 +27,7 @@ pub struct ForgeConfig {
     pub teams: Vec<TeamConfig>,
     /// Team names that no other team's `Trigger::AfterTeams` list names —
     /// i.e. teams nothing else is scheduled to run after. Computed once by
-    /// [`compute_terminal_teams`] at config-load time (see
+    /// `team_triggers::compute_terminal_teams` at config-load time (see
     /// `ForgeConfig::from_file`), not re-derived per trigger evaluation.
     #[serde(default)]
     pub terminal_teams: Vec<String>,

@@ -40,7 +40,7 @@ pub trait ProjectAdapter {
     /// apply their own limit.
     ///
     /// The default projects each target as full text (subject to `budget`)
-    /// via [`build_file_text_target_views`]. Adapters override this to supply
+    /// via `build_file_text_target_views`. Adapters override this to supply
     /// a project-specific representation.
     fn build_target_views(
         &self,

@@ -270,8 +270,8 @@ pub(crate) const PLANNER_PROTOCOL_FOOTER_WITH_OPERATION_NO_WORK: &str = "# Plann
 /// rules, scope limits).
 ///
 /// This shape is shared by three prompt layers, composed together by
-/// [`render_role_prompt`] for every role in every adapter: the generic layer
-/// (see [`generic_prompt`]), the adapter's own per-role layer (see
+/// `render_role_prompt` for every role in every adapter: the generic layer
+/// (see `generic_prompt`), the adapter's own per-role layer (see
 /// [`crate::project::yaml_config::RolePromptConfig`], re-exported as this
 /// same type), and the language plugin's layer (see
 /// [`crate::language::LanguageSpec`]).
@@ -291,8 +291,8 @@ pub struct RolePromptConfig {
 /// The framework's generic prompt layer's shape: `identity`/`context`/
 /// `instructions`/`constraints` apply to every role in every adapter, and
 /// `planner` is an additional layer merged only into Plan-node Producer/
-/// Critic/Referee composition — see [`GenericPromptConfig::shared`] and
-/// [`GenericPromptConfig::for_planner`].
+/// Critic/Referee composition — see `GenericPromptConfig::shared` and
+/// `GenericPromptConfig::for_planner`.
 ///
 /// A Work node isn't decomposing anything, so `planner`-only guidance (e.g.
 /// MECE decomposition review) would be irrelevant noise there; it must never
@@ -475,7 +475,7 @@ pub struct RolePolicy {
     /// Combined with a node-kind-specific footer to build the
     /// [Plan-node](crate::machines::scheduler::NodeKind::Plan) Producer
     /// system prompt, which uses the fixed schema variant selected by
-    /// [`planner_protocol_schema_for`].
+    /// `planner_protocol_schema_for`.
     pub planner_producer_base: String,
     /// Worker role name/description pairs, surfaced to the Plan-node
     /// Producer so it can assign roles explicitly to each task.

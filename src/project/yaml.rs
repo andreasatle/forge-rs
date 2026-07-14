@@ -84,7 +84,7 @@ impl YamlProjectAdapter {
     ///
     /// Exposed (rather than only the flattened names in
     /// [`ProjectAdapter::role_policy`]) so
-    /// [`crate::node_runner::project_setup::validate_worker_roles`] can
+    /// `crate::node_runner::project_setup::validate_worker_roles` can
     /// inspect each entry's raw `plugin_role` (`Some`/`None`) directly.
     pub fn worker_roles(&self) -> &[WorkerRoleConfig] {
         &self.config.workers

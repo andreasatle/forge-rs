@@ -9,7 +9,7 @@
 //! - `types.rs` — [`NodeRunRequest`] and [`NodeRunResult`]
 //! - `runner.rs` — [`NodeRunner`] trait and [`StaticNodeRunner`] fake implementation
 //! - `deliberating.rs` — [`DeliberatingNodeRunner`] backed by [`DeliberationMachine`](crate::machines::deliberation::DeliberationMachine)
-//! - `project_setup.rs` — [`ProjectRuntimeSetup`], which wires a project adapter into the pieces a runner needs
+//! - `project_setup.rs` — `ProjectRuntimeSetup`, which wires a project adapter into the pieces a runner needs
 
 pub mod classify;
 pub mod deliberating;

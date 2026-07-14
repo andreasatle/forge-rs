@@ -24,7 +24,7 @@ pub struct PlannerTask {
     /// [`PlannerOutputKind::Plan`] output, whose grammar and protocol footer
     /// ask the planner for it in both cases: a `kind: "plan"` batch may
     /// collapse into a terminal task row just like `kind: "task"` (see
-    /// [`PlannerOutputProcessor::into_plan`]), so any task in such a batch
+    /// `PlannerOutputProcessor::into_plan`), so any task in such a batch
     /// may need a name. `#[serde(default)]` stays in place because `work`
     /// task schemas carry no `name` field at all — `Work` tasks never become
     /// a terminal task row — so their JSON never includes it.
@@ -66,7 +66,7 @@ pub enum PlannerOutputKind {
     Plan,
     /// Tasks are pure planner intent — id, objective, and ordering only, with
     /// no file targets, role, or operation. Does not correspond to any
-    /// scheduler [`NodeKind`], so [`PlannerOutputProcessor::into_plan`]
+    /// scheduler [`NodeKind`], so `PlannerOutputProcessor::into_plan`
     /// produces no children for it, carrying the tasks in
     /// [`crate::machines::scheduler::PlanOutput::tasks`] instead. The
     /// scheduler records these into `.forge/tasks.json` via

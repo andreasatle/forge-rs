@@ -5,8 +5,9 @@ use serde::Deserialize;
 /// A role prompt split into four explicit sections: identity, context,
 /// instructions, constraints.
 ///
-/// [`super::YamlProjectAdapter::role_policy`] renders all four as separate
-/// labeled sections rather than concatenating them into one paragraph.
+/// [`crate::project::ProjectAdapter::role_policy`] renders all four as
+/// separate labeled sections rather than concatenating them into one
+/// paragraph.
 pub use crate::roles::policy::RolePromptConfig;
 
 /// Producer/Critic/Referee prompts for the planner deliberation, which
@@ -42,7 +43,7 @@ pub struct WorkerRoleConfig {
     /// against a language plugin's own `plugin_role` entries.
     ///
     /// Required whenever the adapter declares any language plugins — see
-    /// [`crate::node_runner::project_setup::validate_worker_roles`], which
+    /// `crate::node_runner::project_setup::validate_worker_roles`, which
     /// enforces this at config-load time since there is no other way to
     /// select this role's per-plugin validation override. May be omitted
     /// entirely when the adapter declares no plugins at all (e.g. a
@@ -81,7 +82,7 @@ pub struct ProjectAdapterConfig {
     /// still needs exactly one entry here even without naming multiple
     /// roles: `workers.first()` supplies the shared Work-node prompts. An
     /// empty list falls back to empty prompts rather than panicking — see
-    /// [`super::YamlProjectAdapter::role_policy`].
+    /// [`crate::project::ProjectAdapter::role_policy`].
     #[serde(default)]
     pub workers: Vec<WorkerRoleConfig>,
     /// Artifact file names included as ambient context in prompts.
