@@ -14,7 +14,21 @@ use crate::providers::types::{
 ///
 /// Uses the object-root form because all role outputs are JSON objects.
 /// Reference: <https://github.com/ggerganov/llama.cpp/blob/master/grammars/json.gbnf>
-const JSON_GBNF: &str = r#"root   ::= object
+///
+/// `root` duplicates `object`'s body rather than delegating to it, because
+/// `object` (like every other rule here) ends in the reference grammar's
+/// recursive `ws`, which is unbounded and has nothing mandatory after it
+/// when reached from `root`: a grammar-constrained model can keep sampling
+/// whitespace forever after a complete top-level object, running every call
+/// to `n_predict` instead of stopping. `object` keeps its trailing `ws`
+/// because it also appears as a nested `value`, where the surrounding `,`
+/// or closing bracket still bounds it. `root` has no such bound, so it ends
+/// at the closing brace with no further grammar-legal tokens.
+const JSON_GBNF: &str = r#"root   ::=
+  "{" ws (
+            string ":" ws value
+    ("," ws string ":" ws value)*
+  )? "}"
 value  ::= object | array | string | number | ("true" | "false" | "null") ws
 
 object ::=
@@ -165,6 +179,20 @@ mod tests {
                 "status {status}"
             );
         }
+    }
+
+    // Regression test for a runaway-generation bug: `root` used to delegate
+    // to `object`, whose trailing `ws` is unbounded and, at the top level,
+    // had nothing mandatory after it — a grammar-constrained model could
+    // keep sampling whitespace forever after a complete object, running
+    // every call to n_predict. `root` must end at the closing brace.
+    #[test]
+    fn json_gbnf_rejects_trailing_whitespace_after_closing_brace() {
+        use crate::roles::policy::gbnf_check::Grammar;
+
+        let grammar = Grammar::parse(JSON_GBNF);
+        assert!(grammar.accepts(r#"{"a":1,"b":[1,2,{"c":true}]}"#));
+        assert!(!grammar.accepts("{\"a\":1} \n"));
     }
 
     #[test]

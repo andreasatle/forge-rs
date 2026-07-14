@@ -424,4 +424,34 @@ mod tests {
         assert!(grammar.accepts(r#"{"status":"rejected","reason":"no"}"#));
         assert!(!grammar.accepts(r#"{"status":"maybe","content":"ok"}"#));
     }
+
+    // Regression test for a runaway-generation bug: the root rule used to end
+    // in an unbounded `ws` after the closing brace, so a grammar-constrained
+    // model could keep sampling whitespace forever after a complete answer,
+    // running every call to the n_predict ceiling. The root rule must end at
+    // the closing brace/bracket so no further tokens are grammar-legal.
+    #[test]
+    fn rejects_trailing_whitespace_after_closing_brace() {
+        let producer = Grammar::parse(crate::roles::policy::PRODUCER_GBNF);
+        assert!(!producer.accepts("{\"summary\":\"did the thing\"} \n"));
+
+        let role = Grammar::parse(crate::roles::policy::ROLE_GBNF);
+        assert!(!role.accepts("{\"status\":\"accepted\",\"content\":\"ok\"}\n\n"));
+
+        let producer_tool = Grammar::parse(crate::roles::policy::PRODUCER_TOOL_GBNF);
+        assert!(!producer_tool.accepts("{\"tool\":\"list_files\"} "));
+
+        let reviewer_tool = Grammar::parse(crate::roles::policy::REVIEWER_TOOL_GBNF);
+        assert!(!reviewer_tool.accepts("{\"tool\":\"list_files\"} "));
+
+        let planner_with_roles = Grammar::parse(crate::roles::policy::PLANNER_GBNF_WITH_ROLES);
+        assert!(!planner_with_roles.accepts(
+            "{\"kind\":\"task\",\"tasks\":[{\"id\":\"a\",\"objective\":\"o\",\"name\":\"n\",\"depends_on\":[]}]} "
+        ));
+
+        let planner_no_work = Grammar::parse(crate::roles::policy::PLANNER_GBNF_NO_WORK);
+        assert!(!planner_no_work.accepts(
+            "{\"kind\":\"task\",\"tasks\":[{\"id\":\"a\",\"objective\":\"o\",\"name\":\"n\",\"depends_on\":[]}]} "
+        ));
+    }
 }

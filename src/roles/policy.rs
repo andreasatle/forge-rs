@@ -13,7 +13,7 @@
 
 /// GBNF grammar constraining output to the Work-node Producer's
 /// `{"summary": "..."}` schema.
-pub(crate) const PRODUCER_GBNF: &str = r#"root ::= "{" ws "\"summary\"" ws ":" ws string ws "}" ws
+pub(crate) const PRODUCER_GBNF: &str = r#"root ::= "{" ws "\"summary\"" ws ":" ws string ws "}"
 
 string ::=
   "\"" (
@@ -27,8 +27,8 @@ ws ::= ([ \t\n] ws)?"#;
 /// schema: `{"status":"accepted","content":"..."}` or
 /// `{"status":"rejected","reason":"..."}`.
 pub(crate) const ROLE_GBNF: &str = r#"root ::= accepted | rejected
-accepted ::= "{" ws "\"status\"" ws ":" ws "\"accepted\"" ws "," ws "\"content\"" ws ":" ws string ws "}" ws
-rejected ::= "{" ws "\"status\"" ws ":" ws "\"rejected\"" ws "," ws "\"reason\"" ws ":" ws string ws "}" ws
+accepted ::= "{" ws "\"status\"" ws ":" ws "\"accepted\"" ws "," ws "\"content\"" ws ":" ws string ws "}"
+rejected ::= "{" ws "\"status\"" ws ":" ws "\"rejected\"" ws "," ws "\"reason\"" ws ":" ws string ws "}"
 
 string ::=
   "\"" (
@@ -47,12 +47,12 @@ ws ::= ([ \t\n] ws)?"#;
 /// Field order within each tool call matches the schema described to the
 /// model in [`super::prompt::render_tool_section`].
 pub(crate) const PRODUCER_TOOL_GBNF: &str = r#"root ::= write-file | replace-text | read-file | list-files | delete-file | summary
-write-file ::= "{" ws "\"tool\"" ws ":" ws "\"write_file\"" ws "," ws "\"path\"" ws ":" ws string ws "," ws "\"content\"" ws ":" ws string ws "}" ws
-replace-text ::= "{" ws "\"tool\"" ws ":" ws "\"replace_text\"" ws "," ws "\"path\"" ws ":" ws string ws "," ws "\"old\"" ws ":" ws string ws "," ws "\"new\"" ws ":" ws string ws "}" ws
-read-file ::= "{" ws "\"tool\"" ws ":" ws "\"read_file\"" ws "," ws "\"path\"" ws ":" ws string ws "}" ws
-list-files ::= "{" ws "\"tool\"" ws ":" ws "\"list_files\"" ws "}" ws
-delete-file ::= "{" ws "\"tool\"" ws ":" ws "\"delete_file\"" ws "," ws "\"path\"" ws ":" ws string ws "}" ws
-summary ::= "{" ws "\"summary\"" ws ":" ws string ws "}" ws
+write-file ::= "{" ws "\"tool\"" ws ":" ws "\"write_file\"" ws "," ws "\"path\"" ws ":" ws string ws "," ws "\"content\"" ws ":" ws string ws "}"
+replace-text ::= "{" ws "\"tool\"" ws ":" ws "\"replace_text\"" ws "," ws "\"path\"" ws ":" ws string ws "," ws "\"old\"" ws ":" ws string ws "," ws "\"new\"" ws ":" ws string ws "}"
+read-file ::= "{" ws "\"tool\"" ws ":" ws "\"read_file\"" ws "," ws "\"path\"" ws ":" ws string ws "}"
+list-files ::= "{" ws "\"tool\"" ws ":" ws "\"list_files\"" ws "}"
+delete-file ::= "{" ws "\"tool\"" ws ":" ws "\"delete_file\"" ws "," ws "\"path\"" ws ":" ws string ws "}"
+summary ::= "{" ws "\"summary\"" ws ":" ws string ws "}"
 
 string ::=
   "\"" (
@@ -71,10 +71,10 @@ ws ::= ([ \t\n] ws)?"#;
 /// Critic and Referee never receive write tools, so this grammar omits
 /// `write_file`, `replace_text`, and `delete_file` entirely.
 pub(crate) const REVIEWER_TOOL_GBNF: &str = r#"root ::= read-file | list-files | accepted | rejected
-read-file ::= "{" ws "\"tool\"" ws ":" ws "\"read_file\"" ws "," ws "\"path\"" ws ":" ws string ws "}" ws
-list-files ::= "{" ws "\"tool\"" ws ":" ws "\"list_files\"" ws "}" ws
-accepted ::= "{" ws "\"status\"" ws ":" ws "\"accepted\"" ws "," ws "\"content\"" ws ":" ws string ws "}" ws
-rejected ::= "{" ws "\"status\"" ws ":" ws "\"rejected\"" ws "," ws "\"reason\"" ws ":" ws string ws "}" ws
+read-file ::= "{" ws "\"tool\"" ws ":" ws "\"read_file\"" ws "," ws "\"path\"" ws ":" ws string ws "}"
+list-files ::= "{" ws "\"tool\"" ws ":" ws "\"list_files\"" ws "}"
+accepted ::= "{" ws "\"status\"" ws ":" ws "\"accepted\"" ws "," ws "\"content\"" ws ":" ws string ws "}"
+rejected ::= "{" ws "\"status\"" ws ":" ws "\"rejected\"" ws "," ws "\"reason\"" ws ":" ws string ws "}"
 
 string ::=
   "\"" (
@@ -106,15 +106,15 @@ ws ::= ([ \t\n] ws)?"#;
 /// `operation`, `role`, or `targets`. Unlike `work`/`plan`, `kind: "task"`
 /// must be stated explicitly; it has no default.
 pub(crate) const PLANNER_GBNF_WITH_ROLES: &str = r#"root ::= work-output | plan-output | task-output
-work-output ::= "{" ws ("\"kind\"" ws ":" ws "\"work\"" ws "," ws)? "\"tasks\"" ws ":" ws "[" ws work-task (ws "," ws work-task)* ws "]" ws "}" ws
-plan-output ::= "{" ws "\"kind\"" ws ":" ws "\"plan\"" ws "," ws "\"tasks\"" ws ":" ws "[" ws plan-task (ws "," ws plan-task)* ws "]" ws "}" ws
+work-output ::= "{" ws ("\"kind\"" ws ":" ws "\"work\"" ws "," ws)? "\"tasks\"" ws ":" ws "[" ws work-task (ws "," ws work-task)* ws "]" ws "}"
+plan-output ::= "{" ws "\"kind\"" ws ":" ws "\"plan\"" ws "," ws "\"tasks\"" ws ":" ws "[" ws plan-task (ws "," ws plan-task)* ws "]" ws "}"
 work-task ::= "{" ws "\"id\"" ws ":" ws string ws "," ws "\"objective\"" ws ":" ws string ws "," ws "\"operation\"" ws ":" ws operation ws "," ws role-field ws "," ws "\"targets\"" ws ":" ws string-array ws "," ws "\"depends_on\"" ws ":" ws string-array ws "}" ws
 plan-task ::= "{" ws "\"id\"" ws ":" ws string ws "," ws "\"objective\"" ws ":" ws string ws "," ws "\"name\"" ws ":" ws string ws "," ws "\"operation\"" ws ":" ws operation ws "," ws role-field ws "," ws "\"targets\"" ws ":" ws string-array ws "," ws "\"depends_on\"" ws ":" ws string-array ws "}" ws
 operation ::= "\"create\"" | "\"modify\"" | "\"delete\""
 role-field ::= "\"role\"" ws ":" ws string
 string-array ::= "[" ws (string (ws "," ws string)*)? ws "]" ws
 
-task-output ::= "{" ws "\"kind\"" ws ":" ws "\"task\"" ws "," ws "\"tasks\"" ws ":" ws "[" ws task-record (ws "," ws task-record)* ws "]" ws "}" ws
+task-output ::= "{" ws "\"kind\"" ws ":" ws "\"task\"" ws "," ws "\"tasks\"" ws ":" ws "[" ws task-record (ws "," ws task-record)* ws "]" ws "}"
 task-record ::= "{" ws "\"id\"" ws ":" ws string ws "," ws "\"objective\"" ws ":" ws string ws "," ws "\"name\"" ws ":" ws string ws "," ws "\"depends_on\"" ws ":" ws string-array ws "}" ws
 
 string ::=
@@ -136,12 +136,12 @@ ws ::= ([ \t\n] ws)?"#;
 /// `role` field — including `plan-task` requiring `name`, for the same
 /// terminal-short-circuit reason documented there.
 pub(crate) const PLANNER_GBNF_NO_WORK: &str = r#"root ::= plan-output | task-output
-plan-output ::= "{" ws "\"kind\"" ws ":" ws "\"plan\"" ws "," ws "\"tasks\"" ws ":" ws "[" ws plan-task (ws "," ws plan-task)* ws "]" ws "}" ws
+plan-output ::= "{" ws "\"kind\"" ws ":" ws "\"plan\"" ws "," ws "\"tasks\"" ws ":" ws "[" ws plan-task (ws "," ws plan-task)* ws "]" ws "}"
 plan-task ::= "{" ws "\"id\"" ws ":" ws string ws "," ws "\"objective\"" ws ":" ws string ws "," ws "\"name\"" ws ":" ws string ws "," ws "\"operation\"" ws ":" ws operation ws "," ws "\"targets\"" ws ":" ws string-array ws "," ws "\"depends_on\"" ws ":" ws string-array ws "}" ws
 operation ::= "\"create\"" | "\"modify\"" | "\"delete\""
 string-array ::= "[" ws (string (ws "," ws string)*)? ws "]" ws
 
-task-output ::= "{" ws "\"kind\"" ws ":" ws "\"task\"" ws "," ws "\"tasks\"" ws ":" ws "[" ws task-record (ws "," ws task-record)* ws "]" ws "}" ws
+task-output ::= "{" ws "\"kind\"" ws ":" ws "\"task\"" ws "," ws "\"tasks\"" ws ":" ws "[" ws task-record (ws "," ws task-record)* ws "]" ws "}"
 task-record ::= "{" ws "\"id\"" ws ":" ws string ws "," ws "\"objective\"" ws ":" ws string ws "," ws "\"name\"" ws ":" ws string ws "," ws "\"depends_on\"" ws ":" ws string-array ws "}" ws
 
 string ::=
