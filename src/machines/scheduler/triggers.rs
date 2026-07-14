@@ -159,8 +159,15 @@ fn spawn_for_tasks(
                      `manifest_tasks` itself, so a matching row must already exist",
             );
             let target_files = task_target_files(team, record)?;
-            let required_validation_targets =
-                crate::language::required_validation_targets(&team.language_plugins, &target_files);
+            let task_name = record
+                .name
+                .as_deref()
+                .expect("a ForTasks-matched record is always a planner task row (kind: \"task\" or a short-circuited kind: \"plan\"), which EmptyName validation guarantees carries a name");
+            let required_validation_targets = crate::language::required_validation_targets_for_task(
+                &team.language_plugins,
+                &target_files,
+                task_name,
+            );
             Ok(NodeRequest {
                 id: new_node_id(),
                 kind: team.kind.clone(),

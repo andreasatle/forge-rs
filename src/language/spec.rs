@@ -600,4 +600,69 @@ name_target_rules:
             );
         }
     }
+
+    #[test]
+    fn required_validation_targets_for_task_agrees_with_testers_actual_target_for_bundled_plugins()
+    {
+        // Structural guard for the sibling path-mismatch class of bug: for
+        // each bundled language plugin, the required validation target
+        // reported for a ForTasks node
+        // (`crate::language::required_validation_targets_for_task`) must
+        // match exactly what a sibling tester-role node would actually
+        // write for the same task name — otherwise an implementer's referee
+        // could expect a different test path than create_test actually
+        // writes to (see the regression test in
+        // `crate::machines::scheduler::triggers_tests`).
+        //
+        // `name` is chosen so the plugin's own (non-tester) default
+        // name_target_rule nests the source under a directory — this
+        // reproduces the audited scenario, where a flat task name is not
+        // enough to expose the bug.
+        use std::collections::BTreeMap;
+
+        for language in ["rust", "python"] {
+            let spec =
+                language_spec(language).unwrap_or_else(|| panic!("{language} spec must load"));
+            let name = "example";
+            let source_target = derive_target_from_name(&spec.name_target_rules, name)
+                .unwrap_or_else(|| panic!("{language} default name_target_rules must match"));
+            let tester_target =
+                derive_target_from_name(spec.name_target_rules_for_role(Some("tester")), name)
+                    .unwrap_or_else(|| panic!("{language} tester name_target_rules must match"));
+
+            let mut plugins = BTreeMap::new();
+            plugins.insert(spec.extensions[0].clone(), spec.clone());
+
+            let required = crate::language::required_validation_targets_for_task(
+                &plugins,
+                std::slice::from_ref(&source_target),
+                name,
+            );
+            assert_eq!(
+                required,
+                vec![tester_target.clone()],
+                "{language}: required_validation_targets_for_task must match the tester role's \
+                 actual write target"
+            );
+
+            // Prove this guard is non-vacuous: the retained path-based
+            // derivation (still used by the single-team planner path, see
+            // `crate::language::required_validation_targets`) disagrees for
+            // a plugin whose default source nests under a directory the
+            // tester role's own rule doesn't share (python) — this is
+            // exactly the class of drift the guard above now catches for
+            // the ForTasks path.
+            let path_based =
+                crate::language::required_validation_targets(&plugins, &[source_target]);
+            if language == "python" {
+                assert_ne!(
+                    path_based,
+                    vec![tester_target],
+                    "python's path-based derivation is expected to disagree with the tester \
+                     role's flat target once the source nests under src/ — if this now agrees, \
+                     the plugin tables have been reconciled and this assertion should be updated"
+                );
+            }
+        }
+    }
 }

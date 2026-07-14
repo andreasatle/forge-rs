@@ -896,3 +896,129 @@ fn for_tasks_spawned_node_required_validation_target_is_enforced_by_the_gate() {
         .validate_required_tests_completed()
         .expect("the required validation target is now completed by another node");
 }
+
+/// A python-like plugin: its default `name_target_rules` nests sources under
+/// `src/` (`src/{name}.py`), while its `tester` plugin_role writes to a flat
+/// `tests/test_{name}.py` with no directory-prefix concept — the exact
+/// sibling-role shape from the sibling path-mismatch audit (a Python
+/// implement/create_test pipeline whose source sits below the repo root).
+fn python_like_plugin_requiring_tests() -> LanguageSpec {
+    LanguageSpec {
+        extensions: vec!["py".to_string()],
+        identity: String::new(),
+        context: String::new(),
+        instructions: String::new(),
+        constraints: String::new(),
+        init: LanguageInitSpec {
+            gitignore: vec![],
+            commands: vec![],
+        },
+        validation: LanguageValidationSpec {
+            runs_tests: true,
+            commands: vec![],
+            validation_targets: vec![ValidationTargetRule {
+                pattern: "{stem}.py".to_string(),
+                target: "tests/test_{stem}.py".to_string(),
+            }],
+        },
+        plugin_roles: vec![
+            crate::language::spec::LanguageRoleConfig {
+                plugin_role: "tester".to_string(),
+                validation: LanguageValidationSpec {
+                    runs_tests: false,
+                    commands: vec![],
+                    validation_targets: vec![],
+                },
+                name_target_rules: vec![NameTargetRule {
+                    pattern: "{name}".to_string(),
+                    target: "tests/test_{name}.py".to_string(),
+                }],
+            },
+            crate::language::spec::LanguageRoleConfig {
+                plugin_role: "implementer".to_string(),
+                validation: LanguageValidationSpec {
+                    runs_tests: true,
+                    commands: vec![],
+                    validation_targets: vec![ValidationTargetRule {
+                        pattern: "{stem}.py".to_string(),
+                        target: "tests/test_{stem}.py".to_string(),
+                    }],
+                },
+                name_target_rules: vec![],
+            },
+        ],
+        api_summary: None,
+        name_target_rules: vec![NameTargetRule {
+            pattern: "{name}".to_string(),
+            target: "src/{name}.py".to_string(),
+        }],
+    }
+}
+
+/// Regression test for the sibling implement/create_test path mismatch: with
+/// a Python-style plugin whose source lands under a non-root directory
+/// (`src/`), `implement`'s ForTasks node must now expect exactly the path
+/// `create_test`'s own ForTasks node actually writes to, not a path nested
+/// under the source's own directory.
+///
+/// Before the fix, `implement`'s `required_validation_targets` was derived
+/// path-based from `validation.validation_targets` applied to its own
+/// (nested) target file, producing `src/tests/test_fibonacci.py` — which
+/// disagreed with `create_test`'s actual `tests/test_fibonacci.py`, derived
+/// name-based from the `tester` role's `name_target_rules`.
+#[test]
+fn implement_required_validation_target_matches_create_test_actual_target_when_source_is_nested() {
+    let plugin = python_like_plugin_requiring_tests();
+    let plugins = BTreeMap::from([("py".to_string(), plugin.clone())]);
+
+    let implement_team = TeamConfig {
+        name_target_rules: plugin
+            .name_target_rules_for_role(Some("implementer"))
+            .to_vec(),
+        language_plugins: plugins.clone(),
+        ..team_with_adapter(
+            "implement",
+            Trigger::AfterTeams(vec!["planner".to_string()]),
+            "",
+            "",
+        )
+    };
+    let create_test_team = TeamConfig {
+        name_target_rules: plugin.name_target_rules_for_role(Some("tester")).to_vec(),
+        language_plugins: plugins,
+        ..team_with_adapter(
+            "create_test",
+            Trigger::AfterTeams(vec!["planner".to_string()]),
+            "",
+            "",
+        )
+    };
+
+    let record = named_record("t1", "implement fibonacci(n: int)", "planner", "fibonacci");
+
+    let implement_target_files =
+        task_target_files(&implement_team, &record).expect("implement target files must derive");
+    assert_eq!(
+        implement_target_files,
+        vec!["src/fibonacci.py".to_string()],
+        "implement's source must nest under src/, reproducing the audited scenario"
+    );
+
+    let create_test_target_files = task_target_files(&create_test_team, &record)
+        .expect("create_test target files must derive");
+    assert_eq!(
+        create_test_target_files,
+        vec!["tests/test_fibonacci.py".to_string()],
+        "create_test must actually write to a flat tests/ directory"
+    );
+
+    let required = crate::language::required_validation_targets_for_task(
+        &implement_team.language_plugins,
+        &implement_target_files,
+        "fibonacci",
+    );
+    assert_eq!(
+        required, create_test_target_files,
+        "implement's referee must expect exactly the path create_test actually writes to"
+    );
+}
