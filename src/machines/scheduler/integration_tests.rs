@@ -131,6 +131,78 @@ fn integrate_planner_tasks_creates_manifest_only_commit() {
     assert_eq!(file_blob, "v1");
 }
 
+/// Two sibling `Work` nodes can legitimately race to integrate the same
+/// branch. The second attempt's workspace is based on a now-stale commit, so
+/// `integrate()`'s CAS pre-check refuses it with `IntegrationError::Conflict`.
+/// That must surface as the retryable `FailureKind::IntegrationConflict`, not
+/// the generic terminal `IntegrationFailure` that every other integration
+/// error kind produces.
+#[test]
+fn stale_parent_conflict_maps_to_retryable_integration_conflict() {
+    let (_temp, artifact) = fixture("stale-parent-conflict");
+    let service = IntegrationService::with_artifact(artifact, Arc::new(NoopTelemetry));
+
+    let node_a = NodeId("a".to_string());
+    let node_b = NodeId("b".to_string());
+    let attempt_a = service
+        .prepare_work_attempt(node_a.clone(), 0)
+        .expect("attempt a");
+    let attempt_b = service
+        .prepare_work_attempt(node_b.clone(), 0)
+        .expect("attempt b");
+
+    fs::write(
+        attempt_a.workspace.lock().unwrap().path().join("a.txt"),
+        "a\n",
+    )
+    .unwrap();
+    let event_a = service.integrate_work(WorkIntegration {
+        node_id: node_a,
+        objective: "a".to_string(),
+        work: WorkOutput {
+            summary: "a".to_string(),
+        },
+        attempt: 0,
+        target_files: vec![],
+        validation_plan: None,
+        team: "impl".to_string(),
+        task_id: None,
+    });
+    assert!(matches!(
+        event_a,
+        SchedulerEvent::IntegrationSucceeded { .. }
+    ));
+
+    fs::write(
+        attempt_b.workspace.lock().unwrap().path().join("b.txt"),
+        "b\n",
+    )
+    .unwrap();
+    let event_b = service.integrate_work(WorkIntegration {
+        node_id: node_b.clone(),
+        objective: "b".to_string(),
+        work: WorkOutput {
+            summary: "b".to_string(),
+        },
+        attempt: 0,
+        target_files: vec![],
+        validation_plan: None,
+        team: "test".to_string(),
+        task_id: None,
+    });
+
+    let SchedulerEvent::IntegrationFailed { node_id, failure } = event_b else {
+        panic!("expected IntegrationFailed for the stale sibling, got {event_b:#?}");
+    };
+    assert_eq!(node_id, node_b);
+    assert_eq!(failure.kind, FailureKind::IntegrationConflict);
+    assert!(
+        matches!(failure.recovery, RecoveryAction::Retry { .. }),
+        "a stale-parent conflict must recover via Retry, not Terminal; got {:?}",
+        failure.recovery
+    );
+}
+
 /// A scheduler with no artifact wired (`IntegrationService::without_artifact`,
 /// as used by `SchedulerHandler::new`) cannot persist a planner-task
 /// manifest. It must fail loudly rather than silently reporting an empty

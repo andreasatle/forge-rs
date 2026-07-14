@@ -9,7 +9,8 @@ pub fn classify_deliberation_failure(kind: FailureKind, message: &str) -> Recove
     match kind {
         FailureKind::ProviderFailure
         | FailureKind::ProtocolFailure
-        | FailureKind::ValidationFailure => RecoveryAction::Retry {
+        | FailureKind::ValidationFailure
+        | FailureKind::IntegrationConflict => RecoveryAction::Retry {
             message: format!("retryable failure: {message}"),
         },
         FailureKind::WorkSemanticValidationFailure => RecoveryAction::Retry {
@@ -64,6 +65,7 @@ mod tests {
             FailureKind::WorkSemanticValidationFailure,
             FailureKind::DeliberationFailure,
             FailureKind::IntegrationFailure,
+            FailureKind::IntegrationConflict,
             FailureKind::UserTaskRejection,
             FailureKind::DispatchPanic,
         ];

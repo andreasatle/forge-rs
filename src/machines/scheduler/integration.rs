@@ -4,7 +4,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use crate::artifacts::{
-    Artifact, TaskRecord, Workspace, WorkspaceFactory, integrate, record_planner_tasks, record_task,
+    Artifact, IntegrationError, TaskRecord, Workspace, WorkspaceFactory, integrate,
+    record_planner_tasks, record_task,
 };
 use crate::machines::scheduler::event::SchedulerEvent;
 use crate::machines::scheduler::failure::FailureKind;
@@ -265,10 +266,15 @@ impl IntegrationService {
                     Err(err) => {
                         let message = err.to_string();
                         self.record_attempt_evidence(&node_id, attempt, &ws, message.clone());
-                        return SchedulerEvent::IntegrationFailed {
-                            node_id,
-                            failure: integration_failure(message),
+                        let failure = match err {
+                            IntegrationError::Conflict { .. } => IntegrationFailure {
+                                kind: FailureKind::IntegrationConflict,
+                                message: message.clone(),
+                                recovery: RecoveryAction::Retry { message },
+                            },
+                            _ => integration_failure(message),
                         };
+                        return SchedulerEvent::IntegrationFailed { node_id, failure };
                     }
                 }
             } else {

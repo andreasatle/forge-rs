@@ -133,26 +133,28 @@ impl ProviderClient for RecordingScriptedProvider {
     }
 }
 
-/// A [`Validator`] that, on the single call it expects to receive, advances
-/// the artifact's bare repo branch out from under the in-flight workspace
-/// before reporting success — forcing the immediately following
-/// `integrate()` call to hit a compare-and-swap conflict.
-///
-/// Used to make a `Work` node's integration fail with a genuine git-level
-/// `IntegrationFailure` (the only failure kind that carries
-/// `RecoveryAction::Terminal`, see `integration.rs::integration_failure`),
-/// without needing to exhaust `MAX_ATTEMPTS` retries to reach a terminal
-/// run failure.
-struct BranchAdvancingValidator {
+/// Corrupts the artifact's bare-repository invariant on every validation
+/// pass, so `integrate()`'s `check_bare_repository` guard fails
+/// deterministically and permanently. Unlike a CAS conflict (which is
+/// retryable and self-heals on the next attempt), this failure persists
+/// across retries, making it suitable for exercising a genuinely terminal
+/// integration failure.
+struct NonBareRepoValidator {
     repo_path: PathBuf,
 }
 
-impl Validator for BranchAdvancingValidator {
+impl Validator for NonBareRepoValidator {
     fn validate(&self, _workspace: &Workspace) -> ValidationResult {
-        advance_branch_in_bare(&self.repo_path, "main");
+        crate::git::command()
+            .args(["config", "core.bare", "false"])
+            .current_dir(&self.repo_path)
+            .status()
+            .expect("failed to corrupt bare repository invariant");
         ValidationResult {
             passed: true,
-            summary: "advanced branch externally to force a CAS conflict".to_string(),
+            summary: "corrupted the bare repository invariant to force a terminal integration \
+                      failure"
+                .to_string(),
             failure: None,
         }
     }
@@ -321,9 +323,10 @@ fn work_cycle_responses(target: &str) -> Vec<String> {
 /// tasks get a `planner` completion row in the same batch), but it must not
 /// spawn a `worker` node until `task-1` has a completion row from every
 /// terminal team. Here `task-1`'s `worker` node is made to fail its
-/// integration permanently (a genuine git-level CAS conflict, injected via
-/// `BranchAdvancingValidator`), so `task-1`'s dependency is never satisfied
-/// and the whole run halts. If gating were broken (both ids spawned
+/// integration permanently (a genuine terminal git-level error, injected via
+/// `NonBareRepoValidator` — deliberately not a CAS conflict, which is
+/// retryable and would let task-1 eventually succeed), so `task-1`'s
+/// dependency is never satisfied and the whole run halts. If gating were broken (both ids spawned
 /// eagerly, ungated), `task-2`'s node would already exist in the graph by
 /// the time the run halts; correct gating means it must never have been
 /// created at all.
@@ -344,7 +347,7 @@ fn second_task_never_spawns_while_its_dependency_never_completes() {
         .with_validation_plan_for_role_fn(fixture.root_setup.validation_plan_for_role_fn);
 
     let handler = SchedulerHandler::with_artifact(runner, fixture.artifact).with_validator(
-        Arc::new(BranchAdvancingValidator {
+        Arc::new(NonBareRepoValidator {
             repo_path: fixture.repo_path.clone(),
         }),
     );
@@ -365,7 +368,9 @@ fn second_task_never_spawns_while_its_dependency_never_completes() {
     let (output, _handler) = run_scheduler_with_telemetry(handler, initial_state, &telemetry);
 
     let SchedulerTerminalOutput::Failed { graph, reason } = output else {
-        panic!("expected the run to halt on task-1's forced CAS conflict, got: {output:#?}");
+        panic!(
+            "expected the run to halt on task-1's forced terminal integration failure, got: {output:#?}"
+        );
     };
     assert!(
         matches!(reason, FailureReason::TerminalRecovery { .. }),

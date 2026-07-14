@@ -565,6 +565,105 @@ fn deliberation_revision_stays_inside_single_scheduler_attempt_until_acceptance(
     );
 }
 
+/// Writes a uniquely named file per dispatch so two concurrently-running
+/// sibling `Work` nodes never collide on the same path within their
+/// independent workspaces.
+struct UniqueFileRunner {
+    counter: AtomicU64,
+}
+
+impl NodeRunner for UniqueFileRunner {
+    fn run_node(&self, request: NodeRunRequest, _telemetry: &dyn TelemetrySink) -> NodeRunResult {
+        let n = self.counter.fetch_add(1, Ordering::SeqCst);
+        request
+            .work_attempt
+            .expect("Work node must receive a WorkAttempt workspace")
+            .workspace
+            .lock()
+            .expect("workspace mutex poisoned")
+            .write_file(&format!("file-{n}.txt"), "content\n")
+            .expect("test runner must write attempt workspace");
+        NodeRunResult::WorkAccepted(NodeRunWorkResult {
+            work: WorkOutput {
+                summary: format!("wrote file-{n}"),
+            },
+        })
+    }
+}
+
+/// End-to-end reproduction of the original stale-parent race: two
+/// independent sibling `Work` nodes (dispatch_cap 2, so both run
+/// concurrently) targeting the same artifact branch. Both dispatch threads
+/// create their workspace from the same base commit before either
+/// integrates, so whichever integrates second hits the CAS conflict. Before
+/// the `IntegrationConflict` fix, that conflict was indistinguishable from
+/// any other integration error and always routed to `Terminal`, failing the
+/// whole run. It must now recover via `Retry` and let the run complete.
+#[test]
+fn sibling_work_node_race_recovers_and_completes_the_run() {
+    let (_temp, artifact) = fixture("sibling-race-completes");
+
+    let runner = UniqueFileRunner {
+        counter: AtomicU64::new(0),
+    };
+    let state = SchedulerState::Active {
+        graph: RunGraph {
+            nodes: vec![
+                work_node_with_deps("implement", "implement the feature", &[]),
+                work_node_with_deps("create_test", "add tests for the feature", &[]),
+            ],
+        },
+        run_config: RunConfig {
+            dispatch_cap: 2,
+            ..RunConfig::default()
+        },
+    };
+
+    let output = run_scheduler(SchedulerHandler::with_artifact(runner, artifact), state);
+
+    let SchedulerTerminalOutput::Complete {
+        graph,
+        recovery_summary,
+    } = output
+    else {
+        panic!("sibling race must recover via retry and complete, not terminate; got {output:#?}");
+    };
+
+    assert!(
+        recovery_summary.recovered,
+        "the losing sibling's conflict must have gone through recovery"
+    );
+
+    let failed: Vec<_> = graph
+        .nodes
+        .iter()
+        .filter(|n| n.status == NodeStatus::Failed)
+        .collect();
+    assert_eq!(
+        failed.len(),
+        1,
+        "exactly one sibling must have lost the integration race; graph: {graph:#?}"
+    );
+
+    let completed: Vec<_> = graph
+        .nodes
+        .iter()
+        .filter(|n| n.status == NodeStatus::Completed)
+        .collect();
+    assert_eq!(
+        completed.len(),
+        2,
+        "the winning sibling plus the losing sibling's retry replacement must both complete; graph: {graph:#?}"
+    );
+
+    let replacement = graph
+        .nodes
+        .iter()
+        .find(|n| matches!(&n.origin, NodeOrigin::Retry { source } if *source == failed[0].id))
+        .expect("the failed sibling must have a Retry-origin replacement");
+    assert_eq!(replacement.status, NodeStatus::Completed);
+}
+
 // ── handler boundary tests ─────────────────────────────────────────────────
 
 #[test]
@@ -663,5 +762,87 @@ fn integrate_work_commits_pending_workspace_mutation() {
     assert_eq!(
         current_sha, new_sha,
         "handler artifact must point at the integrated commit"
+    );
+}
+
+/// Sibling `Work` nodes (e.g. `implement` + `create_test`) that both target
+/// the same artifact branch can legitimately race to integrate: whichever
+/// integrates second has a workspace based on a now-stale commit. That must
+/// surface as a retryable `IntegrationConflict`, not the generic terminal
+/// `IntegrationFailure` — the scheduler's `Retry` recovery re-snapshots the
+/// branch tip on the replacement node's attempt and can complete cleanly.
+#[test]
+fn sibling_work_nodes_racing_to_integrate_get_retryable_conflict() {
+    let (_temp, artifact) = fixture("sibling-integration-conflict");
+
+    let runner = FileWritingRunner {
+        path: "shared.txt".to_string(),
+        content: "written by a sibling\n".to_string(),
+    };
+    let h = SchedulerHandler::with_artifact(runner, artifact);
+
+    for id in ["A", "B"] {
+        h.handle_effect(SchedulerEffect::RunNode {
+            node_id: NodeId(id.to_string()),
+            worker_role: None,
+            kind: NodeKind::Work,
+            objective: format!("sibling {id}"),
+            target_files: vec![],
+            test_plan_context: TestPlanContext::default(),
+            model_tier: ModelTier::Cheap,
+            attempt: 0,
+            retry_feedback: None,
+            team: String::new(),
+            adapter: String::new(),
+            northstar: String::new(),
+        });
+    }
+
+    // A integrates first, advancing the branch tip past the commit both
+    // siblings' workspaces were based on.
+    let event_a = h.handle_effect(SchedulerEffect::IntegrateWork {
+        node_id: NodeId("A".to_string()),
+        objective: "sibling A".to_string(),
+        work: WorkOutput {
+            summary: "implement done".to_string(),
+        },
+        attempt: 0,
+        target_files: vec![],
+        validation_plan: None,
+        team: "implement".to_string(),
+        task_id: None,
+    });
+    assert!(
+        matches!(event_a, SchedulerEvent::IntegrationSucceeded { .. }),
+        "sibling A must integrate cleanly, got {event_a:#?}"
+    );
+
+    // B's workspace is still based on the pre-A commit; its integration must
+    // hit the CAS pre-check and be reported as a retryable IntegrationConflict.
+    let event_b = h.handle_effect(SchedulerEffect::IntegrateWork {
+        node_id: NodeId("B".to_string()),
+        objective: "sibling B".to_string(),
+        work: WorkOutput {
+            summary: "create_test done".to_string(),
+        },
+        attempt: 0,
+        target_files: vec![],
+        validation_plan: None,
+        team: "create_test".to_string(),
+        task_id: None,
+    });
+    let SchedulerEvent::IntegrationFailed { node_id, failure } = event_b else {
+        panic!("expected IntegrationFailed for sibling B, got {event_b:#?}");
+    };
+    assert_eq!(node_id, NodeId("B".to_string()));
+    assert_eq!(
+        failure.kind,
+        FailureKind::IntegrationConflict,
+        "stale-parent races must be distinguishable from generic integration failures"
+    );
+    assert!(
+        matches!(failure.recovery, RecoveryAction::Retry { .. }),
+        "a sibling race must be retryable, not terminal; got {:?}",
+        failure.recovery
     );
 }

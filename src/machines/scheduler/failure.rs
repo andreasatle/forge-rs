@@ -28,6 +28,9 @@ pub enum FailureKind {
     DeliberationFailure,
     /// Artifact integration failed.
     IntegrationFailure,
+    /// Artifact integration was refused because the branch tip advanced past
+    /// the workspace's base commit (a sibling node integrated first).
+    IntegrationConflict,
     /// The user task was semantically rejected by the producing role.
     UserTaskRejection,
     /// The node's dispatch thread panicked before returning a result.

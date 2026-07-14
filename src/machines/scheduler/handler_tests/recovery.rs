@@ -90,8 +90,14 @@ fn scheduler_handler_maps_integration_error_to_failed_outcome() {
     );
 }
 
+/// A CAS conflict (branch tip advanced past the workspace's base commit,
+/// e.g. because a sibling node integrated first) is retryable, not terminal:
+/// the scheduler's `Retry` recovery re-snapshots the tip on the replacement
+/// node's attempt and can succeed. This must be reported as the distinct
+/// `FailureKind::IntegrationConflict`, not the generic `IntegrationFailure`
+/// that other integration errors (e.g. a malformed repo) map to.
 #[test]
-fn scheduler_handler_maps_integration_conflict_to_failed_outcome() {
+fn scheduler_handler_maps_integration_conflict_to_retryable_failure() {
     let (_temp, artifact) = fixture("handler-cas-conflict");
     let repo_path = artifact.repo_path.clone();
 
@@ -140,7 +146,12 @@ fn scheduler_handler_maps_integration_conflict_to_failed_outcome() {
 
     // Recovery policy must switch on the typed failure kind, never on
     // parsed message text.
-    assert_eq!(failure.kind, FailureKind::IntegrationFailure);
+    assert_eq!(failure.kind, FailureKind::IntegrationConflict);
+    assert!(
+        matches!(failure.recovery, RecoveryAction::Retry { .. }),
+        "a CAS conflict must recover via Retry, not Terminal; got {:?}",
+        failure.recovery
+    );
 
     // Branch must remain at the externally advanced commit.
     let tip = git_output(&repo_path, &["rev-parse", "HEAD"]);
