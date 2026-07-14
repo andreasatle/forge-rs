@@ -16,6 +16,7 @@ The architecture should make illegal states difficult or impossible to represent
 ## Core Principles
 
 - Prefer structural solutions over patches.
+- Single source of truth: never derive the same fact through two independent mechanisms.
 - Prefer typed data over parsing strings.
 - Failure recovery is driven by typed failure kinds, never human-readable messages.
 - Semantic validation occurs before Critic/Referee or integration.
