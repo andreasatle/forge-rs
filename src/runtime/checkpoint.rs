@@ -19,12 +19,17 @@ const CHECKPOINT_FILE: &str = "graph.json";
 
 /// Write `state` as pretty-printed JSON to `<run_dir>/graph.json`.
 ///
-/// Overwrites any existing checkpoint. Returns an error if serialization or
-/// file I/O fails; callers should treat the error as non-fatal and log a
-/// warning rather than aborting the run.
+/// Overwrites any existing checkpoint. The write is atomic: `state` is
+/// serialized to a temporary file in `run_dir` and then renamed over the
+/// checkpoint path, so a crash or partial write can never leave `graph.json`
+/// truncated or corrupt. Returns an error if serialization or file I/O
+/// fails; callers should treat the error as non-fatal and log a warning
+/// rather than aborting the run.
 pub fn save_checkpoint(run_dir: &Path, state: &SchedulerState) -> Result<(), Box<dyn Error>> {
     let json = serde_json::to_string_pretty(state)?;
-    std::fs::write(run_dir.join(CHECKPOINT_FILE), json)?;
+    let mut tmp = tempfile::NamedTempFile::new_in(run_dir)?;
+    std::io::Write::write_all(&mut tmp, json.as_bytes())?;
+    tmp.persist(run_dir.join(CHECKPOINT_FILE))?;
     Ok(())
 }
 
@@ -190,6 +195,76 @@ mod tests {
             msg.contains("corrupt checkpoint"),
             "error must mention corrupt checkpoint; got: {msg}"
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn save_checkpoint_leaves_no_temp_file_behind() {
+        let dir = temp_dir("no-leftover-tmp");
+        let state = SchedulerState::Active {
+            graph: sample_graph(),
+            run_config: RunConfig::default(),
+        };
+        save_checkpoint(&dir, &state).unwrap();
+
+        let entries: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            entries,
+            vec![CHECKPOINT_FILE],
+            "successful save must leave only graph.json, no temp file; got: {entries:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn save_checkpoint_never_leaves_partial_or_corrupt_file_on_failure() {
+        let dir = temp_dir("atomic-on-failure");
+        let good_state = SchedulerState::Active {
+            graph: sample_graph(),
+            run_config: RunConfig::default(),
+        };
+        save_checkpoint(&dir, &good_state).unwrap();
+        let good_bytes = std::fs::read(dir.join(CHECKPOINT_FILE)).unwrap();
+
+        // Force the temp-file creation step (which happens before the
+        // existing checkpoint is touched) to fail, simulating a crash or
+        // filesystem error partway through a save.
+        let mut perms = std::fs::metadata(&dir).unwrap().permissions();
+        perms.set_readonly(true);
+        std::fs::set_permissions(&dir, perms.clone()).unwrap();
+
+        let other_state = SchedulerState::Active {
+            graph: {
+                let mut g = sample_graph();
+                g.nodes[1].status = NodeStatus::Integrating;
+                g
+            },
+            run_config: RunConfig::default(),
+        };
+        let result = save_checkpoint(&dir, &other_state);
+
+        perms.set_readonly(false);
+        std::fs::set_permissions(&dir, perms).unwrap();
+
+        assert!(
+            result.is_err(),
+            "save must fail when the temp file cannot be created"
+        );
+
+        // The pre-existing checkpoint must be byte-for-byte unchanged, and
+        // still parse cleanly: no partial or corrupt write occurred.
+        let bytes_after = std::fs::read(dir.join(CHECKPOINT_FILE)).unwrap();
+        assert_eq!(
+            good_bytes, bytes_after,
+            "existing checkpoint must be untouched after a failed save"
+        );
+        let loaded = load_checkpoint(&dir).unwrap();
+        assert_eq!(good_state, loaded);
+
         let _ = std::fs::remove_dir_all(&dir);
     }
 
