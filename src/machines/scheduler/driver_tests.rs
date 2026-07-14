@@ -1,7 +1,7 @@
 use super::*;
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -287,5 +287,93 @@ fn resource_manager_serializes_provider_calls_across_concurrently_dispatched_nod
         1,
         "a ResourceManager with 1 permit must serialize gated work even though \
          3 nodes were dispatched concurrently"
+    );
+}
+
+/// Node "A" fails Terminal immediately; node "B" runs slowly (already
+/// dispatched alongside A in the same batch); node "C" is a third ready node
+/// held back only by `dispatch_cap`, meant to be backfilled once a slot
+/// frees — unless the run has already ended.
+struct TerminalCancellationRunner {
+    b_delay: Duration,
+    b_completed: Arc<AtomicBool>,
+    c_dispatched: Arc<AtomicBool>,
+}
+
+impl NodeRunner for TerminalCancellationRunner {
+    fn run_node(&self, request: NodeRunRequest, _telemetry: &dyn TelemetrySink) -> NodeRunResult {
+        match request.node_id.0.as_str() {
+            "A" => NodeRunResult::Failed(NodeFailure {
+                kind: FailureKind::ProviderTerminalFailure,
+                message: "fatal provider error".to_string(),
+                recovery: RecoveryAction::Terminal {
+                    message: "unrecoverable".to_string(),
+                },
+            }),
+            "B" => {
+                std::thread::sleep(self.b_delay);
+                self.b_completed.store(true, Ordering::SeqCst);
+                work_accepted()
+            }
+            "C" => {
+                self.c_dispatched.store(true, Ordering::SeqCst);
+                work_accepted()
+            }
+            other => panic!("unexpected node dispatched: {other}"),
+        }
+    }
+}
+
+// Invariant: once a Terminal recovery decides the run's outcome, the driver
+// must not emit any further RunNode dispatch for other still-pending/eligible
+// nodes (here, C — held back only by `dispatch_cap`, otherwise ready) — while
+// already-dispatched siblings from the same batch (here, B, dispatched
+// alongside the node that fails) still run to completion and get joined
+// before `run_scheduler` returns.
+#[test]
+fn terminal_recovery_stops_new_dispatch_but_joins_already_inflight_siblings() {
+    let b_completed = Arc::new(AtomicBool::new(false));
+    let c_dispatched = Arc::new(AtomicBool::new(false));
+    let runner = TerminalCancellationRunner {
+        b_delay: Duration::from_millis(200),
+        b_completed: Arc::clone(&b_completed),
+        c_dispatched: Arc::clone(&c_dispatched),
+    };
+
+    // `find_ready` iterates nodes in reverse, so with this ordering A and B
+    // dispatch immediately (dispatch_cap == 2) and C is held back for a
+    // freed slot that should never come.
+    let state = SchedulerState::Active {
+        graph: RunGraph {
+            nodes: vec![work_node("C"), work_node("A"), work_node("B")],
+        },
+        run_config: RunConfig {
+            dispatch_cap: 2,
+            ..RunConfig::default()
+        },
+    };
+
+    let output = run_scheduler(SchedulerHandler::new(runner), state);
+
+    let SchedulerTerminalOutput::Failed { graph, reason } = output else {
+        panic!("expected Failed after a Terminal recovery, got {output:#?}");
+    };
+    assert!(
+        matches!(reason, FailureReason::TerminalRecovery { .. }),
+        "expected TerminalRecovery, got {reason:?}"
+    );
+    assert!(
+        !c_dispatched.load(Ordering::SeqCst),
+        "C must never be dispatched once the run's outcome is already Failed"
+    );
+    assert_eq!(
+        graph.nodes.iter().find(|n| n.id.0 == "C").unwrap().status,
+        NodeStatus::Pending,
+        "C must remain untouched, having never been dispatched or cancelled"
+    );
+    assert!(
+        b_completed.load(Ordering::SeqCst),
+        "B was already dispatched alongside A and must still run to \
+         completion and be joined before run_scheduler returns"
     );
 }
