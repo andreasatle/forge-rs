@@ -453,7 +453,9 @@ fn code_target_without_test_target_rejected_when_tests_required() {
     };
     assert_eq!(
         validate_planner_tests_required(&output, &python_tests),
-        Err(PlannerValidationError::MissingTestsForCodeChange)
+        Err(PlannerValidationError::MissingTestsForCodeChange {
+            required: vec!["tests/test_main.py".to_string()]
+        })
     );
 }
 

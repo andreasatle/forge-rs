@@ -336,6 +336,92 @@ fn recovery_exhaustion_fails_scheduler() {
     }
 }
 
+#[test]
+fn planner_validation_failure_recovers_via_split_and_is_bounded() {
+    // Invariant: a Plan node whose planner output kept failing structured
+    // validation (PlannerValidationFailure) must get another re-planning
+    // cycle via Split, not end the whole run — the planner already got real
+    // chances to fix the problem inside deliberation before this terminal
+    // outcome was reached, so it deserves the same scheduler-level escape
+    // hatch as DeliberationFailure. That escape hatch must still be bounded
+    // by MAX_ATTEMPTS like every other recovery action.
+    let graph = RunGraph {
+        nodes: vec![plan_node("P", "plan the feature", &[])],
+    };
+    let t = do_transition(
+        SchedulerState::Waiting {
+            graph: running(graph, "P"),
+            run_config: RunConfig::default(),
+        },
+        SchedulerEvent::NodeFailed {
+            node_id: NodeId("P".to_string()),
+            failure: NodeFailure {
+                kind: FailureKind::PlannerValidationFailure,
+                message: "planner validation failed: missing test target".to_string(),
+                recovery: RecoveryAction::Split {
+                    message: "semantic failure: missing test target".to_string(),
+                },
+            },
+        },
+    );
+
+    let SchedulerState::Active { graph, .. } = t.state else {
+        panic!(
+            "PlannerValidationFailure must recover via Split, not Terminal; got {:#?}",
+            t.state
+        );
+    };
+    assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
+    let replacement = &graph.nodes[1];
+    assert_eq!(replacement.status, NodeStatus::Pending);
+    assert_eq!(replacement.kind, NodeKind::Plan);
+    assert_eq!(replacement.plan_depth, 1);
+    assert_eq!(replacement.model_tier, ModelTier::Strong);
+    assert!(matches!(replacement.origin, NodeOrigin::Split { .. }));
+
+    // Bounded: a node already at MAX_ATTEMPTS must fail the run instead of
+    // spawning yet another replacement.
+    let mut exhausted_node = plan_node("P", "plan the feature", &[]);
+    exhausted_node.attempt = MAX_ATTEMPTS;
+    let graph = RunGraph {
+        nodes: vec![exhausted_node],
+    };
+    let t = do_transition(
+        SchedulerState::Waiting {
+            graph: running(graph, "P"),
+            run_config: RunConfig::default(),
+        },
+        SchedulerEvent::NodeFailed {
+            node_id: NodeId("P".to_string()),
+            failure: NodeFailure {
+                kind: FailureKind::PlannerValidationFailure,
+                message: "planner validation failed: missing test target".to_string(),
+                recovery: RecoveryAction::Split {
+                    message: "semantic failure: missing test target".to_string(),
+                },
+            },
+        },
+    );
+    let SchedulerState::Failed { graph, reason } = t.state else {
+        panic!(
+            "exhausted PlannerValidationFailure must fail the run; got {:#?}",
+            t.state
+        );
+    };
+    assert_eq!(
+        graph.nodes.len(),
+        1,
+        "no replacement node should be created"
+    );
+    assert!(matches!(
+        reason,
+        FailureReason::AttemptsExhausted {
+            recovery_action: ExhaustedAction::Split,
+            ..
+        }
+    ));
+}
+
 // ── Plan dependency validation tests ─────────────────────────────────────
 
 #[test]

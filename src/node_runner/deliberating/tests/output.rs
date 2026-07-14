@@ -189,7 +189,10 @@ fn invalid_structured_plan_returns_failed() {
         "failure reason must describe the validation error; got: {}",
         failure.message
     );
-    assert!(matches!(failure.recovery, RecoveryAction::Terminal { .. }));
+    // A planner validation failure that survives deliberation's own retry
+    // budget still deserves a scheduler-level re-plan attempt (Split), not
+    // an unconditional end to the run — see classify_deliberation_failure.
+    assert!(matches!(failure.recovery, RecoveryAction::Split { .. }));
 
     // Step 2: validation failure is now recorded as ParseFailed in the runner layer.
     let records = telemetry.into_records();

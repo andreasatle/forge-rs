@@ -119,7 +119,15 @@ pub enum PlannerValidationError {
         dep_id: String,
     },
     /// Test validation is configured, but a code-changing plan has no test target.
-    MissingTestsForCodeChange,
+    ///
+    /// Carries the exact test-target paths the adapter's language plugin
+    /// expects for the plan's source targets, so retry feedback can name the
+    /// concrete expected path instead of a generic reminder.
+    MissingTestsForCodeChange {
+        /// Test-target paths the adapter's language plugin expects for the
+        /// plan's source targets.
+        required: Vec<String>,
+    },
     /// The adapter defines worker roles, but a work task was not assigned a
     /// role matching one of them.
     MissingTaskRole {
@@ -156,10 +164,12 @@ impl std::fmt::Display for PlannerValidationError {
             PlannerValidationError::UnknownDependency { task_id, dep_id } => {
                 write!(f, "task {task_id} depends on unknown id: {dep_id}")
             }
-            PlannerValidationError::MissingTestsForCodeChange => {
+            PlannerValidationError::MissingTestsForCodeChange { required } => {
                 write!(
                     f,
-                    "planner output changes code but does not include a test-related target"
+                    "planner output changes code but does not include a test-related target; \
+                     expected target path(s): {}",
+                    required.join(", ")
                 )
             }
             PlannerValidationError::MissingTaskRole { task_id } => {
@@ -292,7 +302,7 @@ impl<'a> PlannerOutputProcessor<'a> {
         {
             Ok(())
         } else {
-            Err(PlannerValidationError::MissingTestsForCodeChange)
+            Err(PlannerValidationError::MissingTestsForCodeChange { required })
         }
     }
 

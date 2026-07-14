@@ -101,6 +101,15 @@ fn map_plan_output(
     }
 }
 
+/// Deliberation's own producer validation (`validate_plan_producer_content`)
+/// runs the same `validate()` check on this exact content before `Complete`
+/// is ever reached, so this path is unreachable in production — reaching it
+/// means that guarantee broke. Unlike the classify.rs mapping for the
+/// terminal `PlannerValidationFailure` deliberation outcome (which routes
+/// through `RecoveryApplicator`'s bounded Split/retry machinery because the
+/// planner genuinely never got it right after real attempts), this is a
+/// direct invariant-violation trap and must stay `Terminal`: routing it
+/// through recovery would mask a bug as a self-correctable failure.
 fn plan_validation_failed(
     error: PlannerValidationError,
     telemetry: &dyn TelemetrySink,

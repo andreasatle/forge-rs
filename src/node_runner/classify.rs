@@ -25,12 +25,13 @@ pub fn classify_deliberation_failure(kind: FailureKind, message: &str) -> Recove
                  for whole-file rewrites instead of retrying another replace_text."
             ),
         },
-        FailureKind::DeliberationFailure => RecoveryAction::Split {
-            message: format!("semantic failure: {message}"),
-        },
+        FailureKind::DeliberationFailure | FailureKind::PlannerValidationFailure => {
+            RecoveryAction::Split {
+                message: format!("semantic failure: {message}"),
+            }
+        }
         FailureKind::ProviderTerminalFailure
         | FailureKind::ToolFailure
-        | FailureKind::PlannerValidationFailure
         | FailureKind::IntegrationFailure
         | FailureKind::UserTaskRejection
         | FailureKind::DispatchPanic => RecoveryAction::Terminal {
@@ -52,6 +53,23 @@ pub fn recovery_label(action: &RecoveryAction) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn planner_validation_failure_maps_to_split_not_terminal() {
+        // Invariant: a Plan node's structured planner validation failure gets
+        // a scheduler-level re-plan attempt (Split), the same escape hatch
+        // DeliberationFailure already gets, instead of ending the whole run.
+        // The planner already had real in-deliberation retry attempts with
+        // feedback before this terminal deliberation outcome was reached, so
+        // treating it as unconditionally unrecoverable (as it was before)
+        // discards a self-correctable failure class.
+        let recovery =
+            classify_deliberation_failure(FailureKind::PlannerValidationFailure, "missing test");
+        assert!(
+            matches!(recovery, RecoveryAction::Split { .. }),
+            "expected Split, got {recovery:?}"
+        );
+    }
 
     #[test]
     fn same_kind_same_recovery_regardless_of_message() {

@@ -57,10 +57,11 @@ pub(super) fn planner_validation_feedback(error: &PlannerValidationError) -> Str
                  plan. Only reference task ids defined in the same plan."
             )
         }
-        PlannerValidationError::MissingTestsForCodeChange => {
+        PlannerValidationError::MissingTestsForCodeChange { required } => {
             format!(
                 "{error}. Project validation includes a test command, so code changes must include \
-                 at least one test-related task and target such as a test file."
+                 a task whose targets contain the exact expected test path: {}.",
+                required.join(", ")
             )
         }
         PlannerValidationError::MissingTaskRole { task_id } => {
