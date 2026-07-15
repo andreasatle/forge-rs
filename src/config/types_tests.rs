@@ -17,16 +17,16 @@ fn unique_config_dir() -> PathBuf {
     dir
 }
 
-/// Copies a built-in adapter/plugin YAML from this crate's `adapters/`,
-/// `testdata/`, or `plugins/` directory into `dir` (as `name`), so config
-/// fixtures that reference it by a bare relative filename (e.g.
-/// `adapter: coding.yaml`) resolve correctly against the temp directory
-/// holding the config file. A no-op if already staged.
+/// Copies a built-in adapter/plugin YAML from this crate's `testdata/` or
+/// `plugins/` directory into `dir` (as `name`), so config fixtures that
+/// reference it by a bare relative filename (e.g. `adapter: coding.yaml`)
+/// resolve correctly against the temp directory holding the config file. A
+/// no-op if already staged.
 ///
 /// Adapter content is staged flat alongside its plugins (not nested under
-/// `adapters/`/`testdata/`/`plugins/` subdirectories), so the shipped
-/// adapters' `../plugins/...` plugin paths are rewritten to bare filenames
-/// to match — otherwise they'd resolve outside the isolated temp dir.
+/// `testdata/`/`plugins/` subdirectories), so the fixture adapter's
+/// `../plugins/...` plugin paths are rewritten to bare filenames to match —
+/// otherwise they'd resolve outside the isolated temp dir.
 fn stage_fixture(dir: &std::path::Path, subdir: &str, name: &str) {
     let dest = dir.join(name);
     if dest.exists() {
@@ -49,14 +49,6 @@ impl TempYaml {
         let mut f = std::fs::File::create(&path).unwrap();
         f.write_all(content.as_bytes()).unwrap();
         stage_fixture(&dir, "testdata", "coding.yaml");
-        for name in [
-            "planner.yaml",
-            "implement.yaml",
-            "create_test.yaml",
-            "pass_tests.yaml",
-        ] {
-            stage_fixture(&dir, "adapters", name);
-        }
         for name in ["rust.yaml", "python.yaml"] {
             stage_fixture(&dir, "plugins", name);
         }
@@ -1409,29 +1401,13 @@ fn adapter_is_required_when_blank() {
     );
 }
 
-const PLANNER_ADAPTER_YAML: &str = r#"
-objective: "test"
-artifact:
-  repo_path: ".forge/artifacts/main.git"
-  branch: "main"
-provider:
-  cheap:
-    unmanaged:
-      base_url: "http://localhost:8080"
-      model: "llama-test"
-      n_predict: 512
-telemetry:
-  directory: "runs"
-adapter: planner.yaml
-"#;
-
 #[test]
 fn config_parses_adapter() {
-    let tmp = TempYaml::new(PLANNER_ADAPTER_YAML);
+    let tmp = TempYaml::new(EXAMPLE_YAML);
     let config = ForgeConfig::from_file(tmp.path()).unwrap();
     let config_dir = std::path::Path::new(tmp.path()).parent().unwrap();
     let expected = config_dir
-        .join("planner.yaml")
+        .join("coding.yaml")
         .to_string_lossy()
         .into_owned();
     assert_eq!(
