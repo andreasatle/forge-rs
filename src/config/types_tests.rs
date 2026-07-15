@@ -17,16 +17,16 @@ fn unique_config_dir() -> PathBuf {
     dir
 }
 
-/// Copies a built-in adapter/plugin YAML from this crate's `adapters/` or
-/// `plugins/` directory into `dir` (as `name`), so config fixtures that
-/// reference it by a bare relative filename (e.g. `adapter: coding.yaml`)
-/// resolve correctly against the temp directory holding the config file.
-/// A no-op if already staged.
+/// Copies a built-in adapter/plugin YAML from this crate's `adapters/`,
+/// `testdata/`, or `plugins/` directory into `dir` (as `name`), so config
+/// fixtures that reference it by a bare relative filename (e.g.
+/// `adapter: coding.yaml`) resolve correctly against the temp directory
+/// holding the config file. A no-op if already staged.
 ///
 /// Adapter content is staged flat alongside its plugins (not nested under
-/// `adapters/`/`plugins/` subdirectories), so the shipped adapters'
-/// `../plugins/...` plugin paths are rewritten to bare filenames to match —
-/// otherwise they'd resolve outside the isolated temp dir.
+/// `adapters/`/`testdata/`/`plugins/` subdirectories), so the shipped
+/// adapters' `../plugins/...` plugin paths are rewritten to bare filenames
+/// to match — otherwise they'd resolve outside the isolated temp dir.
 fn stage_fixture(dir: &std::path::Path, subdir: &str, name: &str) {
     let dest = dir.join(name);
     if dest.exists() {
@@ -48,8 +48,8 @@ impl TempYaml {
         let path = dir.join("config.yaml");
         let mut f = std::fs::File::create(&path).unwrap();
         f.write_all(content.as_bytes()).unwrap();
+        stage_fixture(&dir, "testdata", "coding.yaml");
         for name in [
-            "coding.yaml",
             "planner.yaml",
             "implement.yaml",
             "create_test.yaml",
@@ -1456,7 +1456,7 @@ fn config_adapter_nested_relative_path_resolves_against_config_dir() {
     // does for the top-level fixture layout.
     let nested_coding_yaml = std::fs::read_to_string(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("adapters")
+            .join("testdata")
             .join("coding.yaml"),
     )
     .unwrap();
@@ -1493,7 +1493,7 @@ fn config_adapter_nested_relative_path_resolves_against_config_dir() {
 #[test]
 fn config_absolute_adapter_path_remains_absolute() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("adapters")
+        .join("testdata")
         .join("coding.yaml");
     let yaml = EXAMPLE_YAML.replace(
         "adapter: coding.yaml",

@@ -60,7 +60,7 @@ fn make_forge_config(repo_path: &Path, telemetry_path: &Path) -> ForgeConfig {
         },
         validation: None,
         adapter: std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("adapters")
+            .join("testdata")
             .join("coding.yaml")
             .to_str()
             .unwrap()
@@ -415,7 +415,7 @@ fn reset_creates_configured_branch() {
             },
             validation: None,
             adapter: std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("adapters")
+                .join("testdata")
                 .join("coding.yaml")
                 .to_str()
                 .unwrap()

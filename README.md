@@ -121,7 +121,7 @@ provider:
   strong_timeout_seconds: 180   # optional; fallback to timeout_seconds
 telemetry:
   directory: "runs"
-adapter: adapters/coding.yaml  # required; path to a project adapter YAML file
+adapter: path/to/adapter.yaml  # required; path to a project adapter YAML file
 dispatch_cap: 4                 # optional; default 4 — see Concurrency below
 validation:                     # optional
   commands:
@@ -137,11 +137,10 @@ directory.
 `adapter` is a path to the project adapter YAML file governing role prompt
 policy. It is required; there is no default. A missing or invalid file — or
 any language plugin it declares — fails `forge.yaml` loading immediately.
-Built-in adapters ship in this repo's `adapters/` directory: `coding.yaml` is
-a single-team adapter, and `planner.yaml`, `implement.yaml`,
-`create_test.yaml`, `pass_tests.yaml` are single-purpose adapters meant to be
-combined in a multi-team `teams:` config (see below). Copy and modify any of
-them freely, or point at your own file.
+Built-in single-purpose adapters ship in this repo's `adapters/` directory:
+`planner.yaml`, `implement.yaml`, `create_test.yaml`, `pass_tests.yaml`,
+meant to be combined in a multi-team `teams:` config (see below). Copy and
+modify any of them freely, or point at your own file.
 
 An adapter declares which language plugins it supports in its own
 `plugins:` list, e.g.:

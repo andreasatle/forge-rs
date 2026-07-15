@@ -64,8 +64,8 @@ pub struct WorkerRoleConfig {
 ///
 /// Covers the planner's role prompts, the worker roles this project defines,
 /// and ambient context file names for a project adapter, whether built-in
-/// (`coding.yaml`, `planner.yaml`, `implement.yaml`, `create_test.yaml`,
-/// `pass_tests.yaml`) or user-defined.
+/// (`planner.yaml`, `implement.yaml`, `create_test.yaml`, `pass_tests.yaml`)
+/// or user-defined.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectAdapterConfig {

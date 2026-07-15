@@ -11,6 +11,13 @@ fn adapter_path(name: &str) -> PathBuf {
         .join(name)
 }
 
+/// Path to a test-fixture adapter YAML (not a built-in, user-facing one).
+fn fixture_adapter_path(name: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("testdata")
+        .join(name)
+}
+
 fn plugin_path(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("plugins")
@@ -22,6 +29,13 @@ fn builder<'a>(
     validation: Option<&'a ValidationConfig>,
 ) -> ProjectRuntimeSetupBuilder<'a> {
     ProjectRuntimeSetupBuilder::new(&adapter_path(adapter), validation).unwrap()
+}
+
+fn fixture_builder<'a>(
+    adapter: &str,
+    validation: Option<&'a ValidationConfig>,
+) -> ProjectRuntimeSetupBuilder<'a> {
+    ProjectRuntimeSetupBuilder::new(&fixture_adapter_path(adapter), validation).unwrap()
 }
 
 /// A fresh, never-before-used temp directory for one test's fixture files.
@@ -111,7 +125,7 @@ fn write_custom_adapter(dir: &Path, plugin_refs: &[&str]) -> PathBuf {
 
 #[test]
 fn runtime_selects_coding_adapter() {
-    let policy = builder("coding.yaml", None).role_policy();
+    let policy = fixture_builder("coding.yaml", None).role_policy();
     assert!(
         policy.planner_producer_base.contains("software planning"),
         "coding adapter must produce software-planning planner prompt; got:\n{}",
@@ -267,7 +281,7 @@ fn required_test_targets_fn_selects_plugin_by_target_extension() {
     // Invariant: the adapter's declared plugins are keyed by extension, so a
     // node's target files pick the matching plugin's derivation rules — a
     // Python target gets the Python rule, a Rust target gets the Rust rule.
-    let setup = builder("coding.yaml", None);
+    let setup = fixture_builder("coding.yaml", None);
     let f = setup.required_test_targets_fn();
     assert_eq!(
         f(&["main.py".to_string()]),
@@ -278,7 +292,7 @@ fn required_test_targets_fn_selects_plugin_by_target_extension() {
 
 #[test]
 fn required_test_targets_fn_empty_when_no_plugin_matches_extension() {
-    let setup = builder("coding.yaml", None);
+    let setup = fixture_builder("coding.yaml", None);
     let f = setup.required_test_targets_fn();
     assert!(
         f(&["README.md".to_string()]).is_empty(),
@@ -315,7 +329,7 @@ fn runtime_uses_command_validator_when_configured() {
         commands: vec!["false".to_string()],
         timeout_seconds: None,
     };
-    let validator = builder("coding.yaml", Some(&config)).validator();
+    let validator = fixture_builder("coding.yaml", Some(&config)).validator();
     let result = validator.validate(&ws);
     assert!(
         !result.passed,
@@ -357,7 +371,7 @@ fn runtime_backward_compat_validation_yaml_translates_to_sh_wrapper() {
         commands: vec!["true".to_string()],
         timeout_seconds: None,
     };
-    let validator = builder("coding.yaml", Some(&config)).validator();
+    let validator = fixture_builder("coding.yaml", Some(&config)).validator();
     let result = validator.validate(&ws);
     assert!(
         result.passed,
@@ -370,7 +384,7 @@ fn runtime_backward_compat_validation_yaml_translates_to_sh_wrapper() {
 
 #[test]
 fn build_wires_validation_plan_api_summary_and_primary_language_init() {
-    let setup = ProjectRuntimeSetup::build(&adapter_path("coding.yaml"), None).unwrap();
+    let setup = ProjectRuntimeSetup::build(&fixture_adapter_path("coding.yaml"), None).unwrap();
     assert!(
         (setup.validation_plan_for_role_fn)(None, &["main.rs".to_string()]).is_some(),
         "a target matching a configured plugin's extension must produce a validation plan"
@@ -392,7 +406,7 @@ fn validation_plan_for_role_uses_python_tester_role_override() {
     // than the plugin's default plan (ruff + pyright + pytest), so tester
     // nodes aren't required to pass the full test suite before their own
     // test files exist.
-    let setup = ProjectRuntimeSetup::build(&adapter_path("coding.yaml"), None).unwrap();
+    let setup = ProjectRuntimeSetup::build(&fixture_adapter_path("coding.yaml"), None).unwrap();
     let plan = (setup.validation_plan_for_role_fn)(Some("tester"), &["main.py".to_string()])
         .expect("python plugin's tester role override must produce a validation plan");
     assert_eq!(
@@ -418,7 +432,7 @@ fn validation_plan_for_role_falls_back_to_default_when_role_has_no_override() {
     // any role that isn't one of the adapter's configured worker roles) must
     // not silently drop validation — it falls back to the same default plan
     // used for nodes with no role assigned, for the same target files.
-    let setup = ProjectRuntimeSetup::build(&adapter_path("coding.yaml"), None).unwrap();
+    let setup = ProjectRuntimeSetup::build(&fixture_adapter_path("coding.yaml"), None).unwrap();
     let targets = vec!["main.rs".to_string()];
     assert_eq!(
         (setup.validation_plan_for_role_fn)(Some("reviewer"), &targets),
@@ -436,7 +450,8 @@ fn validation_plan_for_role_falls_back_to_explicit_validation_when_no_plugin_mat
         commands: vec!["true".to_string()],
         timeout_seconds: None,
     };
-    let setup = ProjectRuntimeSetup::build(&adapter_path("coding.yaml"), Some(&config)).unwrap();
+    let setup =
+        ProjectRuntimeSetup::build(&fixture_adapter_path("coding.yaml"), Some(&config)).unwrap();
     let plan = (setup.validation_plan_for_role_fn)(None, &["README.md".to_string()])
         .expect("no plugin match must fall back to the explicit validation config");
     assert_eq!(
@@ -447,7 +462,7 @@ fn validation_plan_for_role_falls_back_to_explicit_validation_when_no_plugin_mat
 
 #[test]
 fn validation_plan_for_role_is_none_when_no_plugin_matches_and_no_explicit_validation() {
-    let setup = ProjectRuntimeSetup::build(&adapter_path("coding.yaml"), None).unwrap();
+    let setup = ProjectRuntimeSetup::build(&fixture_adapter_path("coding.yaml"), None).unwrap();
     assert!(
         (setup.validation_plan_for_role_fn)(None, &["README.md".to_string()]).is_none(),
         "no matching plugin and no explicit validation must produce no plan"

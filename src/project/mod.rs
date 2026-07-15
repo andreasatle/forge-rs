@@ -186,7 +186,7 @@ mod tests {
     #[test]
     fn coding_adapter_context_file_names_includes_readme() {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("adapters")
+            .join("testdata")
             .join("coding.yaml");
         let names = load_adapter(&path).unwrap().context_file_names();
         assert!(

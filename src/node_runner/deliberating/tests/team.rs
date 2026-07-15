@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 fn fixture_adapter_path(name: &str) -> String {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("adapters")
+        .join("testdata")
         .join(name)
         .to_string_lossy()
         .into_owned()

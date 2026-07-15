@@ -21,6 +21,13 @@ fn repo_adapter(name: &str) -> PathBuf {
         .join(name)
 }
 
+/// Path to a test-fixture adapter YAML shipped alongside the crate.
+fn fixture_adapter(name: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("testdata")
+        .join(name)
+}
+
 const CUSTOM_ADAPTER_YAML: &str = r#"
 planner:
   producer:
@@ -62,7 +69,7 @@ workers:
 
 #[test]
 fn coding_adapter_loads_from_its_shipped_path() {
-    let adapter = load_adapter(&repo_adapter("coding.yaml")).unwrap();
+    let adapter = load_adapter(&fixture_adapter("coding.yaml")).unwrap();
     assert!(!adapter.role_policy().planner_producer_base.is_empty());
 }
 
@@ -254,14 +261,16 @@ fn generic_planner_guidance_reaches_plan_nodes_but_not_work_nodes() {
 
 #[test]
 fn bundled_adapters_context_file_names_include_readme() {
-    for name in [
-        "coding.yaml",
-        "planner.yaml",
-        "implement.yaml",
-        "create_test.yaml",
-        "pass_tests.yaml",
-    ] {
-        let adapter = load_adapter(&repo_adapter(name)).unwrap();
+    let paths = [
+        fixture_adapter("coding.yaml"),
+        repo_adapter("planner.yaml"),
+        repo_adapter("implement.yaml"),
+        repo_adapter("create_test.yaml"),
+        repo_adapter("pass_tests.yaml"),
+    ];
+    for path in paths {
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        let adapter = load_adapter(&path).unwrap();
         assert!(
             adapter
                 .context_file_names()
