@@ -1,9 +1,29 @@
 //! Scheduler support payload and domain vocabulary.
 
+use serde::{Deserialize, Serialize};
+
 use crate::validation::ValidationPlan;
 
 use super::failure::FailureKind;
 use super::graph::{NodeId, NodeKind};
+
+/// A planner-decided file path for one worker role acting on a task.
+///
+/// The planner assigns one `role_targets` entry per worker role that will
+/// eventually act on a `kind: "task"` row (e.g. `implementer` and `tester`)
+/// — sibling teams spawned from the same task manifest row then read their
+/// own role's entry directly instead of each independently deriving a
+/// target file from the task's bare `name`, which is what let an
+/// implementer's expected test path and a tester's actual write path
+/// diverge.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct RoleTarget {
+    /// The worker role this target applies to (e.g. `"implementer"`,
+    /// `"tester"`), matching a `TeamConfig`'s adapter's primary worker role.
+    pub role: String,
+    /// The file path this role should treat as its target for the task.
+    pub file_path: String,
+}
 
 /// The structured output of a plan node that succeeded.
 ///
@@ -36,6 +56,12 @@ pub struct PlannerTaskOutput {
     /// Bare symbol or concept identifier for this task, carried verbatim
     /// from [`crate::node_runner::planner::PlannerTask::name`].
     pub name: String,
+    /// Canonical symbol/function name this task implements, carried
+    /// verbatim from [`crate::node_runner::planner::PlannerTask::function_name`].
+    pub function_name: String,
+    /// Per-worker-role target file paths, carried verbatim from
+    /// [`crate::node_runner::planner::PlannerTask::role_targets`].
+    pub role_targets: Vec<RoleTarget>,
     /// Ids of other tasks in the same output this task depends on, carried
     /// verbatim from [`crate::node_runner::planner::PlannerTask::depends_on`].
     pub depends_on: Vec<String>,

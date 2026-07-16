@@ -143,7 +143,18 @@ fn planner_task(id: &str, objective: &str, targets: &[&str], depends_on: &[&str]
         role: None,
         targets: targets.iter().map(|s| s.to_string()).collect(),
         depends_on: depends_on.iter().map(|s| s.to_string()).collect(),
+        function_name: String::new(),
+        role_targets: vec![],
     }
+}
+
+/// A minimal, valid `role_targets` value for tests that need `validate()` to
+/// pass on a `kind: "task"`/`kind: "plan"` task.
+fn role_targets() -> Vec<RoleTarget> {
+    vec![RoleTarget {
+        role: "implementer".to_string(),
+        file_path: "src/fibonacci.rs".to_string(),
+    }]
 }
 
 #[test]
@@ -297,6 +308,8 @@ fn plan_kind_task_missing_role_skips_role_validation() {
         tasks: vec![planner_task("sub-plan", "decompose this further", &[], &[])],
     };
     output.tasks[0].name = "sub_plan".to_string();
+    output.tasks[0].function_name = "sub_plan".to_string();
+    output.tasks[0].role_targets = role_targets();
     assert!(
         processor_with_roles(&roles).validate(&output).is_ok(),
         "plan-kind task must not require a role even when worker roles are configured"
@@ -312,6 +325,8 @@ fn plan_kind_task_with_empty_targets_passes_structural_validation() {
         tasks: vec![planner_task("sub-plan", "decompose this further", &[], &[])],
     };
     output.tasks[0].name = "sub_plan".to_string();
+    output.tasks[0].function_name = "sub_plan".to_string();
+    output.tasks[0].role_targets = role_targets();
     assert!(
         validate_planner_output(&output).is_ok(),
         "plan-kind task with empty targets must pass validation"
@@ -348,6 +363,8 @@ fn task_kind_task_with_blank_name_fails_validation() {
             role: None,
             targets: vec![],
             depends_on: vec![],
+            function_name: "fibonacci".to_string(),
+            role_targets: role_targets(),
         }],
     };
     assert_eq!(
@@ -369,11 +386,92 @@ fn task_kind_task_with_name_passes_validation() {
             role: None,
             targets: vec![],
             depends_on: vec![],
+            function_name: "fibonacci".to_string(),
+            role_targets: role_targets(),
         }],
     };
     assert!(
         validate_planner_output(&output).is_ok(),
         "task-kind task with a non-blank name must pass validation"
+    );
+}
+
+#[test]
+fn task_kind_task_with_blank_function_name_fails_validation() {
+    // Invariant: `kind: "task"` tasks must carry a non-blank `function_name`,
+    // the same requirement `name` is held to.
+    let output = PlannerOutput {
+        kind: PlannerOutputKind::Task,
+        tasks: vec![PlannerTask {
+            id: "sub-a".to_string(),
+            objective: "decompose part a".to_string(),
+            name: "fibonacci".to_string(),
+            role: None,
+            targets: vec![],
+            depends_on: vec![],
+            function_name: "  ".to_string(),
+            role_targets: role_targets(),
+        }],
+    };
+    assert_eq!(
+        validate_planner_output(&output),
+        Err(PlannerValidationError::EmptyFunctionName(
+            "sub-a".to_string()
+        ))
+    );
+}
+
+#[test]
+fn task_kind_task_with_empty_role_targets_fails_validation() {
+    // Invariant: `kind: "task"` tasks must declare at least one
+    // `role_targets` entry.
+    let output = PlannerOutput {
+        kind: PlannerOutputKind::Task,
+        tasks: vec![PlannerTask {
+            id: "sub-a".to_string(),
+            objective: "decompose part a".to_string(),
+            name: "fibonacci".to_string(),
+            role: None,
+            targets: vec![],
+            depends_on: vec![],
+            function_name: "fibonacci".to_string(),
+            role_targets: vec![],
+        }],
+    };
+    assert_eq!(
+        validate_planner_output(&output),
+        Err(PlannerValidationError::EmptyRoleTargets(
+            "sub-a".to_string()
+        ))
+    );
+}
+
+#[test]
+fn task_kind_task_with_blank_role_target_field_fails_validation() {
+    // Invariant: every `role_targets` entry must itself carry a non-blank
+    // `role` and `file_path` — a present-but-blank entry is rejected the
+    // same as an entirely empty list.
+    let output = PlannerOutput {
+        kind: PlannerOutputKind::Task,
+        tasks: vec![PlannerTask {
+            id: "sub-a".to_string(),
+            objective: "decompose part a".to_string(),
+            name: "fibonacci".to_string(),
+            role: None,
+            targets: vec![],
+            depends_on: vec![],
+            function_name: "fibonacci".to_string(),
+            role_targets: vec![RoleTarget {
+                role: "implementer".to_string(),
+                file_path: "  ".to_string(),
+            }],
+        }],
+    };
+    assert_eq!(
+        validate_planner_output(&output),
+        Err(PlannerValidationError::EmptyRoleTargets(
+            "sub-a".to_string()
+        ))
     );
 }
 
@@ -406,6 +504,8 @@ fn planner_tasks_become_node_requests() {
                 role: None,
                 targets: vec!["one.txt".to_string()],
                 depends_on: vec![],
+                function_name: String::new(),
+                role_targets: vec![],
             },
             PlannerTask {
                 id: "step-two".to_string(),
@@ -414,6 +514,8 @@ fn planner_tasks_become_node_requests() {
                 role: None,
                 targets: vec!["two.txt".to_string()],
                 depends_on: vec![],
+                function_name: String::new(),
+                role_targets: vec![],
             },
         ],
     };
@@ -443,6 +545,8 @@ fn task_kind_output_produces_no_scheduler_children() {
             role: None,
             targets: vec![],
             depends_on: vec![],
+            function_name: String::new(),
+            role_targets: vec![],
         }],
     };
     let plan = planner_output_to_plan_output(output);
@@ -464,6 +568,8 @@ fn task_kind_output_carries_name_into_plan_tasks() {
             role: None,
             targets: vec![],
             depends_on: vec![],
+            function_name: String::new(),
+            role_targets: vec![],
         }],
     };
     let plan = planner_output_to_plan_output(output);
@@ -485,6 +591,8 @@ fn plan_kind_output_produces_plan_children_with_no_worker_role() {
                 role: None,
                 targets: vec![],
                 depends_on: vec![],
+                function_name: String::new(),
+                role_targets: vec![],
             },
             PlannerTask {
                 id: "sub-b".to_string(),
@@ -493,6 +601,8 @@ fn plan_kind_output_produces_plan_children_with_no_worker_role() {
                 role: None,
                 targets: vec![],
                 depends_on: vec!["sub-a".to_string()],
+                function_name: String::new(),
+                role_targets: vec![],
             },
         ],
     };
@@ -524,6 +634,8 @@ fn plan_kind_output_with_single_task_becomes_terminal_task() {
             role: None,
             targets: vec![],
             depends_on: vec![],
+            function_name: String::new(),
+            role_targets: vec![],
         }],
     };
     let plan = planner_output_to_plan_output(output);
@@ -555,6 +667,8 @@ fn plan_kind_task_with_blank_name_fails_validation() {
             role: None,
             targets: vec![],
             depends_on: vec![],
+            function_name: String::new(),
+            role_targets: vec![],
         }],
     };
     assert_eq!(
@@ -579,6 +693,8 @@ fn short_circuited_single_task_plan_output_gets_a_name_that_matches_a_name_targe
             role: None,
             targets: vec![],
             depends_on: vec![],
+            function_name: "fibonacci".to_string(),
+            role_targets: role_targets(),
         }],
     };
     assert!(
@@ -617,6 +733,8 @@ fn task_role_becomes_node_request_worker_role() {
                 role: Some("implementer".to_string()),
                 targets: vec!["main.py".to_string()],
                 depends_on: vec![],
+                function_name: String::new(),
+                role_targets: vec![],
             },
             PlannerTask {
                 id: "test".to_string(),
@@ -625,6 +743,8 @@ fn task_role_becomes_node_request_worker_role() {
                 role: Some("tester".to_string()),
                 targets: vec!["tests/test_main.py".to_string()],
                 depends_on: vec!["impl".to_string()],
+                function_name: String::new(),
+                role_targets: vec![],
             },
         ],
     };
@@ -658,6 +778,8 @@ fn task_without_role_gets_no_worker_role() {
             role: None,
             targets: vec!["main.py".to_string(), "tests/test_main.py".to_string()],
             depends_on: vec![],
+            function_name: String::new(),
+            role_targets: vec![],
         }],
     };
     let plan = planner_output_to_plan_output(output);
@@ -678,6 +800,8 @@ fn planner_dependencies_preserved() {
                 role: None,
                 targets: vec!["tests.txt".to_string()],
                 depends_on: vec![],
+                function_name: String::new(),
+                role_targets: vec![],
             },
             PlannerTask {
                 id: "impl".to_string(),
@@ -686,6 +810,8 @@ fn planner_dependencies_preserved() {
                 role: None,
                 targets: vec!["impl.txt".to_string()],
                 depends_on: vec!["tests".to_string()],
+                function_name: String::new(),
+                role_targets: vec![],
             },
         ],
     };

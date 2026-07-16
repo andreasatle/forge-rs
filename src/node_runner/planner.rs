@@ -8,7 +8,9 @@ use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
 
-use crate::machines::scheduler::{NodeId, NodeKind, NodeRequest, PlanOutput, PlannerTaskOutput};
+use crate::machines::scheduler::{
+    NodeId, NodeKind, NodeRequest, PlanOutput, PlannerTaskOutput, RoleTarget,
+};
 
 /// A single task in a structured planner response.
 #[derive(Deserialize, Serialize, Debug)]
@@ -45,6 +47,26 @@ pub struct PlannerTask {
     pub targets: Vec<String>,
     /// Ids of other tasks in the same output that must complete before this one.
     pub depends_on: Vec<String>,
+    /// Canonical symbol/function name this task implements (e.g.
+    /// `fibonacci`), distinct from `name`: `name` identifies the task for
+    /// dependency references, `function_name` is what downstream teams
+    /// should actually call the thing they write.
+    ///
+    /// Required (and validated non-blank) for [`PlannerOutputKind::Task`]
+    /// and [`PlannerOutputKind::Plan`] output, same as `name` — see `name`'s
+    /// doc for why `Plan` needs it too. `#[serde(default)]` stays in place
+    /// because `work` task schemas carry no `function_name` field at all.
+    #[serde(default)]
+    pub function_name: String,
+    /// Per-worker-role target file paths for this task, decided once by the
+    /// planner instead of each downstream team independently deriving its
+    /// own target from `name` — see [`RoleTarget`].
+    ///
+    /// Required (and validated non-empty, with every entry's `role` and
+    /// `file_path` non-blank) for [`PlannerOutputKind::Task`] and
+    /// [`PlannerOutputKind::Plan`] output, same as `name`.
+    #[serde(default)]
+    pub role_targets: Vec<RoleTarget>,
 }
 
 /// Whether a [`NodeKind::Plan`] parent's output's tasks become `Work`
@@ -107,6 +129,14 @@ pub enum PlannerValidationError {
     /// whitespace-only) name. `kind: "work"` tasks are exempt: they never
     /// become a terminal task row, so they carry no `name` at all.
     EmptyName(String),
+    /// A `kind: "task"` or `kind: "plan"` task has an empty (or
+    /// whitespace-only) `function_name`. Exempt for the same reason as
+    /// `EmptyName`.
+    EmptyFunctionName(String),
+    /// A `kind: "task"` or `kind: "plan"` task has no `role_targets` entries,
+    /// or one whose `role` or `file_path` is empty (or whitespace-only).
+    /// Exempt for the same reason as `EmptyName`.
+    EmptyRoleTargets(String),
     /// A work task does not declare any concrete target files.
     EmptyTargets(String),
     /// A task lists its own id in `depends_on`.
@@ -144,6 +174,12 @@ impl std::fmt::Display for PlannerValidationError {
             }
             PlannerValidationError::EmptyName(id) => {
                 write!(f, "empty name for task: {id}")
+            }
+            PlannerValidationError::EmptyFunctionName(id) => {
+                write!(f, "empty function_name for task: {id}")
+            }
+            PlannerValidationError::EmptyRoleTargets(id) => {
+                write!(f, "empty or invalid role_targets for task: {id}")
             }
             PlannerValidationError::EmptyTargets(id) => {
                 write!(f, "empty targets for task: {id}")
@@ -211,6 +247,18 @@ impl<'a> PlannerOutputProcessor<'a> {
             }
             if output.kind != PlannerOutputKind::Work && task.name.trim().is_empty() {
                 return Err(PlannerValidationError::EmptyName(task.id.clone()));
+            }
+            if output.kind != PlannerOutputKind::Work && task.function_name.trim().is_empty() {
+                return Err(PlannerValidationError::EmptyFunctionName(task.id.clone()));
+            }
+            if output.kind != PlannerOutputKind::Work
+                && (task.role_targets.is_empty()
+                    || task
+                        .role_targets
+                        .iter()
+                        .any(|rt| rt.role.trim().is_empty() || rt.file_path.trim().is_empty()))
+            {
+                return Err(PlannerValidationError::EmptyRoleTargets(task.id.clone()));
             }
             if output.kind == PlannerOutputKind::Work {
                 if task.targets.is_empty() || task.targets.iter().any(|t| t.trim().is_empty()) {
@@ -283,6 +331,8 @@ impl<'a> PlannerOutputProcessor<'a> {
                             id: task.id,
                             objective: task.objective,
                             name: task.name,
+                            function_name: task.function_name,
+                            role_targets: task.role_targets,
                             depends_on: task.depends_on,
                         })
                         .collect(),

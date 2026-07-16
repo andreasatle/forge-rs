@@ -39,6 +39,19 @@ pub(super) fn planner_validation_feedback(error: &PlannerValidationError) -> Str
                  symbol or concept identifier, not a file path. Add a name to task '{id}'."
             )
         }
+        PlannerValidationError::EmptyFunctionName(id) => {
+            format!(
+                "{error}. Every `kind: \"task\"` task must have a non-empty `function_name` — \
+                 the canonical symbol this task implements. Add a function_name to task '{id}'."
+            )
+        }
+        PlannerValidationError::EmptyRoleTargets(id) => {
+            format!(
+                "{error}. Every `kind: \"task\"` task must declare at least one `role_targets` \
+                 entry, each with a non-empty `role` and `file_path`. Add role_targets to task \
+                 '{id}'."
+            )
+        }
         PlannerValidationError::EmptyTargets(id) => {
             format!(
                 "{error}. Every task must declare at least one concrete target file. \

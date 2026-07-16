@@ -75,5 +75,5 @@ pub use request::RunRequest;
 pub use state::SchedulerState;
 pub use types::{
     IntegrationFailure, IntegrationOutput, NodeFailure, NodeRequest, PlanOutput, PlannerTaskOutput,
-    RecoveryAction, WorkOutput,
+    RecoveryAction, RoleTarget, WorkOutput,
 };

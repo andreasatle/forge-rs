@@ -323,7 +323,7 @@ fn northstar_section_appears_in_plan_node_prompt_when_configured() {
     let temp = TempDir::new("northstar-plan");
     let view = make_artifact_view(&temp, "main.py", "def f():\n    pass\n");
 
-    let plan = r#"{"kind":"plan","tasks":[{"id":"t1","objective":"decompose the CLI work","name":"cli_work","depends_on":[]}]}"#;
+    let plan = r#"{"kind":"plan","tasks":[{"id":"t1","objective":"decompose the CLI work","name":"cli_work","function_name":"cli_work","role_targets":[{"role":"implementer","file_path":"cli_work"}],"depends_on":[]}]}"#;
     let provider = RecordingProvider::from_strs(&[
         plan,
         r#"{"status":"accepted","content":"plan looks good"}"#,
@@ -499,7 +499,7 @@ fn language_plugin_is_absent_from_plan_node_prompt_even_with_target_files() {
     let temp = TempDir::new("plugin-prompt-plan");
     let view = make_artifact_view(&temp, "main.py", "def f():\n    pass\n");
 
-    let plan = r#"{"kind":"plan","tasks":[{"id":"t1","objective":"re-plan main.py","name":"main","depends_on":[]}]}"#;
+    let plan = r#"{"kind":"plan","tasks":[{"id":"t1","objective":"re-plan main.py","name":"main","function_name":"main","role_targets":[{"role":"implementer","file_path":"main"}],"depends_on":[]}]}"#;
     let provider = RecordingProvider::from_strs(&[
         plan,
         r#"{"status":"accepted","content":"plan looks good"}"#,

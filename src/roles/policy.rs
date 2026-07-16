@@ -91,31 +91,34 @@ ws ::= ([ \t\n] ws)?"#;
 /// must assign every such task to one of the adapter's configured worker
 /// roles.
 ///
-/// `kind: "plan"` tasks additionally require `name`, matching `kind: "task"`
-/// below: a single-task `"plan"` output collapses into a terminal task row
-/// (see [`crate::node_runner::planner::PlannerOutputProcessor::into_plan`]),
-/// so any task in a `"plan"` batch may end up needing a name — the schema
-/// asks for it unconditionally rather than only when the batch happens to
+/// `kind: "plan"` tasks additionally require `name`, `function_name`, and
+/// `role_targets`, matching `kind: "task"` below: a single-task `"plan"`
+/// output collapses into a terminal task row (see
+/// [`crate::node_runner::planner::PlannerOutputProcessor::into_plan`]), so
+/// any task in a `"plan"` batch may end up needing them — the schema asks
+/// for them unconditionally rather than only when the batch happens to
 /// contain just one task. `kind: "work"` tasks never become a terminal task
-/// row, so they carry no `name` field.
+/// row, so they carry none of these fields.
 ///
 /// Also accepts a third top-level `kind`: `"task"`, whose tasks are pure
 /// planner intent (see [`crate::node_runner::planner::PlannerOutputKind::Task`])
 /// and use a distinct, narrower task-record shape —
-/// `{"id":...,"objective":...,"name":...,"depends_on":[...]}` — with no
-/// `operation`, `role`, or `targets`. Unlike `work`/`plan`, `kind: "task"`
-/// must be stated explicitly; it has no default.
+/// `{"id":...,"objective":...,"name":...,"function_name":...,"role_targets":[...],"depends_on":[...]}`
+/// — with no `operation`, `role`, or `targets`. Unlike `work`/`plan`,
+/// `kind: "task"` must be stated explicitly; it has no default.
 pub(crate) const PLANNER_GBNF_WITH_ROLES: &str = r#"root ::= work-output | plan-output | task-output
 work-output ::= "{" ws ("\"kind\"" ws ":" ws "\"work\"" ws "," ws)? "\"tasks\"" ws ":" ws "[" ws work-task (ws "," ws work-task)* ws "]" ws "}"
 plan-output ::= "{" ws "\"kind\"" ws ":" ws "\"plan\"" ws "," ws "\"tasks\"" ws ":" ws "[" ws plan-task (ws "," ws plan-task)* ws "]" ws "}"
 work-task ::= "{" ws "\"id\"" ws ":" ws string ws "," ws "\"objective\"" ws ":" ws string ws "," ws "\"operation\"" ws ":" ws operation ws "," ws role-field ws "," ws "\"targets\"" ws ":" ws string-array ws "," ws "\"depends_on\"" ws ":" ws string-array ws "}" ws
-plan-task ::= "{" ws "\"id\"" ws ":" ws string ws "," ws "\"objective\"" ws ":" ws string ws "," ws "\"name\"" ws ":" ws string ws "," ws "\"operation\"" ws ":" ws operation ws "," ws role-field ws "," ws "\"targets\"" ws ":" ws string-array ws "," ws "\"depends_on\"" ws ":" ws string-array ws "}" ws
+plan-task ::= "{" ws "\"id\"" ws ":" ws string ws "," ws "\"objective\"" ws ":" ws string ws "," ws "\"name\"" ws ":" ws string ws "," ws "\"function_name\"" ws ":" ws string ws "," ws "\"role_targets\"" ws ":" ws role-target-array ws "," ws "\"operation\"" ws ":" ws operation ws "," ws role-field ws "," ws "\"targets\"" ws ":" ws string-array ws "," ws "\"depends_on\"" ws ":" ws string-array ws "}" ws
 operation ::= "\"create\"" | "\"modify\"" | "\"delete\""
 role-field ::= "\"role\"" ws ":" ws string
 string-array ::= "[" ws (string (ws "," ws string)*)? ws "]" ws
+role-target ::= "{" ws "\"role\"" ws ":" ws string ws "," ws "\"file_path\"" ws ":" ws string ws "}" ws
+role-target-array ::= "[" ws role-target (ws "," ws role-target)* ws "]" ws
 
 task-output ::= "{" ws "\"kind\"" ws ":" ws "\"task\"" ws "," ws "\"tasks\"" ws ":" ws "[" ws task-record (ws "," ws task-record)* ws "]" ws "}"
-task-record ::= "{" ws "\"id\"" ws ":" ws string ws "," ws "\"objective\"" ws ":" ws string ws "," ws "\"name\"" ws ":" ws string ws "," ws "\"depends_on\"" ws ":" ws string-array ws "}" ws
+task-record ::= "{" ws "\"id\"" ws ":" ws string ws "," ws "\"objective\"" ws ":" ws string ws "," ws "\"name\"" ws ":" ws string ws "," ws "\"function_name\"" ws ":" ws string ws "," ws "\"role_targets\"" ws ":" ws role-target-array ws "," ws "\"depends_on\"" ws ":" ws string-array ws "}" ws
 
 string ::=
   "\"" (
@@ -133,16 +136,19 @@ ws ::= ([ \t\n] ws)?"#;
 /// this grammar at all.
 ///
 /// Per-task shape otherwise matches [`PLANNER_GBNF_WITH_ROLES`], minus the
-/// `role` field — including `plan-task` requiring `name`, for the same
-/// terminal-short-circuit reason documented there.
+/// `role` field — including `plan-task` requiring `name`, `function_name`,
+/// and `role_targets`, for the same terminal-short-circuit reason documented
+/// there.
 pub(crate) const PLANNER_GBNF_NO_WORK: &str = r#"root ::= plan-output | task-output
 plan-output ::= "{" ws "\"kind\"" ws ":" ws "\"plan\"" ws "," ws "\"tasks\"" ws ":" ws "[" ws plan-task (ws "," ws plan-task)* ws "]" ws "}"
-plan-task ::= "{" ws "\"id\"" ws ":" ws string ws "," ws "\"objective\"" ws ":" ws string ws "," ws "\"name\"" ws ":" ws string ws "," ws "\"operation\"" ws ":" ws operation ws "," ws "\"targets\"" ws ":" ws string-array ws "," ws "\"depends_on\"" ws ":" ws string-array ws "}" ws
+plan-task ::= "{" ws "\"id\"" ws ":" ws string ws "," ws "\"objective\"" ws ":" ws string ws "," ws "\"name\"" ws ":" ws string ws "," ws "\"function_name\"" ws ":" ws string ws "," ws "\"role_targets\"" ws ":" ws role-target-array ws "," ws "\"operation\"" ws ":" ws operation ws "," ws "\"targets\"" ws ":" ws string-array ws "," ws "\"depends_on\"" ws ":" ws string-array ws "}" ws
 operation ::= "\"create\"" | "\"modify\"" | "\"delete\""
 string-array ::= "[" ws (string (ws "," ws string)*)? ws "]" ws
+role-target ::= "{" ws "\"role\"" ws ":" ws string ws "," ws "\"file_path\"" ws ":" ws string ws "}" ws
+role-target-array ::= "[" ws role-target (ws "," ws role-target)* ws "]" ws
 
 task-output ::= "{" ws "\"kind\"" ws ":" ws "\"task\"" ws "," ws "\"tasks\"" ws ":" ws "[" ws task-record (ws "," ws task-record)* ws "]" ws "}"
-task-record ::= "{" ws "\"id\"" ws ":" ws string ws "," ws "\"objective\"" ws ":" ws string ws "," ws "\"name\"" ws ":" ws string ws "," ws "\"depends_on\"" ws ":" ws string-array ws "}" ws
+task-record ::= "{" ws "\"id\"" ws ":" ws string ws "," ws "\"objective\"" ws ":" ws string ws "," ws "\"name\"" ws ":" ws string ws "," ws "\"function_name\"" ws ":" ws string ws "," ws "\"role_targets\"" ws ":" ws role-target-array ws "," ws "\"depends_on\"" ws ":" ws string-array ws "}" ws
 
 string ::=
   "\"" (
@@ -234,11 +240,13 @@ pub(crate) const PLANNER_PROTOCOL_FOOTER_WITH_OPERATION_AND_ROLES: &str = "# Pla
 \n\
 **When `kind` is \"plan\":** every task becomes a further planning node instead of a work node.\n\
 - `targets` may be empty.\n\
-- Each task additionally requires `name` — a bare symbol or concept identifier (e.g. \"fibonacci\"), not a file path or location.\n\
+- Each task additionally requires `name`, `function_name`, and `role_targets` (see below).\n\
 \n\
 **When `kind` is \"task\":** `kind` must be stated explicitly.\n\
-- Each task requires only `id`, `objective`, `name`, and `depends_on` — no `operation`, `role`, or `targets`.\n\
+- Each task requires only `id`, `objective`, `name`, `function_name`, `role_targets`, and `depends_on` — no `operation`, `role`, or `targets`.\n\
 - `name` must be a bare symbol or concept identifier (e.g. \"fibonacci\"), not a file path or location.\n\
+- `function_name` is the canonical symbol this task implements (e.g. \"fibonacci\").\n\
+- `role_targets` is a non-empty array of `{\"role\":..., \"file_path\":...}` entries, one per worker role that will act on this task (e.g. one entry naming the implementer's source file, one naming the tester's test file) — assign the exact file path each role should treat as its own target, using that role's file-naming convention from context.\n\
 \n\
 - All tasks in one PlannerOutput share the same kind — never mix kinds in one response.";
 
@@ -252,13 +260,16 @@ pub(crate) const PLANNER_PROTOCOL_FOOTER_WITH_OPERATION_NO_WORK: &str = "# Plann
 - `tasks` must be a non-empty array.\n\
 - Required top-level `kind` field: \"plan\" or \"task\" — this adapter defines no worker roles, so `kind: \"work\"` is not available.\n\
 \n\
-**When `kind` is \"plan\":** each task requires `id`, `objective`, `name`, `operation`, `targets`, and `depends_on`.\n\
+**When `kind` is \"plan\":** each task requires `id`, `objective`, `name`, `function_name`, `role_targets`, `operation`, `targets`, and `depends_on`.\n\
 - `operation` must be \"create\", \"modify\", or \"delete\".\n\
 - `targets` may be empty, since the task escalates to further planning instead of naming concrete files yet.\n\
 - `name` must be a bare symbol or concept identifier (e.g. \"fibonacci\"), not a file path or location.\n\
+- `function_name` and `role_targets` follow the same rules described for `kind: \"task\"` below.\n\
 \n\
-**When `kind` is \"task\":** each task requires only `id`, `objective`, `name`, and `depends_on` — no `operation` or `targets`.\n\
+**When `kind` is \"task\":** each task requires only `id`, `objective`, `name`, `function_name`, `role_targets`, and `depends_on` — no `operation` or `targets`.\n\
 - `name` must be a bare symbol or concept identifier (e.g. \"fibonacci\"), not a file path or location.\n\
+- `function_name` is the canonical symbol this task implements (e.g. \"fibonacci\").\n\
+- `role_targets` is a non-empty array of `{\"role\":..., \"file_path\":...}` entries, one per worker role that will act on this task (e.g. one entry naming the implementer's source file, one naming the tester's test file) — assign the exact file path each role should treat as its own target, using that role's file-naming convention from context.\n\
 \n\
 - All tasks in one PlannerOutput share the same kind — never mix kinds in one response.";
 

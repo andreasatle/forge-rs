@@ -220,6 +220,8 @@ fn plan_task_output_marks_integrating_and_emits_integrate_planner_tasks() {
                     id: "t1".to_string(),
                     objective: "decompose alpha".to_string(),
                     name: String::new(),
+                    function_name: String::new(),
+                    role_targets: vec![],
                     depends_on: vec![],
                 }],
             },
