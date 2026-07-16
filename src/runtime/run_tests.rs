@@ -1,8 +1,6 @@
 use super::*;
 use crate::artifacts::Artifact;
-use crate::config::{
-    ArtifactConfig, ProviderBackend, ProviderConfig, ProviderTierConfig, UnmanagedProviderConfig,
-};
+use crate::config::{ArtifactConfig, ProviderConfig, ProviderTierConfig, UnmanagedProviderConfig};
 use crate::machines::scheduler::{SchedulerTerminalOutput, run_scheduler_with_telemetry};
 use crate::runtime::ProviderRunMetadata;
 use crate::runtime::provider_stack::ResolvedProviderStack;
@@ -41,7 +39,6 @@ fn unmanaged_provider(base_url: &str, model: &str, n_predict: usize) -> Provider
             base_url: base_url.to_string(),
             model: model.to_string(),
             n_predict,
-            backend: ProviderBackend::LlamaCpp,
             parallel: 1,
         }),
         strong: None,
@@ -762,14 +759,12 @@ fn run_config_has_strong_tier_true_when_provider_strong_is_some() {
             base_url: "http://localhost:8080".to_string(),
             model: "cheap".to_string(),
             n_predict: 512,
-            backend: ProviderBackend::LlamaCpp,
             parallel: 1,
         }),
         strong: Some(ProviderTierConfig::Unmanaged(UnmanagedProviderConfig {
             base_url: "http://localhost:8081".to_string(),
             model: "strong".to_string(),
             n_predict: 1024,
-            backend: ProviderBackend::LlamaCpp,
             parallel: 1,
         })),
         timeout_seconds: 120,

@@ -6,9 +6,6 @@ pub enum StructuredOutput {
     /// Request generic JSON-formatted output, with no schema constraint.
     Json,
     /// Request output constrained by the given GBNF grammar.
-    ///
-    /// Providers that do not support grammar-constrained decoding (e.g.
-    /// Ollama) fall back to generic JSON mode.
     Grammar(String),
 }
 

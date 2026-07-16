@@ -5,8 +5,6 @@ use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
-use crate::config::ProviderBackend;
-
 /// Identity and paths for a single forge run.
 pub struct RunInfo {
     /// Unique human-readable run identifier (e.g. `2026-06-22-15-31-42`).
@@ -30,8 +28,6 @@ pub struct ProviderTierMetadata {
     pub n_predict: usize,
     /// HTTP timeout in seconds for this tier.
     pub timeout_seconds: u64,
-    /// Which HTTP API dialect `base_url` speaks for this tier.
-    pub backend: ProviderBackend,
     /// Number of concurrent requests this tier's server can serve at once.
     /// Sizes this tier's [`crate::runtime::ResourceManager`] permit pool.
     pub parallel: usize,

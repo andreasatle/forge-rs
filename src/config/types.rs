@@ -279,30 +279,12 @@ pub struct UnmanagedProviderConfig {
     pub model: String,
     /// Maximum tokens to predict per completion call.
     pub n_predict: usize,
-    /// Which HTTP API dialect `base_url` speaks. Defaults to `llama_cpp`,
-    /// the dialect every unmanaged config used before `ollama` existed.
-    #[serde(default)]
-    pub backend: ProviderBackend,
     /// Number of concurrent requests this already-running provider server
     /// can safely serve at once. Sizes this tier's
     /// [`crate::runtime::ResourceManager`] permit pool. Defaults to 1,
     /// matching prior single-request behavior.
     #[serde(default = "default_parallel")]
     pub parallel: usize,
-}
-
-/// HTTP API dialect an unmanaged (or managed) provider server speaks.
-///
-/// Selects which [`crate::providers::ProviderClient`] implementation talks
-/// to a tier's `base_url`; the two servers are not wire-compatible.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ProviderBackend {
-    /// llama.cpp `llama-server`'s `/completion` API.
-    #[default]
-    LlamaCpp,
-    /// Ollama's `/api/generate` API.
-    Ollama,
 }
 
 /// Managed local provider server configuration.

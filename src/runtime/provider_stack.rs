@@ -8,10 +8,9 @@ use std::error::Error;
 use std::path::Path;
 
 use crate::config::{
-    ManagedLlamaCppModelConfig, ManagedProviderConfig, ProviderBackend, ProviderConfig,
-    ProviderTierConfig,
+    ManagedLlamaCppModelConfig, ManagedProviderConfig, ProviderConfig, ProviderTierConfig,
 };
-use crate::providers::{LlamaCppProvider, OllamaProvider, ProviderClient, RetryingProvider};
+use crate::providers::{LlamaCppProvider, ProviderClient, RetryingProvider};
 use crate::runtime::managed_provider::{
     ManagedLlamaCppRuntimeConfig, ManagedProviderServer, resolve_llama_cpp_config,
 };
@@ -32,9 +31,7 @@ pub struct ResolvedProviderStack {
     _servers: Vec<ManagedProviderServer>,
 }
 
-/// Build the [`ProviderClient`] a tier's metadata dictates, dispatching on
-/// [`ProviderTierMetadata::backend`] since llama.cpp and Ollama speak
-/// different HTTP APIs against the same `base_url`/`model` shape.
+/// Build the [`ProviderClient`] for a tier.
 ///
 /// Wraps the raw client in a [`ResourceGatedProvider`] sized to the tier's
 /// own `parallel` count, below [`RetryingProvider`] in the stack (see
@@ -42,16 +39,10 @@ pub struct ResolvedProviderStack {
 /// not the whole node dispatch — holds a permit.
 fn build_tier_client(tier: &ProviderTierMetadata) -> Box<dyn ProviderClient + Send + Sync> {
     let resource_manager = ResourceManager::new(tier.parallel);
-    match tier.backend {
-        ProviderBackend::LlamaCpp => Box::new(ResourceGatedProvider::new(
-            LlamaCppProvider::new(&tier.base_url, tier.timeout_seconds),
-            resource_manager,
-        )),
-        ProviderBackend::Ollama => Box::new(ResourceGatedProvider::new(
-            OllamaProvider::new(&tier.base_url, &tier.model, tier.timeout_seconds),
-            resource_manager,
-        )),
-    }
+    Box::new(ResourceGatedProvider::new(
+        LlamaCppProvider::new(&tier.base_url, tier.timeout_seconds),
+        resource_manager,
+    ))
 }
 
 impl ResolvedProviderStack {
@@ -126,7 +117,6 @@ impl<'a> ProviderStackBuilder<'a> {
                 model: config.model.clone(),
                 n_predict: config.n_predict,
                 timeout_seconds,
-                backend: config.backend,
                 parallel: config.parallel,
                 managed: false,
                 managed_server: None,
@@ -138,7 +128,6 @@ impl<'a> ProviderStackBuilder<'a> {
                     model: config.model.identity().to_string(),
                     n_predict: managed.llama_cpp.n_predict,
                     timeout_seconds,
-                    backend: ProviderBackend::LlamaCpp,
                     parallel: config.parallel,
                     managed: true,
                     managed_server: Some(self.managed_server_metadata(&config)),
@@ -218,7 +207,6 @@ mod tests {
                 base_url: base_url.to_string(),
                 model: model.to_string(),
                 n_predict,
-                backend: ProviderBackend::LlamaCpp,
                 parallel: 1,
             }),
             strong: None,
@@ -268,14 +256,12 @@ mod tests {
                 base_url: "http://localhost:8080".to_string(),
                 model: "cheap-model".to_string(),
                 n_predict: 512,
-                backend: ProviderBackend::LlamaCpp,
                 parallel: 1,
             }),
             strong: Some(ProviderTierConfig::Unmanaged(UnmanagedProviderConfig {
                 base_url: "http://localhost:8081".to_string(),
                 model: "strong-model".to_string(),
                 n_predict: 1024,
-                backend: ProviderBackend::LlamaCpp,
                 parallel: 1,
             })),
             timeout_seconds: 120,
@@ -292,7 +278,6 @@ mod tests {
                     model: "cheap-model".to_string(),
                     n_predict: 512,
                     timeout_seconds: 120,
-                    backend: ProviderBackend::LlamaCpp,
                     parallel: 1,
                     managed: false,
                     managed_server: None,
@@ -302,7 +287,6 @@ mod tests {
                     model: "strong-model".to_string(),
                     n_predict: 1024,
                     timeout_seconds: 180,
-                    backend: ProviderBackend::LlamaCpp,
                     parallel: 1,
                     managed: false,
                     managed_server: None,
@@ -335,7 +319,6 @@ mod tests {
             model: "models/cheap.gguf".to_string(),
             n_predict: 512,
             timeout_seconds: 120,
-            backend: ProviderBackend::LlamaCpp,
             parallel: 1,
             managed: true,
             managed_server: Some(ManagedProviderServerMetadata {
@@ -363,7 +346,6 @@ mod tests {
                 base_url: "http://localhost:8080".to_string(),
                 model: "models/cheap.gguf".to_string(),
                 n_predict: 512,
-                backend: ProviderBackend::LlamaCpp,
                 parallel: 1,
             }),
             strong: Some(managed_tier(
@@ -389,7 +371,6 @@ mod tests {
                     model: "models/cheap.gguf".to_string(),
                     n_predict: 512,
                     timeout_seconds: 120,
-                    backend: ProviderBackend::LlamaCpp,
                     parallel: 1,
                     managed: false,
                     managed_server: None,
@@ -399,7 +380,6 @@ mod tests {
                     model: "models/strong.gguf".to_string(),
                     n_predict: 1024,
                     timeout_seconds: 180,
-                    backend: ProviderBackend::LlamaCpp,
                     parallel: 1,
                     managed: true,
                     managed_server: Some(ManagedProviderServerMetadata {

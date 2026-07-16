@@ -32,7 +32,7 @@ fn commit_count(repo_path: &PathBuf, branch: &str) -> usize {
 
 fn make_forge_config(repo_path: &Path, telemetry_path: &Path) -> ForgeConfig {
     use crate::config::{
-        ArtifactConfig, ProviderBackend, ProviderConfig, ProviderTierConfig, TelemetryConfig,
+        ArtifactConfig, ProviderConfig, ProviderTierConfig, TelemetryConfig,
         UnmanagedProviderConfig,
     };
     ForgeConfig {
@@ -48,7 +48,6 @@ fn make_forge_config(repo_path: &Path, telemetry_path: &Path) -> ForgeConfig {
                 base_url: "http://localhost:8080".to_string(),
                 model: "llama-test".to_string(),
                 n_predict: 512,
-                backend: ProviderBackend::LlamaCpp,
                 parallel: 1,
             }),
             strong: None,
@@ -128,7 +127,7 @@ fn make_forge_config_with_language(
     language: &str,
 ) -> ForgeConfig {
     use crate::config::{
-        ArtifactConfig, ProviderBackend, ProviderConfig, ProviderTierConfig, TelemetryConfig,
+        ArtifactConfig, ProviderConfig, ProviderTierConfig, TelemetryConfig,
         UnmanagedProviderConfig,
     };
     std::fs::create_dir_all(dir).unwrap();
@@ -146,7 +145,6 @@ fn make_forge_config_with_language(
                 base_url: "http://localhost:8080".to_string(),
                 model: "llama-test".to_string(),
                 n_predict: 512,
-                backend: ProviderBackend::LlamaCpp,
                 parallel: 1,
             }),
             strong: None,
@@ -387,7 +385,7 @@ fn reset_creates_configured_branch() {
     // Use a non-default branch name to prove reset uses the config, not "main".
     let config = {
         use crate::config::{
-            ArtifactConfig, ProviderBackend, ProviderConfig, ProviderTierConfig, TelemetryConfig,
+            ArtifactConfig, ProviderConfig, ProviderTierConfig, TelemetryConfig,
             UnmanagedProviderConfig,
         };
         ForgeConfig {
@@ -403,7 +401,6 @@ fn reset_creates_configured_branch() {
                     base_url: "http://localhost:8080".to_string(),
                     model: "llama-test".to_string(),
                     n_predict: 512,
-                    backend: ProviderBackend::LlamaCpp,
                     parallel: 1,
                 }),
                 strong: None,

@@ -4,6 +4,6 @@ mod team_triggers;
 mod types;
 pub use types::{
     ArtifactConfig, ForgeConfig, ManagedLlamaCppConfig, ManagedLlamaCppModelConfig,
-    ManagedProviderConfig, ProviderBackend, ProviderConfig, ProviderTierConfig, TeamConfig,
-    TelemetryConfig, Trigger, UnmanagedProviderConfig, ValidationConfig,
+    ManagedProviderConfig, ProviderConfig, ProviderTierConfig, TeamConfig, TelemetryConfig,
+    Trigger, UnmanagedProviderConfig, ValidationConfig,
 };

@@ -6,13 +6,11 @@
 pub mod client;
 mod http_error;
 pub mod llama_cpp;
-pub mod ollama;
 pub mod retry;
 pub mod types;
 
 pub use client::ProviderClient;
 pub use llama_cpp::LlamaCppProvider;
-pub use ollama::OllamaProvider;
 pub use retry::RetryingProvider;
 pub use types::{
     ProviderError, ProviderErrorKind, ProviderRequest, ProviderResponse, StructuredOutput,

@@ -305,12 +305,12 @@ and neither implies the other:
   through that tier — including each individual retry attempt, not just the
   first — blocks until it acquires a permit. For a managed llama.cpp server,
   `parallel` is also passed through as `llama-server --parallel`, so the
-  config value and the server's own concurrency stay in lockstep. For
-  `backend: ollama`, which is unmanaged-only, `parallel` only bounds forge's
-  own client-side concurrency — it has no path to the server's real
-  concurrency ceiling (`OLLAMA_NUM_PARALLEL`, set independently when the
-  Ollama process starts), so a mismatch doesn't error, it just means excess
-  requests queue server-side instead of running truly in parallel.
+  config value and the server's own concurrency stay in lockstep. For an
+  unmanaged tier, `parallel` only bounds forge's own client-side
+  concurrency — forge doesn't own that process, so it has no path to the
+  server's real concurrency ceiling, and a mismatch doesn't error, it just
+  means excess requests queue server-side instead of running truly in
+  parallel.
 
 Dispatch is **opportunistic, not wave-gated**: as soon as any in-flight node
 resolves and frees a slot below `dispatch_cap`, the scheduler re-scans and
@@ -700,7 +700,6 @@ When `validation` is absent, all changes pass automatically.
 Implemented providers:
 
 - `LlamaCppProvider` — calls a local llama-server `/completion` endpoint. HTTP timeout is enforced per-request.
-- `OllamaProvider` — calls a local Ollama `/api/generate` endpoint. Selected per unmanaged tier via `backend: ollama` (default `llama_cpp`); the two dialects are not wire-compatible, so `backend` picks which `ProviderClient` implementation talks to that tier's `base_url`.
 - `RetryingProvider` — wraps any provider and retries on `Retryable` errors.
 
 `HttpProviderErrorClassifier` centralizes HTTP status and transport error
