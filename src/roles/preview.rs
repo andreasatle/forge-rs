@@ -1,7 +1,7 @@
 //! Renders the static prompt template for a role/node-kind combination.
 //!
 //! Reuses [`build_role_prompt`] — the same composition path
-//! [`ProviderRoleRunner::run_role`](super::runner::ProviderRoleRunner::run_role)
+//! [`RoleRunner::run_role`](super::runner::RoleRunner::run_role)
 //! uses — so the Identity/Context/Instructions/Constraints and tool-section
 //! content is rendered verbatim from the loaded adapter and plugin YAML.
 //! Fields a real run only fills in at dispatch time (objective, target file

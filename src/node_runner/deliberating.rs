@@ -266,8 +266,8 @@ impl<C: ProviderClient, S: ProviderClient> NodeRunner for DeliberatingNodeRunner
 
 impl<C, S> DeliberatingNodeRunner<C, S> {
     /// Stamp the plan-derived metadata and the correct validation plan onto
-    /// every `Work` [`NodeRequest`] in `plan`, based on each child's worker
-    /// role.
+    /// every `Work` [`NodeRequest`](crate::machines::scheduler::NodeRequest)
+    /// in `plan`, based on each child's worker role.
     ///
     /// A `Decomposition` parent's children are themselves `Decomposition` or
     /// `Plan` nodes, so this is a no-op for them — they carry no worker role

@@ -7,4 +7,4 @@ cargo test
 echo "==> cargo clippy"
 cargo clippy -- -D warnings
 echo "==> cargo doc"
-cargo doc --no-deps
+RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --document-private-items
