@@ -28,13 +28,7 @@ pub(crate) fn run_with_provider<P: ProviderClient>(
         telemetry: &node_context,
     };
     let (output, _) = run_machine_with_telemetry(machine, prepared.initial_state, &node_context);
-    map_output(
-        output,
-        request,
-        context_config.required_test_targets_fn.as_ref(),
-        &policy.worker_role_descriptions,
-        telemetry,
-    )
+    map_output(output, request, &policy.worker_role_descriptions, telemetry)
 }
 
 /// Stamps `node_id` and `attempt` onto `StateEntered`, `EventReceived`, and

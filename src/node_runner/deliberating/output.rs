@@ -2,7 +2,6 @@
 
 use crate::machines::deliberation::DeliberationTerminalOutput;
 use crate::machines::scheduler::{FailureKind, NodeFailure, NodeKind, RecoveryAction, WorkOutput};
-use crate::node_runner::TestTargetsFn;
 use crate::node_runner::planner::{PlannerOutputProcessor, PlannerValidationError};
 use crate::telemetry::{TelemetryEvent, TelemetryRecord, TelemetrySink};
 
@@ -12,7 +11,6 @@ use crate::node_runner::types::{NodeRunRequest, NodeRunResult, NodeRunWorkResult
 pub(crate) fn map_output(
     output: DeliberationTerminalOutput,
     request: NodeRunRequest,
-    required_test_targets_fn: &TestTargetsFn,
     available_worker_roles: &[(String, String)],
     telemetry: &dyn TelemetrySink,
 ) -> NodeRunResult {
@@ -23,7 +21,6 @@ pub(crate) fn map_output(
                 request.team,
                 request.adapter,
                 request.northstar,
-                required_test_targets_fn,
                 available_worker_roles,
                 telemetry,
             ),
@@ -69,11 +66,10 @@ fn map_plan_output(
     team: String,
     adapter: String,
     northstar: String,
-    required_test_targets_fn: &TestTargetsFn,
     available_worker_roles: &[(String, String)],
     telemetry: &dyn TelemetrySink,
 ) -> NodeRunResult {
-    let processor = PlannerOutputProcessor::new(required_test_targets_fn, available_worker_roles);
+    let processor = PlannerOutputProcessor::new(available_worker_roles);
 
     match processor.parse_content(&content) {
         Some(planner_out) => match processor.validate_structure(&planner_out) {

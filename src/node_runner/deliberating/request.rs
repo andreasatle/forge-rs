@@ -1,13 +1,10 @@
 //! Mapping node-run inputs into deliberation state and handler wiring.
 
-use std::sync::Arc;
-
 use crate::machines::deliberation::PlanValidationContext;
 use crate::machines::deliberation::{
     DeliberationRequest, DeliberationState, ProviderBackedDeliberationHandler,
 };
 use crate::machines::scheduler::NodeKind;
-use crate::node_runner::TestTargetsFn;
 use crate::providers::ProviderClient;
 use crate::roles::RolePolicy;
 
@@ -27,11 +24,7 @@ pub(crate) fn prepare_deliberation<'a, P: ProviderClient>(
     policy: &RolePolicy,
     context_config: &DeliberationContextConfig,
 ) -> PreparedDeliberation<'a, P> {
-    let plan_validation_context = build_plan_validation_context(
-        request,
-        Arc::clone(context_config.required_test_targets_fn),
-        policy,
-    );
+    let plan_validation_context = build_plan_validation_context(request, policy);
     let context = build_deliberation_context(request, context_config);
     let initial_state = DeliberationState::Ready {
         request: DeliberationRequest {
@@ -58,12 +51,10 @@ pub(crate) fn prepare_deliberation<'a, P: ProviderClient>(
 
 fn build_plan_validation_context(
     request: &NodeRunRequest,
-    required_test_targets_fn: Arc<TestTargetsFn>,
     policy: &RolePolicy,
 ) -> Option<PlanValidationContext> {
     if matches!(request.kind, NodeKind::Plan) {
         Some(PlanValidationContext {
-            required_test_targets_fn,
             available_worker_roles: policy.worker_role_descriptions.clone(),
         })
     } else {

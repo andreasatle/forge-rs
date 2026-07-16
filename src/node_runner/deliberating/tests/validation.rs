@@ -1,14 +1,4 @@
-use std::sync::Arc;
-
 use super::*;
-
-fn python_test_targets(targets: &[String]) -> Vec<String> {
-    let rules = crate::language::language_spec("python")
-        .expect("python language spec must load")
-        .validation
-        .validation_targets;
-    crate::validation::derive_validation_targets(&rules, targets)
-}
 
 #[test]
 fn artifact_worker_without_tool_update_fails_semantic_validation() {
@@ -137,49 +127,5 @@ fn producer_read_file_does_not_satisfy_critic_read_requirement() {
     assert!(
         matches!(result, NodeRunResult::Failed(_)),
         "node must fail when Critic never reads, even though Producer did"
-    );
-}
-
-#[test]
-fn planner_missing_test_target_sends_revision_feedback_and_retries() {
-    let bad_plan = r#"{"tasks":[{"id":"task-1","objective":"Modify main.py to return the haiku.","operation":"modify","targets":["main.py"],"depends_on":[]}]}"#;
-    let good_plan = r#"{"tasks":[{"id":"task-1","objective":"Modify main.py to return the haiku.","operation":"modify","targets":["main.py"],"depends_on":[]},{"id":"task-2","objective":"Add tests for the main.py haiku behavior.","operation":"modify","targets":["tests/test_main.py"],"depends_on":["task-1"]}]}"#;
-
-    let provider = ScriptedProvider::from_strs(&[
-        bad_plan,  // Plan+Producer attempt 1 — fails test-target validation
-        good_plan, // Plan+Producer attempt 2 (with feedback) — passes
-        r#"{"status":"accepted","content":"plan looks good"}"#, // Plan+Critic
-        r#"{"status":"accepted","content":"plan approved"}"#, // Plan+Referee
-    ]);
-    let runner = DeliberatingNodeRunner::new(&provider, &provider)
-        .with_required_test_targets_fn(Arc::new(python_test_targets));
-    let request = NodeRunRequest {
-        kind: NodeKind::Plan,
-        node_id: NodeId("test-node".to_string()),
-        // Objective does not name a specific file so the fast path does not apply
-        // and the LLM planner is called with the scripted responses.
-        objective: "Print a short haiku about state machines.".to_string(),
-        target_files: vec![],
-        test_plan_context: TestPlanContext::default(),
-        model_tier: ModelTier::Cheap,
-        attempt: 0,
-        artifact_view: None,
-        worker_role: None,
-        work_attempt: None,
-        team: String::new(),
-        adapter: String::new(),
-        northstar: String::new(),
-    };
-    let result = runner.run_node(request, &NoopTelemetry);
-
-    let NodeRunResult::PlanAccepted(plan) = result else {
-        panic!("expected PlanAccepted after planner adds test target");
-    };
-    assert_eq!(plan.children.len(), 2);
-    assert!(
-        plan.children
-            .iter()
-            .any(|child| child.target_files == vec!["tests/test_main.py".to_string()]),
-        "revised plan must include a tests/test_main.py target"
     );
 }

@@ -118,16 +118,6 @@ pub enum PlannerValidationError {
         /// The unknown dependency id that was referenced.
         dep_id: String,
     },
-    /// Test validation is configured, but a code-changing plan has no test target.
-    ///
-    /// Carries the exact test-target paths the adapter's language plugin
-    /// expects for the plan's source targets, so retry feedback can name the
-    /// concrete expected path instead of a generic reminder.
-    MissingTestsForCodeChange {
-        /// Test-target paths the adapter's language plugin expects for the
-        /// plan's source targets.
-        required: Vec<String>,
-    },
     /// The adapter defines worker roles, but a work task was not assigned a
     /// role matching one of them.
     MissingTaskRole {
@@ -164,14 +154,6 @@ impl std::fmt::Display for PlannerValidationError {
             PlannerValidationError::UnknownDependency { task_id, dep_id } => {
                 write!(f, "task {task_id} depends on unknown id: {dep_id}")
             }
-            PlannerValidationError::MissingTestsForCodeChange { required } => {
-                write!(
-                    f,
-                    "planner output changes code but does not include a test-related target; \
-                     expected target path(s): {}",
-                    required.join(", ")
-                )
-            }
             PlannerValidationError::MissingTaskRole { task_id } => {
                 write!(f, "task {task_id} was not assigned a valid worker role")
             }
@@ -180,7 +162,6 @@ impl std::fmt::Display for PlannerValidationError {
 }
 
 pub(crate) struct PlannerOutputProcessor<'a> {
-    required_test_targets_fn: &'a dyn Fn(&[String]) -> Vec<String>,
     /// The adapter's configured worker role name/description pairs. Empty
     /// when the adapter defines no worker roles, in which case task role
     /// assignment is not validated.
@@ -188,12 +169,8 @@ pub(crate) struct PlannerOutputProcessor<'a> {
 }
 
 impl<'a> PlannerOutputProcessor<'a> {
-    pub(crate) fn new(
-        required_test_targets_fn: &'a dyn Fn(&[String]) -> Vec<String>,
-        available_worker_roles: &'a [(String, String)],
-    ) -> Self {
+    pub(crate) fn new(available_worker_roles: &'a [(String, String)]) -> Self {
         Self {
-            required_test_targets_fn,
             available_worker_roles,
         }
     }
@@ -271,39 +248,7 @@ impl<'a> PlannerOutputProcessor<'a> {
     }
 
     pub(crate) fn validate(&self, output: &PlannerOutput) -> Result<(), PlannerValidationError> {
-        self.validate_structure(output)?;
-        if output.kind == PlannerOutputKind::Plan {
-            // Escalated tasks have no concrete files yet, so target-based
-            // validation does not apply until they are decomposed further.
-            return Ok(());
-        }
-        self.validate_tests_required(output)?;
-        Ok(())
-    }
-
-    pub(crate) fn validate_tests_required(
-        &self,
-        output: &PlannerOutput,
-    ) -> Result<(), PlannerValidationError> {
-        let all_plan_targets: Vec<String> = output
-            .tasks
-            .iter()
-            .flat_map(|task| task.targets.iter().cloned())
-            .collect();
-        let required = (self.required_test_targets_fn)(&all_plan_targets);
-        if required.is_empty() {
-            return Ok(());
-        }
-        let plan_target_set: std::collections::HashSet<&str> =
-            all_plan_targets.iter().map(|s| s.as_str()).collect();
-        if required
-            .iter()
-            .any(|r| plan_target_set.contains(r.as_str()))
-        {
-            Ok(())
-        } else {
-            Err(PlannerValidationError::MissingTestsForCodeChange { required })
-        }
+        self.validate_structure(output)
     }
 
     /// Convert a validated [`PlannerOutput`] into a [`PlanOutput`] of child
@@ -367,11 +312,6 @@ impl<'a> PlannerOutputProcessor<'a> {
             tasks: vec![],
         }
     }
-}
-
-#[cfg(test)]
-fn no_required_test_targets(_: &[String]) -> Vec<String> {
-    Vec::new()
 }
 
 #[cfg(test)]

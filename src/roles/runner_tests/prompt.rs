@@ -117,6 +117,44 @@ fn review_contract_renders_for_reviewers_only() {
 }
 
 #[test]
+fn missing_required_test_target_is_never_framed_as_grounds_for_rejection() {
+    // Invariant: source-producing and test-producing work are authored in
+    // parallel by independent teams (e.g. `implement` and `create_test`),
+    // not sequenced within one team's own plan graph. A referee/critic
+    // reviewing a source-only node therefore always sees the adapter's
+    // required test target as "not covered by declared follow-up work" —
+    // that sibling team's node lives in a different graph entirely — and
+    // this must never be rendered as valid grounds for rejecting the node.
+    // Regression for a prompt that told the model "missing tests remain a
+    // valid rejection" whenever no in-graph follow-up node covered the
+    // required test target, which caused referees to reject correct source
+    // changes solely because a sibling team hadn't finished yet.
+    let uncovered_context = TestPlanContext {
+        required_validation_targets: vec!["tests/test_fibonacci.py".to_string()],
+        planned_test_targets: vec![],
+    };
+
+    let mut referee = referee_request("Implement a Fibonacci number generator", "draft", "review");
+    referee.context.target_files = vec!["src/fibonacci.py".to_string()];
+    referee.test_plan_context = uncovered_context;
+
+    let prompt = first_prompt(referee, r#"{"status":"accepted","content":"looks good"}"#);
+
+    assert!(
+        prompt.contains("tests/test_fibonacci.py"),
+        "prompt must still surface the required test target; got:\n{prompt}"
+    );
+    assert!(
+        !prompt.contains("valid rejection"),
+        "prompt must never frame a missing test target as valid rejection grounds; got:\n{prompt}"
+    );
+    assert!(
+        prompt.contains("never grounds for rejecting this node"),
+        "prompt must explicitly say a missing test file is never grounds for rejection; got:\n{prompt}"
+    );
+}
+
+#[test]
 fn worker_role_descriptions_render_for_plan_producer_only() {
     // Invariant: the "Available worker roles" section is built from
     // RolePolicy::worker_role_descriptions and appears only in the

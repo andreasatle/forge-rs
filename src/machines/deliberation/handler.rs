@@ -6,11 +6,8 @@
 //! to the Critic/Referee stages. Workspace context construction, semantic
 //! validation, and telemetry recording are all handled here.
 
-use std::sync::Arc;
-
 use crate::artifacts::{ArtifactError, ArtifactRead, ArtifactView};
 use crate::machines::scheduler::{FailureKind, NodeKind};
-use crate::node_runner::TestTargetsFn;
 use crate::node_runner::WorkAttempt;
 use crate::node_runner::planner::PlannerOutputProcessor;
 use crate::roles::TargetView;
@@ -41,10 +38,6 @@ pub(crate) const TARGET_VIEW_BUDGET: usize = 16 * 1024;
 /// Structured context used to validate planner output for a Plan node.
 #[derive(Clone)]
 pub(crate) struct PlanValidationContext {
-    /// Called with all targets in the plan; returns the test-file paths the
-    /// project adapter requires for the source files found in that list.
-    /// An empty return means no tests are required for this plan.
-    pub(crate) required_test_targets_fn: Arc<TestTargetsFn>,
     /// The adapter's configured worker role name/description pairs. Empty
     /// when the adapter defines no worker roles, in which case task role
     /// assignment is not validated.
@@ -324,10 +317,7 @@ impl<R: RoleRunner> DeliberationHandler<R> {
             .plan_validation_context
             .as_ref()
             .expect("plan_validation_context must be Some when this method is called");
-        let processor = PlannerOutputProcessor::new(
-            context.required_test_targets_fn.as_ref(),
-            &context.available_worker_roles,
-        );
+        let processor = PlannerOutputProcessor::new(&context.available_worker_roles);
 
         let Some(planner_out) = processor.parse_content(content) else {
             return Err(ProducerValidationRetry {

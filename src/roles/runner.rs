@@ -488,11 +488,7 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
             if matches!(request.node_kind, NodeKind::Plan)
                 && matches!(request.role, DeliberationRole::Producer)
             {
-                let no_required_test_targets = |_: &[String]| Vec::new();
-                let processor = PlannerOutputProcessor::new(
-                    &no_required_test_targets,
-                    &self.policy.worker_role_descriptions,
-                );
+                let processor = PlannerOutputProcessor::new(&self.policy.worker_role_descriptions);
                 let planner_schema =
                     planner_protocol_schema_for(!self.policy.worker_role_descriptions.is_empty());
                 // Direct PlannerOutput path: no status/content wrapper.

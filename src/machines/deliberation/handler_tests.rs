@@ -1,6 +1,5 @@
 use std::cell::RefCell;
 use std::collections::VecDeque;
-use std::sync::Arc;
 
 use super::*;
 use crate::engine::{Machine, Transition, run_machine, run_machine_with_telemetry};
@@ -384,7 +383,6 @@ fn handler_with_validation(results: Vec<RoleResult>) -> DeliberationHandler<Scri
         work_attempt: None,
         work_requires_artifact_mutation: false,
         plan_validation_context: Some(PlanValidationContext {
-            required_test_targets_fn: Arc::new(|_| vec![]),
             available_worker_roles: vec![],
         }),
     }
@@ -525,39 +523,6 @@ fn invalid_plan_triggers_revision_feedback() {
             "invalid plan {content:?} must produce PlannerValidationFailure retry"
         );
     }
-}
-
-#[test]
-fn missing_test_target_feedback_names_expected_path() {
-    // Invariant: when a plan changes code without the adapter-required test
-    // target, retry feedback must name the concrete expected path (as
-    // computed by required_test_targets_fn), not just a generic reminder to
-    // "add a test file" — otherwise repeated retries can keep guessing wrong
-    // paths without ever converging.
-    let handler = DeliberationHandler {
-        runner: ScriptedRoleRunner::new(vec![]),
-        artifact_view: None,
-        work_attempt: None,
-        work_requires_artifact_mutation: false,
-        plan_validation_context: Some(PlanValidationContext {
-            required_test_targets_fn: Arc::new(|_| vec!["src/tests/test_fibonacci.py".to_string()]),
-            available_worker_roles: vec![],
-        }),
-    };
-    let content = r#"{"tasks":[{"id":"t1","objective":"implement fibonacci","targets":["src/fibonacci.py"],"depends_on":[]}]}"#;
-
-    let Err(retry) = handler.validate_plan_producer_content(content) else {
-        panic!("plan missing the required test target must be rejected");
-    };
-
-    assert_eq!(retry.failure_kind, FailureKind::PlannerValidationFailure);
-    assert!(
-        retry
-            .feedback_reason
-            .contains("src/tests/test_fibonacci.py"),
-        "feedback must name the concrete expected test-target path; got: {}",
-        retry.feedback_reason
-    );
 }
 
 #[test]

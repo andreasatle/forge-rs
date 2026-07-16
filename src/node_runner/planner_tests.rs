@@ -1,44 +1,27 @@
 use super::*;
 
-fn processor(
-    required_test_targets_fn: &dyn Fn(&[String]) -> Vec<String>,
-) -> PlannerOutputProcessor<'_> {
-    PlannerOutputProcessor::new(required_test_targets_fn, &[])
+fn processor() -> PlannerOutputProcessor<'static> {
+    PlannerOutputProcessor::new(&[])
 }
 
-fn processor_with_roles<'a>(
-    required_test_targets_fn: &'a dyn Fn(&[String]) -> Vec<String>,
-    available_worker_roles: &'a [(String, String)],
-) -> PlannerOutputProcessor<'a> {
-    PlannerOutputProcessor::new(required_test_targets_fn, available_worker_roles)
+fn processor_with_roles(available_worker_roles: &[(String, String)]) -> PlannerOutputProcessor<'_> {
+    PlannerOutputProcessor::new(available_worker_roles)
 }
 
 fn parse_planner_content(content: &str) -> Option<PlannerOutput> {
-    processor(&no_required_test_targets).parse_content(content)
+    processor().parse_content(content)
 }
 
 fn try_parse_planner_response(raw: &str) -> Result<PlannerOutput, String> {
-    processor(&no_required_test_targets).parse_response(raw)
+    processor().parse_response(raw)
 }
 
 fn validate_planner_output(output: &PlannerOutput) -> Result<(), PlannerValidationError> {
-    processor(&no_required_test_targets).validate(output)
-}
-
-fn validate_planner_tests_required(
-    output: &PlannerOutput,
-    required_test_targets_fn: &dyn Fn(&[String]) -> Vec<String>,
-) -> Result<(), PlannerValidationError> {
-    processor(required_test_targets_fn).validate_tests_required(output)
+    processor().validate(output)
 }
 
 fn planner_output_to_plan_output(output: PlannerOutput) -> PlanOutput {
-    processor(&no_required_test_targets).into_plan(
-        output,
-        String::new(),
-        String::new(),
-        String::new(),
-    )
+    processor().into_plan(output, String::new(), String::new(), String::new())
 }
 
 // ── Direct planner response parsing ─────────────────────────────────────────
@@ -240,7 +223,7 @@ fn work_task_missing_role_rejected_when_adapter_defines_worker_roles() {
         kind: PlannerOutputKind::Work,
         tasks: vec![planner_task("task", "do something", &["task.txt"], &[])],
     };
-    let err = processor_with_roles(&no_required_test_targets, &roles)
+    let err = processor_with_roles(&roles)
         .validate(&output)
         .expect_err("task with no role must fail validation when roles are configured");
     assert_eq!(
@@ -261,7 +244,7 @@ fn work_task_with_unknown_role_rejected_when_adapter_defines_worker_roles() {
         tasks: vec![planner_task("task", "do something", &["task.txt"], &[])],
     };
     output.tasks[0].role = Some("nonexistent-role".to_string());
-    let err = processor_with_roles(&no_required_test_targets, &roles)
+    let err = processor_with_roles(&roles)
         .validate(&output)
         .expect_err("task with unrecognized role must fail validation");
     assert_eq!(
@@ -283,9 +266,7 @@ fn work_task_with_valid_role_passes_when_adapter_defines_worker_roles() {
     };
     output.tasks[0].role = Some("implementer".to_string());
     assert!(
-        processor_with_roles(&no_required_test_targets, &roles)
-            .validate(&output)
-            .is_ok(),
+        processor_with_roles(&roles).validate(&output).is_ok(),
         "task with a valid role must pass validation"
     );
 }
@@ -317,9 +298,7 @@ fn plan_kind_task_missing_role_skips_role_validation() {
     };
     output.tasks[0].name = "sub_plan".to_string();
     assert!(
-        processor_with_roles(&no_required_test_targets, &roles)
-            .validate(&output)
-            .is_ok(),
+        processor_with_roles(&roles).validate(&output).is_ok(),
         "plan-kind task must not require a role even when worker roles are configured"
     );
 }
@@ -395,117 +374,6 @@ fn task_kind_task_with_name_passes_validation() {
     assert!(
         validate_planner_output(&output).is_ok(),
         "task-kind task with a non-blank name must pass validation"
-    );
-}
-
-#[test]
-fn plan_kind_skips_tests_required_check() {
-    // Invariant: `kind: "plan"` tasks are exempt from target-based validation
-    // entirely. This task's target shape — no test target — would fail the
-    // tests-required check under `kind: "work"` (see other tests in this
-    // module); under `kind: "plan"` it must pass.
-    fn required_test_targets(_: &[String]) -> Vec<String> {
-        vec!["tests/test_main.py".to_string()]
-    }
-
-    let mut output = PlannerOutput {
-        kind: PlannerOutputKind::Plan,
-        tasks: vec![planner_task(
-            "sub-plan",
-            "decompose the pyproject.toml change",
-            &["pyproject.toml"],
-            &[],
-        )],
-    };
-    output.tasks[0].name = "sub_plan".to_string();
-    let processor = PlannerOutputProcessor::new(&required_test_targets, &[]);
-    assert!(
-        processor.validate(&output).is_ok(),
-        "plan-kind output must skip the tests-required check"
-    );
-}
-
-fn python_tests(targets: &[String]) -> Vec<String> {
-    let rules = crate::language::language_spec("python")
-        .expect("python language spec must load")
-        .validation
-        .validation_targets;
-    crate::validation::derive_validation_targets(&rules, targets)
-}
-
-fn no_tests(_: &[String]) -> Vec<String> {
-    vec![]
-}
-
-#[test]
-fn code_target_without_test_target_rejected_when_tests_required() {
-    // Invariant: plan with only a source file fails when adapter requires a test file.
-    let output = PlannerOutput {
-        kind: PlannerOutputKind::Work,
-        tasks: vec![PlannerTask {
-            id: "main".to_string(),
-            objective: "Modify main.py.".to_string(),
-            name: String::new(),
-            role: None,
-            targets: vec!["main.py".to_string()],
-            depends_on: vec![],
-        }],
-    };
-    assert_eq!(
-        validate_planner_tests_required(&output, &python_tests),
-        Err(PlannerValidationError::MissingTestsForCodeChange {
-            required: vec!["tests/test_main.py".to_string()]
-        })
-    );
-}
-
-#[test]
-fn code_target_with_test_target_passes_when_tests_required() {
-    // Invariant: plan with source + adapter-required test file passes validation.
-    let output = PlannerOutput {
-        kind: PlannerOutputKind::Work,
-        tasks: vec![
-            PlannerTask {
-                id: "main".to_string(),
-                objective: "Modify main.py.".to_string(),
-                name: String::new(),
-                role: None,
-                targets: vec!["main.py".to_string()],
-                depends_on: vec![],
-            },
-            PlannerTask {
-                id: "tests".to_string(),
-                objective: "Add tests for main.py.".to_string(),
-                name: String::new(),
-                role: None,
-                targets: vec!["tests/test_main.py".to_string()],
-                depends_on: vec!["main".to_string()],
-            },
-        ],
-    };
-    assert!(
-        validate_planner_tests_required(&output, &python_tests).is_ok(),
-        "main.py plus tests/test_main.py must satisfy test-required planning"
-    );
-}
-
-#[test]
-fn tests_required_passes_when_adapter_requires_nothing() {
-    // Invariant: when the adapter returns no required tests, any plan passes.
-    let output = PlannerOutput {
-        kind: PlannerOutputKind::Work,
-        tasks: vec![PlannerTask {
-            id: "main".to_string(),
-            objective: "Modify main.py.".to_string(),
-            name: String::new(),
-            role: None,
-            targets: vec!["main.py".to_string()],
-            depends_on: vec![],
-        }],
-    };
-    assert!(
-        validate_planner_tests_required(&output, &no_tests).is_ok(),
-        "plan-only task must pass when adapter requires no tests"
     );
 }
 
@@ -842,7 +710,7 @@ fn plan_children_inherit_parent_team_adapter_northstar() {
             planner_task("sub-b", "decompose part b", &[], &[]),
         ],
     };
-    let plan = processor(&no_required_test_targets).into_plan(
+    let plan = processor().into_plan(
         output,
         "team-a".to_string(),
         "adapters/team-a.yaml".to_string(),

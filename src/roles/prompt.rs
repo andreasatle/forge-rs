@@ -475,14 +475,6 @@ pub(super) fn render_node_review_contract(contract: &NodeReviewContract) -> Stri
             "Required test targets covered by declared follow-up work: {}",
             contract.covered_test_targets.join(", ")
         ));
-        lines.push(
-            "Acceptance guidance: accept a correct source-only current node even when these covered test files do not exist yet."
-                .to_string(),
-        );
-        lines.push(
-            "Do not reject this current node solely because covered tests are planned separately."
-                .to_string(),
-        );
     }
 
     if !contract.missing_test_targets.is_empty() {
@@ -490,8 +482,19 @@ pub(super) fn render_node_review_contract(contract: &NodeReviewContract) -> Stri
             "Required test targets not covered by declared follow-up work: {}",
             contract.missing_test_targets.join(", ")
         ));
+    }
+
+    if !contract.required_validation_targets.is_empty() {
         lines.push(
-            "Acceptance guidance: if this current node changes code and no declared follow-up covers these tests, missing tests remain a valid rejection."
+            "Acceptance guidance: accept a correct current node even when its required test \
+             targets do not exist yet and are not covered by declared follow-up work — test \
+             authorship may belong to a separate, independently-scheduled team. A missing test \
+             file is never grounds for rejecting this node. If a required test file does already \
+             exist, you may read it and treat its content as authoritative signal."
+                .to_string(),
+        );
+        lines.push(
+            "Do not reject this current node solely because required test files are absent or planned separately."
                 .to_string(),
         );
     }
@@ -560,29 +563,30 @@ pub(super) fn render_test_plan_context(context: &TestPlanContext) -> String {
             context.planned_test_targets.join(", ")
         ));
     }
-    if missing.is_empty() {
+    if !covered.is_empty() {
         lines.push(format!(
             "Adapter-required test targets covered by declared follow-up work: {}",
             covered.join(", ")
         ));
-        lines.push(
-            "Acceptance is allowed for a correct source-only current node even though those planned test files do not exist yet."
-                .to_string(),
-        );
-        lines.push(
-            "Do not reject this current node solely because covered tests are planned separately."
-                .to_string(),
-        );
-    } else {
+    }
+    if !missing.is_empty() {
         lines.push(format!(
             "Adapter-required test targets not covered by declared follow-up work: {}",
             missing.join(", ")
         ));
-        lines.push(
-            "If this current node changes code and no declared follow-up covers these tests, missing tests remain a valid rejection."
-                .to_string(),
-        );
     }
+    lines.push(
+        "Acceptance is allowed for a correct current node even when its required test targets \
+         do not exist yet and are not covered by declared follow-up work — test authorship may \
+         belong to a separate, independently-scheduled team. A missing test file is never \
+         grounds for rejecting this node. If a required test file does already exist, treat its \
+         content as authoritative signal."
+            .to_string(),
+    );
+    lines.push(
+        "Do not reject this current node solely because required test files are absent or planned separately."
+            .to_string(),
+    );
     lines.join("\n")
 }
 
