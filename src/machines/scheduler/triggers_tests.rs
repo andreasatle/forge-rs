@@ -121,6 +121,8 @@ fn record(id: &str, objective: &str, team: &str) -> TaskRecord {
         completed_at: String::new(),
         team: Some(team.to_string()),
         name: None,
+        function_name: None,
+        role_targets: vec![],
         depends_on: vec![],
     }
 }

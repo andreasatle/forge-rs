@@ -96,6 +96,8 @@ fn sample_record(commit: &str) -> TaskRecord {
         completed_at: "2026-07-10T00:00:00Z".to_string(),
         team: None,
         name: None,
+        function_name: None,
+        role_targets: vec![],
         depends_on: vec![],
     }
 }

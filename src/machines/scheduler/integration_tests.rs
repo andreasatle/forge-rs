@@ -89,6 +89,8 @@ fn integrate_planner_tasks_creates_manifest_only_commit() {
             completed_at: "2026-07-10T00:00:00Z".to_string(),
             team: Some("planner".to_string()),
             name: None,
+            function_name: None,
+            role_targets: vec![],
             depends_on: vec![],
         },
         TaskRecord {
@@ -98,6 +100,8 @@ fn integrate_planner_tasks_creates_manifest_only_commit() {
             completed_at: "2026-07-10T00:00:01Z".to_string(),
             team: Some("planner".to_string()),
             name: None,
+            function_name: None,
+            role_targets: vec![],
             depends_on: vec![],
         },
     ];
@@ -218,6 +222,8 @@ fn integrate_planner_tasks_without_artifact_fails() {
         completed_at: "2026-07-10T00:00:00Z".to_string(),
         team: Some("planner".to_string()),
         name: None,
+        function_name: None,
+        role_targets: vec![],
         depends_on: vec![],
     }];
 

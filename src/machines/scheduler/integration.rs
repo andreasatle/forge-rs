@@ -249,6 +249,8 @@ impl IntegrationService {
                             completed_at: utc_now_iso8601(),
                             team: Some(team.clone()),
                             name: None,
+                            function_name: None,
+                            role_targets: vec![],
                             depends_on: vec![],
                         };
                         let (recorded, tasks) = record_task(&new_artifact, &ws, record)
@@ -383,6 +385,8 @@ impl IntegrationService {
                 completed_at: completed_at.clone(),
                 team: Some(team.clone()),
                 name: Some(task.name),
+                function_name: Some(task.function_name),
+                role_targets: task.role_targets,
                 depends_on: task.depends_on,
             })
             .collect();
