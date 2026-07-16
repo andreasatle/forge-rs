@@ -252,7 +252,7 @@ teams:
 /// ["task-1"]`).
 fn root_and_planner_responses() -> Vec<String> {
     [
-        r#"{"kind":"task","tasks":[{"id":"task-1","objective":"implement the first task","name":"task_one","function_name":"task_one","role_targets":[{"role":"implementer","file_path":"task_one.txt"}],"depends_on":[]},{"id":"task-2","objective":"implement the second task, which depends on the first","name":"task_two","function_name":"task_two","role_targets":[{"role":"implementer","file_path":"task_two.txt"}],"depends_on":["task-1"]}]}"#,
+        r#"{"kind":"task","tasks":[{"id":"task-1","objective":"implement the first task","name":"task_one","function_name":"task_one","file_path":"task_one.txt","depends_on":[]},{"id":"task-2","objective":"implement the second task, which depends on the first","name":"task_two","function_name":"task_two","file_path":"task_two.txt","depends_on":["task-1"]}]}"#,
         r#"{"status":"accepted","content":"planner critic ok"}"#,
         r#"{"status":"accepted","content":"planner referee approved"}"#,
     ]

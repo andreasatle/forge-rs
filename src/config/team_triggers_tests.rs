@@ -13,7 +13,7 @@ fn team(name: &str, trigger: Trigger) -> TeamConfig {
         trigger,
         language_plugins: std::collections::BTreeMap::new(),
         language: String::new(),
-        worker_role: None,
+        derives_target: false,
     }
 }
 

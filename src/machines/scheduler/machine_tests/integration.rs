@@ -221,7 +221,7 @@ fn plan_task_output_marks_integrating_and_emits_integrate_planner_tasks() {
                     objective: "decompose alpha".to_string(),
                     name: String::new(),
                     function_name: String::new(),
-                    role_targets: vec![],
+                    file_path: String::new(),
                     depends_on: vec![],
                 }],
             },

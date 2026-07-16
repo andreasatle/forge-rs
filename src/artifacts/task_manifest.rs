@@ -9,8 +9,6 @@ use std::fs;
 
 use serde::{Deserialize, Serialize};
 
-use crate::machines::scheduler::RoleTarget;
-
 use super::{Artifact, Workspace};
 
 const MANIFEST_PATH: &str = ".forge/tasks.json";
@@ -83,11 +81,11 @@ pub struct TaskRecord {
     /// recorded via `record_task`, for the same reason as `name`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub function_name: Option<String>,
-    /// Per-worker-role target file paths for this task, carried from
-    /// `PlannerTaskOutput::role_targets`. Empty for rows recorded via
+    /// Source file path this task concerns, carried from
+    /// `PlannerTaskOutput::file_path`. `None` for rows recorded via
     /// `record_task`, for the same reason as `name`.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub role_targets: Vec<RoleTarget>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_path: Option<String>,
     /// Ids of other tasks in the manifest this task depends on, carried from
     /// `PlannerTaskOutput::depends_on`. Empty for rows recorded via
     /// `record_task` (completed `Work` nodes), which have no corresponding

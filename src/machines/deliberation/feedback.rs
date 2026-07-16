@@ -45,11 +45,10 @@ pub(super) fn planner_validation_feedback(error: &PlannerValidationError) -> Str
                  the canonical symbol this task implements. Add a function_name to task '{id}'."
             )
         }
-        PlannerValidationError::EmptyRoleTargets(id) => {
+        PlannerValidationError::EmptyFilePath(id) => {
             format!(
-                "{error}. Every `kind: \"task\"` task must declare at least one `role_targets` \
-                 entry, each with a non-empty `role` and `file_path`. Add role_targets to task \
-                 '{id}'."
+                "{error}. Every `kind: \"task\"` task must have a non-empty `file_path` — the \
+                 source location the task authors. Add a file_path to task '{id}'."
             )
         }
         PlannerValidationError::EmptyTargets(id) => {
@@ -74,12 +73,6 @@ pub(super) fn planner_validation_feedback(error: &PlannerValidationError) -> Str
             format!(
                 "{error}. Assign task '{task_id}' a `role` matching one of the available worker \
                  roles listed in the prompt."
-            )
-        }
-        PlannerValidationError::UnknownRoleTarget { task_id, role } => {
-            format!(
-                "{error}. Every `role_targets` entry's `role` must match one of the available \
-                 worker roles listed in the prompt. Fix task '{task_id}''s entry for '{role}'."
             )
         }
     }

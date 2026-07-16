@@ -90,7 +90,7 @@ fn integrate_planner_tasks_creates_manifest_only_commit() {
             team: Some("planner".to_string()),
             name: None,
             function_name: None,
-            role_targets: vec![],
+            file_path: None,
             depends_on: vec![],
         },
         TaskRecord {
@@ -101,7 +101,7 @@ fn integrate_planner_tasks_creates_manifest_only_commit() {
             team: Some("planner".to_string()),
             name: None,
             function_name: None,
-            role_targets: vec![],
+            file_path: None,
             depends_on: vec![],
         },
     ];
@@ -223,7 +223,7 @@ fn integrate_planner_tasks_without_artifact_fails() {
         team: Some("planner".to_string()),
         name: None,
         function_name: None,
-        role_targets: vec![],
+        file_path: None,
         depends_on: vec![],
     }];
 
@@ -254,7 +254,7 @@ fn integrate_plan_tasks_returns_planner_tasks_integrated_event() {
                 objective: "decompose alpha".to_string(),
                 name: "alpha".to_string(),
                 function_name: "alpha".to_string(),
-                role_targets: vec![],
+                file_path: String::new(),
                 depends_on: vec![],
             },
             PlannerTaskOutput {
@@ -262,7 +262,7 @@ fn integrate_plan_tasks_returns_planner_tasks_integrated_event() {
                 objective: "decompose beta".to_string(),
                 name: "beta".to_string(),
                 function_name: "beta".to_string(),
-                role_targets: vec![],
+                file_path: String::new(),
                 depends_on: vec!["t1".to_string()],
             },
         ],

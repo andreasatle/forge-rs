@@ -97,7 +97,7 @@ fn sample_record(commit: &str) -> TaskRecord {
         team: None,
         name: None,
         function_name: None,
-        role_targets: vec![],
+        file_path: None,
         depends_on: vec![],
     }
 }

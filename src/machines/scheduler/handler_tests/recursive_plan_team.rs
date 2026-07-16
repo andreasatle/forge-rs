@@ -239,23 +239,23 @@ teams:
     //      `"kind":"task"` to terminate.
     let provider = RecordingScriptedProvider::from_strs(&[
         // 1. root/recursive-team Plan node
-        r#"{"kind":"plan","tasks":[{"id":"plan-a","objective":"decompose branch a","name":"branch_a","function_name":"branch_a","role_targets":[{"role":"implementer","file_path":"branch_a"}],"depends_on":[]},{"id":"plan-b","objective":"decompose branch b","name":"branch_b","function_name":"branch_b","role_targets":[{"role":"implementer","file_path":"branch_b"}],"depends_on":[]}]}"#,
+        r#"{"kind":"plan","tasks":[{"id":"plan-a","objective":"decompose branch a","name":"branch_a","function_name":"branch_a","file_path":"branch_a","depends_on":[]},{"id":"plan-b","objective":"decompose branch b","name":"branch_b","function_name":"branch_b","file_path":"branch_b","depends_on":[]}]}"#,
         r#"{"status":"accepted","content":"root critic ok"}"#,
         r#"{"status":"accepted","content":"root referee approved"}"#,
         // 2. "plan-b" Plan child: terminates immediately
-        r#"{"kind":"task","tasks":[{"id":"leaf-b","objective":"do the leaf b work","name":"leaf_b","function_name":"leaf_b","role_targets":[{"role":"implementer","file_path":"leaf_b"}],"depends_on":[]}]}"#,
+        r#"{"kind":"task","tasks":[{"id":"leaf-b","objective":"do the leaf b work","name":"leaf_b","function_name":"leaf_b","file_path":"leaf_b","depends_on":[]}]}"#,
         r#"{"status":"accepted","content":"plan-b critic ok"}"#,
         r#"{"status":"accepted","content":"plan-b referee approved"}"#,
         // 3. "plan-a" Plan child: decomposes further
-        r#"{"kind":"plan","tasks":[{"id":"leaf-a1","objective":"decompose leaf a1","name":"leaf_a1_plan","function_name":"leaf_a1_plan","role_targets":[{"role":"implementer","file_path":"leaf_a1_plan"}],"depends_on":[]},{"id":"leaf-a2","objective":"decompose leaf a2","name":"leaf_a2_plan","function_name":"leaf_a2_plan","role_targets":[{"role":"implementer","file_path":"leaf_a2_plan"}],"depends_on":[]}]}"#,
+        r#"{"kind":"plan","tasks":[{"id":"leaf-a1","objective":"decompose leaf a1","name":"leaf_a1_plan","function_name":"leaf_a1_plan","file_path":"leaf_a1_plan","depends_on":[]},{"id":"leaf-a2","objective":"decompose leaf a2","name":"leaf_a2_plan","function_name":"leaf_a2_plan","file_path":"leaf_a2_plan","depends_on":[]}]}"#,
         r#"{"status":"accepted","content":"plan-a critic ok"}"#,
         r#"{"status":"accepted","content":"plan-a referee approved"}"#,
         // 4. "leaf-a2" Plan grandchild: terminates immediately
-        r#"{"kind":"task","tasks":[{"id":"leaf-a2-task","objective":"do the leaf a2 work","name":"leaf_a2","function_name":"leaf_a2","role_targets":[{"role":"implementer","file_path":"leaf_a2"}],"depends_on":[]}]}"#,
+        r#"{"kind":"task","tasks":[{"id":"leaf-a2-task","objective":"do the leaf a2 work","name":"leaf_a2","function_name":"leaf_a2","file_path":"leaf_a2","depends_on":[]}]}"#,
         r#"{"status":"accepted","content":"leaf-a2 critic ok"}"#,
         r#"{"status":"accepted","content":"leaf-a2 referee approved"}"#,
         // 5. "leaf-a1" Plan grandchild: terminates immediately
-        r#"{"kind":"task","tasks":[{"id":"leaf-a1-task","objective":"do the leaf a1 work","name":"leaf_a1","function_name":"leaf_a1","role_targets":[{"role":"implementer","file_path":"leaf_a1"}],"depends_on":[]}]}"#,
+        r#"{"kind":"task","tasks":[{"id":"leaf-a1-task","objective":"do the leaf a1 work","name":"leaf_a1","function_name":"leaf_a1","file_path":"leaf_a1","depends_on":[]}]}"#,
         r#"{"status":"accepted","content":"leaf-a1 critic ok"}"#,
         r#"{"status":"accepted","content":"leaf-a1 referee approved"}"#,
     ]);

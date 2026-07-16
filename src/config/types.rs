@@ -106,13 +106,15 @@ pub struct TeamConfig {
     /// node.
     #[serde(default)]
     pub language_plugins: BTreeMap<String, LanguageSpec>,
-    /// This team's `adapter`'s first configured worker role name, if any —
-    /// see [`crate::project::YamlProjectAdapter::primary_worker_role`].
-    /// Matched against a `kind: "task"` manifest row's `role_targets` to
-    /// find this team's own target file for a `ForTasks`-spawned node,
-    /// without that transition performing any adapter-YAML I/O itself.
+    /// Whether this team's `adapter`'s first configured worker role derives
+    /// its `ForTasks`-spawned node's target file from the task's source
+    /// `file_path` (see
+    /// [`crate::project::YamlProjectAdapter::primary_role_derives_target`]),
+    /// rather than using `file_path` directly — resolved at config-load
+    /// time so the scheduler's node-spawn transition doesn't perform any
+    /// adapter-YAML I/O itself.
     #[serde(default)]
-    pub worker_role: Option<String>,
+    pub derives_target: bool,
     /// The engagement-wide active language (`ForgeConfig::language`), copied
     /// onto every team by `resolve_team_paths` so team-scoped dispatch can
     /// select the one active plugin from `language_plugins` without a
@@ -646,7 +648,7 @@ fn resolve_team_paths(
             )
             .into());
         }
-        team.worker_role = adapter.primary_worker_role().map(str::to_string);
+        team.derives_target = adapter.primary_role_derives_target();
         team.language_plugins = adapter.language_plugins().clone();
         team.language = language.to_string();
         std::fs::metadata(&team.northstar).map_err(|e| {

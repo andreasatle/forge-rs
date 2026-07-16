@@ -143,19 +143,19 @@ fn planner_gbnf_no_work_rejects_kind_work_but_accepts_plan_and_task() {
         "no-work grammar must reject an omitted kind field"
     );
 
-    let plan = r#"{"kind":"plan","tasks":[{"id":"t1","objective":"decompose it","name":"fibonacci","function_name":"fibonacci","role_targets":[{"role":"implementer","file_path":"src/fibonacci.rs"}],"operation":"modify","targets":[],"depends_on":[]}]}"#;
+    let plan = r#"{"kind":"plan","tasks":[{"id":"t1","objective":"decompose it","name":"fibonacci","function_name":"fibonacci","file_path":"src/fibonacci.rs","operation":"modify","targets":[],"depends_on":[]}]}"#;
     assert!(
         grammar.accepts(plan),
         "no-work grammar must accept kind: \"plan\""
     );
 
-    let plan_missing_name = r#"{"kind":"plan","tasks":[{"id":"t1","objective":"decompose it","function_name":"fibonacci","role_targets":[{"role":"implementer","file_path":"src/fibonacci.rs"}],"operation":"modify","targets":[],"depends_on":[]}]}"#;
+    let plan_missing_name = r#"{"kind":"plan","tasks":[{"id":"t1","objective":"decompose it","function_name":"fibonacci","file_path":"src/fibonacci.rs","operation":"modify","targets":[],"depends_on":[]}]}"#;
     assert!(
         !grammar.accepts(plan_missing_name),
         "no-work grammar must reject a kind: \"plan\" task missing the now-required name field"
     );
 
-    let task = r#"{"kind":"task","tasks":[{"id":"t1","objective":"do it","name":"fibonacci","function_name":"fibonacci","role_targets":[{"role":"implementer","file_path":"src/fibonacci.rs"}],"depends_on":[]}]}"#;
+    let task = r#"{"kind":"task","tasks":[{"id":"t1","objective":"do it","name":"fibonacci","function_name":"fibonacci","file_path":"src/fibonacci.rs","depends_on":[]}]}"#;
     assert!(
         grammar.accepts(task),
         "no-work grammar must accept kind: \"task\""
@@ -202,13 +202,13 @@ fn planner_gbnf_with_roles_requires_name_on_kind_plan() {
 
     let grammar = Grammar::parse(PLANNER_GBNF_WITH_ROLES);
 
-    let plan = r#"{"kind":"plan","tasks":[{"id":"t1","objective":"decompose it","name":"fibonacci","function_name":"fibonacci","role_targets":[{"role":"implementer","file_path":"src/fibonacci.rs"}],"operation":"modify","role":"implementer","targets":[],"depends_on":[]}]}"#;
+    let plan = r#"{"kind":"plan","tasks":[{"id":"t1","objective":"decompose it","name":"fibonacci","function_name":"fibonacci","file_path":"src/fibonacci.rs","operation":"modify","role":"implementer","targets":[],"depends_on":[]}]}"#;
     assert!(
         grammar.accepts(plan),
         "with-roles grammar must accept kind: \"plan\" with a name"
     );
 
-    let plan_missing_name = r#"{"kind":"plan","tasks":[{"id":"t1","objective":"decompose it","function_name":"fibonacci","role_targets":[{"role":"implementer","file_path":"src/fibonacci.rs"}],"operation":"modify","role":"implementer","targets":[],"depends_on":[]}]}"#;
+    let plan_missing_name = r#"{"kind":"plan","tasks":[{"id":"t1","objective":"decompose it","function_name":"fibonacci","file_path":"src/fibonacci.rs","operation":"modify","role":"implementer","targets":[],"depends_on":[]}]}"#;
     assert!(
         !grammar.accepts(plan_missing_name),
         "with-roles grammar must reject a kind: \"plan\" task missing the now-required name field"

@@ -1,5 +1,6 @@
 workers:
   - plugin_role: tester
+    derives_target: true
     description: |-
       Writes the test files that pin down expected behavior before the implementation exists.
     producer:

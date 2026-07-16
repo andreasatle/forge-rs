@@ -250,7 +250,7 @@ impl IntegrationService {
                             team: Some(team.clone()),
                             name: None,
                             function_name: None,
-                            role_targets: vec![],
+                            file_path: None,
                             depends_on: vec![],
                         };
                         let (recorded, tasks) = record_task(&new_artifact, &ws, record)
@@ -386,7 +386,7 @@ impl IntegrationService {
                 team: Some(team.clone()),
                 name: Some(task.name),
                 function_name: Some(task.function_name),
-                role_targets: task.role_targets,
+                file_path: Some(task.file_path),
                 depends_on: task.depends_on,
             })
             .collect();

@@ -335,7 +335,7 @@ fn planner_producer_grammar_and_footer_forbid_work_without_worker_roles() {
     // explicitly rather than defaulting to "work".
     use crate::roles::policy::PLANNER_GBNF_NO_WORK;
 
-    let response = r#"{"kind":"plan","tasks":[{"id":"t1","objective":"do the thing","name":"thing","function_name":"thing","role_targets":[{"role":"implementer","file_path":"thing.txt"}],"operation":"modify","targets":["thing.txt"],"depends_on":[]}]}"#;
+    let response = r#"{"kind":"plan","tasks":[{"id":"t1","objective":"do the thing","name":"thing","function_name":"thing","file_path":"thing.txt","operation":"modify","targets":["thing.txt"],"depends_on":[]}]}"#;
     let provider = ScriptedProvider::from_strs(&[response]);
     let runner = ProviderRoleRunner::new(&provider);
     let request = RoleRequest {

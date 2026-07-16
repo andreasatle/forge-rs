@@ -72,7 +72,7 @@ fn team_adapter_and_northstar_override_the_top_level_ones() {
     let northstar_path = temp.join("northstar.txt");
     std::fs::write(&northstar_path, "Team: ship the widget CLI.").unwrap();
 
-    let plan = r#"{"kind":"plan","tasks":[{"id":"t1","objective":"decompose the widget work","name":"widget_work","function_name":"widget_work","role_targets":[{"role":"implementer","file_path":"widget_work"}],"depends_on":[]}]}"#;
+    let plan = r#"{"kind":"plan","tasks":[{"id":"t1","objective":"decompose the widget work","name":"widget_work","function_name":"widget_work","file_path":"widget_work","depends_on":[]}]}"#;
     let provider = RecordingProvider::from_strs(&[
         plan,
         r#"{"status":"accepted","content":"plan looks good"}"#,

@@ -50,6 +50,18 @@ pub struct WorkerRoleConfig {
     /// document-writing adapter with no language plugin to match against).
     #[serde(default)]
     pub plugin_role: Option<String>,
+    /// Whether this role's target file for a `ForTasks`-spawned node is
+    /// derived from the task's source `file_path` via the active language
+    /// plugin's validation-target derivation (see
+    /// [`crate::validation::ValidationTargetRule`]), rather than being
+    /// `file_path` itself.
+    ///
+    /// Set by roles that produce a validation artifact for another role's
+    /// source file (e.g. a `tester` role writing `tests/test_main.py` for
+    /// an `implementer` role's `main.py`). Left `false` (the default) by the
+    /// role that owns the source file directly.
+    #[serde(default)]
+    pub derives_target: bool,
     /// Human-readable description of what this role is responsible for.
     pub description: String,
     /// System instruction for this role's Producer.

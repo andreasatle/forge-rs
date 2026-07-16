@@ -8,9 +8,7 @@ use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
 
-use crate::machines::scheduler::{
-    NodeId, NodeKind, NodeRequest, PlanOutput, PlannerTaskOutput, RoleTarget,
-};
+use crate::machines::scheduler::{NodeId, NodeKind, NodeRequest, PlanOutput, PlannerTaskOutput};
 
 /// A single task in a structured planner response.
 #[derive(Deserialize, Serialize, Debug)]
@@ -58,15 +56,15 @@ pub struct PlannerTask {
     /// because `work` task schemas carry no `function_name` field at all.
     #[serde(default)]
     pub function_name: String,
-    /// Per-worker-role target file paths for this task, decided once by the
-    /// planner instead of each downstream team independently deriving its
-    /// own target from `name` — see [`RoleTarget`].
+    /// Source file path this task concerns (e.g. `main.py`) — the single
+    /// authoritative location the planner decided on for the code being
+    /// written. Downstream roles derive their own targets (e.g. test files)
+    /// from this instead of each independently deciding a path.
     ///
-    /// Required (and validated non-empty, with every entry's `role` and
-    /// `file_path` non-blank) for [`PlannerOutputKind::Task`] and
-    /// [`PlannerOutputKind::Plan`] output, same as `name`.
+    /// Required (and validated non-blank) for [`PlannerOutputKind::Task`]
+    /// and [`PlannerOutputKind::Plan`] output, same as `name`.
     #[serde(default)]
-    pub role_targets: Vec<RoleTarget>,
+    pub file_path: String,
 }
 
 /// Whether a [`NodeKind::Plan`] parent's output's tasks become `Work`
@@ -133,10 +131,10 @@ pub enum PlannerValidationError {
     /// whitespace-only) `function_name`. Exempt for the same reason as
     /// `EmptyName`.
     EmptyFunctionName(String),
-    /// A `kind: "task"` or `kind: "plan"` task has no `role_targets` entries,
-    /// or one whose `role` or `file_path` is empty (or whitespace-only).
-    /// Exempt for the same reason as `EmptyName`.
-    EmptyRoleTargets(String),
+    /// A `kind: "task"` or `kind: "plan"` task has an empty (or
+    /// whitespace-only) `file_path`. Exempt for the same reason as
+    /// `EmptyName`.
+    EmptyFilePath(String),
     /// A work task does not declare any concrete target files.
     EmptyTargets(String),
     /// A task lists its own id in `depends_on`.
@@ -153,14 +151,6 @@ pub enum PlannerValidationError {
     MissingTaskRole {
         /// The id of the task missing a valid role assignment.
         task_id: String,
-    },
-    /// The adapter defines worker roles, but a `role_targets` entry names a
-    /// role that matches none of them.
-    UnknownRoleTarget {
-        /// The id of the task containing the invalid `role_targets` entry.
-        task_id: String,
-        /// The unrecognized role name.
-        role: String,
     },
 }
 
@@ -186,8 +176,8 @@ impl std::fmt::Display for PlannerValidationError {
             PlannerValidationError::EmptyFunctionName(id) => {
                 write!(f, "empty function_name for task: {id}")
             }
-            PlannerValidationError::EmptyRoleTargets(id) => {
-                write!(f, "empty or invalid role_targets for task: {id}")
+            PlannerValidationError::EmptyFilePath(id) => {
+                write!(f, "empty file_path for task: {id}")
             }
             PlannerValidationError::EmptyTargets(id) => {
                 write!(f, "empty targets for task: {id}")
@@ -200,12 +190,6 @@ impl std::fmt::Display for PlannerValidationError {
             }
             PlannerValidationError::MissingTaskRole { task_id } => {
                 write!(f, "task {task_id} was not assigned a valid worker role")
-            }
-            PlannerValidationError::UnknownRoleTarget { task_id, role } => {
-                write!(
-                    f,
-                    "task {task_id} has a role_targets entry for unknown role '{role}'"
-                )
             }
         }
     }
@@ -265,28 +249,8 @@ impl<'a> PlannerOutputProcessor<'a> {
             if output.kind != PlannerOutputKind::Work && task.function_name.trim().is_empty() {
                 return Err(PlannerValidationError::EmptyFunctionName(task.id.clone()));
             }
-            if output.kind != PlannerOutputKind::Work {
-                if task.role_targets.is_empty()
-                    || task
-                        .role_targets
-                        .iter()
-                        .any(|rt| rt.role.trim().is_empty() || rt.file_path.trim().is_empty())
-                {
-                    return Err(PlannerValidationError::EmptyRoleTargets(task.id.clone()));
-                }
-                if !self.available_worker_roles.is_empty()
-                    && let Some(rt) = task.role_targets.iter().find(|rt| {
-                        !self
-                            .available_worker_roles
-                            .iter()
-                            .any(|(name, _)| name == &rt.role)
-                    })
-                {
-                    return Err(PlannerValidationError::UnknownRoleTarget {
-                        task_id: task.id.clone(),
-                        role: rt.role.clone(),
-                    });
-                }
+            if output.kind != PlannerOutputKind::Work && task.file_path.trim().is_empty() {
+                return Err(PlannerValidationError::EmptyFilePath(task.id.clone()));
             }
             if output.kind == PlannerOutputKind::Work {
                 if task.targets.is_empty() || task.targets.iter().any(|t| t.trim().is_empty()) {
@@ -360,7 +324,7 @@ impl<'a> PlannerOutputProcessor<'a> {
                             objective: task.objective,
                             name: task.name,
                             function_name: task.function_name,
-                            role_targets: task.role_targets,
+                            file_path: task.file_path,
                             depends_on: task.depends_on,
                         })
                         .collect(),

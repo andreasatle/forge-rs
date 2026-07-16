@@ -194,23 +194,23 @@ fn parses_teams() {
 }
 
 #[test]
-fn team_worker_role_and_language_plugins_are_populated_from_its_adapter() {
-    // Invariant: each team's worker_role and language_plugins are populated
-    // at config-load time from its own adapter (coding.yaml declares both
-    // python.yaml and rust.yaml, plus an implementer worker role), not left
-    // empty/None — this is what lets a ForTasks-spawned node read its own
-    // target file from a task's planner-supplied role_targets with no I/O
-    // inside the (pure) scheduler transition.
+fn team_derives_target_and_language_plugins_are_populated_from_its_adapter() {
+    // Invariant: each team's derives_target and language_plugins are
+    // populated at config-load time from its own adapter (coding.yaml
+    // declares both python.yaml and rust.yaml, plus an implementer worker
+    // role whose derives_target defaults to false), not left at defaults —
+    // this is what lets a ForTasks-spawned node compute its own target file
+    // from a task's planner-supplied file_path with no I/O inside the (pure)
+    // scheduler transition.
     let tmp = TempYaml::new(TEAMS_YAML);
     std::fs::write(tmp.dir().join("project.md"), "gap: project").unwrap();
     std::fs::write(tmp.dir().join("implementation.md"), "gap: implementation").unwrap();
     let config = ForgeConfig::from_file(tmp.path()).unwrap();
 
     for team in &config.teams {
-        assert_eq!(
-            team.worker_role.as_deref(),
-            Some("implementer"),
-            "team '{}' must inherit its adapter's primary worker role",
+        assert!(
+            !team.derives_target,
+            "team '{}' must inherit its adapter's primary worker role's derives_target",
             team.name
         );
         let extensions: Vec<&str> = team.language_plugins.keys().map(String::as_str).collect();

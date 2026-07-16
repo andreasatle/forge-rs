@@ -67,18 +67,19 @@ impl YamlProjectAdapter {
         &self.config.plugins
     }
 
-    /// This adapter's first configured worker role name, if any.
+    /// Whether this adapter's first configured worker role derives its
+    /// `ForTasks`-spawned node's target file from the task's source
+    /// `file_path`, rather than using `file_path` directly.
     ///
     /// A single-purpose Work-only adapter (see [`ProjectAdapterConfig::workers`])
-    /// defines exactly one role; this is the role matched against a
-    /// `kind: "task"` manifest row's `role_targets` entries when resolving a
-    /// [`crate::config::TeamConfig`]'s own target file for a `ForTasks`-spawned
-    /// node (see `crate::config::TeamConfig::worker_role`).
-    pub fn primary_worker_role(&self) -> Option<&str> {
+    /// defines exactly one role; this is that role's own
+    /// [`WorkerRoleConfig::derives_target`], copied onto
+    /// [`crate::config::TeamConfig::derives_target`] at config-load time.
+    pub fn primary_role_derives_target(&self) -> bool {
         self.config
             .workers
             .first()
-            .and_then(|w| w.plugin_role.as_deref())
+            .is_some_and(|w| w.derives_target)
     }
 
     /// This adapter's configured worker roles, in declaration order.
@@ -231,6 +232,7 @@ mod tests {
     fn worker_configs() -> Vec<WorkerRoleConfig> {
         vec![WorkerRoleConfig {
             plugin_role: Some("implementer".to_string()),
+            derives_target: false,
             description: "Implements code changes.".to_string(),
             producer: prompt("build it", "build bounds"),
             critic: prompt("review the work", "review work bounds"),
@@ -386,6 +388,7 @@ mod tests {
         let mut workers = worker_configs();
         workers.push(WorkerRoleConfig {
             plugin_role: Some("tester".to_string()),
+            derives_target: false,
             description: "Writes tests.".to_string(),
             producer: prompt("test it", "test bounds"),
             critic: prompt("review the tests", "review test bounds"),
@@ -453,6 +456,7 @@ mod tests {
         let mut workers = worker_configs();
         workers.push(WorkerRoleConfig {
             plugin_role: Some("tester".to_string()),
+            derives_target: false,
             description: "Writes tests.".to_string(),
             producer: prompt("test it", "test bounds"),
             critic: prompt("review the tests", "review test bounds"),
@@ -500,6 +504,7 @@ mod tests {
         let mut workers = worker_configs();
         workers.push(WorkerRoleConfig {
             plugin_role: Some("tester".to_string()),
+            derives_target: false,
             description: "Writes tests.".to_string(),
             producer: prompt("test it", "test bounds"),
             critic: prompt("review the tests", "review test bounds"),
