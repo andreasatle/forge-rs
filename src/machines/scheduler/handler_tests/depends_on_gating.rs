@@ -13,17 +13,7 @@ use crate::providers::{ProviderClient, ProviderError, ProviderRequest, ProviderR
 /// `multi_team::adapter_yaml`, duplicated locally (per this test module's
 /// established convention of not sharing fixture builders across
 /// `handler_tests` files) so this file stays self-contained.
-fn adapter_yaml(marker: &str, plugins: &[String]) -> String {
-    let plugins_yaml = if plugins.is_empty() {
-        "[]".to_string()
-    } else {
-        let entries = plugins
-            .iter()
-            .map(|p| format!("  - \"{p}\""))
-            .collect::<Vec<_>>()
-            .join("\n");
-        format!("\n{entries}")
-    };
+fn adapter_yaml(marker: &str) -> String {
     format!(
         r#"
 planner:
@@ -61,32 +51,9 @@ workers:
       instructions: ""
       constraints: ""
 context_files: []
-plugins: {plugins_yaml}
+plugins: []
 "#
     )
-}
-
-/// A language plugin whose `name_target_rules` derives a distinct target
-/// file per task name (`{name}` -> `{name}.txt`), so `task_one` and
-/// `task_two` each get their own file instead of colliding on one target.
-fn plugin_yaml() -> String {
-    r#"
-extensions: ["txt"]
-init:
-  commands: []
-validation:
-  runs_tests: false
-  commands: []
-plugin_roles:
-  - plugin_role: implementer
-    validation:
-      runs_tests: false
-      commands: []
-name_target_rules:
-  - pattern: "{name}"
-    target: "{name}.txt"
-"#
-    .to_string()
 }
 
 /// Records every prompt it is called with and replays scripted responses in
@@ -196,23 +163,12 @@ fn build_fixture(label: &str) -> Fixture {
         commit_sha,
     };
 
-    let worker_plugin_path = temp.join("worker_plugin.yaml");
-    fs::write(&worker_plugin_path, plugin_yaml()).expect("write worker plugin");
-
     let root_adapter_path = temp.join("root_adapter.yaml");
-    fs::write(&root_adapter_path, adapter_yaml("ROOT", &[])).expect("write root adapter");
+    fs::write(&root_adapter_path, adapter_yaml("ROOT")).expect("write root adapter");
     let planner_adapter_path = temp.join("planner_adapter.yaml");
-    fs::write(&planner_adapter_path, adapter_yaml("PLANNER-TEAM", &[]))
-        .expect("write planner adapter");
+    fs::write(&planner_adapter_path, adapter_yaml("PLANNER-TEAM")).expect("write planner adapter");
     let worker_adapter_path = temp.join("worker_adapter.yaml");
-    fs::write(
-        &worker_adapter_path,
-        adapter_yaml(
-            "WORKER-TEAM",
-            &[worker_plugin_path.to_string_lossy().into_owned()],
-        ),
-    )
-    .expect("write worker adapter");
+    fs::write(&worker_adapter_path, adapter_yaml("WORKER-TEAM")).expect("write worker adapter");
 
     let planner_northstar_path = temp.join("planner_northstar.txt");
     fs::write(
@@ -296,7 +252,7 @@ teams:
 /// ["task-1"]`).
 fn root_and_planner_responses() -> Vec<String> {
     [
-        r#"{"kind":"task","tasks":[{"id":"task-1","objective":"implement the first task","name":"task_one","function_name":"task_one","role_targets":[{"role":"implementer","file_path":"task_one"}],"depends_on":[]},{"id":"task-2","objective":"implement the second task, which depends on the first","name":"task_two","function_name":"task_two","role_targets":[{"role":"implementer","file_path":"task_two"}],"depends_on":["task-1"]}]}"#,
+        r#"{"kind":"task","tasks":[{"id":"task-1","objective":"implement the first task","name":"task_one","function_name":"task_one","role_targets":[{"role":"implementer","file_path":"task_one.txt"}],"depends_on":[]},{"id":"task-2","objective":"implement the second task, which depends on the first","name":"task_two","function_name":"task_two","role_targets":[{"role":"implementer","file_path":"task_two.txt"}],"depends_on":["task-1"]}]}"#,
         r#"{"status":"accepted","content":"planner critic ok"}"#,
         r#"{"status":"accepted","content":"planner referee approved"}"#,
     ]

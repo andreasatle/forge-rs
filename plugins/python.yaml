@@ -55,9 +55,6 @@ plugin_roles:
         - program: uv
           args: ["run", "ruff", "check"]
           scope: changed_files
-    name_target_rules:
-      - pattern: "{name}"
-        target: "tests/test_{name}.py"
   - plugin_role: implementer
     validation:
       runs_tests: true
@@ -77,9 +74,6 @@ plugin_roles:
       validation_targets:
         - pattern: "{stem}.py"
           target: "tests/test_{stem}.py"
-name_target_rules:
-  - pattern: "{name}"
-    target: "src/{name}.py"
 api_summary:
   program: uv
   args:

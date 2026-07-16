@@ -2,10 +2,8 @@ use std::collections::BTreeMap;
 
 use super::*;
 use crate::config::Trigger;
-use crate::language::NameTargetRule;
-use crate::language::spec::{LanguageInitSpec, LanguageSpec, LanguageValidationSpec};
+use crate::machines::scheduler::RoleTarget;
 use crate::machines::scheduler::graph::{ModelTier, Node, NodeKind, NodeStatus};
-use crate::validation::ValidationTargetRule;
 
 fn kind_for(trigger: &Trigger) -> NodeKind {
     match trigger {
@@ -21,9 +19,18 @@ fn team(name: &str, trigger: Trigger) -> TeamConfig {
         adapter: String::new(),
         kind: kind_for(&trigger),
         trigger,
-        name_target_rules: vec![],
         language_plugins: BTreeMap::new(),
         language: String::new(),
+        worker_role: None,
+    }
+}
+
+/// A team configured with a worker role, for tests that exercise `ForTasks`
+/// spawning and need `task_target_files` to match a `role_targets` entry.
+fn team_with_role(name: &str, trigger: Trigger, role: &str) -> TeamConfig {
+    TeamConfig {
+        worker_role: Some(role.to_string()),
+        ..team(name, trigger)
     }
 }
 
@@ -34,83 +41,10 @@ fn team_with_adapter(name: &str, trigger: Trigger, adapter: &str, northstar: &st
         adapter: adapter.to_string(),
         kind: kind_for(&trigger),
         trigger,
-        name_target_rules: vec![NameTargetRule {
-            pattern: "{name}".to_string(),
-            target: "src/{name}.rs".to_string(),
-        }],
         language_plugins: BTreeMap::new(),
         language: String::new(),
+        worker_role: Some("implementer".to_string()),
     }
-}
-
-fn team_with_name_target_rules(
-    name: &str,
-    trigger: Trigger,
-    name_target_rules: Vec<NameTargetRule>,
-) -> TeamConfig {
-    TeamConfig {
-        name: name.to_string(),
-        northstar: String::new(),
-        adapter: String::new(),
-        kind: kind_for(&trigger),
-        trigger,
-        name_target_rules,
-        language_plugins: BTreeMap::new(),
-        language: String::new(),
-    }
-}
-
-/// A minimal language plugin that requires tests and derives a `test_{stem}.rs`
-/// validation target for every `.rs` source, keyed under the `"rs"` extension —
-/// mirrors what `resolve_team_paths` merges onto `TeamConfig::language_plugins`
-/// from a real adapter's plugins at config-load time.
-fn rs_plugin_requiring_tests() -> LanguageSpec {
-    LanguageSpec {
-        extensions: vec!["rs".to_string()],
-        identity: String::new(),
-        context: String::new(),
-        instructions: String::new(),
-        constraints: String::new(),
-        init: LanguageInitSpec {
-            gitignore: vec![],
-            commands: vec![],
-        },
-        validation: LanguageValidationSpec {
-            runs_tests: true,
-            commands: vec![],
-            validation_targets: vec![ValidationTargetRule {
-                pattern: "{stem}.rs".to_string(),
-                target: "{stem}_test.rs".to_string(),
-            }],
-        },
-        plugin_roles: vec![],
-        api_summary: None,
-        name_target_rules: vec![],
-    }
-}
-
-/// A team whose `name_target_rules` derives a `.rs` target file from any task
-/// name, and whose `language_plugins` declares that `.rs` sources require a
-/// test target — the wiring needed to exercise real (non-hardcoded-empty)
-/// `required_validation_targets` computation on the `ForTasks` spawn path.
-fn team_with_catchall_rule_and_validation_targets(name: &str, trigger: Trigger) -> TeamConfig {
-    TeamConfig {
-        language_plugins: BTreeMap::from([("rs".to_string(), rs_plugin_requiring_tests())]),
-        ..team_with_catchall_rule(name, trigger)
-    }
-}
-
-/// A team whose `name_target_rules` matches any task name, for tests that
-/// exercise `ForTasks` spawning but don't care what target file results.
-fn team_with_catchall_rule(name: &str, trigger: Trigger) -> TeamConfig {
-    team_with_name_target_rules(
-        name,
-        trigger,
-        vec![NameTargetRule {
-            pattern: "{name}".to_string(),
-            target: "src/{name}.rs".to_string(),
-        }],
-    )
 }
 
 fn record(id: &str, objective: &str, team: &str) -> TaskRecord {
@@ -134,16 +68,52 @@ fn named_record(id: &str, objective: &str, team: &str, name: &str) -> TaskRecord
     }
 }
 
-fn named_record_with_deps(
+/// A planner task row carrying a single `role_targets` entry for
+/// `"implementer"` — the common case for tests exercising a single
+/// `ForTasks`-spawned team.
+fn record_for_implementer(
     id: &str,
     objective: &str,
     team: &str,
     name: &str,
+    file_path: &str,
+) -> TaskRecord {
+    TaskRecord {
+        role_targets: vec![RoleTarget {
+            role: "implementer".to_string(),
+            file_path: file_path.to_string(),
+        }],
+        ..named_record(id, objective, team, name)
+    }
+}
+
+fn record_with_role_targets(
+    id: &str,
+    objective: &str,
+    team: &str,
+    name: &str,
+    role_targets: Vec<RoleTarget>,
+) -> TaskRecord {
+    TaskRecord {
+        role_targets,
+        ..named_record(id, objective, team, name)
+    }
+}
+
+/// A planner task row carrying both a single-entry `role_targets` for
+/// `"implementer"` and a `depends_on` list, for tests exercising dependency
+/// gating on the `ForTasks` path.
+fn record_for_implementer_with_deps(
+    id: &str,
+    objective: &str,
+    team: &str,
+    name: &str,
+    file_path: &str,
     depends_on: Vec<&str>,
 ) -> TaskRecord {
     TaskRecord {
         depends_on: depends_on.into_iter().map(String::from).collect(),
-        ..named_record(id, objective, team, name)
+        ..record_for_implementer(id, objective, team, name, file_path)
     }
 }
 
@@ -373,16 +343,18 @@ fn implement_after_teams_planner_fires_off_root_lineage_task() {
             "adapters/planner.yaml",
             "northstars/planner.md",
         ),
-        team_with_catchall_rule(
+        team_with_role(
             "implement",
             Trigger::AfterTeams(vec!["planner".to_string()]),
+            "implementer",
         ),
     ]);
-    let manifest = [named_record(
+    let manifest = [record_for_implementer(
         "root-t1",
         "implement fibonacci(n: int)",
         "planner",
         "fibonacci",
+        "src/fibonacci.rs",
     )];
     let graph = apply_team_triggers(graph, &NodeId("root".to_string()), &config, &manifest)
         .expect("team triggers must apply cleanly");
@@ -418,15 +390,17 @@ fn for_tasks_spawns_work_node_with_original_objective() {
     let graph = RunGraph {
         nodes: vec![root_node()],
     };
-    let config = run_config(vec![team_with_catchall_rule(
+    let config = run_config(vec![team_with_role(
         "implement",
         Trigger::AfterTeams(vec!["planner".to_string()]),
+        "implementer",
     )]);
-    let manifest = [named_record(
+    let manifest = [record_for_implementer(
         "t1",
         "implement fibonacci(n: int)",
         "planner",
         "fibonacci",
+        "src/fibonacci.rs",
     )];
     let graph = apply_team_triggers(graph, &NodeId("root".to_string()), &config, &manifest)
         .expect("team triggers must apply cleanly");
@@ -453,16 +427,18 @@ fn for_tasks_spawns_node_with_teams_declared_kind_not_inferred_from_trigger() {
     };
     let config = run_config(vec![TeamConfig {
         kind: NodeKind::Plan,
-        ..team_with_catchall_rule(
+        ..team_with_role(
             "implement",
             Trigger::AfterTeams(vec!["planner".to_string()]),
+            "implementer",
         )
     }]);
-    let manifest = [named_record(
+    let manifest = [record_for_implementer(
         "t1",
         "implement fibonacci(n: int)",
         "planner",
         "fibonacci",
+        "src/fibonacci.rs",
     )];
     let graph = apply_team_triggers(graph, &NodeId("root".to_string()), &config, &manifest)
         .expect("team triggers must apply cleanly");
@@ -476,28 +452,26 @@ fn for_tasks_spawns_node_with_teams_declared_kind_not_inferred_from_trigger() {
     assert_eq!(spawned[0].kind, NodeKind::Plan);
 }
 
-/// A `ForTasks`-spawned Work node derives its `target_files` from the
-/// matched manifest task's `name` using the spawning team's
-/// `name_target_rules` — the fix for the bug where these nodes were spawned
-/// with `target_files: vec![]` unconditionally and so could touch no file.
+/// A `ForTasks`-spawned Work node derives its `target_files` by reading the
+/// matched manifest task's `role_targets` entry for the spawning team's own
+/// `worker_role` — the planner already decided this path once, so there is
+/// no per-team re-derivation from the task's bare name.
 #[test]
-fn for_tasks_spawns_node_with_target_files_derived_from_task_name() {
+fn for_tasks_spawns_node_with_target_files_from_role_targets() {
     let graph = RunGraph {
         nodes: vec![root_node()],
     };
-    let config = run_config(vec![team_with_name_target_rules(
+    let config = run_config(vec![team_with_role(
         "implement",
         Trigger::AfterTeams(vec!["planner".to_string()]),
-        vec![NameTargetRule {
-            pattern: "{name}".to_string(),
-            target: "src/{name}.rs".to_string(),
-        }],
+        "implementer",
     )]);
-    let manifest = [named_record(
+    let manifest = [record_for_implementer(
         "t1",
         "implement fibonacci(n: int)",
         "planner",
         "fibonacci",
+        "src/fibonacci.rs",
     )];
     let graph = apply_team_triggers(graph, &NodeId("root".to_string()), &config, &manifest)
         .expect("team triggers must apply cleanly");
@@ -514,11 +488,12 @@ fn for_tasks_spawns_node_with_target_files_derived_from_task_name() {
     );
 }
 
-/// When no configured `name_target_rules` matches the task's name (or the
-/// team has none), applying triggers fails loudly instead of spawning a node
-/// that could touch no file — never a guessed empty fallback.
+/// When no `role_targets` entry matches the spawning team's own worker role
+/// (or the team has no worker role at all), applying triggers fails loudly
+/// instead of spawning a node that could touch no file — never a guessed
+/// empty fallback.
 #[test]
-fn for_tasks_fails_when_no_rule_matches_task_name() {
+fn for_tasks_fails_when_no_role_targets_entry_matches_team_role() {
     let graph = RunGraph {
         nodes: vec![root_node()],
     };
@@ -526,16 +501,17 @@ fn for_tasks_fails_when_no_rule_matches_task_name() {
         "implement",
         Trigger::AfterTeams(vec!["planner".to_string()]),
     )]);
-    let manifest = [named_record(
+    let manifest = [record_for_implementer(
         "t1",
         "implement fibonacci(n: int)",
         "planner",
         "fibonacci",
+        "src/fibonacci.rs",
     )];
     let err = apply_team_triggers(graph, &NodeId("root".to_string()), &config, &manifest)
-        .expect_err("no name_target_rule matches, so target derivation must fail");
+        .expect_err("team has no worker_role, so no role_targets entry can ever match");
     assert!(
-        err.contains("no name_target_rule matched"),
+        err.contains("no role_targets entry matches"),
         "error must name the cause: {err}"
     );
 }
@@ -554,11 +530,12 @@ fn for_tasks_spawns_node_with_team_adapter_and_northstar() {
         "adapters/implement.yaml",
         "northstars/implement.md",
     )]);
-    let manifest = [named_record(
+    let manifest = [record_for_implementer(
         "t1",
         "implement fibonacci(n: int)",
         "planner",
         "fibonacci",
+        "src/fibonacci.rs",
     )];
     let graph = apply_team_triggers(graph, &NodeId("root".to_string()), &config, &manifest)
         .expect("team triggers must apply cleanly");
@@ -581,15 +558,17 @@ fn for_tasks_does_not_duplicate_while_node_in_flight() {
     let graph = RunGraph {
         nodes: vec![root_node()],
     };
-    let config = run_config(vec![team_with_catchall_rule(
+    let config = run_config(vec![team_with_role(
         "implement",
         Trigger::AfterTeams(vec!["planner".to_string()]),
+        "implementer",
     )]);
-    let manifest = [named_record(
+    let manifest = [record_for_implementer(
         "t1",
         "implement fibonacci(n: int)",
         "planner",
         "fibonacci",
+        "src/fibonacci.rs",
     )];
     let graph = apply_team_triggers(graph, &NodeId("root".to_string()), &config, &manifest)
         .expect("team triggers must apply cleanly");
@@ -662,15 +641,17 @@ fn for_tasks_respawns_after_prior_attempt_failed() {
         retry_feedback: None,
     });
 
-    let config = run_config(vec![team_with_catchall_rule(
+    let config = run_config(vec![team_with_role(
         "implement",
         Trigger::AfterTeams(vec!["planner".to_string()]),
+        "implementer",
     )]);
-    let manifest = [named_record(
+    let manifest = [record_for_implementer(
         "t1",
         "implement fibonacci(n: int)",
         "planner",
         "fibonacci",
+        "src/fibonacci.rs",
     )];
     let graph = apply_team_triggers(graph, &NodeId("root".to_string()), &config, &manifest)
         .expect("team triggers must apply cleanly");
@@ -692,19 +673,27 @@ fn for_tasks_does_not_spawn_when_dependency_unsatisfied() {
         nodes: vec![root_node()],
     };
     let config = run_config_with_terminal_teams(
-        vec![team_with_catchall_rule(
+        vec![team_with_role(
             "implement",
             Trigger::AfterTeams(vec!["planner".to_string()]),
+            "implementer",
         )],
         vec!["implement"],
     );
     let manifest = [
-        named_record("t1", "implement fibonacci(n: int)", "planner", "fibonacci"),
-        named_record_with_deps(
+        record_for_implementer(
+            "t1",
+            "implement fibonacci(n: int)",
+            "planner",
+            "fibonacci",
+            "src/fibonacci.rs",
+        ),
+        record_for_implementer_with_deps(
             "t2",
             "implement factorial(n: int)",
             "planner",
             "factorial",
+            "src/factorial.rs",
             vec!["t1"],
         ),
     ];
@@ -732,20 +721,28 @@ fn for_tasks_spawns_once_all_terminal_teams_complete_dependency() {
         nodes: vec![root_node()],
     };
     let config = run_config_with_terminal_teams(
-        vec![team_with_catchall_rule(
+        vec![team_with_role(
             "implement",
             Trigger::AfterTeams(vec!["planner".to_string()]),
+            "implementer",
         )],
         vec!["implement"],
     );
     let manifest = [
-        named_record("t1", "implement fibonacci(n: int)", "planner", "fibonacci"),
+        record_for_implementer(
+            "t1",
+            "implement fibonacci(n: int)",
+            "planner",
+            "fibonacci",
+            "src/fibonacci.rs",
+        ),
         record("t1", "implemented fibonacci", "implement"),
-        named_record_with_deps(
+        record_for_implementer_with_deps(
             "t2",
             "implement factorial(n: int)",
             "planner",
             "factorial",
+            "src/factorial.rs",
             vec!["t1"],
         ),
     ];
@@ -773,17 +770,19 @@ fn for_tasks_unaffected_when_no_depends_on() {
         nodes: vec![root_node()],
     };
     let config = run_config_with_terminal_teams(
-        vec![team_with_catchall_rule(
+        vec![team_with_role(
             "implement",
             Trigger::AfterTeams(vec!["planner".to_string()]),
+            "implementer",
         )],
         vec!["implement"],
     );
-    let manifest = [named_record(
+    let manifest = [record_for_implementer(
         "t1",
         "implement fibonacci(n: int)",
         "planner",
         "fibonacci",
+        "src/fibonacci.rs",
     )];
     let graph = apply_team_triggers(graph, &NodeId("root".to_string()), &config, &manifest)
         .expect("team triggers must apply cleanly");
@@ -797,24 +796,37 @@ fn for_tasks_unaffected_when_no_depends_on() {
     assert_eq!(spawned[0].task_id, Some("t1".to_string()));
 }
 
-/// A `ForTasks`-spawned Work node's `required_validation_targets` is derived
-/// for real from the spawning team's language plugins, mirroring
-/// `required_test_targets_fn` on the planner path — not hardcoded to
-/// `vec![]` regardless of what the team's adapter declares.
+/// A `ForTasks`-spawned Work node's `required_validation_targets` is every
+/// *other* role's target file path from the same manifest row's
+/// `role_targets` — not derived from any language plugin at all, so it can
+/// never disagree with what the sibling role's own `ForTasks` node actually
+/// targets (see [`implement_and_create_test_read_identical_role_targets_from_the_same_manifest_row`]
+/// for the two-team version of this proof).
 #[test]
-fn for_tasks_spawns_node_with_required_validation_targets_from_team_language_plugins() {
+fn for_tasks_spawns_node_with_required_validation_targets_from_sibling_role_targets() {
     let graph = RunGraph {
         nodes: vec![root_node()],
     };
-    let config = run_config(vec![team_with_catchall_rule_and_validation_targets(
+    let config = run_config(vec![team_with_role(
         "implement",
         Trigger::AfterTeams(vec!["planner".to_string()]),
+        "implementer",
     )]);
-    let manifest = [named_record(
+    let manifest = [record_with_role_targets(
         "t1",
         "implement fibonacci(n: int)",
         "planner",
         "fibonacci",
+        vec![
+            RoleTarget {
+                role: "implementer".to_string(),
+                file_path: "src/fibonacci.rs".to_string(),
+            },
+            RoleTarget {
+                role: "tester".to_string(),
+                file_path: "src/fibonacci_test.rs".to_string(),
+            },
+        ],
     )];
     let graph = apply_team_triggers(graph, &NodeId("root".to_string()), &config, &manifest)
         .expect("team triggers must apply cleanly");
@@ -832,7 +844,7 @@ fn for_tasks_spawns_node_with_required_validation_targets_from_team_language_plu
     assert_eq!(
         spawned[0].required_validation_targets,
         vec!["src/fibonacci_test.rs".to_string()],
-        "must derive a real required validation target from the team's language plugin, not vec![]"
+        "must be the tester role's own target file, read directly from role_targets"
     );
 }
 
@@ -846,15 +858,26 @@ fn for_tasks_spawned_node_required_validation_target_is_enforced_by_the_gate() {
     let graph = RunGraph {
         nodes: vec![root_node()],
     };
-    let config = run_config(vec![team_with_catchall_rule_and_validation_targets(
+    let config = run_config(vec![team_with_role(
         "implement",
         Trigger::AfterTeams(vec!["planner".to_string()]),
+        "implementer",
     )]);
-    let manifest = [named_record(
+    let manifest = [record_with_role_targets(
         "t1",
         "implement fibonacci(n: int)",
         "planner",
         "fibonacci",
+        vec![
+            RoleTarget {
+                role: "implementer".to_string(),
+                file_path: "src/fibonacci.rs".to_string(),
+            },
+            RoleTarget {
+                role: "tester".to_string(),
+                file_path: "src/fibonacci_test.rs".to_string(),
+            },
+        ],
     )];
     let mut graph = apply_team_triggers(graph, &NodeId("root".to_string()), &config, &manifest)
         .expect("team triggers must apply cleanly");
@@ -902,128 +925,80 @@ fn for_tasks_spawned_node_required_validation_target_is_enforced_by_the_gate() {
         .expect("the required validation target is now completed by another node");
 }
 
-/// A python-like plugin: its default `name_target_rules` nests sources under
-/// `src/` (`src/{name}.py`), while its `tester` plugin_role writes to a flat
-/// `tests/test_{name}.py` with no directory-prefix concept — the exact
-/// sibling-role shape from the sibling path-mismatch audit (a Python
-/// implement/create_test pipeline whose source sits below the repo root).
-fn python_like_plugin_requiring_tests() -> LanguageSpec {
-    LanguageSpec {
-        extensions: vec!["py".to_string()],
-        identity: String::new(),
-        context: String::new(),
-        instructions: String::new(),
-        constraints: String::new(),
-        init: LanguageInitSpec {
-            gitignore: vec![],
-            commands: vec![],
-        },
-        validation: LanguageValidationSpec {
-            runs_tests: true,
-            commands: vec![],
-            validation_targets: vec![ValidationTargetRule {
-                pattern: "{stem}.py".to_string(),
-                target: "tests/test_{stem}.py".to_string(),
-            }],
-        },
-        plugin_roles: vec![
-            crate::language::spec::LanguageRoleConfig {
-                plugin_role: "tester".to_string(),
-                validation: LanguageValidationSpec {
-                    runs_tests: false,
-                    commands: vec![],
-                    validation_targets: vec![],
-                },
-                name_target_rules: vec![NameTargetRule {
-                    pattern: "{name}".to_string(),
-                    target: "tests/test_{name}.py".to_string(),
-                }],
-            },
-            crate::language::spec::LanguageRoleConfig {
-                plugin_role: "implementer".to_string(),
-                validation: LanguageValidationSpec {
-                    runs_tests: true,
-                    commands: vec![],
-                    validation_targets: vec![ValidationTargetRule {
-                        pattern: "{stem}.py".to_string(),
-                        target: "tests/test_{stem}.py".to_string(),
-                    }],
-                },
-                name_target_rules: vec![],
-            },
-        ],
-        api_summary: None,
-        name_target_rules: vec![NameTargetRule {
-            pattern: "{name}".to_string(),
-            target: "src/{name}.py".to_string(),
-        }],
-    }
-}
-
 /// Regression test for the sibling implement/create_test path mismatch: with
-/// a Python-style plugin whose source lands under a non-root directory
-/// (`src/`), `implement`'s ForTasks node must now expect exactly the path
-/// `create_test`'s own ForTasks node actually writes to, not a path nested
-/// under the source's own directory.
-///
-/// Before the fix, `implement`'s `required_validation_targets` was derived
-/// path-based from `validation.validation_targets` applied to its own
-/// (nested) target file, producing `src/tests/test_fibonacci.py` — which
-/// disagreed with `create_test`'s actual `tests/test_fibonacci.py`, derived
-/// name-based from the `tester` role's `name_target_rules`.
+/// a single manifest row carrying planner-decided `role_targets` for both
+/// the `implementer` and `tester` roles, spawning both teams' `ForTasks`
+/// nodes from that same row must produce a target-file pair that agrees by
+/// construction — `implement`'s own target, and what it requires to exist
+/// elsewhere (the tester's target), must equal `create_test`'s own actual
+/// target, and vice versa — because both teams read the identical
+/// `record.role_targets`, not two independently derived tables that merely
+/// happen to agree.
 #[test]
-fn implement_required_validation_target_matches_create_test_actual_target_when_source_is_nested() {
-    let plugin = python_like_plugin_requiring_tests();
-    let plugins = BTreeMap::from([("py".to_string(), plugin.clone())]);
-
-    let implement_team = TeamConfig {
-        name_target_rules: plugin
-            .name_target_rules_for_role(Some("implementer"))
-            .to_vec(),
-        language_plugins: plugins.clone(),
-        ..team_with_adapter(
+fn implement_and_create_test_read_identical_role_targets_from_the_same_manifest_row() {
+    let graph = RunGraph {
+        nodes: vec![root_node()],
+    };
+    let config = run_config(vec![
+        team_with_role(
             "implement",
             Trigger::AfterTeams(vec!["planner".to_string()]),
-            "",
-            "",
-        )
-    };
-    let create_test_team = TeamConfig {
-        name_target_rules: plugin.name_target_rules_for_role(Some("tester")).to_vec(),
-        language_plugins: plugins,
-        ..team_with_adapter(
+            "implementer",
+        ),
+        team_with_role(
             "create_test",
             Trigger::AfterTeams(vec!["planner".to_string()]),
-            "",
-            "",
-        )
-    };
-
-    let record = named_record("t1", "implement fibonacci(n: int)", "planner", "fibonacci");
-
-    let implement_target_files =
-        task_target_files(&implement_team, &record).expect("implement target files must derive");
-    assert_eq!(
-        implement_target_files,
-        vec!["src/fibonacci.py".to_string()],
-        "implement's source must nest under src/, reproducing the audited scenario"
-    );
-
-    let create_test_target_files = task_target_files(&create_test_team, &record)
-        .expect("create_test target files must derive");
-    assert_eq!(
-        create_test_target_files,
-        vec!["tests/test_fibonacci.py".to_string()],
-        "create_test must actually write to a flat tests/ directory"
-    );
-
-    let required = crate::language::required_validation_targets_for_task(
-        &implement_team.language_plugins,
-        &implement_target_files,
+            "tester",
+        ),
+    ]);
+    let manifest = [record_with_role_targets(
+        "t1",
+        "implement fibonacci(n: int)",
+        "planner",
         "fibonacci",
+        vec![
+            RoleTarget {
+                role: "implementer".to_string(),
+                file_path: "src/fibonacci.py".to_string(),
+            },
+            RoleTarget {
+                role: "tester".to_string(),
+                file_path: "tests/test_fibonacci.py".to_string(),
+            },
+        ],
+    )];
+    let graph = apply_team_triggers(graph, &NodeId("root".to_string()), &config, &manifest)
+        .expect("team triggers must apply cleanly");
+
+    let implement_node = graph
+        .nodes
+        .iter()
+        .find(|n| n.team == "implement")
+        .expect("implement must have spawned a node");
+    let create_test_node = graph
+        .nodes
+        .iter()
+        .find(|n| n.team == "create_test")
+        .expect("create_test must have spawned a node");
+
+    assert_eq!(
+        implement_node.target_files,
+        vec!["src/fibonacci.py".to_string()]
     );
     assert_eq!(
-        required, create_test_target_files,
-        "implement's referee must expect exactly the path create_test actually writes to"
+        create_test_node.target_files,
+        vec!["tests/test_fibonacci.py".to_string()]
+    );
+
+    // implement's referee must expect exactly the path create_test actually
+    // writes to, and vice versa — not a nested or otherwise-derived path
+    // that happens to coincide only for some plugin shapes.
+    assert_eq!(
+        implement_node.required_validation_targets, create_test_node.target_files,
+        "implement's required validation target must match create_test's actual target"
+    );
+    assert_eq!(
+        create_test_node.required_validation_targets, implement_node.target_files,
+        "create_test's required validation target must match implement's actual target"
     );
 }

@@ -6,7 +6,7 @@ use std::path::Path;
 use serde::{Deserialize, Deserializer, Serialize};
 
 use super::team_triggers;
-use crate::language::{LanguageSpec, NameTargetRule};
+use crate::language::LanguageSpec;
 use crate::machines::scheduler::NodeKind;
 
 /// Top-level configuration for a forge run.
@@ -98,23 +98,21 @@ pub struct TeamConfig {
     /// Parsed trigger expression, e.g. `start` or
     /// `after_teams(team_a, team_b)`.
     pub trigger: Trigger,
-    /// Name-to-target derivation rules merged from every language plugin
-    /// this team's `adapter` declares, keyed by nothing (tried in plugin
-    /// declaration order) — never authored directly in `forge.yaml`.
-    ///
-    /// Populated by [`ForgeConfig::from_file`]'s `resolve_team_paths` step
-    /// from the adapter loaded for `adapter`, so it is available to the
-    /// (pure) scheduler transition that spawns `ForTasks` nodes without that
-    /// transition performing any I/O itself.
-    #[serde(default)]
-    pub name_target_rules: Vec<NameTargetRule>,
     /// This team's `adapter`-declared language plugins, keyed by extension —
-    /// merged in the same `resolve_team_paths` step as `name_target_rules`,
-    /// so `required_validation_targets` can be derived for a `ForTasks`-
-    /// spawned node without performing adapter-YAML I/O from inside the
-    /// (pure) scheduler transition that spawns it.
+    /// populated by [`ForgeConfig::from_file`]'s `resolve_team_paths` step
+    /// from the adapter loaded for `adapter`, so per-node plugin selection
+    /// (e.g. `required_validation_targets`) can happen without adapter-YAML
+    /// I/O from inside the (pure) scheduler transition that dispatches a
+    /// node.
     #[serde(default)]
     pub language_plugins: BTreeMap<String, LanguageSpec>,
+    /// This team's `adapter`'s first configured worker role name, if any —
+    /// see [`crate::project::YamlProjectAdapter::primary_worker_role`].
+    /// Matched against a `kind: "task"` manifest row's `role_targets` to
+    /// find this team's own target file for a `ForTasks`-spawned node,
+    /// without that transition performing any adapter-YAML I/O itself.
+    #[serde(default)]
+    pub worker_role: Option<String>,
     /// The engagement-wide active language (`ForgeConfig::language`), copied
     /// onto every team by `resolve_team_paths` so team-scoped dispatch can
     /// select the one active plugin from `language_plugins` without a
@@ -648,12 +646,7 @@ fn resolve_team_paths(
             )
             .into());
         }
-        let role = adapter.primary_worker_role();
-        team.name_target_rules = adapter
-            .language_plugins()
-            .values()
-            .flat_map(|spec| spec.name_target_rules_for_role(role).iter().cloned())
-            .collect();
+        team.worker_role = adapter.primary_worker_role().map(str::to_string);
         team.language_plugins = adapter.language_plugins().clone();
         team.language = language.to_string();
         std::fs::metadata(&team.northstar).map_err(|e| {

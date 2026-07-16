@@ -16,9 +16,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 pub use registry::language_spec;
-pub use spec::{
-    LanguageInitSpec, LanguageSpec, LanguageValidationSpec, NameTargetRule, derive_target_from_name,
-};
+pub use spec::{LanguageInitSpec, LanguageSpec, LanguageValidationSpec};
 
 /// Picks the language plugin that applies to a node from the extensions of
 /// its target files: the first target file (in order) whose extension has a
@@ -60,43 +58,6 @@ pub fn required_validation_targets(
         }
         _ => vec![],
     }
-}
-
-/// Required validation targets for a `ForTasks`-spawned node, given the
-/// spawning task's own bare `name` (see [`crate::artifacts::TaskRecord::name`]).
-///
-/// Prefers deriving from any `plugin_roles` entry that declares its own
-/// `name_target_rules` (the same table [`derive_target_from_name`] applies
-/// to derive that role's *own* sibling node's target file — see
-/// `task_target_files` in `crate::machines::scheduler::triggers`), so the
-/// two can never disagree: whatever a test-writing role's own ForTasks node
-/// will target is exactly what gets reported here as required.
-///
-/// Falls back to the path-based [`required_validation_targets`] when the
-/// matching plugin declares no such per-role override — e.g. a
-/// single-worker-role team that writes its own tests alongside its own
-/// source, with no sibling role to defer to.
-pub fn required_validation_targets_for_task(
-    plugins: &BTreeMap<String, LanguageSpec>,
-    target_files: &[String],
-    task_name: &str,
-) -> Vec<String> {
-    let Some(spec) = select_plugin(plugins, target_files) else {
-        return vec![];
-    };
-    if !spec.validation_includes_test_command() {
-        return vec![];
-    }
-    let from_roles: Vec<String> = spec
-        .plugin_roles
-        .iter()
-        .filter(|role| !role.name_target_rules.is_empty())
-        .filter_map(|role| derive_target_from_name(&role.name_target_rules, task_name))
-        .collect();
-    if !from_roles.is_empty() {
-        return from_roles;
-    }
-    required_validation_targets(plugins, target_files)
 }
 
 #[cfg(test)]

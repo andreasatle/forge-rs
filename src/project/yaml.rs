@@ -70,9 +70,10 @@ impl YamlProjectAdapter {
     /// This adapter's first configured worker role name, if any.
     ///
     /// A single-purpose Work-only adapter (see [`ProjectAdapterConfig::workers`])
-    /// defines exactly one role; this is the role a language plugin's
-    /// per-role `name_target_rules` override is matched against when
-    /// resolving a [`crate::config::TeamConfig`]'s name-derived targets.
+    /// defines exactly one role; this is the role matched against a
+    /// `kind: "task"` manifest row's `role_targets` entries when resolving a
+    /// [`crate::config::TeamConfig`]'s own target file for a `ForTasks`-spawned
+    /// node (see `crate::config::TeamConfig::worker_role`).
     pub fn primary_worker_role(&self) -> Option<&str> {
         self.config
             .workers

@@ -194,26 +194,29 @@ fn parses_teams() {
 }
 
 #[test]
-fn team_name_target_rules_are_merged_from_its_adapter_language_plugins() {
-    // Invariant: each team's name_target_rules is populated at config-load
-    // time from the language plugins its own adapter declares (coding.yaml
-    // declares both python.yaml and rust.yaml), not left empty — this is
-    // what lets a ForTasks-spawned node derive target_files from a task
-    // name with no I/O inside the (pure) scheduler transition.
+fn team_worker_role_and_language_plugins_are_populated_from_its_adapter() {
+    // Invariant: each team's worker_role and language_plugins are populated
+    // at config-load time from its own adapter (coding.yaml declares both
+    // python.yaml and rust.yaml, plus an implementer worker role), not left
+    // empty/None — this is what lets a ForTasks-spawned node read its own
+    // target file from a task's planner-supplied role_targets with no I/O
+    // inside the (pure) scheduler transition.
     let tmp = TempYaml::new(TEAMS_YAML);
     std::fs::write(tmp.dir().join("project.md"), "gap: project").unwrap();
     std::fs::write(tmp.dir().join("implementation.md"), "gap: implementation").unwrap();
     let config = ForgeConfig::from_file(tmp.path()).unwrap();
 
     for team in &config.teams {
-        let targets: Vec<&str> = team
-            .name_target_rules
-            .iter()
-            .map(|rule| rule.target.as_str())
-            .collect();
+        assert_eq!(
+            team.worker_role.as_deref(),
+            Some("implementer"),
+            "team '{}' must inherit its adapter's primary worker role",
+            team.name
+        );
+        let extensions: Vec<&str> = team.language_plugins.keys().map(String::as_str).collect();
         assert!(
-            targets.contains(&"src/{name}.py") && targets.contains(&"src/{name}.rs"),
-            "team '{}' must inherit name_target_rules from both plugins its adapter declares, got {targets:?}",
+            extensions.contains(&"py") && extensions.contains(&"rs"),
+            "team '{}' must inherit language_plugins from both plugins its adapter declares, got {extensions:?}",
             team.name
         );
     }

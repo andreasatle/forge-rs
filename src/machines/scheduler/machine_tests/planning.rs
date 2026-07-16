@@ -53,9 +53,9 @@ fn initial_state_seeds_root_with_start_triggered_teams_identity() {
             adapter: "adapters/planner.yaml".to_string(),
             kind: NodeKind::Plan,
             trigger: Trigger::Start,
-            name_target_rules: vec![],
             language_plugins: BTreeMap::new(),
             language: String::new(),
+            worker_role: None,
         }],
         ..RunConfig::default()
     };

@@ -246,10 +246,8 @@ fn register_fake_language(dir: &Path, label: &str) -> String {
                     commands: vec![],
                     validation_targets: vec![],
                 },
-                name_target_rules: vec![],
             }],
             api_summary: None,
-            name_target_rules: vec![],
         },
     );
     id

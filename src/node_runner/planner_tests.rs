@@ -656,8 +656,7 @@ fn plan_kind_task_with_blank_name_fails_validation() {
     // task row via the single-task short-circuit (see
     // `plan_kind_output_with_single_task_becomes_terminal_task`), so a blank
     // name must be caught here, at validation time, rather than surfacing
-    // later as a `name_target_rules` match failure or a downstream `.expect()`
-    // panic (`triggers::task_target_files`).
+    // later as a downstream `.expect()` panic (`triggers::task_target_files`).
     let output = PlannerOutput {
         kind: PlannerOutputKind::Plan,
         tasks: vec![PlannerTask {
@@ -678,12 +677,13 @@ fn plan_kind_task_with_blank_name_fails_validation() {
 }
 
 #[test]
-fn short_circuited_single_task_plan_output_gets_a_name_that_matches_a_name_target_rule() {
+fn short_circuited_single_task_plan_output_carries_role_targets_through() {
     // Invariant: end-to-end, a single-task `kind: "plan"` output that
     // validates successfully and is short-circuited into a terminal task by
-    // `into_plan` carries a real, non-blank `name` all the way through —
-    // exactly the value a team's `name_target_rules` matches against in
-    // `triggers::task_target_files` once the row lands in the manifest.
+    // `into_plan` carries its planner-decided `function_name`/`role_targets`
+    // all the way through — exactly the values a `ForTasks`-spawned node
+    // reads directly in `triggers::task_target_files` once the row lands in
+    // the manifest, with no name-based re-derivation.
     let output = PlannerOutput {
         kind: PlannerOutputKind::Plan,
         tasks: vec![PlannerTask {
@@ -705,17 +705,8 @@ fn short_circuited_single_task_plan_output_gets_a_name_that_matches_a_name_targe
     assert!(plan.children.is_empty());
     assert_eq!(plan.tasks.len(), 1);
     assert_eq!(plan.tasks[0].name, "fibonacci");
-
-    let rules = [crate::language::NameTargetRule {
-        pattern: "{name}".to_string(),
-        target: "src/{name}.rs".to_string(),
-    }];
-    let target = crate::language::derive_target_from_name(&rules, &plan.tasks[0].name);
-    assert_eq!(
-        target,
-        Some("src/fibonacci.rs".to_string()),
-        "the short-circuited task's name must successfully match a name_target_rule"
-    );
+    assert_eq!(plan.tasks[0].function_name, "fibonacci");
+    assert_eq!(plan.tasks[0].role_targets, role_targets());
 }
 
 #[test]

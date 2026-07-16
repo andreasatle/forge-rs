@@ -46,14 +46,6 @@ pub struct LanguageSpec {
     /// file path as the last argument; its stdout is the file's summary.
     #[serde(default)]
     pub api_summary: Option<CommandSpec>,
-    /// Rules deriving a target file from a task's bare name (see
-    /// [`crate::artifacts::TaskRecord::name`]), for nodes spawned with no
-    /// target file of their own to select a plugin or validation rule from.
-    ///
-    /// Used as the default for any worker role without its own override in
-    /// `plugin_roles` (see [`Self::name_target_rules_for_role`]).
-    #[serde(default)]
-    pub name_target_rules: Vec<NameTargetRule>,
 }
 
 impl LanguageSpec {
@@ -63,22 +55,6 @@ impl LanguageSpec {
     /// rather than by inspecting command tokens.
     pub fn validation_includes_test_command(&self) -> bool {
         self.validation.runs_tests
-    }
-
-    /// Name-target rules that apply for `role`, mirroring how `plugin_roles`
-    /// overrides `validation`: a role with its own non-empty
-    /// `name_target_rules` uses those instead of the plugin-level default —
-    /// e.g. a `tester` role deriving `tests/test_{name}.py` while the
-    /// plugin's own default derives `src/{name}.py` for every other role.
-    ///
-    /// Falls back to the plugin-level [`Self::name_target_rules`] when `role`
-    /// is `None`, matches no entry in `plugin_roles`, or that entry has no
-    /// `name_target_rules` of its own.
-    pub fn name_target_rules_for_role(&self, role: Option<&str>) -> &[NameTargetRule] {
-        role.and_then(|role| self.plugin_roles.iter().find(|r| r.plugin_role == role))
-            .map(|r| r.name_target_rules.as_slice())
-            .filter(|rules| !rules.is_empty())
-            .unwrap_or(&self.name_target_rules)
     }
 
     /// This plugin's prompt sections, for composition into a role prompt
@@ -94,51 +70,6 @@ impl LanguageSpec {
     }
 }
 
-/// A rule deriving a target file from a task's bare name, independent of
-/// any target file the task already carries.
-///
-/// `pattern` is matched against the whole name; it contains exactly one
-/// `{name}` placeholder and matches when the name starts with the text
-/// before it and ends with the text after it. The captured middle section
-/// is substituted into `target` to derive the target path.
-///
-/// Example: `pattern: "{name}"`, `target: "src/{name}.py"` derives
-/// `src/add_parser.py` from the name `add_parser`.
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct NameTargetRule {
-    /// Task-name pattern, e.g. `"{name}"`.
-    pub pattern: String,
-    /// Target file pattern, e.g. `"src/{name}.py"`.
-    pub target: String,
-}
-
-impl NameTargetRule {
-    /// Applies this rule to `name`, returning the derived target path if
-    /// `name` matches `pattern` as a whole (not a substring). See the type
-    /// docs for the matching rule.
-    fn apply(&self, name: &str) -> Option<String> {
-        let (before, after) = self.pattern.split_once("{name}")?;
-        if name.len() < before.len() + after.len() {
-            return None;
-        }
-        if !name.starts_with(before) || !name.ends_with(after) {
-            return None;
-        }
-        let captured = &name[before.len()..name.len() - after.len()];
-        if captured.is_empty() {
-            return None;
-        }
-        Some(self.target.replace("{name}", captured))
-    }
-}
-
-/// Applies `rules` in order to `name`, returning the first matching rule's
-/// derived target path, or `None` when no rule's pattern matches.
-pub fn derive_target_from_name(rules: &[NameTargetRule], name: &str) -> Option<String> {
-    rules.iter().find_map(|rule| rule.apply(name))
-}
-
 /// A worker role's validation override for a language plugin.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LanguageRoleConfig {
@@ -147,13 +78,6 @@ pub struct LanguageRoleConfig {
     /// Validation spec used for nodes assigned this role, replacing the
     /// language's default `validation` spec entirely.
     pub validation: LanguageValidationSpec,
-    /// Name-target rules used for nodes assigned this role, replacing the
-    /// plugin-level [`LanguageSpec::name_target_rules`] entirely — same
-    /// override semantics as `validation`. Empty by default, in which case
-    /// [`LanguageSpec::name_target_rules_for_role`] falls back to the
-    /// plugin-level rules.
-    #[serde(default)]
-    pub name_target_rules: Vec<NameTargetRule>,
 }
 
 /// Init-phase command list for a language.
@@ -211,7 +135,6 @@ mod tests {
             },
             plugin_roles: vec![],
             api_summary: None,
-            name_target_rules: vec![],
         };
         assert!(
             spec.validation_includes_test_command(),
@@ -243,7 +166,6 @@ mod tests {
             },
             plugin_roles: vec![],
             api_summary: None,
-            name_target_rules: vec![],
         };
         assert!(
             !spec.validation_includes_test_command(),
@@ -383,286 +305,5 @@ plugin_roles:
         );
         assert!(spec.validation.runs_tests);
         assert_eq!(spec.validation.commands[0].program, "full");
-    }
-
-    #[test]
-    fn name_target_rules_defaults_to_empty_when_omitted_from_yaml() {
-        // Invariant: name_target_rules is optional — a language spec with no
-        // name-derived target rules still parses, defaulting to empty.
-        let yaml = r#"
-identity: "guidance"
-init:
-  commands: []
-validation:
-  commands: []
-"#;
-        let spec: LanguageSpec =
-            serde_yaml::from_str(yaml).expect("spec without name_target_rules must parse");
-        assert!(spec.name_target_rules.is_empty());
-    }
-
-    #[test]
-    fn name_target_rules_parse_pattern_and_target_from_yaml() {
-        // Invariant: each name_target_rules entry carries its own pattern and
-        // target strings, independent of validation_targets.
-        let yaml = r#"
-identity: "guidance"
-init:
-  commands: []
-validation:
-  commands: []
-name_target_rules:
-  - pattern: "{name}"
-    target: "src/{name}.py"
-"#;
-        let spec: LanguageSpec =
-            serde_yaml::from_str(yaml).expect("spec with name_target_rules must parse");
-        assert_eq!(spec.name_target_rules.len(), 1);
-        assert_eq!(spec.name_target_rules[0].pattern, "{name}");
-        assert_eq!(spec.name_target_rules[0].target, "src/{name}.py");
-    }
-
-    #[test]
-    fn derive_target_from_name_substitutes_captured_middle() {
-        // Invariant: the text captured between a rule's pattern prefix/suffix
-        // is substituted verbatim into the target pattern's {name} slot.
-        let rules = vec![NameTargetRule {
-            pattern: "{name}".to_string(),
-            target: "src/{name}.py".to_string(),
-        }];
-        assert_eq!(
-            derive_target_from_name(&rules, "add_parser"),
-            Some("src/add_parser.py".to_string())
-        );
-    }
-
-    #[test]
-    fn derive_target_from_name_returns_none_when_no_rule_matches() {
-        // Invariant: a name that fits no configured rule's pattern derives
-        // no target — callers must not guess a fallback.
-        let rules = vec![NameTargetRule {
-            pattern: "test_{name}".to_string(),
-            target: "tests/test_{name}.py".to_string(),
-        }];
-        assert_eq!(derive_target_from_name(&rules, "add_parser"), None);
-    }
-
-    #[test]
-    fn derive_target_from_name_returns_none_for_empty_rules() {
-        // Invariant: a team/spec with no configured name_target_rules never
-        // derives a target, regardless of the name.
-        assert_eq!(derive_target_from_name(&[], "add_parser"), None);
-    }
-
-    #[test]
-    fn derive_target_from_name_uses_first_matching_rule() {
-        // Invariant: rules are tried in order and the first match wins, same
-        // as validation_targets' derivation semantics.
-        let rules = vec![
-            NameTargetRule {
-                pattern: "{name}".to_string(),
-                target: "src/{name}.rs".to_string(),
-            },
-            NameTargetRule {
-                pattern: "{name}".to_string(),
-                target: "src/{name}.py".to_string(),
-            },
-        ];
-        assert_eq!(
-            derive_target_from_name(&rules, "add_parser"),
-            Some("src/add_parser.rs".to_string())
-        );
-    }
-
-    #[test]
-    fn name_target_rules_for_role_falls_back_to_plugin_default() {
-        // Invariant: a role with no override, or no role at all, uses the
-        // plugin-level name_target_rules — this is what keeps an
-        // implementer-only (or role-less) adapter deriving the same target
-        // it always has.
-        let default_rules = vec![NameTargetRule {
-            pattern: "{name}".to_string(),
-            target: "src/{name}.py".to_string(),
-        }];
-        let spec = LanguageSpec {
-            extensions: vec![],
-            identity: String::new(),
-            context: String::new(),
-            instructions: String::new(),
-            constraints: String::new(),
-            init: LanguageInitSpec {
-                gitignore: vec![],
-                commands: vec![],
-            },
-            validation: LanguageValidationSpec {
-                runs_tests: true,
-                commands: vec![],
-                validation_targets: vec![],
-            },
-            plugin_roles: vec![LanguageRoleConfig {
-                plugin_role: "implementer".to_string(),
-                validation: LanguageValidationSpec {
-                    runs_tests: true,
-                    commands: vec![],
-                    validation_targets: vec![],
-                },
-                name_target_rules: vec![],
-            }],
-            api_summary: None,
-            name_target_rules: default_rules.clone(),
-        };
-        assert_eq!(spec.name_target_rules_for_role(None), default_rules);
-        assert_eq!(
-            spec.name_target_rules_for_role(Some("implementer")),
-            default_rules
-        );
-        assert_eq!(
-            spec.name_target_rules_for_role(Some("unknown_role")),
-            default_rules
-        );
-    }
-
-    #[test]
-    fn name_target_rules_for_role_uses_role_override_when_present() {
-        // Invariant: a role with its own non-empty name_target_rules (e.g. a
-        // tester deriving a test file) replaces the plugin-level default
-        // entirely — the two never merge.
-        let tester_rules = vec![NameTargetRule {
-            pattern: "{name}".to_string(),
-            target: "tests/test_{name}.py".to_string(),
-        }];
-        let spec = LanguageSpec {
-            extensions: vec![],
-            identity: String::new(),
-            context: String::new(),
-            instructions: String::new(),
-            constraints: String::new(),
-            init: LanguageInitSpec {
-                gitignore: vec![],
-                commands: vec![],
-            },
-            validation: LanguageValidationSpec {
-                runs_tests: true,
-                commands: vec![],
-                validation_targets: vec![],
-            },
-            plugin_roles: vec![LanguageRoleConfig {
-                plugin_role: "tester".to_string(),
-                validation: LanguageValidationSpec {
-                    runs_tests: false,
-                    commands: vec![],
-                    validation_targets: vec![],
-                },
-                name_target_rules: tester_rules.clone(),
-            }],
-            api_summary: None,
-            name_target_rules: vec![NameTargetRule {
-                pattern: "{name}".to_string(),
-                target: "src/{name}.py".to_string(),
-            }],
-        };
-        assert_eq!(
-            spec.name_target_rules_for_role(Some("tester")),
-            tester_rules
-        );
-    }
-
-    #[test]
-    fn bundled_language_specs_declare_name_target_rules() {
-        for language in ["rust", "python"] {
-            let spec =
-                language_spec(language).unwrap_or_else(|| panic!("{language} spec must load"));
-            assert!(
-                !spec.name_target_rules.is_empty(),
-                "{language} plugin must configure name_target_rules"
-            );
-        }
-    }
-
-    #[test]
-    fn bundled_language_specs_derive_a_distinct_tester_target_from_the_default() {
-        // Invariant: the shipped plugins' tester role derives a test-file
-        // target distinct from the plugin-level default (which derives the
-        // source file) — this is what lets a create_test-style adapter's
-        // ForTasks-spawned Work node target a test file instead of colliding
-        // with the implementer's source-file target.
-        for language in ["rust", "python"] {
-            let spec =
-                language_spec(language).unwrap_or_else(|| panic!("{language} spec must load"));
-            let default_target = derive_target_from_name(&spec.name_target_rules, "example")
-                .unwrap_or_else(|| panic!("{language} default name_target_rules must match"));
-            let tester_target =
-                derive_target_from_name(spec.name_target_rules_for_role(Some("tester")), "example")
-                    .unwrap_or_else(|| panic!("{language} tester name_target_rules must match"));
-            assert_ne!(
-                default_target, tester_target,
-                "{language} tester role must derive a distinct target from the plugin default"
-            );
-        }
-    }
-
-    #[test]
-    fn required_validation_targets_for_task_agrees_with_testers_actual_target_for_bundled_plugins()
-    {
-        // Structural guard for the sibling path-mismatch class of bug: for
-        // each bundled language plugin, the required validation target
-        // reported for a ForTasks node
-        // (`crate::language::required_validation_targets_for_task`) must
-        // match exactly what a sibling tester-role node would actually
-        // write for the same task name — otherwise an implementer's referee
-        // could expect a different test path than create_test actually
-        // writes to (see the regression test in
-        // `crate::machines::scheduler::triggers_tests`).
-        //
-        // `name` is chosen so the plugin's own (non-tester) default
-        // name_target_rule nests the source under a directory — this
-        // reproduces the audited scenario, where a flat task name is not
-        // enough to expose the bug.
-        use std::collections::BTreeMap;
-
-        for language in ["rust", "python"] {
-            let spec =
-                language_spec(language).unwrap_or_else(|| panic!("{language} spec must load"));
-            let name = "example";
-            let source_target = derive_target_from_name(&spec.name_target_rules, name)
-                .unwrap_or_else(|| panic!("{language} default name_target_rules must match"));
-            let tester_target =
-                derive_target_from_name(spec.name_target_rules_for_role(Some("tester")), name)
-                    .unwrap_or_else(|| panic!("{language} tester name_target_rules must match"));
-
-            let mut plugins = BTreeMap::new();
-            plugins.insert(spec.extensions[0].clone(), spec.clone());
-
-            let required = crate::language::required_validation_targets_for_task(
-                &plugins,
-                std::slice::from_ref(&source_target),
-                name,
-            );
-            assert_eq!(
-                required,
-                vec![tester_target.clone()],
-                "{language}: required_validation_targets_for_task must match the tester role's \
-                 actual write target"
-            );
-
-            // Prove this guard is non-vacuous: the retained path-based
-            // derivation (still used by the single-team planner path, see
-            // `crate::language::required_validation_targets`) disagrees for
-            // a plugin whose default source nests under a directory the
-            // tester role's own rule doesn't share (python) — this is
-            // exactly the class of drift the guard above now catches for
-            // the ForTasks path.
-            let path_based =
-                crate::language::required_validation_targets(&plugins, &[source_target]);
-            if language == "python" {
-                assert_ne!(
-                    path_based,
-                    vec![tester_target],
-                    "python's path-based derivation is expected to disagree with the tester \
-                     role's flat target once the source nests under src/ — if this now agrees, \
-                     the plugin tables have been reconciled and this assertion should be updated"
-                );
-            }
-        }
     }
 }

@@ -11,21 +11,8 @@ use crate::providers::{ProviderClient, ProviderError, ProviderRequest, ProviderR
 
 /// A trivial adapter YAML: one planner + one worker role, with `marker`
 /// baked into the planner producer's identity so the rendered prompt proves
-/// which adapter a node actually ran under. `plugins` are the adapter's
-/// declared language plugin paths (see [`plugin_yaml`]), needed so a
-/// `ForTasks`-spawned Work node's `name_target_rules` lookup has something to
-/// match against.
-fn adapter_yaml(marker: &str, plugins: &[String]) -> String {
-    let plugins_yaml = if plugins.is_empty() {
-        "[]".to_string()
-    } else {
-        let entries = plugins
-            .iter()
-            .map(|p| format!("  - \"{p}\""))
-            .collect::<Vec<_>>()
-            .join("\n");
-        format!("\n{entries}")
-    };
+/// which adapter a node actually ran under.
+fn adapter_yaml(marker: &str) -> String {
     format!(
         r#"
 planner:
@@ -63,32 +50,7 @@ workers:
       instructions: ""
       constraints: ""
 context_files: []
-plugins: {plugins_yaml}
-"#
-    )
-}
-
-/// A minimal language plugin YAML whose only interesting content is a
-/// `name_target_rules` entry matching any task name to `target`, so a
-/// `ForTasks`-spawned Work node can derive `target_files` without requiring
-/// the fixture to model a real language.
-fn plugin_yaml(target: &str) -> String {
-    format!(
-        r#"
-extensions: ["txt"]
-init:
-  commands: []
-validation:
-  runs_tests: false
-  commands: []
-plugin_roles:
-  - plugin_role: implementer
-    validation:
-      runs_tests: false
-      commands: []
-name_target_rules:
-  - pattern: "{{name}}"
-    target: "{target}"
+plugins: []
 "#
     )
 }
@@ -186,31 +148,14 @@ fn two_team_forge_yaml_drives_planner_then_worker_under_their_own_adapters() {
         commit_sha,
     };
 
-    // The worker team's Work node is spawned by `after_teams(planner)`
-    // (`ForTasks`), which derives `target_files` from the matched task's
-    // name via the worker adapter's `name_target_rules` — so the worker
-    // adapter needs a plugin declaring a rule for the "worker_task" name
-    // used below, matching the `write_file`/`read_file` path the scripted
-    // provider already uses.
-    let worker_plugin_path = temp.join("worker_plugin.yaml");
-    fs::write(&worker_plugin_path, plugin_yaml("worker_output.txt")).expect("write worker plugin");
-
     // Fixture adapters and northstars, one set per team plus a distinct
     // top-level/root one, so a marker mismatch would be visible.
     let root_adapter_path = temp.join("root_adapter.yaml");
-    fs::write(&root_adapter_path, adapter_yaml("ROOT", &[])).expect("write root adapter");
+    fs::write(&root_adapter_path, adapter_yaml("ROOT")).expect("write root adapter");
     let planner_adapter_path = temp.join("planner_adapter.yaml");
-    fs::write(&planner_adapter_path, adapter_yaml("PLANNER-TEAM", &[]))
-        .expect("write planner adapter");
+    fs::write(&planner_adapter_path, adapter_yaml("PLANNER-TEAM")).expect("write planner adapter");
     let worker_adapter_path = temp.join("worker_adapter.yaml");
-    fs::write(
-        &worker_adapter_path,
-        adapter_yaml(
-            "WORKER-TEAM",
-            &[worker_plugin_path.to_string_lossy().into_owned()],
-        ),
-    )
-    .expect("write worker adapter");
+    fs::write(&worker_adapter_path, adapter_yaml("WORKER-TEAM")).expect("write worker adapter");
 
     let planner_northstar_path = temp.join("planner_northstar.txt");
     fs::write(
@@ -288,7 +233,7 @@ teams:
     //      referee loop (write_file, then read_file twice).
     let provider = RecordingScriptedProvider::from_strs(&[
         // 1. root/planner-team Plan node
-        r#"{"kind":"task","tasks":[{"id":"task-1","objective":"implement the worker task","name":"worker_task","function_name":"worker_task","role_targets":[{"role":"implementer","file_path":"worker_task"}],"depends_on":[]}]}"#,
+        r#"{"kind":"task","tasks":[{"id":"task-1","objective":"implement the worker task","name":"worker_task","function_name":"worker_task","role_targets":[{"role":"implementer","file_path":"worker_output.txt"}],"depends_on":[]}]}"#,
         r#"{"status":"accepted","content":"planner critic ok"}"#,
         r#"{"status":"accepted","content":"planner referee approved"}"#,
         // 2. worker-team Work node

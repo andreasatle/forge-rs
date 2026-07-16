@@ -44,9 +44,6 @@ plugin_roles:
         - program: cargo
           args: ["fmt", "--check"]
           scope: workspace
-    name_target_rules:
-      - pattern: "{name}"
-        target: "src/{name}_test.rs"
   - plugin_role: implementer
     validation:
       runs_tests: true
@@ -63,9 +60,6 @@ plugin_roles:
       validation_targets:
         - pattern: "{stem}.rs"
           target: "{stem}_test.rs"
-name_target_rules:
-  - pattern: "{name}"
-    target: "src/{name}.rs"
 api_summary:
   program: sh
   args:

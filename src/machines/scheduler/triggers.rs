@@ -8,7 +8,6 @@
 
 use crate::artifacts::TaskRecord;
 use crate::config::TeamConfig;
-use crate::language::derive_target_from_name;
 use crate::services::team_trigger::{TaskCompletion, TriggerDecision, evaluate_trigger};
 
 use super::config::RunConfig;
@@ -159,15 +158,7 @@ fn spawn_for_tasks(
                      `manifest_tasks` itself, so a matching row must already exist",
             );
             let target_files = task_target_files(team, record)?;
-            let task_name = record
-                .name
-                .as_deref()
-                .expect("a ForTasks-matched record is always a planner task row (kind: \"task\" or a short-circuited kind: \"plan\"), which EmptyName validation guarantees carries a name");
-            let required_validation_targets = crate::language::required_validation_targets_for_task(
-                &team.language_plugins,
-                &target_files,
-                task_name,
-            );
+            let required_validation_targets = sibling_role_target_files(team, record);
             Ok(NodeRequest {
                 id: new_node_id(),
                 kind: team.kind.clone(),
@@ -190,10 +181,12 @@ fn spawn_for_tasks(
     Ok(graph)
 }
 
-/// Derives a `ForTasks`-spawned node's target files from its matched
-/// manifest task's `name`, using `team`'s `name_target_rules` (merged from
-/// its adapter's language plugins at config-load time — see
-/// [`TeamConfig::name_target_rules`]).
+/// Derives a `ForTasks`-spawned node's target file directly from its matched
+/// manifest task's `role_targets`, matched against `team`'s own configured
+/// worker role (`TeamConfig::worker_role`) — the planner already decided
+/// this file path once, for every role that will act on the task, so every
+/// team reads its own entry instead of independently deriving one from the
+/// task's bare `name`.
 ///
 /// `record` is always a planner-produced task row this id was decomposed
 /// from — either a `kind: "task"` row, or a `kind: "plan"` row that
@@ -202,25 +195,48 @@ fn spawn_for_tasks(
 /// `ForTasks` id only ever exists because a manifest row with that id and a
 /// team already does, and the first such row for any id is always one of
 /// these two planner rows (a `Work`-node completion for the id can only be
-/// recorded *after* the planner row that gave rise to it). `EmptyName`
-/// validation covers both row kinds and guarantees `name` is never empty for
-/// either. Failing to match it against any configured rule — including when
-/// `team` has no language plugins at all, i.e. `name_target_rules` is empty
-/// — is `Err`, never a guessed fallback: the caller must fail the run rather
-/// than spawn a node that can touch no file.
+/// recorded *after* the planner row that gave rise to it). `EmptyRoleTargets`
+/// validation covers both row kinds and guarantees `role_targets` is never
+/// empty for either. Finding no entry for `team`'s own role — including when
+/// `team` has no configured worker role at all — is `Err`, never a guessed
+/// fallback: the caller must fail the run rather than spawn a node that can
+/// touch no file.
 fn task_target_files(team: &TeamConfig, record: &TaskRecord) -> Result<Vec<String>, String> {
-    let name = record
-        .name
-        .as_deref()
-        .expect("a ForTasks-matched record is always a planner task row (kind: \"task\" or a short-circuited kind: \"plan\"), which EmptyName validation guarantees carries a name");
-    derive_target_from_name(&team.name_target_rules, name)
-        .map(|target| vec![target])
+    own_role_target_file(team, record)
+        .map(|file_path| vec![file_path.to_string()])
         .ok_or_else(|| {
             format!(
-                "team '{}': no name_target_rule matched task name '{name}' (id {})",
-                team.name, record.id
+                "team '{}': no role_targets entry matches its role '{}' for task id {}",
+                team.name,
+                team.worker_role.as_deref().unwrap_or("<none>"),
+                record.id
             )
         })
+}
+
+/// This team's own target file path for `record`, matched by
+/// `team.worker_role` against `record.role_targets`.
+fn own_role_target_file<'a>(team: &TeamConfig, record: &'a TaskRecord) -> Option<&'a str> {
+    let role = team.worker_role.as_deref()?;
+    record
+        .role_targets
+        .iter()
+        .find(|target| target.role == role)
+        .map(|target| target.file_path.as_str())
+}
+
+/// Every other role's target file path for `record` — the file(s) this
+/// team's own node completion requires to exist elsewhere in the graph (e.g.
+/// the implementer's node requiring the tester's test file), read directly
+/// from the same planner-supplied `role_targets` every sibling team's own
+/// [`task_target_files`] call reads, so the two can never disagree.
+fn sibling_role_target_files(team: &TeamConfig, record: &TaskRecord) -> Vec<String> {
+    record
+        .role_targets
+        .iter()
+        .filter(|target| Some(target.role.as_str()) != team.worker_role.as_deref())
+        .map(|target| target.file_path.clone())
+        .collect()
 }
 
 /// The objective the run was started with, per the graph's `Root` node.
