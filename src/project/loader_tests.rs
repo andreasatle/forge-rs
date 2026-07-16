@@ -218,6 +218,52 @@ fn create_test_worker_producer_prompt_requires_importing_functions_under_test() 
 }
 
 #[test]
+fn pass_tests_worker_prompt_resolves_implementation_test_disagreement_toward_the_test() {
+    // Invariant: when the implement and create_test teams' independent work
+    // disagrees (e.g. `fibonacci` raises `ValueError` for `n <= 0`, but the
+    // test expects `fibonacci(0) == 0`), pass_tests's rendered prompt must
+    // unambiguously direct the producer to change the implementation, never
+    // the test, and must never present this as a case-by-case judgment call.
+    // Regression for run 2026-07-16-19-59-53, node 9ada54cd, where producer/
+    // critic/referee cycled on exactly this discrepancy until the revision
+    // limit exhausted and the node failed outright.
+    let policy = load_adapter(&repo_adapter("pass_tests.yaml"))
+        .unwrap()
+        .role_policy();
+
+    assert!(
+        policy
+            .worker_producer_system
+            .contains("Never modify test files"),
+        "pass_tests producer prompt must forbid editing test files unconditionally; got:\n{}",
+        policy.worker_producer_system
+    );
+    assert!(
+        !policy
+            .worker_producer_system
+            .contains("unless it is unambiguously wrong"),
+        "pass_tests producer prompt must not carve out a case-by-case exception for editing tests; got:\n{}",
+        policy.worker_producer_system
+    );
+
+    for (label, system) in [
+        ("critic", &policy.worker_critic_system),
+        ("referee", &policy.worker_referee_system),
+    ] {
+        assert!(
+            system.contains(
+                "only valid ground for rejection is whether the existing tests still fail"
+            ),
+            "pass_tests {label} prompt must scope rejection to whether tests still fail; got:\n{system}"
+        );
+        assert!(
+            !system.contains("an iterative version might be faster"),
+            "pass_tests {label} prompt must not retain the generic style/performance rejection example, which invites weighing the implementation against the test rather than just checking pass/fail; got:\n{system}"
+        );
+    }
+}
+
+#[test]
 fn generic_planner_guidance_reaches_plan_nodes_but_not_work_nodes() {
     // Invariant: MECE decomposition-review guidance lives once in the
     // generic layer's `planner` block (adapters/generic.yaml) so every
