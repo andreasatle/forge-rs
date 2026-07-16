@@ -32,6 +32,12 @@ pub(crate) struct DeliberationContextConfig<'a> {
     /// select the plugin whose prompt sections apply to this node's own
     /// target files — see [`crate::language::select_plugin`].
     pub(crate) language_plugins: &'a BTreeMap<String, LanguageSpec>,
+    /// The engagement's single active language plugin (selected via
+    /// `ForgeConfig::language`/`TeamConfig::language`, not a node's target
+    /// files). Used for `Plan` nodes, which have no target files of their
+    /// own to select a plugin by extension — see
+    /// [`crate::language::select_plugin`] for the `Work`-node counterpart.
+    pub(crate) active_language_plugin: Option<&'a LanguageSpec>,
 }
 
 /// Returns structured context for a deliberation run.
@@ -55,11 +61,15 @@ pub(crate) fn build_deliberation_context(
     // still be non-empty here (a split node inherits it from the failed
     // node it replaces, for objective-rendering context), but that inherited
     // list must never drive language-plugin selection for a node that isn't
-    // producing code itself.
-    let plugin_prompt = (!matches!(request.kind, NodeKind::Plan))
-        .then(|| select_plugin(config.language_plugins, &request.target_files))
-        .flatten()
-        .map(LanguageSpec::prompt_sections);
+    // producing code itself. Plan nodes instead use the engagement's single
+    // configured active plugin, selected once at config-load time rather
+    // than per node.
+    let plugin_prompt = if matches!(request.kind, NodeKind::Plan) {
+        config.active_language_plugin
+    } else {
+        select_plugin(config.language_plugins, &request.target_files)
+    }
+    .map(LanguageSpec::prompt_sections);
 
     DeliberationContext {
         target_files: request.target_files.clone(),

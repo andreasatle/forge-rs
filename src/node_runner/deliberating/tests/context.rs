@@ -69,6 +69,7 @@ fn prepared_deliberation_keeps_canonical_objective_and_structured_context_separa
         api_summary_command: None,
         northstar: None,
         language_plugins: &language_plugins,
+        active_language_plugin: None,
     };
     let prepared = prepare_deliberation(
         &provider,

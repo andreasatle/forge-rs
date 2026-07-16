@@ -48,6 +48,7 @@ impl RunSession {
         let setup = ProjectRuntimeSetup::build(
             Path::new(&self.config.adapter),
             self.config.validation.as_ref(),
+            &self.config.language,
         )?;
         let artifact =
             load_or_create_artifact(&self.config.artifact, setup.primary_language_init.as_ref())?;
@@ -61,6 +62,7 @@ impl RunSession {
                 .with_context_file_names(setup.context_file_names)
                 .with_api_summary_command(setup.api_summary_command)
                 .with_language_plugins(setup.language_plugins)
+                .with_language(self.config.language.clone())
                 .with_validation_plan_for_role_fn(setup.validation_plan_for_role_fn);
         let handler = SchedulerHandler::with_artifact(runner, artifact)
             .with_telemetry(Arc::clone(&self.sink))

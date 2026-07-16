@@ -183,6 +183,7 @@ provider:
 telemetry:
   directory: "{telemetry_dir}"
 adapter: "{root_adapter}"
+language: "txt"
 teams:
   - name: recursive
     northstar: "{recursive_northstar}"
@@ -211,7 +212,7 @@ teams:
     // actually dispatches under it: the root node is seeded with
     // `recursive`'s own team/adapter/northstar since `recursive` is the
     // run's sole `Trigger::Start` team.
-    let root_setup = ProjectRuntimeSetup::build(Path::new(&config.adapter), None)
+    let root_setup = ProjectRuntimeSetup::build(Path::new(&config.adapter), None, &config.language)
         .expect("root adapter must load");
 
     // Response order, matching how the scheduler will actually dispatch.

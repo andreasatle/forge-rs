@@ -50,11 +50,21 @@ impl ProjectRuntimeSetup {
     /// its own language plugins (`plugins:`). Validated by
     /// [`crate::config::ForgeConfig::from_file`] in the common case, but a
     /// missing/invalid adapter or plugin is still a hard error here.
+    ///
+    /// `language` is the engagement's single active language
+    /// (`ForgeConfig::language`/`TeamConfig::language`), matching one of
+    /// `adapter`'s declared plugin extensions — used to pick a single,
+    /// explicit plugin for concerns with no node target files of their own
+    /// to select by (repo bootstrap, API summaries, the handler-level
+    /// fallback validator), instead of an arbitrary `BTreeMap` iteration
+    /// order that would otherwise silently favor whichever extension sorts
+    /// first.
     pub fn build(
         adapter: &Path,
         validation: Option<&ValidationConfig>,
+        language: &str,
     ) -> Result<Self, Box<dyn Error>> {
-        Ok(ProjectRuntimeSetupBuilder::new(adapter, validation)?.build())
+        Ok(ProjectRuntimeSetupBuilder::new(adapter, validation, language)?.build())
     }
 }
 
@@ -112,6 +122,7 @@ pub(crate) fn validate_worker_roles(
 struct ProjectRuntimeSetupBuilder<'a> {
     validation: Option<&'a ValidationConfig>,
     language_plugins: BTreeMap<String, LanguageSpec>,
+    language: String,
     adapter: Box<dyn ProjectAdapter>,
 }
 
@@ -119,6 +130,7 @@ impl<'a> ProjectRuntimeSetupBuilder<'a> {
     fn new(
         adapter: &Path,
         validation: Option<&'a ValidationConfig>,
+        language: &str,
     ) -> Result<Self, Box<dyn Error>> {
         let adapter = load_adapter(adapter)?;
         let language_plugins = adapter.language_plugins().clone();
@@ -126,6 +138,7 @@ impl<'a> ProjectRuntimeSetupBuilder<'a> {
         Ok(Self {
             validation,
             language_plugins,
+            language: language.to_string(),
             adapter: Box::new(adapter),
         })
     }
@@ -138,19 +151,22 @@ impl<'a> ProjectRuntimeSetupBuilder<'a> {
             validation_plan_for_role_fn: self.validation_plan_for_role_fn(),
             validator: self.validator(),
             api_summary_command: self
-                .first_plugin()
+                .active_plugin()
                 .and_then(|spec| spec.api_summary.clone()),
-            primary_language_init: self.first_plugin().map(|spec| spec.init.clone()),
+            primary_language_init: self.active_plugin().map(|spec| spec.init.clone()),
             language_plugins: self.language_plugins.clone(),
         }
     }
 
-    /// The adapter's first declared language plugin in extension order —
-    /// used as a deterministic fallback for concerns that must pick a single
-    /// plugin without a node's target files to select by (repo bootstrap,
-    /// API summaries, the handler-level fallback validator).
-    fn first_plugin(&self) -> Option<&LanguageSpec> {
-        self.language_plugins.values().next()
+    /// The engagement's configured active language plugin — used as the
+    /// single, explicit choice for concerns that must pick one plugin
+    /// without a node's target files to select by (repo bootstrap, API
+    /// summaries, the handler-level fallback validator). `None` only when
+    /// the adapter declares no plugins at all; `ForgeConfig::from_file`
+    /// guarantees `language` matches a declared extension whenever any
+    /// plugin is configured.
+    fn active_plugin(&self) -> Option<&LanguageSpec> {
+        self.language_plugins.get(&self.language)
     }
 
     fn role_policy(&self) -> RolePolicy {
@@ -240,7 +256,7 @@ impl<'a> ProjectRuntimeSetupBuilder<'a> {
     /// Handler-level fallback validator, used only for nodes that carry no
     /// per-node `validation_plan` (e.g. no plugin matched their target files
     /// at plan-expansion time). Prefers the explicit `validation:` config
-    /// when present, otherwise the first configured plugin's commands.
+    /// when present, otherwise the active language plugin's commands.
     fn validator(&self) -> Arc<dyn Validator> {
         if let Some(v) = self.validation
             && !v.commands.is_empty()
@@ -259,7 +275,7 @@ impl<'a> ProjectRuntimeSetupBuilder<'a> {
             return Arc::new(CommandValidator::new(specs, timeout));
         }
 
-        match self.first_plugin() {
+        match self.active_plugin() {
             Some(spec) => {
                 let timeout = Duration::from_secs(120);
                 Arc::new(CommandValidator::new(

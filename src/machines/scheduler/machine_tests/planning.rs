@@ -55,6 +55,7 @@ fn initial_state_seeds_root_with_start_triggered_teams_identity() {
             trigger: Trigger::Start,
             name_target_rules: vec![],
             language_plugins: BTreeMap::new(),
+            language: String::new(),
         }],
         ..RunConfig::default()
     };

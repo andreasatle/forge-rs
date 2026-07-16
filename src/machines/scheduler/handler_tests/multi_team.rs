@@ -240,6 +240,7 @@ provider:
 telemetry:
   directory: "{telemetry_dir}"
 adapter: "{root_adapter}"
+language: "txt"
 teams:
   - name: planner
     northstar: "{planner_northstar}"
@@ -270,7 +271,7 @@ teams:
     assert_eq!(config.teams.len(), 2);
 
     // Wire the root/default adapter the same way `RunSession::drive` does.
-    let root_setup = ProjectRuntimeSetup::build(Path::new(&config.adapter), None)
+    let root_setup = ProjectRuntimeSetup::build(Path::new(&config.adapter), None, &config.language)
         .expect("root adapter must load");
 
     // Response order, matching how the scheduler will actually dispatch:

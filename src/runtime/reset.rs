@@ -56,7 +56,11 @@ pub fn run_reset(config: ForgeConfig) -> Result<(), Box<dyn Error>> {
         std::fs::remove_dir_all(&repo_path)?;
     }
 
-    let setup = ProjectRuntimeSetup::build(Path::new(&config.adapter), config.validation.as_ref())?;
+    let setup = ProjectRuntimeSetup::build(
+        Path::new(&config.adapter),
+        config.validation.as_ref(),
+        &config.language,
+    )?;
     let artifact =
         super::load_or_create_artifact(&config.artifact, setup.primary_language_init.as_ref())?;
 

@@ -22,6 +22,7 @@ provider:
 telemetry:
   directory: "runs"
 adapter: adapters/planner.yaml
+language: py
 teams:
   - name: planner
     northstar: northstar.md

@@ -65,6 +65,12 @@ pub struct DeliberatingNodeRunner<C, S> {
     /// Returning `None` for a role means no per-node plan; integration falls
     /// back to the global handler-level validator.
     validation_plan_for_role_fn: Arc<ValidationPlanForRoleFn>,
+    /// The engagement-wide active language (`ForgeConfig::language`), used to
+    /// select a single plugin from `language_plugins` for `Plan`-node prompt
+    /// context — a `Plan` node has no target files of its own to select a
+    /// plugin by extension, unlike a `Work` node (see
+    /// [`crate::language::select_plugin`]).
+    language: String,
 }
 
 impl<C, S> DeliberatingNodeRunner<C, S> {
@@ -86,6 +92,7 @@ impl<C, S> DeliberatingNodeRunner<C, S> {
             northstar: None,
             language_plugins: BTreeMap::new(),
             validation_plan_for_role_fn: Arc::new(|_, _| None),
+            language: String::new(),
         }
     }
 
@@ -166,11 +173,19 @@ impl<C, S> DeliberatingNodeRunner<C, S> {
         self.validation_plan_for_role_fn = f;
         self
     }
+
+    /// Set the engagement's single active language (`ForgeConfig::language`),
+    /// used to select a plugin for `Plan`-node prompt context. Empty by
+    /// default, which selects no plugin for any `Plan` node.
+    pub fn with_language(mut self, language: String) -> Self {
+        self.language = language;
+        self
+    }
 }
 
 impl<C: ProviderClient, S: ProviderClient> NodeRunner for DeliberatingNodeRunner<C, S> {
     fn run_node(&self, request: NodeRunRequest, telemetry: &dyn TelemetrySink) -> NodeRunResult {
-        let team_setup = match load_team_setup(&request.adapter) {
+        let team_setup = match load_team_setup(&request.adapter, &self.language) {
             Ok(team_setup) => team_setup,
             Err(message) => return team_wiring_failed(message, telemetry),
         };
@@ -208,6 +223,7 @@ impl<C: ProviderClient, S: ProviderClient> NodeRunner for DeliberatingNodeRunner
             .map(|setup| &setup.language_plugins)
             .unwrap_or(&self.language_plugins);
         let northstar = team_northstar.as_deref().or(self.northstar.as_deref());
+        let active_language_plugin = language_plugins.get(&self.language);
 
         let context_config = DeliberationContextConfig {
             required_test_targets_fn,
@@ -215,6 +231,7 @@ impl<C: ProviderClient, S: ProviderClient> NodeRunner for DeliberatingNodeRunner
             api_summary_command,
             northstar,
             language_plugins,
+            active_language_plugin,
         };
         let result = match request.model_tier {
             ModelTier::Cheap => run_with_provider(

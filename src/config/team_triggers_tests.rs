@@ -13,6 +13,7 @@ fn team(name: &str, trigger: Trigger) -> TeamConfig {
         trigger,
         name_target_rules: Vec::new(),
         language_plugins: std::collections::BTreeMap::new(),
+        language: String::new(),
     }
 }
 

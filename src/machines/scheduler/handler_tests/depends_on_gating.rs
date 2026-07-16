@@ -242,6 +242,7 @@ provider:
 telemetry:
   directory: "{telemetry_dir}"
 adapter: "{root_adapter}"
+language: "txt"
 teams:
   - name: planner
     northstar: "{planner_northstar}"
@@ -275,7 +276,7 @@ teams:
          after_teams, so depends_on gating is checked against worker completions"
     );
 
-    let root_setup = ProjectRuntimeSetup::build(Path::new(&config.adapter), None)
+    let root_setup = ProjectRuntimeSetup::build(Path::new(&config.adapter), None, &config.language)
         .expect("root adapter must load");
 
     Fixture {

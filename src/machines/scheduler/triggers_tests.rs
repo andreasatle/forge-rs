@@ -23,6 +23,7 @@ fn team(name: &str, trigger: Trigger) -> TeamConfig {
         trigger,
         name_target_rules: vec![],
         language_plugins: BTreeMap::new(),
+        language: String::new(),
     }
 }
 
@@ -38,6 +39,7 @@ fn team_with_adapter(name: &str, trigger: Trigger, adapter: &str, northstar: &st
             target: "src/{name}.rs".to_string(),
         }],
         language_plugins: BTreeMap::new(),
+        language: String::new(),
     }
 }
 
@@ -54,6 +56,7 @@ fn team_with_name_target_rules(
         trigger,
         name_target_rules,
         language_plugins: BTreeMap::new(),
+        language: String::new(),
     }
 }
 

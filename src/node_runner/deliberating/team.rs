@@ -18,11 +18,14 @@ use crate::telemetry::{TelemetryEvent, TelemetryRecord, TelemetrySink};
 /// exists yet, so a team's validator/validation plan always falls back to
 /// its adapter's own plugin commands, same as the top-level path with no
 /// explicit `validation:` config.
-pub(super) fn load_team_setup(adapter_path: &str) -> Result<Option<ProjectRuntimeSetup>, String> {
+pub(super) fn load_team_setup(
+    adapter_path: &str,
+    language: &str,
+) -> Result<Option<ProjectRuntimeSetup>, String> {
     if adapter_path.trim().is_empty() {
         return Ok(None);
     }
-    ProjectRuntimeSetup::build(std::path::Path::new(adapter_path), None)
+    ProjectRuntimeSetup::build(std::path::Path::new(adapter_path), None, language)
         .map(Some)
         .map_err(|e| format!("failed to load team adapter '{adapter_path}': {e}"))
 }

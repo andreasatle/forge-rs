@@ -65,6 +65,7 @@ fn make_forge_config(repo_path: &Path, telemetry_path: &Path) -> ForgeConfig {
             .to_str()
             .unwrap()
             .to_string(),
+        language: "py".to_string(),
         dispatch_cap: 1,
     }
 }
@@ -157,6 +158,7 @@ fn make_forge_config_with_language(
         },
         validation: None,
         adapter: adapter_path.to_str().unwrap().to_string(),
+        language: "fake".to_string(),
         dispatch_cap: 1,
     }
 }
@@ -420,6 +422,7 @@ fn reset_creates_configured_branch() {
                 .to_str()
                 .unwrap()
                 .to_string(),
+            language: "py".to_string(),
             dispatch_cap: 1,
         }
     };

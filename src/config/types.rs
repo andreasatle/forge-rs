@@ -46,6 +46,18 @@ pub struct ForgeConfig {
     /// config file, like `artifact.repo_path`.
     #[serde(default)]
     pub adapter: String,
+    /// The single language this engagement targets, matching one of the
+    /// extensions declared by the root `adapter`'s language plugins (e.g.
+    /// `"py"`, `"rs"`). Required.
+    ///
+    /// Resolves language-plugin selection once per engagement, at config-load
+    /// time, rather than per node or per task: concerns with no target file
+    /// of their own to select a plugin from (repo bootstrap, API summaries,
+    /// the handler-level fallback validator, and the planner's own prompt
+    /// context) all key off this value instead of an arbitrary
+    /// `BTreeMap<String, LanguageSpec>` iteration order.
+    #[serde(default)]
+    pub language: String,
     /// Maximum number of nodes the scheduler may have `Running`/`Integrating`
     /// at once (`RunConfig::dispatch_cap`).
     ///
@@ -103,6 +115,12 @@ pub struct TeamConfig {
     /// (pure) scheduler transition that spawns it.
     #[serde(default)]
     pub language_plugins: BTreeMap<String, LanguageSpec>,
+    /// The engagement-wide active language (`ForgeConfig::language`), copied
+    /// onto every team by `resolve_team_paths` so team-scoped dispatch can
+    /// select the one active plugin from `language_plugins` without a
+    /// back-reference to the root config.
+    #[serde(default)]
+    pub language: String,
 }
 
 /// Parsed form of a `TeamConfig::trigger` expression, consumed by
@@ -435,12 +453,26 @@ impl ForgeConfig {
         if config.adapter.trim().is_empty() {
             return Err("adapter is required".into());
         }
+        if config.language.trim().is_empty() {
+            return Err("language is required".into());
+        }
         if let Some(dir) = config_dir {
             config.adapter = resolve_relative(&config.adapter, dir);
         }
-        crate::project::load_adapter(Path::new(&config.adapter))?;
+        let root_adapter = crate::project::load_adapter(Path::new(&config.adapter))?;
+        if !root_adapter.language_plugins().is_empty()
+            && !root_adapter
+                .language_plugins()
+                .contains_key(&config.language)
+        {
+            return Err(format!(
+                "language '{}' matches no plugin extension declared by adapter '{}'",
+                config.language, config.adapter
+            )
+            .into());
+        }
 
-        resolve_team_paths(&mut config.teams, config_dir)?;
+        resolve_team_paths(&mut config.teams, config_dir, &config.language)?;
         config.terminal_teams = team_triggers::compute_terminal_teams(&config.teams)?;
 
         if let Some(dir) = config_dir {
@@ -571,6 +603,7 @@ fn resolve_relative(path_str: &str, base: &Path) -> String {
 fn resolve_team_paths(
     teams: &mut [TeamConfig],
     config_dir: Option<&Path>,
+    language: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     for team in teams {
         if team.adapter.trim().is_empty() {
@@ -606,6 +639,15 @@ fn resolve_team_paths(
             adapter.language_plugins(),
         )
         .map_err(|e| format!("team '{}': {e}", team.name))?;
+        if !adapter.language_plugins().is_empty()
+            && !adapter.language_plugins().contains_key(language)
+        {
+            return Err(format!(
+                "team '{}': language '{language}' matches no plugin extension declared by adapter '{}'",
+                team.name, team.adapter
+            )
+            .into());
+        }
         let role = adapter.primary_worker_role();
         team.name_target_rules = adapter
             .language_plugins()
@@ -613,6 +655,7 @@ fn resolve_team_paths(
             .flat_map(|spec| spec.name_target_rules_for_role(role).iter().cloned())
             .collect();
         team.language_plugins = adapter.language_plugins().clone();
+        team.language = language.to_string();
         std::fs::metadata(&team.northstar).map_err(|e| {
             format!(
                 "team '{}': northstar at {} could not be read: {e}",

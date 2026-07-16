@@ -86,6 +86,7 @@ provider:
 telemetry:
   directory: "runs"
 adapter: coding.yaml
+language: py
 "#;
 
 #[test]
@@ -115,6 +116,7 @@ provider:
 telemetry:
   directory: "runs"
 adapter: coding.yaml
+language: py
 "#;
 
 #[test]
@@ -143,6 +145,7 @@ provider:
 telemetry:
   directory: "runs"
 adapter: coding.yaml
+language: py
 teams:
   - name: planner
     northstar: project.md
@@ -244,6 +247,7 @@ provider:
 telemetry:
   directory: "runs"
 adapter: coding.yaml
+language: py
 teams:
   - name: a
     northstar: a.md
@@ -287,6 +291,7 @@ provider:
 telemetry:
   directory: "runs"
 adapter: coding.yaml
+language: py
 teams:
   - name: gather
     northstar: gather.md
@@ -320,6 +325,7 @@ provider:
 telemetry:
   directory: "runs"
 adapter: coding.yaml
+language: py
 teams:
   - name: bogus
     northstar: northstars/bogus.md
@@ -352,6 +358,7 @@ provider:
 telemetry:
   directory: "runs"
 adapter: coding.yaml
+language: py
 teams:
   - name: planner
     northstar: project.md
@@ -393,6 +400,7 @@ provider:
 telemetry:
   directory: "runs"
 adapter: coding.yaml
+language: py
 teams:
   - name: worker
     northstar: project.md
@@ -442,6 +450,7 @@ provider:
 telemetry:
   directory: "runs"
 adapter: coding.yaml
+language: py
 teams:
   - name: planner
     northstar: project.md
@@ -477,6 +486,7 @@ provider:
 telemetry:
   directory: "runs"
 adapter: coding.yaml
+language: py
 teams:
   - name: planner
     northstar: "   "
@@ -509,6 +519,7 @@ provider:
 telemetry:
   directory: "runs"
 adapter: coding.yaml
+language: py
 teams:
   - name: planner
     northstar: project.md
@@ -546,6 +557,7 @@ provider:
 telemetry:
   directory: "runs"
 adapter: coding.yaml
+language: py
 teams:
   - name: planner
     northstar: bogus_northstar_that_does_not_exist.md
@@ -629,6 +641,7 @@ provider:
 telemetry:
   directory: "runs"
 adapter: coding.yaml
+language: py
 teams:
   - name: planner
     northstar: project.md
@@ -725,6 +738,7 @@ provider:
 telemetry:
   directory: "runs"
 adapter: coding.yaml
+language: py
 teams:
   - name: planner
     northstar: project.md
@@ -825,6 +839,7 @@ provider:
 telemetry:
   directory: "runs"
 adapter: coding.yaml
+language: py
 dispatch_cap: 8
 "#;
 
@@ -849,6 +864,7 @@ provider:
 telemetry:
   directory: "runs"
 adapter: coding.yaml
+language: py
 dispatch_cap: 0
 "#;
 
@@ -877,6 +893,7 @@ provider:
 telemetry:
   directory: "runs"
 adapter: coding.yaml
+language: py
 "#;
 
 #[test]
@@ -915,6 +932,7 @@ provider:
 telemetry:
   directory: "runs"
 adapter: coding.yaml
+language: py
 validation:
   commands:
     - cargo fmt --check
@@ -968,6 +986,7 @@ provider:
 telemetry:
   directory: "runs"
 adapter: coding.yaml
+language: py
 "#;
 
 #[test]
@@ -1009,6 +1028,7 @@ provider:
 telemetry:
   directory: "runs"
 adapter: coding.yaml
+language: py
 "#;
 
 #[test]
@@ -1035,6 +1055,7 @@ provider:
 telemetry:
   directory: "runs"
 adapter: coding.yaml
+language: py
 "#;
 
 #[test]
@@ -1067,6 +1088,7 @@ provider:
 telemetry:
   directory: "runs"
 adapter: coding.yaml
+language: py
 "#;
 
 #[test]
@@ -1106,6 +1128,7 @@ provider:
 telemetry:
   directory: "runs"
 adapter: coding.yaml
+language: py
 "#;
 
 #[test]
@@ -1145,6 +1168,7 @@ provider:
 telemetry:
   directory: "runs"
 adapter: coding.yaml
+language: py
 "#;
 
 #[test]
@@ -1171,6 +1195,7 @@ provider:
 telemetry:
   directory: "runs"
 adapter: coding.yaml
+language: py
 "#;
 
 #[test]
@@ -1201,6 +1226,7 @@ provider:
 telemetry:
   directory: "runs"
 adapter: coding.yaml
+language: py
 "#;
 
 #[test]
@@ -1231,6 +1257,7 @@ provider:
 telemetry:
   directory: "runs"
 adapter: coding.yaml
+language: py
 "#;
 
 #[test]
@@ -1257,6 +1284,7 @@ provider:
 telemetry:
   directory: "runs"
 adapter: coding.yaml
+language: py
 "#;
 
 #[test]
@@ -1283,6 +1311,7 @@ provider:
 telemetry:
   directory: "runs"
 adapter: coding.yaml
+language: py
 "#;
 
 #[test]
@@ -1309,6 +1338,7 @@ provider:
 telemetry:
   directory: "runs"
 adapter: coding.yaml
+language: py
 "#;
 
 #[test]
@@ -1335,6 +1365,7 @@ provider:
 telemetry:
   directory: "/absolute/telemetry"
 adapter: coding.yaml
+language: py
 "#;
 
 #[test]
@@ -1389,6 +1420,7 @@ provider:
 telemetry:
   directory: "runs"
 adapter: "   "
+language: py
 "#;
 
 #[test]
@@ -1494,6 +1526,7 @@ provider:
 telemetry:
   directory: "runs"
 adapter: bogus_adapter_that_does_not_exist.yaml
+language: py
 "#;
 
 #[test]
