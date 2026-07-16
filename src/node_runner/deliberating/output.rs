@@ -12,6 +12,7 @@ pub(crate) fn map_output(
     output: DeliberationTerminalOutput,
     request: NodeRunRequest,
     available_worker_roles: &[(String, String)],
+    provides: &[String],
     telemetry: &dyn TelemetrySink,
 ) -> NodeRunResult {
     match output {
@@ -22,6 +23,7 @@ pub(crate) fn map_output(
                 request.adapter,
                 request.northstar,
                 available_worker_roles,
+                provides,
                 telemetry,
             ),
             NodeKind::Work => NodeRunResult::WorkAccepted(NodeRunWorkResult {
@@ -67,9 +69,10 @@ fn map_plan_output(
     adapter: String,
     northstar: String,
     available_worker_roles: &[(String, String)],
+    provides: &[String],
     telemetry: &dyn TelemetrySink,
 ) -> NodeRunResult {
-    let processor = PlannerOutputProcessor::new(available_worker_roles);
+    let processor = PlannerOutputProcessor::new(available_worker_roles, provides);
 
     match processor.parse_content(&content) {
         Some(planner_out) => match processor.validate_structure(&planner_out) {

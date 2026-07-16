@@ -91,32 +91,44 @@ ws ::= ([ \t\n] ws)?"#;
 /// must assign every such task to one of the adapter's configured worker
 /// roles.
 ///
-/// `kind: "plan"` tasks additionally require `name`, `function_name`, and
-/// `file_path`, matching `kind: "task"` below: a single-task `"plan"`
-/// output collapses into a terminal task row (see
+/// `kind: "plan"` tasks additionally require `task_kv`, matching `kind:
+/// "task"` below: a single-task `"plan"` output collapses into a terminal
+/// task row (see
 /// [`crate::node_runner::planner::PlannerOutputProcessor::into_plan`]), so
-/// any task in a `"plan"` batch may end up needing them — the schema asks
-/// for them unconditionally rather than only when the batch happens to
-/// contain just one task. `kind: "work"` tasks never become a terminal task
-/// row, so they carry none of these fields.
+/// any task in a `"plan"` batch may end up needing it — the schema asks for
+/// it unconditionally rather than only when the batch happens to contain
+/// just one task. `kind: "work"` tasks never become a terminal task row, so
+/// they carry no `task_kv`.
+///
+/// `task_kv` is an open string-keyed object (see `task-kv`/`kv-pair` below):
+/// the grammar only constrains its *shape* to string-to-string pairs, not
+/// which keys are present. Which keys a project adapter actually requires is
+/// declared in its YAML (`PlannerConfig::provides`/`WorkerRoleConfig::requires`)
+/// and checked post-parse by
+/// [`crate::node_runner::planner::PlannerOutputProcessor::validate_structure`]
+/// — the same reason `role` above is grammar-open (any string) rather than
+/// constrained to the adapter's actual role names, which are likewise only
+/// known at runtime from YAML.
 ///
 /// Also accepts a third top-level `kind`: `"task"`, whose tasks are pure
 /// planner intent (see [`crate::node_runner::planner::PlannerOutputKind::Task`])
 /// and use a distinct, narrower task-record shape —
-/// `{"id":...,"objective":...,"name":...,"function_name":...,"file_path":...,"depends_on":[...]}`
+/// `{"id":...,"objective":...,"task_kv":{...},"depends_on":[...]}`
 /// — with no `operation`, `role`, or `targets`. Unlike `work`/`plan`,
 /// `kind: "task"` must be stated explicitly; it has no default.
 pub(crate) const PLANNER_GBNF_WITH_ROLES: &str = r#"root ::= work-output | plan-output | task-output
 work-output ::= "{" ws ("\"kind\"" ws ":" ws "\"work\"" ws "," ws)? "\"tasks\"" ws ":" ws "[" ws work-task (ws "," ws work-task)* ws "]" ws "}"
 plan-output ::= "{" ws "\"kind\"" ws ":" ws "\"plan\"" ws "," ws "\"tasks\"" ws ":" ws "[" ws plan-task (ws "," ws plan-task)* ws "]" ws "}"
 work-task ::= "{" ws "\"id\"" ws ":" ws string ws "," ws "\"objective\"" ws ":" ws string ws "," ws "\"operation\"" ws ":" ws operation ws "," ws role-field ws "," ws "\"targets\"" ws ":" ws string-array ws "," ws "\"depends_on\"" ws ":" ws string-array ws "}" ws
-plan-task ::= "{" ws "\"id\"" ws ":" ws string ws "," ws "\"objective\"" ws ":" ws string ws "," ws "\"name\"" ws ":" ws string ws "," ws "\"function_name\"" ws ":" ws string ws "," ws "\"file_path\"" ws ":" ws string ws "," ws "\"operation\"" ws ":" ws operation ws "," ws role-field ws "," ws "\"targets\"" ws ":" ws string-array ws "," ws "\"depends_on\"" ws ":" ws string-array ws "}" ws
+plan-task ::= "{" ws "\"id\"" ws ":" ws string ws "," ws "\"objective\"" ws ":" ws string ws "," ws "\"task_kv\"" ws ":" ws task-kv ws "," ws "\"operation\"" ws ":" ws operation ws "," ws role-field ws "," ws "\"targets\"" ws ":" ws string-array ws "," ws "\"depends_on\"" ws ":" ws string-array ws "}" ws
 operation ::= "\"create\"" | "\"modify\"" | "\"delete\""
 role-field ::= "\"role\"" ws ":" ws string
 string-array ::= "[" ws (string (ws "," ws string)*)? ws "]" ws
+task-kv ::= "{" ws (kv-pair (ws "," ws kv-pair)*)? ws "}" ws
+kv-pair ::= string ws ":" ws string
 
 task-output ::= "{" ws "\"kind\"" ws ":" ws "\"task\"" ws "," ws "\"tasks\"" ws ":" ws "[" ws task-record (ws "," ws task-record)* ws "]" ws "}"
-task-record ::= "{" ws "\"id\"" ws ":" ws string ws "," ws "\"objective\"" ws ":" ws string ws "," ws "\"name\"" ws ":" ws string ws "," ws "\"function_name\"" ws ":" ws string ws "," ws "\"file_path\"" ws ":" ws string ws "," ws "\"depends_on\"" ws ":" ws string-array ws "}" ws
+task-record ::= "{" ws "\"id\"" ws ":" ws string ws "," ws "\"objective\"" ws ":" ws string ws "," ws "\"task_kv\"" ws ":" ws task-kv ws "," ws "\"depends_on\"" ws ":" ws string-array ws "}" ws
 
 string ::=
   "\"" (
@@ -134,17 +146,18 @@ ws ::= ([ \t\n] ws)?"#;
 /// this grammar at all.
 ///
 /// Per-task shape otherwise matches [`PLANNER_GBNF_WITH_ROLES`], minus the
-/// `role` field — including `plan-task` requiring `name`, `function_name`,
-/// and `file_path`, for the same terminal-short-circuit reason documented
-/// there.
+/// `role` field — including `plan-task` requiring `task_kv`, for the same
+/// terminal-short-circuit reason documented there.
 pub(crate) const PLANNER_GBNF_NO_WORK: &str = r#"root ::= plan-output | task-output
 plan-output ::= "{" ws "\"kind\"" ws ":" ws "\"plan\"" ws "," ws "\"tasks\"" ws ":" ws "[" ws plan-task (ws "," ws plan-task)* ws "]" ws "}"
-plan-task ::= "{" ws "\"id\"" ws ":" ws string ws "," ws "\"objective\"" ws ":" ws string ws "," ws "\"name\"" ws ":" ws string ws "," ws "\"function_name\"" ws ":" ws string ws "," ws "\"file_path\"" ws ":" ws string ws "," ws "\"operation\"" ws ":" ws operation ws "," ws "\"targets\"" ws ":" ws string-array ws "," ws "\"depends_on\"" ws ":" ws string-array ws "}" ws
+plan-task ::= "{" ws "\"id\"" ws ":" ws string ws "," ws "\"objective\"" ws ":" ws string ws "," ws "\"task_kv\"" ws ":" ws task-kv ws "," ws "\"operation\"" ws ":" ws operation ws "," ws "\"targets\"" ws ":" ws string-array ws "," ws "\"depends_on\"" ws ":" ws string-array ws "}" ws
 operation ::= "\"create\"" | "\"modify\"" | "\"delete\""
 string-array ::= "[" ws (string (ws "," ws string)*)? ws "]" ws
+task-kv ::= "{" ws (kv-pair (ws "," ws kv-pair)*)? ws "}" ws
+kv-pair ::= string ws ":" ws string
 
 task-output ::= "{" ws "\"kind\"" ws ":" ws "\"task\"" ws "," ws "\"tasks\"" ws ":" ws "[" ws task-record (ws "," ws task-record)* ws "]" ws "}"
-task-record ::= "{" ws "\"id\"" ws ":" ws string ws "," ws "\"objective\"" ws ":" ws string ws "," ws "\"name\"" ws ":" ws string ws "," ws "\"function_name\"" ws ":" ws string ws "," ws "\"file_path\"" ws ":" ws string ws "," ws "\"depends_on\"" ws ":" ws string-array ws "}" ws
+task-record ::= "{" ws "\"id\"" ws ":" ws string ws "," ws "\"objective\"" ws ":" ws string ws "," ws "\"task_kv\"" ws ":" ws task-kv ws "," ws "\"depends_on\"" ws ":" ws string-array ws "}" ws
 
 string ::=
   "\"" (
@@ -226,6 +239,11 @@ Use tools before making assumptions about file contents — inspect files before
 /// JSON protocol instructions for planner-style roles under an adapter that
 /// defines worker roles: every `work`/`plan` task must be assigned to one of
 /// the worker roles listed earlier in the prompt.
+///
+/// Does not mention which `task_kv` keys are required — that set is
+/// adapter-specific (`PlannerConfig::provides`) and appended dynamically by
+/// [`planner_protocol_schema_for`], the same reason the exact worker role
+/// names aren't baked in here either.
 pub(crate) const PLANNER_PROTOCOL_FOOTER_WITH_OPERATION_AND_ROLES: &str = "# PlannerOutput Schema\n\
 - `tasks` must be a non-empty array.\n\
 - Each task requires `id`, `objective`, `operation`, `role`, `targets`, and `depends_on`.\n\
@@ -236,13 +254,10 @@ pub(crate) const PLANNER_PROTOCOL_FOOTER_WITH_OPERATION_AND_ROLES: &str = "# Pla
 \n\
 **When `kind` is \"plan\":** every task becomes a further planning node instead of a work node.\n\
 - `targets` may be empty.\n\
-- Each task additionally requires `name`, `function_name`, and `file_path` (see below).\n\
+- Each task additionally requires a `task_kv` object (see below).\n\
 \n\
 **When `kind` is \"task\":** `kind` must be stated explicitly.\n\
-- Each task requires only `id`, `objective`, `name`, `function_name`, `file_path`, and `depends_on` — no `operation`, `role`, or `targets`.\n\
-- `name` must be a bare symbol or concept identifier (e.g. \"fibonacci\"), not a file path or location.\n\
-- `function_name` is the canonical symbol this task implements (e.g. \"fibonacci\").\n\
-- `file_path` is the single source file this task concerns (e.g. \"main.py\") — the file the code will actually live in. Downstream roles derive any other files they need (e.g. test files) from this path themselves; do not list per-role paths.\n\
+- Each task requires only `id`, `objective`, `task_kv`, and `depends_on` — no `operation`, `role`, or `targets`.\n\
 \n\
 - All tasks in one PlannerOutput share the same kind — never mix kinds in one response.";
 
@@ -256,16 +271,11 @@ pub(crate) const PLANNER_PROTOCOL_FOOTER_WITH_OPERATION_NO_WORK: &str = "# Plann
 - `tasks` must be a non-empty array.\n\
 - Required top-level `kind` field: \"plan\" or \"task\" — this adapter defines no worker roles, so `kind: \"work\"` is not available.\n\
 \n\
-**When `kind` is \"plan\":** each task requires `id`, `objective`, `name`, `function_name`, `file_path`, `operation`, `targets`, and `depends_on`.\n\
+**When `kind` is \"plan\":** each task requires `id`, `objective`, `task_kv`, `operation`, `targets`, and `depends_on`.\n\
 - `operation` must be \"create\", \"modify\", or \"delete\".\n\
 - `targets` may be empty, since the task escalates to further planning instead of naming concrete files yet.\n\
-- `name` must be a bare symbol or concept identifier (e.g. \"fibonacci\"), not a file path or location.\n\
-- `function_name` and `file_path` follow the same rules described for `kind: \"task\"` below.\n\
 \n\
-**When `kind` is \"task\":** each task requires only `id`, `objective`, `name`, `function_name`, `file_path`, and `depends_on` — no `operation` or `targets`.\n\
-- `name` must be a bare symbol or concept identifier (e.g. \"fibonacci\"), not a file path or location.\n\
-- `function_name` is the canonical symbol this task implements (e.g. \"fibonacci\").\n\
-- `file_path` is the single source file this task concerns (e.g. \"main.py\") — the file the code will actually live in. Downstream roles derive any other files they need (e.g. test files) from this path themselves; do not list per-role paths.\n\
+**When `kind` is \"task\":** each task requires only `id`, `objective`, `task_kv`, and `depends_on` — no `operation` or `targets`.\n\
 \n\
 - All tasks in one PlannerOutput share the same kind — never mix kinds in one response.";
 
@@ -499,6 +509,17 @@ pub struct RolePolicy {
     /// `worker_referee_system`. Nodes with no role, or a role absent from
     /// this map, fall back to the shared fields.
     pub worker_role_policies: std::collections::HashMap<String, WorkerRolePolicy>,
+    /// The complete set of `task_kv` keys this adapter's planner commits to
+    /// emitting on every `kind: "plan"`/`kind: "task"` task, copied verbatim
+    /// from [`crate::project::yaml_config::PlannerConfig::provides`].
+    ///
+    /// Surfaced to the Plan-node Producer prompt (so the model knows exactly
+    /// which keys to fill in) and to
+    /// `crate::node_runner::planner::PlannerOutputProcessor` (so a task's
+    /// `task_kv` can be checked against it). Empty for an adapter that
+    /// declares no `provides`, in which case `task_kv` validation imposes no
+    /// requirement.
+    pub provides: Vec<String>,
 }
 
 impl Default for RolePolicy {
@@ -537,6 +558,7 @@ impl Default for RolePolicy {
             planner_producer_base,
             worker_role_descriptions: Vec::new(),
             worker_role_policies: std::collections::HashMap::new(),
+            provides: Vec::new(),
         }
     }
 }
@@ -554,11 +576,42 @@ impl Default for RolePolicy {
 /// planning or emit pure planner intent. Callers only ever invoke this for a
 /// Plan node — the [Work node](crate::machines::scheduler::NodeKind::Work)
 /// builds its Producer system prompt from `worker_producer_system` instead.
-pub(crate) fn planner_protocol_schema_for(has_worker_roles: bool) -> &'static str {
-    if has_worker_roles {
+///
+/// `provides` is the active adapter's declared
+/// [`crate::project::yaml_config::PlannerConfig::provides`] — the exact
+/// `task_kv` keys this adapter's tasks must carry. The framework-level
+/// footer constants describe `task_kv`'s *shape* only (an object of string
+/// keys to string values, same as the grammar); which keys are actually
+/// required is adapter-specific, so it is appended here as a dynamic line
+/// rather than baked into a `&'static str` constant.
+pub(crate) fn planner_protocol_schema_for(has_worker_roles: bool, provides: &[String]) -> String {
+    let base = if has_worker_roles {
         PLANNER_PROTOCOL_FOOTER_WITH_OPERATION_AND_ROLES
     } else {
         PLANNER_PROTOCOL_FOOTER_WITH_OPERATION_NO_WORK
+    };
+    format!("{base}\n{}", task_kv_schema_line(provides))
+}
+
+/// Describes `task_kv`'s required contents for the Plan Producer prompt.
+///
+/// Generic ("an object of string keys to string values") when `provides` is
+/// empty — an adapter that declares no `provides` imposes no requirement —
+/// otherwise names the exact keys, since the grammar itself only constrains
+/// `task_kv`'s shape, not its keys (see [`PLANNER_GBNF_WITH_ROLES`]'s doc).
+fn task_kv_schema_line(provides: &[String]) -> String {
+    if provides.is_empty() {
+        "- `task_kv` must be a JSON object of string keys to string values.".to_string()
+    } else {
+        let keys = provides
+            .iter()
+            .map(|key| format!("`{key}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!(
+            "- `task_kv` must be a JSON object containing exactly these keys, each with a \
+             non-empty string value: {keys}."
+        )
     }
 }
 

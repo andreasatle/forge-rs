@@ -1,5 +1,7 @@
 //! Scheduler support payload and domain vocabulary.
 
+use std::collections::HashMap;
+
 use crate::validation::ValidationPlan;
 
 use super::failure::FailureKind;
@@ -33,18 +35,15 @@ pub struct PlannerTaskOutput {
     pub id: String,
     /// Natural-language description of the planner's intent.
     pub objective: String,
-    /// Bare symbol or concept identifier for this task, carried verbatim
-    /// from [`crate::node_runner::planner::PlannerTask::name`].
-    pub name: String,
-    /// Canonical symbol/function name this task implements, carried
-    /// verbatim from [`crate::node_runner::planner::PlannerTask::function_name`].
-    pub function_name: String,
-    /// Source file path this task concerns, carried verbatim from
-    /// [`crate::node_runner::planner::PlannerTask::file_path`]. The single
-    /// authoritative location the planner decided on; downstream roles
-    /// derive their own targets (e.g. test files) from it instead of each
-    /// independently deciding a path.
-    pub file_path: String,
+    /// Open string-keyed task metadata (e.g. `name`, `function_name`,
+    /// `file_path`), carried verbatim from
+    /// [`crate::node_runner::planner::PlannerTask::task_kv`]. The actual key
+    /// set is declared by the active project adapter's YAML, not fixed
+    /// here; `file_path` (when present) is the single authoritative source
+    /// location the planner decided on, and downstream roles derive their
+    /// own targets (e.g. test files) from it instead of each independently
+    /// deciding a path.
+    pub task_kv: HashMap<String, String>,
     /// Ids of other tasks in the same output this task depends on, carried
     /// verbatim from [`crate::node_runner::planner::PlannerTask::depends_on`].
     pub depends_on: Vec<String>,

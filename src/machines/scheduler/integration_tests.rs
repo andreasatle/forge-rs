@@ -88,9 +88,7 @@ fn integrate_planner_tasks_creates_manifest_only_commit() {
             commit: String::new(),
             completed_at: "2026-07-10T00:00:00Z".to_string(),
             team: Some("planner".to_string()),
-            name: None,
-            function_name: None,
-            file_path: None,
+            task_kv: std::collections::HashMap::new(),
             depends_on: vec![],
         },
         TaskRecord {
@@ -99,9 +97,7 @@ fn integrate_planner_tasks_creates_manifest_only_commit() {
             commit: String::new(),
             completed_at: "2026-07-10T00:00:01Z".to_string(),
             team: Some("planner".to_string()),
-            name: None,
-            function_name: None,
-            file_path: None,
+            task_kv: std::collections::HashMap::new(),
             depends_on: vec![],
         },
     ];
@@ -221,9 +217,7 @@ fn integrate_planner_tasks_without_artifact_fails() {
         commit: String::new(),
         completed_at: "2026-07-10T00:00:00Z".to_string(),
         team: Some("planner".to_string()),
-        name: None,
-        function_name: None,
-        file_path: None,
+        task_kv: std::collections::HashMap::new(),
         depends_on: vec![],
     }];
 
@@ -252,17 +246,13 @@ fn integrate_plan_tasks_returns_planner_tasks_integrated_event() {
             PlannerTaskOutput {
                 id: "t1".to_string(),
                 objective: "decompose alpha".to_string(),
-                name: "alpha".to_string(),
-                function_name: "alpha".to_string(),
-                file_path: String::new(),
+                task_kv: [("name".to_string(), "alpha".to_string())].into(),
                 depends_on: vec![],
             },
             PlannerTaskOutput {
                 id: "t2".to_string(),
                 objective: "decompose beta".to_string(),
-                name: "beta".to_string(),
-                function_name: "beta".to_string(),
-                file_path: String::new(),
+                task_kv: [("name".to_string(), "beta".to_string())].into(),
                 depends_on: vec!["t1".to_string()],
             },
         ],
@@ -280,10 +270,16 @@ fn integrate_plan_tasks_returns_planner_tasks_integrated_event() {
     assert_eq!(manifest_tasks.len(), 2);
     assert_eq!(manifest_tasks[0].id, "t1");
     assert_eq!(manifest_tasks[0].team, Some("planner".to_string()));
-    assert_eq!(manifest_tasks[0].name, Some("alpha".to_string()));
+    assert_eq!(
+        manifest_tasks[0].task_kv.get("name").map(String::as_str),
+        Some("alpha")
+    );
     assert!(manifest_tasks[0].depends_on.is_empty());
     assert_eq!(manifest_tasks[1].id, "t2");
     assert_eq!(manifest_tasks[1].team, Some("planner".to_string()));
-    assert_eq!(manifest_tasks[1].name, Some("beta".to_string()));
+    assert_eq!(
+        manifest_tasks[1].task_kv.get("name").map(String::as_str),
+        Some("beta")
+    );
     assert_eq!(manifest_tasks[1].depends_on, vec!["t1".to_string()]);
 }

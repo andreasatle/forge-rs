@@ -783,6 +783,133 @@ fn team_worker_role_missing_plugin_role_fails_at_config_load_time() {
     );
 }
 
+/// A minimal team adapter whose sole worker role declares `requires:
+/// [file_path]`, with no `provides` declared anywhere in this fixture's
+/// adapters (this adapter's own `planner:` block and `coding.yaml`, the root
+/// adapter, both omit it) — the gap `provides_requires_gap_fails_at_config_load_time`
+/// exercises.
+const TEAM_ADAPTER_WITH_UNDECLARED_REQUIRES_YAML: &str = r#"
+planner:
+  producer:
+    identity: "planner identity"
+    context: "planner context"
+    instructions: "planner instructions"
+    constraints: "planner constraints"
+  critic:
+    identity: "critic identity"
+    context: "critic context"
+    instructions: "critic instructions"
+    constraints: "critic constraints"
+  referee:
+    identity: "referee identity"
+    context: "referee context"
+    instructions: "referee instructions"
+    constraints: "referee constraints"
+workers:
+  - plugin_role: implementer
+    requires: [file_path]
+    description: "Implements code."
+    producer:
+      identity: "impl identity"
+      context: "impl context"
+      instructions: "impl instructions"
+      constraints: "impl constraints"
+    critic:
+      identity: "impl critic identity"
+      context: "impl critic context"
+      instructions: "impl critic instructions"
+      constraints: "impl critic constraints"
+    referee:
+      identity: "impl referee identity"
+      context: "impl referee context"
+      instructions: "impl referee instructions"
+      constraints: "impl referee constraints"
+"#;
+
+const TEAM_WITH_UNDECLARED_REQUIRES_YAML: &str = r#"
+objective: "test"
+artifact:
+  repo_path: ".forge/artifacts/main.git"
+  branch: "main"
+provider:
+  cheap:
+    unmanaged:
+      base_url: "http://localhost:8080"
+      model: "llama-test"
+      n_predict: 512
+telemetry:
+  directory: "runs"
+adapter: coding.yaml
+language: py
+teams:
+  - name: worker
+    northstar: project.md
+    adapter: worker_adapter.yaml
+    kind: work
+    trigger: after_teams(planner)
+  - name: planner
+    northstar: project.md
+    adapter: coding.yaml
+    kind: plan
+    trigger: start
+"#;
+
+#[test]
+fn provides_requires_gap_fails_at_config_load_time() {
+    // Invariant: a worker role's declared `requires` key must be covered by
+    // some adapter's declared `provides` in this engagement, checked once at
+    // config-load time (`validate_task_key_consistency`) rather than
+    // discovered mid-run as a `task_target_files` panic or a scheduler
+    // `TargetDerivationFailed` failure. Here `worker_adapter.yaml` requires
+    // `file_path`, but neither it nor the root `coding.yaml` adapter
+    // declares any `provides` at all, so the gap must fail `from_file`
+    // itself, naming the adapter, role, and missing key.
+    let tmp = TempYaml::new(TEAM_WITH_UNDECLARED_REQUIRES_YAML);
+    std::fs::write(tmp.dir().join("project.md"), "gap: project").unwrap();
+    std::fs::write(
+        tmp.dir().join("worker_adapter.yaml"),
+        TEAM_ADAPTER_WITH_UNDECLARED_REQUIRES_YAML,
+    )
+    .unwrap();
+
+    let err = ForgeConfig::from_file(tmp.path()).unwrap_err();
+    let message = err.to_string();
+    assert!(
+        message.contains("worker_adapter.yaml"),
+        "error must name the adapter declaring the uncovered requires; got: {message}"
+    );
+    assert!(
+        message.contains("implementer"),
+        "error must name the worker role declaring the uncovered requires; got: {message}"
+    );
+    assert!(
+        message.contains("file_path") && message.contains("provides"),
+        "error must name the uncovered key and mention provides; got: {message}"
+    );
+}
+
+/// Same fixture as `TEAM_WITH_UNDECLARED_REQUIRES_YAML`/
+/// `TEAM_ADAPTER_WITH_UNDECLARED_REQUIRES_YAML`, except the root `coding.yaml`
+/// adapter is swapped for a copy declaring `provides: [file_path]` under its
+/// `planner:` block — closing the gap
+/// `provides_requires_gap_fails_at_config_load_time` exercises.
+#[test]
+fn provides_covering_requires_loads_successfully() {
+    let tmp = TempYaml::new(TEAM_WITH_UNDECLARED_REQUIRES_YAML);
+    std::fs::write(tmp.dir().join("project.md"), "gap: project").unwrap();
+    std::fs::write(
+        tmp.dir().join("worker_adapter.yaml"),
+        TEAM_ADAPTER_WITH_UNDECLARED_REQUIRES_YAML,
+    )
+    .unwrap();
+    let coding_yaml = std::fs::read_to_string(tmp.dir().join("coding.yaml")).unwrap();
+    let coding_yaml = coding_yaml.replacen("planner:\n", "planner:\n  provides: [file_path]\n", 1);
+    std::fs::write(tmp.dir().join("coding.yaml"), coding_yaml).unwrap();
+
+    ForgeConfig::from_file(tmp.path())
+        .expect("a provides declaration covering every declared requires must load cleanly");
+}
+
 #[test]
 fn parses_artifact_config() {
     let tmp = TempYaml::new(EXAMPLE_YAML);

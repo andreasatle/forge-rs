@@ -33,22 +33,16 @@ pub(super) fn planner_validation_feedback(error: &PlannerValidationError) -> Str
                  Add a clear objective to task '{id}'."
             )
         }
-        PlannerValidationError::EmptyName(id) => {
+        PlannerValidationError::MissingTaskKey { task_id, key } => {
             format!(
-                "{error}. Every `kind: \"task\"` task must have a non-empty `name` — a bare \
-                 symbol or concept identifier, not a file path. Add a name to task '{id}'."
+                "{error}. Every `kind: \"task\"`/`kind: \"plan\"` task must include a non-empty \
+                 `{key}` entry in `task_kv`. Add it to task '{task_id}'."
             )
         }
-        PlannerValidationError::EmptyFunctionName(id) => {
+        PlannerValidationError::UnknownTaskKey { task_id, key } => {
             format!(
-                "{error}. Every `kind: \"task\"` task must have a non-empty `function_name` — \
-                 the canonical symbol this task implements. Add a function_name to task '{id}'."
-            )
-        }
-        PlannerValidationError::EmptyFilePath(id) => {
-            format!(
-                "{error}. Every `kind: \"task\"` task must have a non-empty `file_path` — the \
-                 source location the task authors. Add a file_path to task '{id}'."
+                "{error}. `task_kv` may only contain the keys listed in this adapter's schema. \
+                 Remove `{key}` from task '{task_id}'."
             )
         }
         PlannerValidationError::EmptyTargets(id) => {

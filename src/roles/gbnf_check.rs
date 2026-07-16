@@ -445,13 +445,44 @@ mod tests {
         assert!(!reviewer_tool.accepts("{\"tool\":\"list_files\"} "));
 
         let planner_with_roles = Grammar::parse(crate::roles::policy::PLANNER_GBNF_WITH_ROLES);
+        assert!(planner_with_roles.accepts(
+            "{\"kind\":\"task\",\"tasks\":[{\"id\":\"a\",\"objective\":\"o\",\"task_kv\":{\"name\":\"n\"},\"depends_on\":[]}]}"
+        ));
         assert!(!planner_with_roles.accepts(
-            "{\"kind\":\"task\",\"tasks\":[{\"id\":\"a\",\"objective\":\"o\",\"name\":\"n\",\"depends_on\":[]}]} "
+            "{\"kind\":\"task\",\"tasks\":[{\"id\":\"a\",\"objective\":\"o\",\"task_kv\":{\"name\":\"n\"},\"depends_on\":[]}]} "
         ));
 
         let planner_no_work = Grammar::parse(crate::roles::policy::PLANNER_GBNF_NO_WORK);
-        assert!(!planner_no_work.accepts(
-            "{\"kind\":\"task\",\"tasks\":[{\"id\":\"a\",\"objective\":\"o\",\"name\":\"n\",\"depends_on\":[]}]} "
+        assert!(planner_no_work.accepts(
+            "{\"kind\":\"task\",\"tasks\":[{\"id\":\"a\",\"objective\":\"o\",\"task_kv\":{\"name\":\"n\"},\"depends_on\":[]}]}"
         ));
+        assert!(!planner_no_work.accepts(
+            "{\"kind\":\"task\",\"tasks\":[{\"id\":\"a\",\"objective\":\"o\",\"task_kv\":{\"name\":\"n\"},\"depends_on\":[]}]} "
+        ));
+    }
+
+    // ── task_kv open string-keyed map ───────────────────────────────────────
+
+    #[test]
+    fn task_kv_accepts_arbitrary_key_sets() {
+        // Invariant: the grammar constrains task_kv's *shape* (a JSON object
+        // of string keys to string values) but not which keys or how many —
+        // that is validated post-parse from adapter YAML, not baked into the
+        // grammar. Prove a zero-key, one-key, and multi-key object are all
+        // grammar-legal for the same rule.
+        let planner_no_work = Grammar::parse(crate::roles::policy::PLANNER_GBNF_NO_WORK);
+        let with_kv = |kv: &str| {
+            format!(
+                "{{\"kind\":\"task\",\"tasks\":[{{\"id\":\"a\",\"objective\":\"o\",\"task_kv\":{kv},\"depends_on\":[]}}]}}"
+            )
+        };
+        assert!(planner_no_work.accepts(&with_kv("{}")));
+        assert!(planner_no_work.accepts(&with_kv("{\"file_path\":\"main.py\"}")));
+        assert!(planner_no_work.accepts(&with_kv(
+            "{\"name\":\"fibonacci\",\"function_name\":\"fibonacci\",\"file_path\":\"main.py\"}"
+        )));
+        // Malformed task_kv (non-string value, missing colon) must be rejected.
+        assert!(!planner_no_work.accepts(&with_kv("{\"file_path\":1}")));
+        assert!(!planner_no_work.accepts(&with_kv("{\"file_path\"}")));
     }
 }

@@ -278,7 +278,10 @@ pub(super) fn build_role_prompt(
         (NodeKind::Plan, DeliberationRole::Producer) => format!(
             "{}\n\n{}",
             policy.planner_producer_base,
-            planner_protocol_schema_for(!policy.worker_role_descriptions.is_empty())
+            planner_protocol_schema_for(
+                !policy.worker_role_descriptions.is_empty(),
+                &policy.provides
+            )
         ),
         (NodeKind::Plan, DeliberationRole::Critic) => policy.planner_critic_system.clone(),
         (NodeKind::Plan, DeliberationRole::Referee) => policy.planner_referee_system.clone(),
@@ -488,9 +491,14 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
             if matches!(request.node_kind, NodeKind::Plan)
                 && matches!(request.role, DeliberationRole::Producer)
             {
-                let processor = PlannerOutputProcessor::new(&self.policy.worker_role_descriptions);
-                let planner_schema =
-                    planner_protocol_schema_for(!self.policy.worker_role_descriptions.is_empty());
+                let processor = PlannerOutputProcessor::new(
+                    &self.policy.worker_role_descriptions,
+                    &self.policy.provides,
+                );
+                let planner_schema = planner_protocol_schema_for(
+                    !self.policy.worker_role_descriptions.is_empty(),
+                    &self.policy.provides,
+                );
                 // Direct PlannerOutput path: no status/content wrapper.
                 let outcome = match processor.parse_response(&response.content) {
                     Ok(out) => match processor.validate(&out) {
@@ -548,7 +556,7 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                                 attempt_count: tools.current_attempt(),
                             },
                         ));
-                        tools.render_planner_retry_prompt(&err, &response.content, planner_schema);
+                        tools.render_planner_retry_prompt(&err, &response.content, &planner_schema);
                     }
                     PlanParseOutcome::ParseFailed(parse_error) => {
                         let effective_error = match &tool_call_error {
@@ -586,7 +594,7 @@ impl<P: ProviderClient> RoleRunner for ProviderRoleRunner<P> {
                         tools.render_planner_retry_prompt(
                             &effective_error,
                             &response.content,
-                            planner_schema,
+                            &planner_schema,
                         );
                     }
                 }

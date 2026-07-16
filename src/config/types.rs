@@ -472,7 +472,23 @@ impl ForgeConfig {
             .into());
         }
 
-        resolve_team_paths(&mut config.teams, config_dir, &config.language)?;
+        let mut provides_all: Vec<String> = Vec::new();
+        let mut requirements_all: Vec<TaskKeyRequirement> = Vec::new();
+        collect_adapter_task_keys(
+            &root_adapter,
+            &config.adapter,
+            &mut provides_all,
+            &mut requirements_all,
+        );
+
+        resolve_team_paths(
+            &mut config.teams,
+            config_dir,
+            &config.language,
+            &mut provides_all,
+            &mut requirements_all,
+        )?;
+        validate_task_key_consistency(&provides_all, &requirements_all)?;
         config.terminal_teams = team_triggers::compute_terminal_teams(&config.teams)?;
 
         if let Some(dir) = config_dir {
@@ -600,10 +616,17 @@ fn resolve_relative(path_str: &str, base: &Path) -> String {
 /// `adapter` field — including the worker-role/plugin check, so a team with
 /// a worker role missing from its plugins' `plugin_roles` lists fails here rather
 /// than at first dispatch.
+///
+/// Each team's adapter's declared `provides`/`requires` are appended to
+/// `provides_all`/`requirements_all` as they're loaded, for
+/// `validate_task_key_consistency` to check once every adapter (root and
+/// team) has been collected.
 fn resolve_team_paths(
     teams: &mut [TeamConfig],
     config_dir: Option<&Path>,
     language: &str,
+    provides_all: &mut Vec<String>,
+    requirements_all: &mut Vec<TaskKeyRequirement>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     for team in teams {
         if team.adapter.trim().is_empty() {
@@ -651,12 +674,77 @@ fn resolve_team_paths(
         team.derives_target = adapter.primary_role_derives_target();
         team.language_plugins = adapter.language_plugins().clone();
         team.language = language.to_string();
+        collect_adapter_task_keys(&adapter, &team.adapter, provides_all, requirements_all);
         std::fs::metadata(&team.northstar).map_err(|e| {
             format!(
                 "team '{}': northstar at {} could not be read: {e}",
                 team.name, team.northstar
             )
         })?;
+    }
+    Ok(())
+}
+
+/// One worker role's declared need for a specific `task_kv` key, tagged
+/// with where it came from for [`validate_task_key_consistency`]'s error
+/// message.
+#[derive(Debug, Clone, PartialEq)]
+struct TaskKeyRequirement {
+    /// Path to the adapter YAML file declaring this requirement.
+    adapter_path: String,
+    /// The worker role name declaring this requirement (empty when the role
+    /// declares no `plugin_role`).
+    role_name: String,
+    /// The required `task_kv` key.
+    key: String,
+}
+
+/// Appends `adapter`'s declared `PlannerConfig::provides` to `provides_all`
+/// and every one of its worker roles' declared `requires` to
+/// `requirements_all`, tagged with `adapter_path` for error reporting.
+fn collect_adapter_task_keys(
+    adapter: &crate::project::YamlProjectAdapter,
+    adapter_path: &str,
+    provides_all: &mut Vec<String>,
+    requirements_all: &mut Vec<TaskKeyRequirement>,
+) {
+    provides_all.extend(adapter.provides().iter().cloned());
+    for worker in adapter.worker_roles() {
+        let role_name = worker.plugin_role.clone().unwrap_or_default();
+        requirements_all.extend(worker.requires.iter().map(|key| TaskKeyRequirement {
+            adapter_path: adapter_path.to_string(),
+            role_name: role_name.clone(),
+            key: key.clone(),
+        }));
+    }
+}
+
+/// Confirms every declared `requires` key across every adapter in this
+/// engagement (root and every team) is covered by some adapter's declared
+/// `provides` — the same task manifest is shared by every team, so any
+/// team's `ForTasks`-spawned node can read any planner-produced row
+/// regardless of which team's `trigger` chain it sits behind, and this
+/// checks that "some declared source" exists for everything anyone needs
+/// rather than deriving `provides` from the union of `requires` itself (see
+/// [`crate::project::yaml_config::PlannerConfig::provides`]'s doc for why
+/// that would defeat the point).
+///
+/// A gap here is a config-load error, not a runtime one: this is the same
+/// treatment as the adapter/plugin/worker-role checks already performed by
+/// `ForgeConfig::from_file`/`resolve_team_paths`.
+fn validate_task_key_consistency(
+    provides_all: &[String],
+    requirements_all: &[TaskKeyRequirement],
+) -> Result<(), Box<dyn std::error::Error>> {
+    for requirement in requirements_all {
+        if !provides_all.iter().any(|p| p == &requirement.key) {
+            return Err(format!(
+                "adapter '{}' worker role '{}' requires task_kv key '{}', but no adapter in this \
+                 engagement declares it in planner.provides",
+                requirement.adapter_path, requirement.role_name, requirement.key
+            )
+            .into());
+        }
     }
     Ok(())
 }

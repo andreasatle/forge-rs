@@ -42,6 +42,11 @@ pub(crate) struct PlanValidationContext {
     /// when the adapter defines no worker roles, in which case task role
     /// assignment is not validated.
     pub(crate) available_worker_roles: Vec<(String, String)>,
+    /// The adapter's declared `PlannerConfig::provides` — the complete set
+    /// of `task_kv` keys a `kind: "task"`/`kind: "plan"` task must carry.
+    /// Empty when the adapter declares none, in which case `task_kv` is not
+    /// validated.
+    pub(crate) provides: Vec<String>,
 }
 
 /// Executes `DeliberationEffect` values by delegating role execution to a
@@ -317,7 +322,8 @@ impl<R: RoleRunner> DeliberationHandler<R> {
             .plan_validation_context
             .as_ref()
             .expect("plan_validation_context must be Some when this method is called");
-        let processor = PlannerOutputProcessor::new(&context.available_worker_roles);
+        let processor =
+            PlannerOutputProcessor::new(&context.available_worker_roles, &context.provides);
 
         let Some(planner_out) = processor.parse_content(content) else {
             return Err(ProducerValidationRetry {

@@ -1,5 +1,6 @@
 workers:
   - plugin_role: implementer
+    requires: [file_path]
     description: |-
       Runs the project's test suite against the implementation and tests the implement and create_test teams already produced, and fixes the implementation until it passes.
     producer:

@@ -56,6 +56,7 @@ fn build_plan_validation_context(
     if matches!(request.kind, NodeKind::Plan) {
         Some(PlanValidationContext {
             available_worker_roles: policy.worker_role_descriptions.clone(),
+            provides: policy.provides.clone(),
         })
     } else {
         None

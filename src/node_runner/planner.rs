@@ -4,7 +4,7 @@
 //! typed schema, validation rules, and the conversion to scheduler
 //! [`NodeRequest`]s.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -17,19 +17,6 @@ pub struct PlannerTask {
     pub id: String,
     /// Natural-language description of what this task should accomplish.
     pub objective: String,
-    /// Bare symbol or concept identifier for this task (e.g. `fibonacci`) —
-    /// not a file path or location.
-    ///
-    /// Required (and validated non-blank) for [`PlannerOutputKind::Task`] and
-    /// [`PlannerOutputKind::Plan`] output, whose grammar and protocol footer
-    /// ask the planner for it in both cases: a `kind: "plan"` batch may
-    /// collapse into a terminal task row just like `kind: "task"` (see
-    /// `PlannerOutputProcessor::into_plan`), so any task in such a batch
-    /// may need a name. `#[serde(default)]` stays in place because `work`
-    /// task schemas carry no `name` field at all — `Work` tasks never become
-    /// a terminal task row — so their JSON never includes it.
-    #[serde(default)]
-    pub name: String,
     /// Worker role this task is assigned to, chosen by the planner from the
     /// adapter's configured worker roles.
     ///
@@ -45,26 +32,20 @@ pub struct PlannerTask {
     pub targets: Vec<String>,
     /// Ids of other tasks in the same output that must complete before this one.
     pub depends_on: Vec<String>,
-    /// Canonical symbol/function name this task implements (e.g.
-    /// `fibonacci`), distinct from `name`: `name` identifies the task for
-    /// dependency references, `function_name` is what downstream teams
-    /// should actually call the thing they write.
+    /// Open string-keyed task metadata — e.g. `name`, `function_name`,
+    /// `file_path` — whose actual key set is declared by the active project
+    /// adapter's YAML, not fixed by this struct.
     ///
-    /// Required (and validated non-blank) for [`PlannerOutputKind::Task`]
-    /// and [`PlannerOutputKind::Plan`] output, same as `name` — see `name`'s
-    /// doc for why `Plan` needs it too. `#[serde(default)]` stays in place
-    /// because `work` task schemas carry no `function_name` field at all.
+    /// Required (and validated against the adapter's declared
+    /// `PlannerConfig::provides`) for [`PlannerOutputKind::Task`] and
+    /// [`PlannerOutputKind::Plan`] output: a `kind: "plan"` batch may
+    /// collapse into a terminal task row just like `kind: "task"` (see
+    /// `PlannerOutputProcessor::into_plan`), so any task in such a batch may
+    /// need it. `#[serde(default)]` stays in place because `work` task
+    /// schemas carry no `task_kv` field at all — `Work` tasks never become a
+    /// terminal task row — so their JSON never includes it.
     #[serde(default)]
-    pub function_name: String,
-    /// Source file path this task concerns (e.g. `main.py`) — the single
-    /// authoritative location the planner decided on for the code being
-    /// written. Downstream roles derive their own targets (e.g. test files)
-    /// from this instead of each independently deciding a path.
-    ///
-    /// Required (and validated non-blank) for [`PlannerOutputKind::Task`]
-    /// and [`PlannerOutputKind::Plan`] output, same as `name`.
-    #[serde(default)]
-    pub file_path: String,
+    pub task_kv: HashMap<String, String>,
 }
 
 /// Whether a [`NodeKind::Plan`] parent's output's tasks become `Work`
@@ -123,18 +104,24 @@ pub enum PlannerValidationError {
     DuplicateId(String),
     /// A task has an empty (or whitespace-only) objective.
     EmptyObjective(String),
-    /// A `kind: "task"` or `kind: "plan"` task has an empty (or
-    /// whitespace-only) name. `kind: "work"` tasks are exempt: they never
-    /// become a terminal task row, so they carry no `name` at all.
-    EmptyName(String),
-    /// A `kind: "task"` or `kind: "plan"` task has an empty (or
-    /// whitespace-only) `function_name`. Exempt for the same reason as
-    /// `EmptyName`.
-    EmptyFunctionName(String),
-    /// A `kind: "task"` or `kind: "plan"` task has an empty (or
-    /// whitespace-only) `file_path`. Exempt for the same reason as
-    /// `EmptyName`.
-    EmptyFilePath(String),
+    /// A `kind: "task"` or `kind: "plan"` task's `task_kv` is missing a key
+    /// the adapter's `PlannerConfig::provides` declares (or the key is
+    /// present but blank). `kind: "work"` tasks are exempt: they never
+    /// become a terminal task row, so they carry no `task_kv` at all.
+    MissingTaskKey {
+        /// The id of the task missing the key.
+        task_id: String,
+        /// The declared-but-absent key.
+        key: String,
+    },
+    /// A `kind: "task"` or `kind: "plan"` task's `task_kv` carries a key not
+    /// present in the adapter's declared `PlannerConfig::provides` at all.
+    UnknownTaskKey {
+        /// The id of the task carrying the unrecognized key.
+        task_id: String,
+        /// The unrecognized key.
+        key: String,
+    },
     /// A work task does not declare any concrete target files.
     EmptyTargets(String),
     /// A task lists its own id in `depends_on`.
@@ -170,14 +157,11 @@ impl std::fmt::Display for PlannerValidationError {
             PlannerValidationError::EmptyObjective(id) => {
                 write!(f, "empty objective for task: {id}")
             }
-            PlannerValidationError::EmptyName(id) => {
-                write!(f, "empty name for task: {id}")
+            PlannerValidationError::MissingTaskKey { task_id, key } => {
+                write!(f, "task {task_id} is missing required task_kv key '{key}'")
             }
-            PlannerValidationError::EmptyFunctionName(id) => {
-                write!(f, "empty function_name for task: {id}")
-            }
-            PlannerValidationError::EmptyFilePath(id) => {
-                write!(f, "empty file_path for task: {id}")
+            PlannerValidationError::UnknownTaskKey { task_id, key } => {
+                write!(f, "task {task_id} has an unrecognized task_kv key '{key}'")
             }
             PlannerValidationError::EmptyTargets(id) => {
                 write!(f, "empty targets for task: {id}")
@@ -200,12 +184,21 @@ pub(crate) struct PlannerOutputProcessor<'a> {
     /// when the adapter defines no worker roles, in which case task role
     /// assignment is not validated.
     available_worker_roles: &'a [(String, String)],
+    /// The adapter's declared `PlannerConfig::provides` — the complete set
+    /// of `task_kv` keys a `kind: "task"`/`kind: "plan"` task must carry,
+    /// and the only keys it may carry. Empty when the adapter declares no
+    /// `provides`, in which case `task_kv` is not validated at all.
+    provides: &'a [String],
 }
 
 impl<'a> PlannerOutputProcessor<'a> {
-    pub(crate) fn new(available_worker_roles: &'a [(String, String)]) -> Self {
+    pub(crate) fn new(
+        available_worker_roles: &'a [(String, String)],
+        provides: &'a [String],
+    ) -> Self {
         Self {
             available_worker_roles,
+            provides,
         }
     }
 
@@ -243,14 +236,8 @@ impl<'a> PlannerOutputProcessor<'a> {
             if task.objective.trim().is_empty() {
                 return Err(PlannerValidationError::EmptyObjective(task.id.clone()));
             }
-            if output.kind != PlannerOutputKind::Work && task.name.trim().is_empty() {
-                return Err(PlannerValidationError::EmptyName(task.id.clone()));
-            }
-            if output.kind != PlannerOutputKind::Work && task.function_name.trim().is_empty() {
-                return Err(PlannerValidationError::EmptyFunctionName(task.id.clone()));
-            }
-            if output.kind != PlannerOutputKind::Work && task.file_path.trim().is_empty() {
-                return Err(PlannerValidationError::EmptyFilePath(task.id.clone()));
+            if output.kind != PlannerOutputKind::Work {
+                validate_task_kv(&task.id, &task.task_kv, self.provides)?;
             }
             if output.kind == PlannerOutputKind::Work {
                 if task.targets.is_empty() || task.targets.iter().any(|t| t.trim().is_empty()) {
@@ -322,9 +309,7 @@ impl<'a> PlannerOutputProcessor<'a> {
                         .map(|task| PlannerTaskOutput {
                             id: task.id,
                             objective: task.objective,
-                            name: task.name,
-                            function_name: task.function_name,
-                            file_path: task.file_path,
+                            task_kv: task.task_kv,
                             depends_on: task.depends_on,
                         })
                         .collect(),
@@ -354,6 +339,50 @@ impl<'a> PlannerOutputProcessor<'a> {
             tasks: vec![],
         }
     }
+}
+
+/// Checks `task_kv` against `provides` — the adapter's declared, complete
+/// set of keys a task must carry (see
+/// [`crate::project::yaml_config::PlannerConfig::provides`]).
+///
+/// A single generic check rather than bespoke per-field checks, the same
+/// pattern as the framework's other runtime-known-set validations (e.g.
+/// task `role` against the adapter's configured worker roles): the grammar
+/// cannot constrain which keys are legal, since the valid set is only known
+/// at runtime from YAML, so this is enforced here instead.
+///
+/// A key in `provides` missing (or blank) on `task_kv` is
+/// [`PlannerValidationError::MissingTaskKey`] — recognized, but this task
+/// didn't emit it, so the producer should retry. A key on `task_kv` not
+/// present in `provides` at all is
+/// [`PlannerValidationError::UnknownTaskKey`] — never declared, so it is
+/// rejected outright. `provides` empty means no requirement at all: an
+/// adapter that declares nothing imposes nothing.
+fn validate_task_kv(
+    task_id: &str,
+    task_kv: &HashMap<String, String>,
+    provides: &[String],
+) -> Result<(), PlannerValidationError> {
+    if let Some(key) = task_kv
+        .keys()
+        .find(|key| !provides.iter().any(|p| p == *key))
+    {
+        return Err(PlannerValidationError::UnknownTaskKey {
+            task_id: task_id.to_string(),
+            key: key.clone(),
+        });
+    }
+    if let Some(key) = provides.iter().find(|key| {
+        task_kv
+            .get(key.as_str())
+            .is_none_or(|v| v.trim().is_empty())
+    }) {
+        return Err(PlannerValidationError::MissingTaskKey {
+            task_id: task_id.to_string(),
+            key: key.clone(),
+        });
+    }
+    Ok(())
 }
 
 #[cfg(test)]

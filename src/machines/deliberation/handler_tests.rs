@@ -384,6 +384,7 @@ fn handler_with_validation(results: Vec<RoleResult>) -> DeliberationHandler<Scri
         work_requires_artifact_mutation: false,
         plan_validation_context: Some(PlanValidationContext {
             available_worker_roles: vec![],
+            provides: vec![],
         }),
     }
 }

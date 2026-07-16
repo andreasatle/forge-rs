@@ -25,6 +25,22 @@ pub struct PlannerConfig {
     pub critic: RolePromptConfig,
     /// System instruction for the Plan-node Referee.
     pub referee: RolePromptConfig,
+    /// The complete set of `task_kv` keys this adapter's planner commits to
+    /// emitting on every `kind: "plan"`/`kind: "task"` task.
+    ///
+    /// This is the single authoritative contract for what a task carries —
+    /// written down explicitly here, not inferred by unioning every worker
+    /// role's `requires` across the run's teams. `ForgeConfig::from_file`
+    /// checks at config-load time that this list is a superset of every
+    /// configured team's declared `requires` (see
+    /// [`WorkerRoleConfig::requires`]); a gap is a loud config error, not a
+    /// silent runtime one. Post-parse, every task's `task_kv` is checked
+    /// against exactly this list: a key present here but missing from a
+    /// task is a retryable validation failure, and a key on a task but
+    /// absent here is rejected as unrecognized (see
+    /// `crate::node_runner::planner::PlannerOutputProcessor::validate_structure`).
+    #[serde(default)]
+    pub provides: Vec<String>,
 }
 
 /// A worker role this project adapter defines: its own Producer/Critic/
@@ -62,6 +78,17 @@ pub struct WorkerRoleConfig {
     /// role that owns the source file directly.
     #[serde(default)]
     pub derives_target: bool,
+    /// The `task_kv` keys this role needs already present on a task to do
+    /// its job (e.g. `["file_path"]`).
+    ///
+    /// Checked at config-load time against the triggering planner's
+    /// declared [`PlannerConfig::provides`]: every key named here must
+    /// appear there, or config loading fails immediately. Not otherwise
+    /// enforced per-task by this role itself — the generic `task_kv`
+    /// validation in `PlannerOutputProcessor::validate_structure` already
+    /// guarantees every task carries every `provides` key.
+    #[serde(default)]
+    pub requires: Vec<String>,
     /// Human-readable description of what this role is responsible for.
     pub description: String,
     /// System instruction for this role's Producer.

@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use super::*;
 use crate::config::Trigger;
@@ -139,18 +139,15 @@ fn record(id: &str, objective: &str, team: &str) -> TaskRecord {
         commit: String::new(),
         completed_at: String::new(),
         team: Some(team.to_string()),
-        name: None,
-        function_name: None,
-        file_path: None,
+        task_kv: HashMap::new(),
         depends_on: vec![],
     }
 }
 
 fn named_record(id: &str, objective: &str, team: &str, name: &str) -> TaskRecord {
-    TaskRecord {
-        name: Some(name.to_string()),
-        ..record(id, objective, team)
-    }
+    let mut r = record(id, objective, team);
+    r.task_kv.insert("name".to_string(), name.to_string());
+    r
 }
 
 /// A planner task row carrying the single planner-decided source `file_path`
@@ -162,10 +159,10 @@ fn record_with_file_path(
     name: &str,
     file_path: &str,
 ) -> TaskRecord {
-    TaskRecord {
-        file_path: Some(file_path.to_string()),
-        ..named_record(id, objective, team, name)
-    }
+    let mut r = named_record(id, objective, team, name);
+    r.task_kv
+        .insert("file_path".to_string(), file_path.to_string());
+    r
 }
 
 /// A planner task row carrying both a source `file_path` and a `depends_on`

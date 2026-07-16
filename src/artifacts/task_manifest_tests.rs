@@ -95,9 +95,7 @@ fn sample_record(commit: &str) -> TaskRecord {
         commit: commit.to_string(),
         completed_at: "2026-07-10T00:00:00Z".to_string(),
         team: None,
-        name: None,
-        function_name: None,
-        file_path: None,
+        task_kv: std::collections::HashMap::new(),
         depends_on: vec![],
     }
 }

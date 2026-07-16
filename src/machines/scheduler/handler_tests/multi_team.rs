@@ -31,8 +31,10 @@ planner:
     context: ""
     instructions: ""
     constraints: ""
+  provides: [name, function_name, file_path]
 workers:
   - plugin_role: implementer
+    requires: [file_path]
     description: "Implements assigned tasks."
     producer:
       identity: "{marker}: worker producer"
@@ -233,7 +235,7 @@ teams:
     //      referee loop (write_file, then read_file twice).
     let provider = RecordingScriptedProvider::from_strs(&[
         // 1. root/planner-team Plan node
-        r#"{"kind":"task","tasks":[{"id":"task-1","objective":"implement the worker task","name":"worker_task","function_name":"worker_task","file_path":"worker_output.txt","depends_on":[]}]}"#,
+        r#"{"kind":"task","tasks":[{"id":"task-1","objective":"implement the worker task","task_kv":{"name":"worker_task","function_name":"worker_task","file_path":"worker_output.txt"},"depends_on":[]}]}"#,
         r#"{"status":"accepted","content":"planner critic ok"}"#,
         r#"{"status":"accepted","content":"planner referee approved"}"#,
         // 2. worker-team Work node

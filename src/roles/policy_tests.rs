@@ -7,7 +7,7 @@ fn default_system_prompts_have_expected_role_schemas() {
     let planner_producer_system = format!(
         "{}\n{}",
         policy.planner_producer_base,
-        planner_protocol_schema_for(false)
+        planner_protocol_schema_for(false, &[])
     );
     assert_schema(
         &planner_producer_system,
@@ -143,19 +143,19 @@ fn planner_gbnf_no_work_rejects_kind_work_but_accepts_plan_and_task() {
         "no-work grammar must reject an omitted kind field"
     );
 
-    let plan = r#"{"kind":"plan","tasks":[{"id":"t1","objective":"decompose it","name":"fibonacci","function_name":"fibonacci","file_path":"src/fibonacci.rs","operation":"modify","targets":[],"depends_on":[]}]}"#;
+    let plan = r#"{"kind":"plan","tasks":[{"id":"t1","objective":"decompose it","task_kv":{"name":"fibonacci","function_name":"fibonacci","file_path":"src/fibonacci.rs"},"operation":"modify","targets":[],"depends_on":[]}]}"#;
     assert!(
         grammar.accepts(plan),
         "no-work grammar must accept kind: \"plan\""
     );
 
-    let plan_missing_name = r#"{"kind":"plan","tasks":[{"id":"t1","objective":"decompose it","function_name":"fibonacci","file_path":"src/fibonacci.rs","operation":"modify","targets":[],"depends_on":[]}]}"#;
+    let plan_missing_task_kv = r#"{"kind":"plan","tasks":[{"id":"t1","objective":"decompose it","operation":"modify","targets":[],"depends_on":[]}]}"#;
     assert!(
-        !grammar.accepts(plan_missing_name),
-        "no-work grammar must reject a kind: \"plan\" task missing the now-required name field"
+        !grammar.accepts(plan_missing_task_kv),
+        "no-work grammar must reject a kind: \"plan\" task missing the required task_kv field"
     );
 
-    let task = r#"{"kind":"task","tasks":[{"id":"t1","objective":"do it","name":"fibonacci","function_name":"fibonacci","file_path":"src/fibonacci.rs","depends_on":[]}]}"#;
+    let task = r#"{"kind":"task","tasks":[{"id":"t1","objective":"do it","task_kv":{"name":"fibonacci","function_name":"fibonacci","file_path":"src/fibonacci.rs"},"depends_on":[]}]}"#;
     assert!(
         grammar.accepts(task),
         "no-work grammar must accept kind: \"task\""
@@ -183,35 +183,35 @@ fn planner_gbnf_with_roles_still_accepts_kind_work() {
         "with-roles grammar must still accept an omitted kind (defaults to work)"
     );
 
-    // `kind: "work"` tasks never become a terminal task row, so `name` stays
-    // grammar-illegal for them — only `plan`/`task` require it.
-    let work_with_name = r#"{"kind":"work","tasks":[{"id":"t1","objective":"do it","name":"fibonacci","operation":"modify","role":"implementer","targets":["a.txt"],"depends_on":[]}]}"#;
+    // `kind: "work"` tasks never become a terminal task row, so `task_kv`
+    // stays grammar-illegal for them — only `plan`/`task` require it.
+    let work_with_task_kv = r#"{"kind":"work","tasks":[{"id":"t1","objective":"do it","task_kv":{"name":"fibonacci"},"operation":"modify","role":"implementer","targets":["a.txt"],"depends_on":[]}]}"#;
     assert!(
-        !grammar.accepts(work_with_name),
-        "with-roles grammar must reject a name field on a kind: \"work\" task"
+        !grammar.accepts(work_with_task_kv),
+        "with-roles grammar must reject a task_kv field on a kind: \"work\" task"
     );
 }
 
 #[test]
-fn planner_gbnf_with_roles_requires_name_on_kind_plan() {
+fn planner_gbnf_with_roles_requires_task_kv_on_kind_plan() {
     // Invariant: a `kind: "plan"` batch can collapse into a terminal task row
     // via the single-task short-circuit
     // (`PlannerOutputProcessor::into_plan`), so the with-roles grammar must
-    // require `name` on every `kind: "plan"` task, same as `kind: "task"`.
+    // require `task_kv` on every `kind: "plan"` task, same as `kind: "task"`.
     use super::gbnf_check::Grammar;
 
     let grammar = Grammar::parse(PLANNER_GBNF_WITH_ROLES);
 
-    let plan = r#"{"kind":"plan","tasks":[{"id":"t1","objective":"decompose it","name":"fibonacci","function_name":"fibonacci","file_path":"src/fibonacci.rs","operation":"modify","role":"implementer","targets":[],"depends_on":[]}]}"#;
+    let plan = r#"{"kind":"plan","tasks":[{"id":"t1","objective":"decompose it","task_kv":{"name":"fibonacci","function_name":"fibonacci","file_path":"src/fibonacci.rs"},"operation":"modify","role":"implementer","targets":[],"depends_on":[]}]}"#;
     assert!(
         grammar.accepts(plan),
-        "with-roles grammar must accept kind: \"plan\" with a name"
+        "with-roles grammar must accept kind: \"plan\" with a task_kv"
     );
 
-    let plan_missing_name = r#"{"kind":"plan","tasks":[{"id":"t1","objective":"decompose it","function_name":"fibonacci","file_path":"src/fibonacci.rs","operation":"modify","role":"implementer","targets":[],"depends_on":[]}]}"#;
+    let plan_missing_task_kv = r#"{"kind":"plan","tasks":[{"id":"t1","objective":"decompose it","operation":"modify","role":"implementer","targets":[],"depends_on":[]}]}"#;
     assert!(
-        !grammar.accepts(plan_missing_name),
-        "with-roles grammar must reject a kind: \"plan\" task missing the now-required name field"
+        !grammar.accepts(plan_missing_task_kv),
+        "with-roles grammar must reject a kind: \"plan\" task missing the required task_kv field"
     );
 }
 
@@ -220,12 +220,25 @@ fn planner_protocol_schema_for_selects_by_worker_role_presence() {
     // Invariant: the Plan Producer's schema depends on whether the adapter
     // defines any worker roles — `kind: "work"` is only offered when there
     // is at least one role to assign a work task to.
-    assert_eq!(
-        planner_protocol_schema_for(true),
-        PLANNER_PROTOCOL_FOOTER_WITH_OPERATION_AND_ROLES
+    assert!(
+        planner_protocol_schema_for(true, &[])
+            .starts_with(PLANNER_PROTOCOL_FOOTER_WITH_OPERATION_AND_ROLES)
     );
-    assert_eq!(
-        planner_protocol_schema_for(false),
-        PLANNER_PROTOCOL_FOOTER_WITH_OPERATION_NO_WORK
+    assert!(
+        planner_protocol_schema_for(false, &[])
+            .starts_with(PLANNER_PROTOCOL_FOOTER_WITH_OPERATION_NO_WORK)
     );
+}
+
+#[test]
+fn planner_protocol_schema_for_lists_declared_provides_keys() {
+    // Invariant: the dynamic task_kv schema line names every key the adapter
+    // declares in `provides`, so the model is told exactly what to emit —
+    // the grammar itself only constrains task_kv's shape, not its keys.
+    let schema = planner_protocol_schema_for(false, &["name".to_string(), "file_path".to_string()]);
+    assert!(schema.contains("`name`"));
+    assert!(schema.contains("`file_path`"));
+
+    let schema_empty = planner_protocol_schema_for(false, &[]);
+    assert!(schema_empty.contains("string keys to string values"));
 }

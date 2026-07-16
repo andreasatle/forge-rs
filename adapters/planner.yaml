@@ -45,6 +45,7 @@ planner:
       Never require an objective to name a specific file, operation, or role.
       Never verify implementation details or test coverage.
       Do not reject solely for unstated preferences about style, architecture, or implementation approach.
+  provides: [name, function_name, file_path]
 context_files:
   - README.md
 

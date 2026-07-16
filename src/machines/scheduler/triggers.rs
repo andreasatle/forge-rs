@@ -201,9 +201,11 @@ fn spawn_for_tasks(
 /// `ForTasks` id only ever exists because a manifest row with that id and a
 /// team already does, and the first such row for any id is always one of
 /// these two planner rows (a `Work`-node completion for the id can only be
-/// recorded *after* the planner row that gave rise to it). `EmptyFilePath`
-/// validation covers both row kinds and guarantees `file_path` is never
-/// empty for either.
+/// recorded *after* the planner row that gave rise to it). The generic
+/// `task_kv` validation in `PlannerOutputProcessor::validate_structure`
+/// covers both row kinds and guarantees `file_path` is never absent or
+/// blank for either, provided the adapter declares `file_path` in its
+/// `PlannerConfig::provides`.
 ///
 /// A derived target coming up empty (e.g. no language plugin matches
 /// `file_path`'s extension) is `Err`, never a guessed fallback: the caller
@@ -238,10 +240,10 @@ fn sibling_target_files(team: &TeamConfig, record: &TaskRecord) -> Vec<String> {
 /// `record`'s planner-decided source file path. Always present for a
 /// `ForTasks`-spawned row — see [`task_target_files`]'s doc for why.
 fn source_file_path(record: &TaskRecord) -> &str {
-    record
-        .file_path
-        .as_deref()
-        .expect("a ForTasks-spawned row is always a planner task row, which EmptyFilePath validation guarantees carries a non-empty file_path")
+    record.task_kv.get("file_path").map(String::as_str).expect(
+        "a ForTasks-spawned row is always a planner task row, which task_kv validation \
+             guarantees carries a non-empty file_path when the adapter declares it in provides",
+    )
 }
 
 /// Applies `team`'s language plugin's canonical validation-target derivation

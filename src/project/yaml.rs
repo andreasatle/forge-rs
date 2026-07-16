@@ -91,6 +91,13 @@ impl YamlProjectAdapter {
     pub fn worker_roles(&self) -> &[WorkerRoleConfig] {
         &self.config.workers
     }
+
+    /// The complete set of `task_kv` keys this adapter's planner commits to
+    /// emitting, as declared by `PlannerConfig::provides`. Empty for an
+    /// adapter that declares none.
+    pub fn provides(&self) -> &[String] {
+        &self.config.planner.provides
+    }
 }
 
 impl ProjectAdapter for YamlProjectAdapter {
@@ -176,6 +183,7 @@ impl ProjectAdapter for YamlProjectAdapter {
                     )
                 })
                 .collect(),
+            provides: self.config.planner.provides.clone(),
         }
     }
 
@@ -226,6 +234,7 @@ mod tests {
             producer: prompt("plan it", "plan bounds"),
             critic: prompt("review the plan", "review plan bounds"),
             referee: prompt("decide the plan", "decide plan bounds"),
+            provides: vec![],
         }
     }
 
@@ -233,6 +242,7 @@ mod tests {
         vec![WorkerRoleConfig {
             plugin_role: Some("implementer".to_string()),
             derives_target: false,
+            requires: vec![],
             description: "Implements code changes.".to_string(),
             producer: prompt("build it", "build bounds"),
             critic: prompt("review the work", "review work bounds"),
@@ -389,6 +399,7 @@ mod tests {
         workers.push(WorkerRoleConfig {
             plugin_role: Some("tester".to_string()),
             derives_target: false,
+            requires: vec![],
             description: "Writes tests.".to_string(),
             producer: prompt("test it", "test bounds"),
             critic: prompt("review the tests", "review test bounds"),
@@ -457,6 +468,7 @@ mod tests {
         workers.push(WorkerRoleConfig {
             plugin_role: Some("tester".to_string()),
             derives_target: false,
+            requires: vec![],
             description: "Writes tests.".to_string(),
             producer: prompt("test it", "test bounds"),
             critic: prompt("review the tests", "review test bounds"),
@@ -505,6 +517,7 @@ mod tests {
         workers.push(WorkerRoleConfig {
             plugin_role: Some("tester".to_string()),
             derives_target: false,
+            requires: vec![],
             description: "Writes tests.".to_string(),
             producer: prompt("test it", "test bounds"),
             critic: prompt("review the tests", "review test bounds"),

@@ -248,9 +248,7 @@ impl IntegrationService {
                             commit: new_artifact.commit_sha.clone(),
                             completed_at: utc_now_iso8601(),
                             team: Some(team.clone()),
-                            name: None,
-                            function_name: None,
-                            file_path: None,
+                            task_kv: std::collections::HashMap::new(),
                             depends_on: vec![],
                         };
                         let (recorded, tasks) = record_task(&new_artifact, &ws, record)
@@ -384,9 +382,7 @@ impl IntegrationService {
                 commit: String::new(),
                 completed_at: completed_at.clone(),
                 team: Some(team.clone()),
-                name: Some(task.name),
-                function_name: Some(task.function_name),
-                file_path: Some(task.file_path),
+                task_kv: task.task_kv,
                 depends_on: task.depends_on,
             })
             .collect();

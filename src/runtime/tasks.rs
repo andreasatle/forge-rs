@@ -35,7 +35,10 @@ fn tasks_contents(artifact: &Artifact) -> Result<String, Box<dyn Error>> {
         out.push_str(&format!("id       : {}\n", task.id));
         out.push_str(&format!(
             "name     : {}\n",
-            task.name.as_deref().unwrap_or("(none)")
+            task.task_kv
+                .get("name")
+                .map(String::as_str)
+                .unwrap_or("(none)")
         ));
         out.push_str(&format!("objective: {}\n", task.objective));
         out.push_str(&format!(
@@ -109,7 +112,7 @@ mod tests {
                     "commit": "deadbeef",
                     "completed_at": "2024-01-01T00:00:00Z",
                     "team": "core",
-                    "name": "widget"
+                    "task_kv": {"name": "widget"}
                 }
             ]
         }"#;
