@@ -32,7 +32,7 @@ teams:
     northstar: northstar.md
     adapter: adapters/implement.yaml
     kind: work
-    trigger: after_teams(planner)
+    trigger: after_teams(planner, create_test)
   - name: create_test
     northstar: northstar.md
     adapter: adapters/create_test.yaml
