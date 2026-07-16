@@ -476,6 +476,70 @@ fn task_kind_task_with_blank_role_target_field_fails_validation() {
 }
 
 #[test]
+fn task_kind_task_with_unknown_role_target_role_rejected_when_adapter_defines_worker_roles() {
+    // Invariant: when the adapter defines worker roles, every `role_targets`
+    // entry's `role` must match one of them — a typo'd or nonexistent role
+    // name is rejected as a normal validation failure (retryable through the
+    // producer validation loop), not left to surface later as a scheduler
+    // `TargetDerivationFailed` run failure.
+    let roles = [("implementer".to_string(), "Implements code.".to_string())];
+    let output = PlannerOutput {
+        kind: PlannerOutputKind::Task,
+        tasks: vec![PlannerTask {
+            id: "sub-a".to_string(),
+            objective: "decompose part a".to_string(),
+            name: "fibonacci".to_string(),
+            role: None,
+            targets: vec![],
+            depends_on: vec![],
+            function_name: "fibonacci".to_string(),
+            role_targets: vec![RoleTarget {
+                role: "Implementer".to_string(),
+                file_path: "src/fibonacci.rs".to_string(),
+            }],
+        }],
+    };
+    let err = processor_with_roles(&roles)
+        .validate(&output)
+        .expect_err("role_targets entry naming an unknown role must fail validation");
+    assert_eq!(
+        err,
+        PlannerValidationError::UnknownRoleTarget {
+            task_id: "sub-a".to_string(),
+            role: "Implementer".to_string(),
+        }
+    );
+}
+
+#[test]
+fn task_kind_task_with_unknown_role_target_role_not_enforced_when_adapter_defines_no_worker_roles()
+{
+    // Invariant: when the adapter defines no worker roles, `role_targets`
+    // role names are not checked against any known set — there is nothing to
+    // check against.
+    let output = PlannerOutput {
+        kind: PlannerOutputKind::Task,
+        tasks: vec![PlannerTask {
+            id: "sub-a".to_string(),
+            objective: "decompose part a".to_string(),
+            name: "fibonacci".to_string(),
+            role: None,
+            targets: vec![],
+            depends_on: vec![],
+            function_name: "fibonacci".to_string(),
+            role_targets: vec![RoleTarget {
+                role: "whatever".to_string(),
+                file_path: "src/fibonacci.rs".to_string(),
+            }],
+        }],
+    };
+    assert!(
+        validate_planner_output(&output).is_ok(),
+        "role_targets role names are unconstrained when the adapter defines no worker roles"
+    );
+}
+
+#[test]
 fn plan_kind_with_no_tasks_fails_empty_task_list() {
     // Invariant: an empty `tasks` array fails validation regardless of
     // `kind` — `kind: "plan"` exempts target and role validation, but not

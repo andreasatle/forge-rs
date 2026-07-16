@@ -154,6 +154,14 @@ pub enum PlannerValidationError {
         /// The id of the task missing a valid role assignment.
         task_id: String,
     },
+    /// The adapter defines worker roles, but a `role_targets` entry names a
+    /// role that matches none of them.
+    UnknownRoleTarget {
+        /// The id of the task containing the invalid `role_targets` entry.
+        task_id: String,
+        /// The unrecognized role name.
+        role: String,
+    },
 }
 
 impl std::fmt::Display for PlannerValidationError {
@@ -192,6 +200,12 @@ impl std::fmt::Display for PlannerValidationError {
             }
             PlannerValidationError::MissingTaskRole { task_id } => {
                 write!(f, "task {task_id} was not assigned a valid worker role")
+            }
+            PlannerValidationError::UnknownRoleTarget { task_id, role } => {
+                write!(
+                    f,
+                    "task {task_id} has a role_targets entry for unknown role '{role}'"
+                )
             }
         }
     }
@@ -251,14 +265,28 @@ impl<'a> PlannerOutputProcessor<'a> {
             if output.kind != PlannerOutputKind::Work && task.function_name.trim().is_empty() {
                 return Err(PlannerValidationError::EmptyFunctionName(task.id.clone()));
             }
-            if output.kind != PlannerOutputKind::Work
-                && (task.role_targets.is_empty()
+            if output.kind != PlannerOutputKind::Work {
+                if task.role_targets.is_empty()
                     || task
                         .role_targets
                         .iter()
-                        .any(|rt| rt.role.trim().is_empty() || rt.file_path.trim().is_empty()))
-            {
-                return Err(PlannerValidationError::EmptyRoleTargets(task.id.clone()));
+                        .any(|rt| rt.role.trim().is_empty() || rt.file_path.trim().is_empty())
+                {
+                    return Err(PlannerValidationError::EmptyRoleTargets(task.id.clone()));
+                }
+                if !self.available_worker_roles.is_empty()
+                    && let Some(rt) = task.role_targets.iter().find(|rt| {
+                        !self
+                            .available_worker_roles
+                            .iter()
+                            .any(|(name, _)| name == &rt.role)
+                    })
+                {
+                    return Err(PlannerValidationError::UnknownRoleTarget {
+                        task_id: task.id.clone(),
+                        role: rt.role.clone(),
+                    });
+                }
             }
             if output.kind == PlannerOutputKind::Work {
                 if task.targets.is_empty() || task.targets.iter().any(|t| t.trim().is_empty()) {

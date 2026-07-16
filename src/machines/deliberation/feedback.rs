@@ -76,6 +76,12 @@ pub(super) fn planner_validation_feedback(error: &PlannerValidationError) -> Str
                  roles listed in the prompt."
             )
         }
+        PlannerValidationError::UnknownRoleTarget { task_id, role } => {
+            format!(
+                "{error}. Every `role_targets` entry's `role` must match one of the available \
+                 worker roles listed in the prompt. Fix task '{task_id}''s entry for '{role}'."
+            )
+        }
     }
 }
 
