@@ -50,4 +50,3 @@ context_files:
 
 plugins:
   - ../plugins/python.yaml
-  - ../plugins/rust.yaml
