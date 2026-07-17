@@ -91,7 +91,7 @@ planner:
     instructions: "instructions"
     constraints: "constraints"
 workers:
-  - plugin_role: implementer
+  - key: implementer
     description: "Implements code."
     producer:
       identity: "identity"

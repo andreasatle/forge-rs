@@ -996,9 +996,9 @@ fn real_adapter_path(name: &str) -> std::path::PathBuf {
 ///
 /// This proves the fix end-to-end for all three real single-worker-role
 /// adapters: `team.worker_role` (as `resolve_team_paths` would populate it
-/// from `adapter.primary_role_name()`) survives all the way through
+/// from `adapter.primary_role_key()`) survives all the way through
 /// `apply_team_triggers` onto the spawned `Node::worker_role`, matching each
-/// adapter's own declared `plugin_role` exactly.
+/// adapter's own declared `key` exactly.
 #[test]
 fn for_tasks_spawned_node_carries_its_teams_adapter_declared_worker_role() {
     for (adapter_file, team_name, expected_role) in [
@@ -1009,16 +1009,16 @@ fn for_tasks_spawned_node_carries_its_teams_adapter_declared_worker_role() {
         let adapter = crate::project::load_adapter(&real_adapter_path(adapter_file))
             .unwrap_or_else(|e| panic!("{adapter_file} must load cleanly: {e}"));
         assert_eq!(
-            adapter.primary_role_name(),
+            adapter.primary_role_key(),
             Some(expected_role.to_string()),
-            "{adapter_file}'s own declared plugin_role must be '{expected_role}'"
+            "{adapter_file}'s own declared key must be '{expected_role}'"
         );
 
         let graph = RunGraph {
             nodes: vec![root_node()],
         };
         let config = run_config(vec![TeamConfig {
-            worker_role: adapter.primary_role_name(),
+            worker_role: adapter.primary_role_key(),
             ..team_direct(
                 team_name,
                 Trigger::AfterTeams(vec!["planner".to_string()]),

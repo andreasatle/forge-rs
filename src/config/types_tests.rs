@@ -601,7 +601,7 @@ planner:
     instructions: "referee instructions"
     constraints: "referee constraints"
 workers:
-  - plugin_role: tester
+  - key: tester
     validation: [lint]
     description: "Writes tests."
     producer:
@@ -689,9 +689,9 @@ fn team_worker_role_missing_from_plugin_fails_at_config_load_time() {
 }
 
 /// A minimal team adapter declaring a plugin, but whose sole worker entry
-/// omits `plugin_role` entirely and selects no validation functions — valid
-/// now that `plugin_role` is pure identity, decoupled from plugin matching.
-const TEAM_ADAPTER_WITH_MISSING_PLUGIN_ROLE_YAML: &str = r#"
+/// omits `key` entirely and selects no validation functions — valid
+/// now that `key` is pure identity, decoupled from plugin matching.
+const TEAM_ADAPTER_WITH_MISSING_KEY_YAML: &str = r#"
 planner:
   producer:
     identity: "planner identity"
@@ -738,7 +738,7 @@ validation:
 functions: {}
 "#;
 
-const TEAM_WITH_MISSING_PLUGIN_ROLE_YAML: &str = r#"
+const TEAM_WITH_MISSING_KEY_YAML: &str = r#"
 objective: "test"
 artifact:
   repo_path: ".forge/artifacts/main.git"
@@ -762,16 +762,16 @@ teams:
 "#;
 
 #[test]
-fn team_worker_role_missing_plugin_role_is_fine_at_config_load_time() {
-    // Invariant: `plugin_role` is pure worker-role identity — it no longer
+fn team_worker_role_missing_key_is_fine_at_config_load_time() {
+    // Invariant: `key` is pure worker-role identity — it no longer
     // selects anything plugin-side (that's `WorkerRoleConfig::validation`'s
     // job), so a worker entry may omit it even once the adapter declares
     // plugins; `from_file` must succeed.
-    let tmp = TempYaml::new(TEAM_WITH_MISSING_PLUGIN_ROLE_YAML);
+    let tmp = TempYaml::new(TEAM_WITH_MISSING_KEY_YAML);
     std::fs::write(tmp.dir().join("project.md"), "gap: project").unwrap();
     std::fs::write(
         tmp.dir().join("broken_team_adapter.yaml"),
-        TEAM_ADAPTER_WITH_MISSING_PLUGIN_ROLE_YAML,
+        TEAM_ADAPTER_WITH_MISSING_KEY_YAML,
     )
     .unwrap();
     std::fs::write(
@@ -783,7 +783,7 @@ fn team_worker_role_missing_plugin_role_is_fine_at_config_load_time() {
     let result = ForgeConfig::from_file(tmp.path());
     assert!(
         result.is_ok(),
-        "a worker entry missing plugin_role must load fine even with plugins declared; got: {result:?}"
+        "a worker entry missing key must load fine even with plugins declared; got: {result:?}"
     );
 }
 
@@ -810,7 +810,7 @@ planner:
     instructions: "referee instructions"
     constraints: "referee constraints"
 workers:
-  - plugin_role: implementer
+  - key: implementer
     requires: [file_path]
     description: "Implements code."
     producer:

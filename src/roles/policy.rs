@@ -556,7 +556,7 @@ pub struct RolePolicy {
     /// Producer so it can assign roles explicitly to each task.
     ///
     /// Sourced from the adapter's `workers` list
-    /// (`WorkerRoleConfig::plugin_role`/`WorkerRoleConfig::description`). Empty
+    /// (`WorkerRoleConfig::key`/`WorkerRoleConfig::description`). Empty
     /// when the adapter defines no worker roles, in which case the section
     /// is omitted from the rendered prompt.
     pub worker_role_descriptions: Vec<(String, String)>,

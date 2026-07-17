@@ -374,7 +374,7 @@ mod tests {
         //
         // This is a generic `ValidationPlan` mechanism test only — it does not
         // describe how `pass_tests` decides whether to run pytest in
-        // production. `pass_tests` gets its own `plugin_role` in
+        // production. `pass_tests` gets its own `key` in
         // `plugins/python.yaml` whose pytest step is workspace-scoped and
         // carries no `when_artifacts_present` gate at all, so its pytest step
         // always runs regardless of the node's target files. This gate exists
@@ -414,7 +414,7 @@ mod tests {
         // never satisfy, so the step was always skipped and the plan
         // trivially "passed" no matter what a real test run would have found.
         //
-        // `pass_tests` now gets its own `plugin_role` (see plugins/python.yaml)
+        // `pass_tests` now gets its own `key` (see plugins/python.yaml)
         // whose pytest step is workspace-scoped with no `when_artifacts_present`
         // gate at all. This test builds a step of that exact shape and proves
         // it actually executes — regardless of target_files being source-only,

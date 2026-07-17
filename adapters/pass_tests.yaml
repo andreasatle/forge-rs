@@ -1,5 +1,5 @@
 workers:
-  - plugin_role: pass_tests
+  - key: pass_tests
     requires: [file_path]
     validation: [lint, typecheck, test]
     description: |-

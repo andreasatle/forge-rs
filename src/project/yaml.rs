@@ -110,15 +110,12 @@ impl YamlProjectAdapter {
             .is_some_and(|w| w.derives_target)
     }
 
-    /// This adapter's first configured worker role's own `plugin_role` name,
+    /// This adapter's first configured worker role's own `key` name,
     /// if any — copied onto [`crate::config::TeamConfig::worker_role`] at
     /// config-load time so it can be stamped onto every `Work` node this team
     /// spawns without adapter-YAML I/O from inside the scheduler.
-    pub fn primary_role_name(&self) -> Option<String> {
-        self.config
-            .workers
-            .first()
-            .and_then(|w| w.plugin_role.clone())
+    pub fn primary_role_key(&self) -> Option<String> {
+        self.config.workers.first().and_then(|w| w.key.clone())
     }
 
     /// This adapter's configured worker roles, in declaration order.
@@ -224,12 +221,7 @@ impl ProjectAdapter for YamlProjectAdapter {
                 .config
                 .workers
                 .iter()
-                .map(|w| {
-                    (
-                        w.plugin_role.clone().unwrap_or_default(),
-                        w.description.clone(),
-                    )
-                })
+                .map(|w| (w.key.clone().unwrap_or_default(), w.description.clone()))
                 .collect(),
             worker_role_policies: self
                 .config
@@ -237,7 +229,7 @@ impl ProjectAdapter for YamlProjectAdapter {
                 .iter()
                 .map(|w| {
                     (
-                        w.plugin_role.clone().unwrap_or_default(),
+                        w.key.clone().unwrap_or_default(),
                         worker_role_policy(generic, w),
                     )
                 })
@@ -361,7 +353,7 @@ mod tests {
 
     fn worker_configs() -> Vec<WorkerRoleConfig> {
         vec![WorkerRoleConfig {
-            plugin_role: Some("implementer".to_string()),
+            key: Some("implementer".to_string()),
             derives_target: false,
             requires: vec![],
             description: "Implements code changes.".to_string(),
@@ -520,7 +512,7 @@ mod tests {
         // shared or per-role.
         let mut workers = worker_configs();
         workers.push(WorkerRoleConfig {
-            plugin_role: Some("tester".to_string()),
+            key: Some("tester".to_string()),
             derives_target: false,
             requires: vec![],
             description: "Writes tests.".to_string(),
@@ -592,7 +584,7 @@ mod tests {
         // entry, not the last.
         let mut workers = worker_configs();
         workers.push(WorkerRoleConfig {
-            plugin_role: Some("tester".to_string()),
+            key: Some("tester".to_string()),
             derives_target: false,
             requires: vec![],
             description: "Writes tests.".to_string(),
@@ -643,7 +635,7 @@ mod tests {
         // always falling back to the first-worker shared fields.
         let mut workers = worker_configs();
         workers.push(WorkerRoleConfig {
-            plugin_role: Some("tester".to_string()),
+            key: Some("tester".to_string()),
             derives_target: false,
             requires: vec![],
             description: "Writes tests.".to_string(),
@@ -713,7 +705,7 @@ planner:
     instructions: "decide the plan"
     constraints: "decide plan bounds"
 workers:
-  - plugin_role: implementer
+  - key: implementer
     description: "Implements code changes."
     producer:
       identity: "build identity"

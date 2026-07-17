@@ -54,7 +54,7 @@ planner:
       Never verify implementation details or test coverage.
       Do not reject solely for unstated preferences about style, algorithm, architecture, or performance.
 workers:
-  - plugin_role: implementer
+  - key: implementer
     validation: [lint, typecheck]
     description: |-
       Implements code changes, including the tests that verify them.
@@ -103,7 +103,7 @@ workers:
         Reject if the artifact contents do not satisfy the objective, even if the producer or critic claims they do.
         Do not reject solely for unstated preferences about style, algorithm, architecture, or performance.
         If you have a style or performance concern outside the contract, mention it in accepted content as advisory only, not as a rejection reason.
-  - plugin_role: tester
+  - key: tester
     validation: [lint]
     description: |-
       Writes the test files that pin down expected behavior.

@@ -62,7 +62,7 @@ pub struct WorkerRoleConfig {
     /// pure identity, with no plugin-side counterpart to match against. May
     /// be omitted by an adapter with only one worker role, or none at all.
     #[serde(default)]
-    pub plugin_role: Option<String>,
+    pub key: Option<String>,
     /// Names of validation functions this role selects to run, resolved
     /// generically against the `functions` map of whichever language plugin
     /// the framework selects for a given node's target files (see
@@ -186,7 +186,7 @@ planner:
     instructions: "decide the plan"
     constraints: "decide plan bounds"
 workers:
-  - plugin_role: implementer
+  - key: implementer
     description: "Implements code changes."
     producer:
       identity: "build identity"
@@ -230,7 +230,7 @@ workers:
         let config: ProjectAdapterConfig = serde_yaml::from_str(MINIMAL_YAML).unwrap();
         assert_eq!(config.workers.len(), 1);
         let implementer = &config.workers[0];
-        assert_eq!(implementer.plugin_role.as_deref(), Some("implementer"));
+        assert_eq!(implementer.key.as_deref(), Some("implementer"));
         assert_eq!(implementer.description, "Implements code changes.");
         assert_eq!(implementer.producer.identity, "build identity");
         assert_eq!(implementer.producer.context, "build context");
@@ -245,8 +245,8 @@ workers:
     }
 
     #[test]
-    fn plugin_role_defaults_to_none_when_omitted() {
-        // Invariant: `plugin_role` is optional at the schema level — an
+    fn key_defaults_to_none_when_omitted() {
+        // Invariant: `key` is optional at the schema level — an
         // adapter with no plugins to match against may omit it entirely.
         // Whether it's actually required (because the adapter declares
         // plugins) is enforced separately by
@@ -273,17 +273,17 @@ workers:
 "#;
         let config: ProjectAdapterConfig = serde_yaml::from_str(yaml).unwrap();
         assert_eq!(config.workers.len(), 1);
-        assert_eq!(config.workers[0].plugin_role, None);
+        assert_eq!(config.workers[0].key, None);
     }
 
     #[test]
     fn multiple_worker_roles_all_parse() {
         let yaml = format!(
-            "{MINIMAL_YAML}\n  - plugin_role: tester\n    description: \"Writes tests.\"\n    producer:\n      identity: \"test identity\"\n      context: \"test context\"\n      instructions: \"test it\"\n      constraints: \"test bounds\"\n    critic:\n      identity: \"test critic identity\"\n      context: \"test critic context\"\n      instructions: \"review the tests\"\n      constraints: \"review test bounds\"\n    referee:\n      identity: \"test referee identity\"\n      context: \"test referee context\"\n      instructions: \"decide the tests\"\n      constraints: \"decide test bounds\"\n"
+            "{MINIMAL_YAML}\n  - key: tester\n    description: \"Writes tests.\"\n    producer:\n      identity: \"test identity\"\n      context: \"test context\"\n      instructions: \"test it\"\n      constraints: \"test bounds\"\n    critic:\n      identity: \"test critic identity\"\n      context: \"test critic context\"\n      instructions: \"review the tests\"\n      constraints: \"review test bounds\"\n    referee:\n      identity: \"test referee identity\"\n      context: \"test referee context\"\n      instructions: \"decide the tests\"\n      constraints: \"decide test bounds\"\n"
         );
         let config: ProjectAdapterConfig = serde_yaml::from_str(&yaml).unwrap();
         assert_eq!(config.workers.len(), 2);
-        assert_eq!(config.workers[1].plugin_role.as_deref(), Some("tester"));
+        assert_eq!(config.workers[1].key.as_deref(), Some("tester"));
     }
 
     #[test]
@@ -416,7 +416,7 @@ planner:
 "#;
         let work_only = r#"
 workers:
-  - plugin_role: implementer
+  - key: implementer
     description: "Implements code changes."
     producer:
       identity: "build identity"

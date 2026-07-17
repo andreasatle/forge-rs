@@ -116,8 +116,8 @@ pub struct TeamConfig {
     #[serde(default)]
     pub derives_target: bool,
     /// This team's `adapter`'s first configured worker role's own
-    /// `plugin_role` name (see
-    /// [`crate::project::YamlProjectAdapter::primary_role_name`]), resolved
+    /// `key` name (see
+    /// [`crate::project::YamlProjectAdapter::primary_role_key`]), resolved
     /// at config-load time so the scheduler's node-spawn transition can stamp
     /// every spawned `Work` node's `NodeRequest::worker_role` without
     /// adapter-YAML I/O from inside the (pure) scheduler transition.
@@ -662,7 +662,7 @@ fn resolve_team_paths(
             .into());
         }
         team.derives_target = adapter.primary_role_derives_target();
-        team.worker_role = adapter.primary_role_name();
+        team.worker_role = adapter.primary_role_key();
         team.language_plugins = adapter.language_plugins().clone();
         team.language = language.to_string();
         collect_adapter_task_keys(&adapter, &team.adapter, provides_all, requirements_all);
@@ -684,7 +684,7 @@ struct TaskKeyRequirement {
     /// Path to the adapter YAML file declaring this requirement.
     adapter_path: String,
     /// The worker role name declaring this requirement (empty when the role
-    /// declares no `plugin_role`).
+    /// declares no `key`).
     role_name: String,
     /// The required `task_kv` key.
     key: String,
@@ -701,7 +701,7 @@ fn collect_adapter_task_keys(
 ) {
     provides_all.extend(adapter.provides().iter().cloned());
     for worker in adapter.worker_roles() {
-        let role_name = worker.plugin_role.clone().unwrap_or_default();
+        let role_name = worker.key.clone().unwrap_or_default();
         requirements_all.extend(worker.requires.iter().map(|key| TaskKeyRequirement {
             adapter_path: adapter_path.to_string(),
             role_name: role_name.clone(),

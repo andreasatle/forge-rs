@@ -77,7 +77,7 @@ planner:
     instructions: "referee instructions"
     constraints: "referee constraints"
 workers:
-  - plugin_role: implementer
+  - key: implementer
     description: "Implements code."
     producer:
       identity: "impl identity"
@@ -94,7 +94,7 @@ workers:
       context: "impl referee context"
       instructions: "impl referee instructions"
       constraints: "impl referee constraints"
-  - plugin_role: tester
+  - key: tester
     description: "Writes tests."
     producer:
       identity: "test identity"
@@ -211,8 +211,8 @@ functions:
     )
     .unwrap();
     let mut yaml = CUSTOM_ADAPTER_YAML.replace(
-        "  - plugin_role: implementer\n",
-        "  - plugin_role: implementer\n    validation: [typecheck]\n",
+        "  - key: implementer\n",
+        "  - key: implementer\n    validation: [typecheck]\n",
     );
     yaml.push_str("plugins:\n  - plugin.yaml\n");
     let adapter = dir.join("adapter.yaml");
@@ -231,23 +231,23 @@ functions:
 }
 
 #[test]
-fn worker_missing_plugin_role_is_fine_regardless_of_declared_plugins() {
-    // Invariant: `plugin_role` is pure worker-role identity now — it has no
+fn worker_missing_key_is_fine_regardless_of_declared_plugins() {
+    // Invariant: `key` is pure worker-role identity now — it has no
     // plugin-side counterpart to match against (that's `validation`'s job),
     // so a worker entry may omit it whether or not the adapter declares any
     // plugins.
-    let dir = test_dir("missing-plugin-role-no-plugins");
-    let yaml = CUSTOM_ADAPTER_YAML.replace("  - plugin_role: implementer\n", "  - \n");
+    let dir = test_dir("missing-key-no-plugins");
+    let yaml = CUSTOM_ADAPTER_YAML.replace("  - key: implementer\n", "  - \n");
     let adapter = dir.join("adapter.yaml");
     std::fs::write(&adapter, yaml).unwrap();
 
     let result = ProjectRuntimeSetupBuilder::new(&adapter, None, "");
     assert!(
         result.is_ok(),
-        "worker entry missing plugin_role must load fine with no plugins declared"
+        "worker entry missing key must load fine with no plugins declared"
     );
 
-    let dir = test_dir("missing-plugin-role-with-plugins");
+    let dir = test_dir("missing-key-with-plugins");
     std::fs::write(
         dir.join("plugin.yaml"),
         r#"
@@ -260,7 +260,7 @@ functions: {}
 "#,
     )
     .unwrap();
-    let mut yaml = CUSTOM_ADAPTER_YAML.replace("  - plugin_role: implementer\n", "  - \n");
+    let mut yaml = CUSTOM_ADAPTER_YAML.replace("  - key: implementer\n", "  - \n");
     yaml.push_str("plugins:\n  - plugin.yaml\n");
     let adapter = dir.join("adapter.yaml");
     std::fs::write(&adapter, yaml).unwrap();
@@ -268,8 +268,8 @@ functions: {}
     let is_ok = ProjectRuntimeSetupBuilder::new(&adapter, None, "").is_ok();
     assert!(
         is_ok,
-        "worker entry missing plugin_role must also load fine with plugins declared, since \
-         plugin_role no longer selects anything plugin-side"
+        "worker entry missing key must also load fine with plugins declared, since \
+         key no longer selects anything plugin-side"
     );
 }
 
@@ -437,8 +437,8 @@ functions:
 
     // implementer: selects every named function this plugin defines.
     let mut full_yaml = CUSTOM_ADAPTER_YAML.replace(
-        "  - plugin_role: implementer\n",
-        "  - plugin_role: implementer\n    validation: [lint, typecheck]\n",
+        "  - key: implementer\n",
+        "  - key: implementer\n    validation: [lint, typecheck]\n",
     );
     full_yaml.push_str("plugins:\n  - plugin.yaml\n");
     let full_adapter = dir.join("adapter_full.yaml");
@@ -465,9 +465,9 @@ functions:
 }
 
 #[test]
-fn real_adapters_resolve_to_the_same_validation_plans_as_the_old_plugin_role_bundles() {
+fn real_adapters_resolve_to_the_same_validation_plans_as_the_old_role_keyed_bundles() {
     // Invariant: this pins the exact command/scope/gating shape each real
-    // adapter's role resolved to under the old `plugin_role`-keyed bundle
+    // adapter's role resolved to under the old role-keyed bundle
     // mechanism, now produced by resolving `validation: [...]` names against
     // the python plugin's `functions` map instead — a pure mechanism swap,
     // not a behavior change. See adapters/create_test.yaml, implement.yaml,
@@ -649,8 +649,8 @@ functions:
     )
     .unwrap();
     let mut yaml = CUSTOM_ADAPTER_YAML.replace(
-        "  - plugin_role: implementer\n",
-        "  - plugin_role: implementer\n    validation: [frobnicate]\n",
+        "  - key: implementer\n",
+        "  - key: implementer\n    validation: [frobnicate]\n",
     );
     yaml.push_str("plugins:\n  - plugin.yaml\n");
     let adapter = dir.join("adapter.yaml");

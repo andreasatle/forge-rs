@@ -34,7 +34,7 @@ planner:
     constraints: ""
   provides: [name, function_name, file_path]
 workers:
-  - plugin_role: implementer
+  - key: implementer
     requires: [file_path]
     description: "Implements assigned tasks."
     producer:

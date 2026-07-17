@@ -89,7 +89,7 @@ pub(crate) fn validate_worker_roles(
                 if !spec.functions.contains_key(name) {
                     return Err(format!(
                         "worker role '{}' selects validation function '{name}', which is not defined in the plugin's functions for extension '{extension}'",
-                        worker.plugin_role.clone().unwrap_or_default()
+                        worker.key.clone().unwrap_or_default()
                     )
                     .into());
                 }
@@ -124,11 +124,7 @@ impl<'a> ProjectRuntimeSetupBuilder<'a> {
         let role_validations = adapter
             .worker_roles()
             .iter()
-            .filter_map(|w| {
-                w.plugin_role
-                    .clone()
-                    .map(|name| (name, w.validation.clone()))
-            })
+            .filter_map(|w| w.key.clone().map(|name| (name, w.validation.clone())))
             .collect();
         Ok(Self {
             validation,

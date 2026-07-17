@@ -1,5 +1,5 @@
 workers:
-  - plugin_role: implementer
+  - key: implementer
     requires: [file_path]
     validation: [lint, typecheck]
     description: |-

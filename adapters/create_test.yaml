@@ -1,5 +1,5 @@
 workers:
-  - plugin_role: tester
+  - key: tester
     derives_target: true
     requires: [file_path]
     validation: [lint]

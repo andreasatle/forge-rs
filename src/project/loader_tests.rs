@@ -46,7 +46,7 @@ planner:
     instructions: "custom referee instructions"
     constraints: "custom referee constraints"
 workers:
-  - plugin_role: implementer
+  - key: implementer
     description: "Implements code changes."
     producer:
       identity: "custom worker identity"
