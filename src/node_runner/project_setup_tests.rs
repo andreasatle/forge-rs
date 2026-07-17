@@ -400,6 +400,71 @@ fn build_wires_validation_plan_api_summary_and_primary_language_init() {
 }
 
 #[test]
+fn primary_language_init_is_unaffected_by_worker_validation_selection() {
+    // Invariant: `primary_language_init` (repo-bootstrap commands, e.g.
+    // `uv init`/`cargo init`) is derived solely from the active plugin's own
+    // `init:` field — never from any worker role's `validation:` selection.
+    // A role with an empty/omitted `validation:` list must see the exact
+    // same init spec as a role that selects every named function; no team
+    // can suppress or alter it via function selection.
+    let dir = test_dir("primary-language-init-selection-independence");
+    std::fs::write(
+        dir.join("plugin.yaml"),
+        r#"
+extensions: [zz]
+init:
+  commands:
+    - program: echo
+      args: ["bootstrap"]
+validation:
+  commands: []
+functions:
+  lint:
+    program: echo
+    args: ["lint"]
+  typecheck:
+    program: echo
+    args: ["typecheck"]
+"#,
+    )
+    .unwrap();
+
+    // implementer: no `validation:` at all (empty selection).
+    let mut empty_yaml = CUSTOM_ADAPTER_YAML.to_string();
+    empty_yaml.push_str("plugins:\n  - plugin.yaml\n");
+    let empty_adapter = dir.join("adapter_empty.yaml");
+    std::fs::write(&empty_adapter, empty_yaml).unwrap();
+
+    // implementer: selects every named function this plugin defines.
+    let mut full_yaml = CUSTOM_ADAPTER_YAML.replace(
+        "  - plugin_role: implementer\n",
+        "  - plugin_role: implementer\n    validation: [lint, typecheck]\n",
+    );
+    full_yaml.push_str("plugins:\n  - plugin.yaml\n");
+    let full_adapter = dir.join("adapter_full.yaml");
+    std::fs::write(&full_adapter, full_yaml).unwrap();
+
+    let empty_setup = ProjectRuntimeSetup::build(&empty_adapter, None, "zz").unwrap();
+    let full_setup = ProjectRuntimeSetup::build(&full_adapter, None, "zz").unwrap();
+
+    let empty_init = empty_setup
+        .primary_language_init
+        .expect("init spec must be present for a role with empty validation selection");
+    let full_init = full_setup
+        .primary_language_init
+        .expect("init spec must be present for a role with full validation selection");
+
+    assert_eq!(
+        empty_init, full_init,
+        "primary_language_init must be identical regardless of any worker role's validation selection"
+    );
+    assert_eq!(
+        empty_init.commands[0].program, "echo",
+        "init spec must still carry the plugin's real bootstrap command"
+    );
+}
+
+#[test]
 fn real_adapters_resolve_to_the_same_validation_plans_as_the_old_plugin_role_bundles() {
     // Invariant: this pins the exact command/scope/gating shape each real
     // adapter's role resolved to under the old `plugin_role`-keyed bundle
