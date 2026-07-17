@@ -305,10 +305,10 @@ fn generic_planner_guidance_reaches_plan_nodes_but_not_work_nodes() {
     }
 }
 
-// ── worker review scoping ────────────────────────────────────────────────
+// ── worker content scoping ───────────────────────────────────────────────
 //
 // The shared Critic/Referee review contract lives once in the generic
-// layer's `worker_review` block (adapters/generic.yaml) rather than in a
+// layer's `worker` block (adapters/generic.yaml) rather than in a
 // standalone fragment file. A worker role opts in via `review: true`
 // (`WorkerRoleConfig::review`); this section protects that opt-in staying
 // scoped to exactly the roles/adapters that declare it, never leaking into
@@ -316,7 +316,7 @@ fn generic_planner_guidance_reaches_plan_nodes_but_not_work_nodes() {
 // inline Critic/Referee.
 
 #[test]
-fn implement_and_create_test_both_opt_into_the_generic_worker_review_content() {
+fn implement_and_create_test_both_opt_into_the_generic_worker_content() {
     // Invariant: implement.yaml and create_test.yaml apply the exact same
     // Critic/Referee review contract, so both declare `review: true` rather
     // than duplicating the prompt text inline. If a future edit makes one
@@ -376,7 +376,7 @@ fn worker_role_with_both_inline_review_and_review_flag_fails_loudly() {
 }
 
 #[test]
-fn worker_role_review_flag_pulls_in_the_generic_worker_review_content() {
+fn worker_role_review_flag_pulls_in_the_generic_worker_content() {
     let adapter_path = unique_path("opt_in_review.yaml");
     let yaml = CUSTOM_ADAPTER_YAML.replace(
         "    critic:\n      identity: \"custom worker critic identity\"\n      context: \"custom worker critic context\"\n      instructions: \"custom worker critic instructions\"\n      constraints: \"custom worker critic constraints\"\n    referee:\n      identity: \"custom worker referee identity\"\n      context: \"custom worker referee context\"\n      instructions: \"custom worker referee instructions\"\n      constraints: \"custom worker referee constraints\"\n",
@@ -386,30 +386,30 @@ fn worker_role_review_flag_pulls_in_the_generic_worker_review_content() {
 
     let generic = crate::roles::policy::generic_prompt();
     assert!(
-        !generic.worker_review.critic.identity.is_empty(),
-        "test assumes adapters/generic.yaml defines non-empty worker_review.critic guidance"
+        !generic.worker.critic.identity.is_empty(),
+        "test assumes adapters/generic.yaml defines non-empty worker.critic guidance"
     );
 
     let policy = load_adapter(&adapter_path).unwrap().role_policy();
     assert!(
         policy
             .worker_critic_system
-            .contains(generic.worker_review.critic.identity.as_str()),
-        "review: true must pull in the generic layer's worker_review.critic content; got:\n{}",
+            .contains(generic.worker.critic.identity.as_str()),
+        "review: true must pull in the generic layer's worker.critic content; got:\n{}",
         policy.worker_critic_system
     );
     assert!(
         policy
             .worker_referee_system
-            .contains(generic.worker_review.referee.identity.as_str()),
-        "review: true must pull in the generic layer's worker_review.referee content; got:\n{}",
+            .contains(generic.worker.referee.identity.as_str()),
+        "review: true must pull in the generic layer's worker.referee content; got:\n{}",
         policy.worker_referee_system
     );
 }
 
 #[test]
-fn generic_worker_review_content_reaches_only_opted_in_worker_critic_and_referee_prompts() {
-    // Invariant: the generic layer's `worker_review` content (see
+fn generic_worker_content_reaches_only_opted_in_worker_critic_and_referee_prompts() {
+    // Invariant: the generic layer's `worker` content (see
     // adapters/generic.yaml) must never leak into a Producer prompt, a
     // Plan-node prompt, or a worker role that declares its own inline
     // Critic/Referee instead of opting in — exercised through the real
@@ -419,10 +419,10 @@ fn generic_worker_review_content_reaches_only_opted_in_worker_critic_and_referee
     // though it is worker-kind; `planner.yaml` never renders a worker
     // Critic/Referee at all.
     let generic = crate::roles::policy::generic_prompt();
-    let marker = generic.worker_review.critic.identity.as_str();
+    let marker = generic.worker.critic.identity.as_str();
     assert!(
         !marker.is_empty(),
-        "test assumes adapters/generic.yaml defines non-empty worker_review.critic guidance"
+        "test assumes adapters/generic.yaml defines non-empty worker.critic guidance"
     );
 
     let implement_policy = load_adapter(&repo_adapter("implement.yaml"))
@@ -430,7 +430,7 @@ fn generic_worker_review_content_reaches_only_opted_in_worker_critic_and_referee
         .role_policy();
     assert!(
         !implement_policy.worker_producer_system.contains(marker),
-        "implement.yaml's Producer prompt must never carry worker_review content; got:\n{}",
+        "implement.yaml's Producer prompt must never carry worker content; got:\n{}",
         implement_policy.worker_producer_system
     );
 
@@ -450,7 +450,7 @@ fn generic_worker_review_content_reaches_only_opted_in_worker_critic_and_referee
     ] {
         assert!(
             !system.contains(marker),
-            "{label} must not carry the generic worker_review content, since pass_tests.yaml declares its own inline Critic/Referee; got:\n{system}"
+            "{label} must not carry the generic worker content, since pass_tests.yaml declares its own inline Critic/Referee; got:\n{system}"
         );
     }
 
@@ -464,7 +464,7 @@ fn generic_worker_review_content_reaches_only_opted_in_worker_critic_and_referee
     ] {
         assert!(
             !system.contains(marker),
-            "{label} must not carry the generic worker_review content; got:\n{system}"
+            "{label} must not carry the generic worker content; got:\n{system}"
         );
     }
 }

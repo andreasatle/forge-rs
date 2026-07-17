@@ -97,7 +97,7 @@ pub struct WorkerRoleConfig {
     ///
     /// Exactly one of (`critic` and `referee`, both present) or `review:
     /// true` must hold — enforced by
-    /// [`crate::project::yaml::YamlProjectAdapter::validate_worker_reviews`]
+    /// [`crate::project::yaml::YamlProjectAdapter::validate_worker_content`]
     /// once parsing has completed, not by parsing itself, since it is a
     /// cross-field invariant.
     #[serde(default)]
@@ -106,9 +106,9 @@ pub struct WorkerRoleConfig {
     /// [`Self::critic`].
     #[serde(default)]
     pub referee: Option<RolePromptConfig>,
-    /// Opts this role into the generic prompt layer's shared worker-review
-    /// content (`adapters/generic.yaml`'s `worker_review` section — see
-    /// [`crate::roles::policy::GenericPromptConfig::worker_review`]) for its
+    /// Opts this role into the generic prompt layer's shared worker
+    /// content (`adapters/generic.yaml`'s `worker` section — see
+    /// [`crate::roles::policy::GenericPromptConfig::worker`]) for its
     /// Critic and Referee prompts, in place of declaring `critic`/`referee`
     /// inline. Mutually exclusive with declaring `critic`/`referee` inline.
     /// See [`Self::critic`].
@@ -301,7 +301,7 @@ workers:
         // instead opt into the generic layer's shared content via `review:
         // true` — so their requiredness (exactly one of inline
         // critic+referee or `review: true`) is checked by
-        // `YamlProjectAdapter::validate_worker_reviews` instead; see
+        // `YamlProjectAdapter::validate_worker_content` instead; see
         // `crate::project::loader_tests`.
         let missing_constraints_sub_field = r#"
 planner:

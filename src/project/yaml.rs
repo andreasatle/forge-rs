@@ -63,14 +63,14 @@ impl YamlProjectAdapter {
     /// Validate every worker role declares exactly one of (`critic` and
     /// `referee`, both inline) or `review: true` — never both, never
     /// neither. `review: true` opts the role into the generic prompt
-    /// layer's shared `worker_review` content (see
-    /// [`crate::roles::policy::GenericPromptConfig::worker_review`]) instead
+    /// layer's shared `worker` content (see
+    /// [`crate::roles::policy::GenericPromptConfig::worker`]) instead
     /// of declaring its own Critic/Referee text.
     ///
     /// Called at load time (see [`crate::project::loader::load_adapter`]) so
     /// a malformed adapter fails immediately instead of silently
     /// mis-rendering the first time a prompt is built.
-    pub fn validate_worker_reviews(&self) -> Result<(), String> {
+    pub fn validate_worker_content(&self) -> Result<(), String> {
         for worker in &self.config.workers {
             match (&worker.critic, &worker.referee, worker.review) {
                 (Some(_), Some(_), false) => {}
@@ -263,7 +263,7 @@ fn worker_role_policy(
 
 /// The generic layer for a worker role's Critic prompt: the shared fields
 /// alone for a role that declares its Critic inline, or the shared fields
-/// with the generic layer's `worker_review.critic` addition appended for a
+/// with the generic layer's `worker.critic` addition appended for a
 /// role that opts in via `review: true` (see
 /// [`WorkerRoleConfig::review`]) — never applied to a Producer or a
 /// Plan-node role.
@@ -272,7 +272,7 @@ fn worker_critic_generic(
     worker: &WorkerRoleConfig,
 ) -> RolePromptConfig {
     if worker.review {
-        generic.for_worker_review_critic()
+        generic.for_worker_critic()
     } else {
         generic.shared()
     }
@@ -285,7 +285,7 @@ fn worker_referee_generic(
     worker: &WorkerRoleConfig,
 ) -> RolePromptConfig {
     if worker.review {
-        generic.for_worker_review_referee()
+        generic.for_worker_referee()
     } else {
         generic.shared()
     }
@@ -293,7 +293,7 @@ fn worker_referee_generic(
 
 /// This worker role's Critic prompt, declared inline. Falls back to an
 /// empty prompt when absent — either because the role opts into the
-/// generic layer's shared `worker_review` content instead (see
+/// generic layer's shared `worker` content instead (see
 /// [`worker_critic_generic`]), or because of the sentinel
 /// `WorkerRoleConfig::default()` used when an adapter configures no workers
 /// at all, which is never rendered into a real Work-node prompt since such

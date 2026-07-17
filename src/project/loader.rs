@@ -52,7 +52,7 @@ pub fn load_adapter(path: &Path) -> Result<YamlProjectAdapter, Box<dyn Error>> {
     }
 
     let adapter = adapter.with_language_plugins(language_plugins);
-    adapter.validate_worker_reviews().map_err(|e| {
+    adapter.validate_worker_content().map_err(|e| {
         format!(
             "adapter at {} declares an invalid worker role: {e}",
             path.display()

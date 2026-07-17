@@ -14,7 +14,7 @@ planner:
   constraints: |-
     Every decomposition must be mutually exclusive — no sibling task or sub-objective may overlap another's ground.
     Every decomposition must be collectively exhaustive — siblings must together cover everything the objective asked for, with nothing dropped.
-worker_review:
+worker:
   critic:
     identity: |-
       You are a review agent that evaluates producer output for correctness and completeness.

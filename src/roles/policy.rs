@@ -315,7 +315,7 @@ pub struct RolePromptConfig {
 /// objective) declares its `critic`/`referee` inline instead of opting in.
 #[derive(Debug, Clone, Default, PartialEq, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct WorkerReviewPromptConfig {
+pub struct WorkerPromptConfig {
     /// Addition merged into an opted-in worker role's Critic prompt.
     pub critic: RolePromptConfig,
     /// Addition merged into an opted-in worker role's Referee prompt.
@@ -325,15 +325,15 @@ pub struct WorkerReviewPromptConfig {
 /// The framework's generic prompt layer's shape: `identity`/`context`/
 /// `instructions`/`constraints` apply to every role in every adapter,
 /// `planner` is an additional layer merged only into Plan-node Producer/
-/// Critic/Referee composition, and `worker_review` is an additional layer
+/// Critic/Referee composition, and `worker` is an additional layer
 /// merged only into an opted-in worker role's Critic/Referee composition —
 /// see `GenericPromptConfig::shared`, `GenericPromptConfig::for_planner`,
-/// and `GenericPromptConfig::for_worker_review_critic`/
-/// `for_worker_review_referee`.
+/// and `GenericPromptConfig::for_worker_critic`/
+/// `for_worker_referee`.
 ///
 /// A Work node isn't decomposing anything, so `planner`-only guidance (e.g.
 /// MECE decomposition review) would be irrelevant noise there; it must never
-/// reach a Work-node prompt. Symmetrically, `worker_review` guidance has no
+/// reach a Work-node prompt. Symmetrically, `worker` guidance has no
 /// meaning for a Producer (which never accepts or rejects) or for a
 /// Plan-node role, so it must never reach either.
 #[derive(Debug, Clone, Default, PartialEq, serde::Deserialize)]
@@ -358,7 +358,7 @@ pub struct GenericPromptConfig {
     /// review-contract criteria that a Producer, and any Plan-node role, has
     /// no use for.
     #[serde(default)]
-    pub worker_review: WorkerReviewPromptConfig,
+    pub worker: WorkerPromptConfig,
 }
 
 impl GenericPromptConfig {
@@ -384,31 +384,28 @@ impl GenericPromptConfig {
         }
     }
 
-    /// The shared fields with the `worker_review.critic` addition appended
+    /// The shared fields with the `worker.critic` addition appended
     /// to each section — used to compose an opted-in worker role's Critic
     /// prompt only (see
     /// [`crate::project::yaml_config::WorkerRoleConfig::review`]). Never
     /// used for a Producer or a Plan-node role.
-    pub(crate) fn for_worker_review_critic(&self) -> RolePromptConfig {
+    pub(crate) fn for_worker_critic(&self) -> RolePromptConfig {
         RolePromptConfig {
-            identity: append_layer(&self.identity, &self.worker_review.critic.identity),
-            context: append_layer(&self.context, &self.worker_review.critic.context),
-            instructions: append_layer(&self.instructions, &self.worker_review.critic.instructions),
-            constraints: append_layer(&self.constraints, &self.worker_review.critic.constraints),
+            identity: append_layer(&self.identity, &self.worker.critic.identity),
+            context: append_layer(&self.context, &self.worker.critic.context),
+            instructions: append_layer(&self.instructions, &self.worker.critic.instructions),
+            constraints: append_layer(&self.constraints, &self.worker.critic.constraints),
         }
     }
 
-    /// The shared fields with the `worker_review.referee` addition appended
-    /// to each section. See [`Self::for_worker_review_critic`].
-    pub(crate) fn for_worker_review_referee(&self) -> RolePromptConfig {
+    /// The shared fields with the `worker.referee` addition appended
+    /// to each section. See [`Self::for_worker_critic`].
+    pub(crate) fn for_worker_referee(&self) -> RolePromptConfig {
         RolePromptConfig {
-            identity: append_layer(&self.identity, &self.worker_review.referee.identity),
-            context: append_layer(&self.context, &self.worker_review.referee.context),
-            instructions: append_layer(
-                &self.instructions,
-                &self.worker_review.referee.instructions,
-            ),
-            constraints: append_layer(&self.constraints, &self.worker_review.referee.constraints),
+            identity: append_layer(&self.identity, &self.worker.referee.identity),
+            context: append_layer(&self.context, &self.worker.referee.context),
+            instructions: append_layer(&self.instructions, &self.worker.referee.instructions),
+            constraints: append_layer(&self.constraints, &self.worker.referee.constraints),
         }
     }
 }
