@@ -7,13 +7,14 @@ constraints: |-
   Execution failures are handled by the framework, not the model.
   Return exactly one JSON object. No markdown. No code fence. No explanation. No text before or after the JSON.
 planner:
-  identity: ""
-  context: |-
-    A decomposition into sub-objectives or sibling tasks is evaluated against both halves of MECE: mutually exclusive, meaning no two siblings cover overlapping ground, and collectively exhaustive, meaning the siblings together cover everything the objective being decomposed asked for, with nothing dropped.
-  instructions: ""
-  constraints: |-
-    Every decomposition must be mutually exclusive — no sibling task or sub-objective may overlap another's ground.
-    Every decomposition must be collectively exhaustive — siblings must together cover everything the objective asked for, with nothing dropped.
+  default:
+    identity: ""
+    context: |-
+      A decomposition into sub-objectives or sibling tasks is evaluated against both halves of MECE: mutually exclusive, meaning no two siblings cover overlapping ground, and collectively exhaustive, meaning the siblings together cover everything the objective being decomposed asked for, with nothing dropped.
+    instructions: ""
+    constraints: |-
+      Every decomposition must be mutually exclusive — no sibling task or sub-objective may overlap another's ground.
+      Every decomposition must be collectively exhaustive — siblings must together cover everything the objective asked for, with nothing dropped.
 worker:
   critic:
     identity: |-

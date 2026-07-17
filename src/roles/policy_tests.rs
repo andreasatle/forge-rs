@@ -242,3 +242,86 @@ fn planner_protocol_schema_for_lists_declared_provides_keys() {
     let schema_empty = planner_protocol_schema_for(false, &[]);
     assert!(schema_empty.contains("string keys to string values"));
 }
+
+#[test]
+fn for_role_covers_all_six_kind_role_combinations() {
+    // Invariant: `for_role` is one general dispatch function addressable by
+    // every (kind, role) combination, not just the ones the old hardcoded
+    // `for_planner`/`for_worker_critic`/`for_worker_referee` methods
+    // happened to cover. A combination with nothing configured composes to
+    // the shared fields alone (an empty addition, not an error); a
+    // per-role override takes precedence over its kind's `default`.
+    let config = GenericPromptConfig {
+        identity: "base identity".to_string(),
+        context: String::new(),
+        instructions: String::new(),
+        constraints: String::new(),
+        planner: KindPromptConfig {
+            default: RolePromptConfig {
+                identity: "planner default".to_string(),
+                ..Default::default()
+            },
+            producer: None,
+            // The old `for_planner()` applied one single block uniformly to
+            // all three planner roles — there was no field to express a
+            // per-role planner override at all.
+            critic: Some(RolePromptConfig {
+                identity: "planner critic override".to_string(),
+                ..Default::default()
+            }),
+            referee: None,
+        },
+        worker: KindPromptConfig {
+            default: RolePromptConfig::default(),
+            // `WorkerPromptConfig` never had a `producer` field — this slot
+            // could not previously be configured at all.
+            producer: None,
+            critic: Some(RolePromptConfig {
+                identity: "worker critic".to_string(),
+                ..Default::default()
+            }),
+            referee: Some(RolePromptConfig {
+                identity: "worker referee".to_string(),
+                ..Default::default()
+            }),
+        },
+    };
+
+    assert_eq!(
+        config
+            .for_role(&NodeKind::Plan, &DeliberationRole::Producer)
+            .identity,
+        "base identity\nplanner default"
+    );
+    assert_eq!(
+        config
+            .for_role(&NodeKind::Plan, &DeliberationRole::Critic)
+            .identity,
+        "base identity\nplanner critic override"
+    );
+    assert_eq!(
+        config
+            .for_role(&NodeKind::Plan, &DeliberationRole::Referee)
+            .identity,
+        "base identity\nplanner default"
+    );
+
+    assert_eq!(
+        config
+            .for_role(&NodeKind::Work, &DeliberationRole::Producer)
+            .identity,
+        "base identity"
+    );
+    assert_eq!(
+        config
+            .for_role(&NodeKind::Work, &DeliberationRole::Critic)
+            .identity,
+        "base identity\nworker critic"
+    );
+    assert_eq!(
+        config
+            .for_role(&NodeKind::Work, &DeliberationRole::Referee)
+            .identity,
+        "base identity\nworker referee"
+    );
+}

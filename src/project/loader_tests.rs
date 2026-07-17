@@ -270,7 +270,10 @@ fn generic_planner_guidance_reaches_plan_nodes_but_not_work_nodes() {
     // Plan-capable adapter inherits it without its own copy, and it never
     // reaches a Work-node's rendered prompt. Exercised through the real
     // bundled adapter files, not synthetic fixtures.
-    let mece_context = &crate::roles::policy::generic_prompt().planner.context;
+    let mece_context = &crate::roles::policy::generic_prompt()
+        .planner
+        .default
+        .context;
     assert!(
         !mece_context.is_empty(),
         "adapters/generic.yaml must define non-empty planner-only MECE guidance"
@@ -385,8 +388,10 @@ fn worker_role_review_flag_pulls_in_the_generic_worker_content() {
     fs::write(&adapter_path, yaml).unwrap();
 
     let generic = crate::roles::policy::generic_prompt();
+    let worker_critic = generic.worker.critic.as_ref().unwrap();
+    let worker_referee = generic.worker.referee.as_ref().unwrap();
     assert!(
-        !generic.worker.critic.identity.is_empty(),
+        !worker_critic.identity.is_empty(),
         "test assumes adapters/generic.yaml defines non-empty worker.critic guidance"
     );
 
@@ -394,14 +399,14 @@ fn worker_role_review_flag_pulls_in_the_generic_worker_content() {
     assert!(
         policy
             .worker_critic_system
-            .contains(generic.worker.critic.identity.as_str()),
+            .contains(worker_critic.identity.as_str()),
         "review: true must pull in the generic layer's worker.critic content; got:\n{}",
         policy.worker_critic_system
     );
     assert!(
         policy
             .worker_referee_system
-            .contains(generic.worker.referee.identity.as_str()),
+            .contains(worker_referee.identity.as_str()),
         "review: true must pull in the generic layer's worker.referee content; got:\n{}",
         policy.worker_referee_system
     );
@@ -419,7 +424,7 @@ fn generic_worker_content_reaches_only_opted_in_worker_critic_and_referee_prompt
     // though it is worker-kind; `planner.yaml` never renders a worker
     // Critic/Referee at all.
     let generic = crate::roles::policy::generic_prompt();
-    let marker = generic.worker.critic.identity.as_str();
+    let marker = generic.worker.critic.as_ref().unwrap().identity.as_str();
     assert!(
         !marker.is_empty(),
         "test assumes adapters/generic.yaml defines non-empty worker.critic guidance"

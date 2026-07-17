@@ -5,6 +5,8 @@ use std::collections::BTreeMap;
 use super::ProjectAdapter;
 use super::yaml_config::{ProjectAdapterConfig, RolePromptConfig, WorkerRoleConfig};
 use crate::language::LanguageSpec;
+use crate::machines::deliberation::DeliberationRole;
+use crate::machines::scheduler::NodeKind;
 use crate::roles::RolePolicy;
 use crate::roles::policy::{
     DEFAULT_SYSTEM, GenericPromptConfig, PLANNER_PRODUCER_IDENTITY, WORK_PRODUCER_SYSTEM,
@@ -137,13 +139,18 @@ impl ProjectAdapter for YamlProjectAdapter {
         // since an adapter's declared plugins vary by node, not by adapter.
         //
         // Plan-node roles (Producer/Critic/Referee) additionally pick up the
-        // generic layer's `planner` addition (see
-        // `GenericPromptConfig::for_planner`) — decomposition-review
-        // guidance that has no meaning for a Work node, which uses the
-        // shared fields alone (see `GenericPromptConfig::shared`).
+        // generic layer's `planner` addition for their own role (see
+        // `GenericPromptConfig::for_role`) — decomposition-review guidance
+        // that has no meaning for a Work node, which uses the shared fields
+        // alone unless its own role has opted into the `worker` addition
+        // (see `worker_critic_generic`/`worker_referee_generic` below).
         let generic = generic_prompt();
-        let shared = generic.shared();
-        let for_planner = generic.for_planner();
+        let planner_producer_generic_base =
+            generic.for_role(&NodeKind::Plan, &DeliberationRole::Producer);
+        let planner_critic_generic = generic.for_role(&NodeKind::Plan, &DeliberationRole::Critic);
+        let planner_referee_generic = generic.for_role(&NodeKind::Plan, &DeliberationRole::Referee);
+        let worker_producer_generic_base =
+            generic.for_role(&NodeKind::Work, &DeliberationRole::Producer);
         let planner = &self.config.planner;
         // The shared worker_*_system fields below fall back to the first
         // configured worker role; node_runner dispatch selects a Work node's
@@ -156,12 +163,18 @@ impl ProjectAdapter for YamlProjectAdapter {
         let default_worker = WorkerRoleConfig::default();
         let worker = self.config.workers.first().unwrap_or(&default_worker);
         let planner_producer_generic = RolePromptConfig {
-            identity: format!("{PLANNER_PRODUCER_IDENTITY}\n{}", for_planner.identity),
-            ..for_planner.clone()
+            identity: format!(
+                "{PLANNER_PRODUCER_IDENTITY}\n{}",
+                planner_producer_generic_base.identity
+            ),
+            ..planner_producer_generic_base.clone()
         };
         let worker_producer_generic = RolePromptConfig {
-            identity: format!("{WORKER_PRODUCER_IDENTITY}\n{}", shared.identity),
-            ..shared.clone()
+            identity: format!(
+                "{WORKER_PRODUCER_IDENTITY}\n{}",
+                worker_producer_generic_base.identity
+            ),
+            ..worker_producer_generic_base.clone()
         };
         let planner_producer_base =
             render_role_prompt(&planner_producer_generic, &planner.producer, None);
@@ -172,7 +185,7 @@ impl ProjectAdapter for YamlProjectAdapter {
             ),
             planner_critic_system: format!(
                 "{}\n{DEFAULT_SYSTEM}",
-                render_role_prompt(&for_planner, &planner.critic, None)
+                render_role_prompt(&planner_critic_generic, &planner.critic, None)
             ),
             worker_critic_system: format!(
                 "{}\n{DEFAULT_SYSTEM}",
@@ -184,7 +197,7 @@ impl ProjectAdapter for YamlProjectAdapter {
             ),
             planner_referee_system: format!(
                 "{}\n{DEFAULT_SYSTEM}",
-                render_role_prompt(&for_planner, &planner.referee, None)
+                render_role_prompt(&planner_referee_generic, &planner.referee, None)
             ),
             worker_referee_system: format!(
                 "{}\n{DEFAULT_SYSTEM}",
@@ -232,10 +245,14 @@ fn worker_role_policy(
     generic: &GenericPromptConfig,
     worker: &WorkerRoleConfig,
 ) -> WorkerRolePolicy {
-    let shared = generic.shared();
+    let worker_producer_generic_base =
+        generic.for_role(&NodeKind::Work, &DeliberationRole::Producer);
     let producer_generic = RolePromptConfig {
-        identity: format!("{WORKER_PRODUCER_IDENTITY}\n{}", shared.identity),
-        ..shared.clone()
+        identity: format!(
+            "{WORKER_PRODUCER_IDENTITY}\n{}",
+            worker_producer_generic_base.identity
+        ),
+        ..worker_producer_generic_base.clone()
     };
     WorkerRolePolicy {
         producer_system: format!(
@@ -272,9 +289,9 @@ fn worker_critic_generic(
     worker: &WorkerRoleConfig,
 ) -> RolePromptConfig {
     if worker.review {
-        generic.for_worker_critic()
+        generic.for_role(&NodeKind::Work, &DeliberationRole::Critic)
     } else {
-        generic.shared()
+        generic.base()
     }
 }
 
@@ -285,9 +302,9 @@ fn worker_referee_generic(
     worker: &WorkerRoleConfig,
 ) -> RolePromptConfig {
     if worker.review {
-        generic.for_worker_referee()
+        generic.for_role(&NodeKind::Work, &DeliberationRole::Referee)
     } else {
-        generic.shared()
+        generic.base()
     }
 }
 
@@ -406,14 +423,14 @@ mod tests {
             "plan it identity",
             "# Context",
             &generic.context,
-            &generic.planner.context,
+            &generic.planner.default.context,
             "plan it context",
             "# Instructions",
         ]);
         needles.extend(bullets("plan it"));
         needles.push("# Constraints".to_string());
         needles.extend(bullets(&generic.constraints));
-        needles.extend(bullets(&generic.planner.constraints));
+        needles.extend(bullets(&generic.planner.default.constraints));
         needles.extend(bullets("plan bounds"));
         assert_ordered_sections(&policy.planner_producer_base, &needles);
 
@@ -465,7 +482,7 @@ mod tests {
             needles.push("# Context".to_string());
             needles.push(generic.context.clone());
             if is_planner {
-                needles.push(generic.planner.context.clone());
+                needles.push(generic.planner.default.context.clone());
             }
             needles.push(format!("{instructions} context"));
             needles.push("# Instructions".to_string());
@@ -473,7 +490,7 @@ mod tests {
             needles.push("# Constraints".to_string());
             needles.extend(bullets(&generic.constraints));
             if is_planner {
-                needles.extend(bullets(&generic.planner.constraints));
+                needles.extend(bullets(&generic.planner.default.constraints));
             }
             needles.extend(bullets(constraints));
             needles.push(DEFAULT_SYSTEM.to_string());
@@ -508,7 +525,8 @@ mod tests {
         let policy = adapter.role_policy();
         let generic = generic_prompt();
         assert!(
-            !generic.planner.context.is_empty() && !generic.planner.constraints.is_empty(),
+            !generic.planner.default.context.is_empty()
+                && !generic.planner.default.constraints.is_empty(),
             "test assumes adapters/generic.yaml defines non-empty planner-only guidance"
         );
 
@@ -518,10 +536,10 @@ mod tests {
             ("planner referee", &policy.planner_referee_system),
         ] {
             assert!(
-                system.contains(&generic.planner.context),
+                system.contains(&generic.planner.default.context),
                 "{label} prompt must include the generic layer's planner-only context; got:\n{system}"
             );
-            for bullet in bullets(&generic.planner.constraints) {
+            for bullet in bullets(&generic.planner.default.constraints) {
                 assert!(
                     system.contains(&bullet),
                     "{label} prompt must include the generic layer's planner-only constraint {bullet:?}; got:\n{system}"
@@ -541,10 +559,10 @@ mod tests {
         }
         for (label, system) in work_systems {
             assert!(
-                !system.contains(&generic.planner.context),
+                !system.contains(&generic.planner.default.context),
                 "{label} prompt must not include the generic layer's planner-only context; got:\n{system}"
             );
-            for bullet in bullets(&generic.planner.constraints) {
+            for bullet in bullets(&generic.planner.default.constraints) {
                 assert!(
                     !system.contains(&bullet),
                     "{label} prompt must not include the generic layer's planner-only constraint {bullet:?}; got:\n{system}"

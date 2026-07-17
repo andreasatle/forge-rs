@@ -11,6 +11,9 @@
 //! [`DeliberationRole::Producer`]: crate::machines::deliberation::DeliberationRole
 //! [`NodeKind`]: crate::machines::scheduler::NodeKind
 
+use crate::machines::deliberation::DeliberationRole;
+use crate::machines::scheduler::NodeKind;
+
 /// GBNF grammar constraining output to the Work-node Producer's
 /// `{"summary": "..."}` schema.
 pub(crate) const PRODUCER_GBNF: &str = r#"root ::= "{" ws "\"summary\"" ws ":" ws string ws "}"
@@ -305,37 +308,61 @@ pub struct RolePromptConfig {
     pub constraints: String,
 }
 
-/// A worker role's Critic and Referee prompts within the generic layer —
-/// review-contract content shared by every worker role whose adapter opts
-/// it in (see [`crate::project::yaml_config::WorkerRoleConfig::review`]),
-/// factored out once here instead of duplicated per adapter (e.g.
-/// `implement.yaml` and `create_test.yaml`, whose review criteria are
-/// genuinely identical). An adapter whose review criteria differ (e.g.
-/// `pass_tests.yaml`, which judges against existing tests rather than the
-/// objective) declares its `critic`/`referee` inline instead of opting in.
+/// One adapter-kind's (planner or worker) optional additional content: a
+/// `default` applied to all three roles (Producer/Critic/Referee) under
+/// that kind, plus an optional per-role override for any role that needs
+/// something different from the default.
+///
+/// This is what lets today's planner content ("one block, applied
+/// uniformly to Producer/Critic/Referee") and worker content ("nothing for
+/// Producer, distinct content for Critic and Referee") both be expressed
+/// through the same schema: the planner side populates only `default`,
+/// while the worker side populates only the per-role overrides and leaves
+/// `default` empty.
 #[derive(Debug, Clone, Default, PartialEq, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct WorkerPromptConfig {
-    /// Addition merged into an opted-in worker role's Critic prompt.
-    pub critic: RolePromptConfig,
-    /// Addition merged into an opted-in worker role's Referee prompt.
-    pub referee: RolePromptConfig,
+pub struct KindPromptConfig {
+    /// Addition applied to any role under this kind that has no more
+    /// specific override below.
+    #[serde(default)]
+    pub default: RolePromptConfig,
+    /// Addition applied only to this kind's Producer, overriding `default`.
+    #[serde(default)]
+    pub producer: Option<RolePromptConfig>,
+    /// Addition applied only to this kind's Critic, overriding `default`.
+    #[serde(default)]
+    pub critic: Option<RolePromptConfig>,
+    /// Addition applied only to this kind's Referee, overriding `default`.
+    #[serde(default)]
+    pub referee: Option<RolePromptConfig>,
+}
+
+impl KindPromptConfig {
+    /// The addition for `role` under this kind: its own override if
+    /// declared, otherwise this kind's `default`.
+    fn slot(&self, role: &DeliberationRole) -> &RolePromptConfig {
+        let over = match role {
+            DeliberationRole::Producer => &self.producer,
+            DeliberationRole::Critic => &self.critic,
+            DeliberationRole::Referee => &self.referee,
+        };
+        over.as_ref().unwrap_or(&self.default)
+    }
 }
 
 /// The framework's generic prompt layer's shape: `identity`/`context`/
-/// `instructions`/`constraints` apply to every role in every adapter,
-/// `planner` is an additional layer merged only into Plan-node Producer/
-/// Critic/Referee composition, and `worker` is an additional layer
-/// merged only into an opted-in worker role's Critic/Referee composition —
-/// see `GenericPromptConfig::shared`, `GenericPromptConfig::for_planner`,
-/// and `GenericPromptConfig::for_worker_critic`/
-/// `for_worker_referee`.
+/// `instructions`/`constraints` apply to every role in every adapter, and
+/// `planner`/`worker` each carry optional additional content addressable by
+/// every (kind, role) combination — see [`KindPromptConfig`] and
+/// `GenericPromptConfig::for_role`.
 ///
 /// A Work node isn't decomposing anything, so `planner`-only guidance (e.g.
 /// MECE decomposition review) would be irrelevant noise there; it must never
 /// reach a Work-node prompt. Symmetrically, `worker` guidance has no
-/// meaning for a Producer (which never accepts or rejects) or for a
-/// Plan-node role, so it must never reach either.
+/// meaning for a Plan-node role, so it must never reach one. Both
+/// restrictions are enforced by call sites choosing which `NodeKind` to pass
+/// to `for_role`, not by the schema itself — every (kind, role) slot exists
+/// uniformly, most simply empty by default.
 #[derive(Debug, Clone, Default, PartialEq, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GenericPromptConfig {
@@ -349,63 +376,42 @@ pub struct GenericPromptConfig {
     /// Prohibitions and boundaries every role must respect, applied to Plan
     /// and Work nodes alike.
     pub constraints: String,
-    /// Guidance merged only into the Plan-node Producer/Critic/Referee —
-    /// decomposition-specific review criteria that a Work node has no use
-    /// for.
+    /// Additional content addressable by any Plan-node role.
     #[serde(default)]
-    pub planner: RolePromptConfig,
-    /// Guidance merged only into an opted-in worker role's Critic/Referee —
-    /// review-contract criteria that a Producer, and any Plan-node role, has
-    /// no use for.
+    pub planner: KindPromptConfig,
+    /// Additional content addressable by any Work-node role.
     #[serde(default)]
-    pub worker: WorkerPromptConfig,
+    pub worker: KindPromptConfig,
 }
 
 impl GenericPromptConfig {
-    /// The shared fields alone, applied to every role — Plan and Work alike.
-    pub(crate) fn shared(&self) -> RolePromptConfig {
-        RolePromptConfig {
-            identity: self.identity.clone(),
-            context: self.context.clone(),
-            instructions: self.instructions.clone(),
-            constraints: self.constraints.clone(),
-        }
+    /// The shared fields alone, with no per-kind or per-role addition —
+    /// used wherever a role hasn't opted into (or has no) kind-specific
+    /// content.
+    pub(crate) fn base(&self) -> RolePromptConfig {
+        self.compose(&RolePromptConfig::default())
     }
 
-    /// The shared fields with the `planner` addition appended to each
-    /// section — used to compose Plan-node Producer/Critic/Referee prompts
-    /// only, never a Work-node prompt.
-    pub(crate) fn for_planner(&self) -> RolePromptConfig {
-        RolePromptConfig {
-            identity: append_layer(&self.identity, &self.planner.identity),
-            context: append_layer(&self.context, &self.planner.context),
-            instructions: append_layer(&self.instructions, &self.planner.instructions),
-            constraints: append_layer(&self.constraints, &self.planner.constraints),
-        }
+    /// The shared fields with `kind`'s addition for `role` appended to each
+    /// section — the one general composition entry point covering every
+    /// (kind, role) combination. A combination with nothing configured
+    /// composes against an empty addition, which is a no-op.
+    pub(crate) fn for_role(&self, kind: &NodeKind, role: &DeliberationRole) -> RolePromptConfig {
+        let kind_config = match kind {
+            NodeKind::Plan => &self.planner,
+            NodeKind::Work => &self.worker,
+        };
+        self.compose(kind_config.slot(role))
     }
 
-    /// The shared fields with the `worker.critic` addition appended
-    /// to each section — used to compose an opted-in worker role's Critic
-    /// prompt only (see
-    /// [`crate::project::yaml_config::WorkerRoleConfig::review`]). Never
-    /// used for a Producer or a Plan-node role.
-    pub(crate) fn for_worker_critic(&self) -> RolePromptConfig {
+    /// Append `addition`'s four sections after this config's own shared
+    /// four sections.
+    fn compose(&self, addition: &RolePromptConfig) -> RolePromptConfig {
         RolePromptConfig {
-            identity: append_layer(&self.identity, &self.worker.critic.identity),
-            context: append_layer(&self.context, &self.worker.critic.context),
-            instructions: append_layer(&self.instructions, &self.worker.critic.instructions),
-            constraints: append_layer(&self.constraints, &self.worker.critic.constraints),
-        }
-    }
-
-    /// The shared fields with the `worker.referee` addition appended
-    /// to each section. See [`Self::for_worker_critic`].
-    pub(crate) fn for_worker_referee(&self) -> RolePromptConfig {
-        RolePromptConfig {
-            identity: append_layer(&self.identity, &self.worker.referee.identity),
-            context: append_layer(&self.context, &self.worker.referee.context),
-            instructions: append_layer(&self.instructions, &self.worker.referee.instructions),
-            constraints: append_layer(&self.constraints, &self.worker.referee.constraints),
+            identity: append_layer(&self.identity, &addition.identity),
+            context: append_layer(&self.context, &addition.context),
+            instructions: append_layer(&self.instructions, &addition.instructions),
+            constraints: append_layer(&self.constraints, &addition.constraints),
         }
     }
 }
@@ -579,33 +585,37 @@ impl Default for RolePolicy {
         // No adapter or plugin configured: every role prompt is the generic
         // layer alone, composed the same way [`crate::project::yaml::YamlProjectAdapter`]
         // composes it, just with empty adapter/plugin layers. Plan-node
-        // roles additionally pick up the generic layer's `planner` addition;
-        // Work-node roles use the shared fields only.
+        // roles additionally pick up the generic layer's `planner` addition
+        // for their own role; Work-node roles have no adapter-declared
+        // worker role to opt into the `worker` addition, so they use the
+        // shared fields alone.
         let generic = generic_prompt();
-        let shared = generic.shared();
-        let for_planner = generic.for_planner();
+        let planner_producer = generic.for_role(&NodeKind::Plan, &DeliberationRole::Producer);
+        let planner_critic = generic.for_role(&NodeKind::Plan, &DeliberationRole::Critic);
+        let planner_referee = generic.for_role(&NodeKind::Plan, &DeliberationRole::Referee);
+        let base = generic.base();
         let empty = RolePromptConfig::default();
-        let planner_producer_base = render_role_prompt(&for_planner, &empty, None);
+        let planner_producer_base = render_role_prompt(&planner_producer, &empty, None);
         Self {
             worker_producer_system: format!(
                 "{}\n{WORK_PRODUCER_SYSTEM}",
-                render_role_prompt(&shared, &empty, None)
+                render_role_prompt(&base, &empty, None)
             ),
             planner_critic_system: format!(
                 "{}\n{DEFAULT_SYSTEM}",
-                render_role_prompt(&for_planner, &empty, None)
+                render_role_prompt(&planner_critic, &empty, None)
             ),
             worker_critic_system: format!(
                 "{}\n{DEFAULT_SYSTEM}",
-                render_role_prompt(&shared, &empty, None)
+                render_role_prompt(&base, &empty, None)
             ),
             planner_referee_system: format!(
                 "{}\n{DEFAULT_SYSTEM}",
-                render_role_prompt(&for_planner, &empty, None)
+                render_role_prompt(&planner_referee, &empty, None)
             ),
             worker_referee_system: format!(
                 "{}\n{DEFAULT_SYSTEM}",
-                render_role_prompt(&shared, &empty, None)
+                render_role_prompt(&base, &empty, None)
             ),
             planner_producer_base,
             worker_role_descriptions: Vec::new(),
