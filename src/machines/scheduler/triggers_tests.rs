@@ -23,6 +23,7 @@ fn team(name: &str, trigger: Trigger) -> TeamConfig {
         language_plugins: BTreeMap::new(),
         language: String::new(),
         derives_target: false,
+        worker_role: None,
     }
 }
 
@@ -129,6 +130,7 @@ fn team_with_adapter(name: &str, trigger: Trigger, adapter: &str, northstar: &st
         language_plugins: BTreeMap::new(),
         language: String::new(),
         derives_target: false,
+        worker_role: None,
     }
 }
 
@@ -970,6 +972,77 @@ fn for_tasks_spawned_node_required_validation_target_is_enforced_by_the_gate() {
     graph
         .validate_required_tests_completed()
         .expect("the required validation target is now completed by another node");
+}
+
+/// Path to a real, shipped adapter YAML file (not a test fixture) — used so
+/// this test exercises the actual `adapters/*.yaml` files a real run loads,
+/// not a synthetic stand-in.
+fn real_adapter_path(name: &str) -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("adapters")
+        .join(name)
+}
+
+/// Regression test for the `worker_role: None` bug this session fixed: before
+/// the fix, `spawn_run_once`/`spawn_for_tasks` hardcoded every spawned
+/// `NodeRequest::worker_role` to `None`, so `validation_plan_for_role_fn`'s
+/// keyed lookup (`role_validations.get(name)`, `project_setup.rs`) always
+/// missed and silently fell back to the plugin's default validation bundle —
+/// even though isolated unit tests of that lookup (e.g.
+/// `validation_plan_for_role_uses_adapters_tester_validation_selection`)
+/// passed, because they called the function with an explicit role and never
+/// exercised the actual `TeamConfig`/`NodeRequest` wiring that supplies it in
+/// production.
+///
+/// This proves the fix end-to-end for all three real single-worker-role
+/// adapters: `team.worker_role` (as `resolve_team_paths` would populate it
+/// from `adapter.primary_role_name()`) survives all the way through
+/// `apply_team_triggers` onto the spawned `Node::worker_role`, matching each
+/// adapter's own declared `plugin_role` exactly.
+#[test]
+fn for_tasks_spawned_node_carries_its_teams_adapter_declared_worker_role() {
+    for (adapter_file, team_name, expected_role) in [
+        ("create_test.yaml", "create_test", "tester"),
+        ("implement.yaml", "implement", "implementer"),
+        ("pass_tests.yaml", "pass_tests", "pass_tests"),
+    ] {
+        let adapter = crate::project::load_adapter(&real_adapter_path(adapter_file))
+            .unwrap_or_else(|e| panic!("{adapter_file} must load cleanly: {e}"));
+        assert_eq!(
+            adapter.primary_role_name(),
+            Some(expected_role.to_string()),
+            "{adapter_file}'s own declared plugin_role must be '{expected_role}'"
+        );
+
+        let graph = RunGraph {
+            nodes: vec![root_node()],
+        };
+        let config = run_config(vec![TeamConfig {
+            worker_role: adapter.primary_role_name(),
+            ..team_direct(
+                team_name,
+                Trigger::AfterTeams(vec!["planner".to_string()]),
+                python_language_plugins(),
+            )
+        }]);
+        let manifest = [record_with_file_path(
+            "t1",
+            "implement fibonacci(n: int)",
+            "planner",
+            "fibonacci",
+            "main.py",
+        )];
+        let graph = apply_team_triggers(graph, &NodeId("root".to_string()), &config, &manifest)
+            .expect("team triggers must apply cleanly");
+
+        let spawned: Vec<&Node> = graph.nodes.iter().filter(|n| n.team == team_name).collect();
+        assert_eq!(spawned.len(), 1, "{adapter_file}: exactly one node spawned");
+        assert_eq!(
+            spawned[0].worker_role,
+            Some(expected_role.to_string()),
+            "{adapter_file}: spawned node must carry its team's adapter-declared worker role"
+        );
+    }
 }
 
 /// Regression test for the sibling implement/create_test path mismatch: with

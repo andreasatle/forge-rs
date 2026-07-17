@@ -115,6 +115,14 @@ pub struct TeamConfig {
     /// adapter-YAML I/O itself.
     #[serde(default)]
     pub derives_target: bool,
+    /// This team's `adapter`'s first configured worker role's own
+    /// `plugin_role` name (see
+    /// [`crate::project::YamlProjectAdapter::primary_role_name`]), resolved
+    /// at config-load time so the scheduler's node-spawn transition can stamp
+    /// every spawned `Work` node's `NodeRequest::worker_role` without
+    /// adapter-YAML I/O from inside the (pure) scheduler transition.
+    #[serde(default)]
+    pub worker_role: Option<String>,
     /// The engagement-wide active language (`ForgeConfig::language`), copied
     /// onto every team by `resolve_team_paths` so team-scoped dispatch can
     /// select the one active plugin from `language_plugins` without a
@@ -654,6 +662,7 @@ fn resolve_team_paths(
             .into());
         }
         team.derives_target = adapter.primary_role_derives_target();
+        team.worker_role = adapter.primary_role_name();
         team.language_plugins = adapter.language_plugins().clone();
         team.language = language.to_string();
         collect_adapter_task_keys(&adapter, &team.adapter, provides_all, requirements_all);

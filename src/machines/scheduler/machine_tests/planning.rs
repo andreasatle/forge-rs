@@ -56,6 +56,7 @@ fn initial_state_seeds_root_with_start_triggered_teams_identity() {
             language_plugins: BTreeMap::new(),
             language: String::new(),
             derives_target: false,
+            worker_role: None,
         }],
         ..RunConfig::default()
     };

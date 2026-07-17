@@ -14,6 +14,7 @@ fn team(name: &str, trigger: Trigger) -> TeamConfig {
         language_plugins: std::collections::BTreeMap::new(),
         language: String::new(),
         derives_target: false,
+        worker_role: None,
     }
 }
 

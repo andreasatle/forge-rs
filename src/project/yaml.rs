@@ -110,6 +110,17 @@ impl YamlProjectAdapter {
             .is_some_and(|w| w.derives_target)
     }
 
+    /// This adapter's first configured worker role's own `plugin_role` name,
+    /// if any — copied onto [`crate::config::TeamConfig::worker_role`] at
+    /// config-load time so it can be stamped onto every `Work` node this team
+    /// spawns without adapter-YAML I/O from inside the scheduler.
+    pub fn primary_role_name(&self) -> Option<String> {
+        self.config
+            .workers
+            .first()
+            .and_then(|w| w.plugin_role.clone())
+    }
+
     /// This adapter's configured worker roles, in declaration order.
     ///
     /// Exposed (rather than only the flattened names in
