@@ -1202,3 +1202,132 @@ fn implement_and_create_test_derive_matching_targets_from_the_same_file_path() {
         "create_test's required validation target must match implement's actual target"
     );
 }
+
+// ── verify_terminal_teams_complete (Bug B: false-COMPLETE safety net) ─────
+
+#[test]
+fn verify_terminal_teams_complete_ok_when_nothing_outstanding() {
+    // Invariant: a terminal team that already ran (RunOnce) and a terminal
+    // team with no eligible task ids left (ForTasks empty) must not fail
+    // the run — this is the ordinary "everything genuinely finished" case.
+    let config = run_config_with_terminal_teams(
+        vec![
+            team("planner", Trigger::Start),
+            team_direct(
+                "worker",
+                Trigger::AfterTeams(vec!["planner".to_string()]),
+                BTreeMap::new(),
+            ),
+        ],
+        vec!["planner", "worker"],
+    );
+    let manifest = [
+        record("t1", "obj", "planner"),
+        record("t1", "obj", "worker"),
+    ];
+    assert_eq!(verify_terminal_teams_complete(&config, &manifest), Ok(()));
+}
+
+#[test]
+fn verify_terminal_teams_complete_detects_run_once_never_ran() {
+    // Invariant: a `Trigger::Start` terminal team with no manifest row of
+    // its own at all is provably stuck once the graph is fully drained —
+    // nothing left can ever spawn its one-time node.
+    let config =
+        run_config_with_terminal_teams(vec![team("planner", Trigger::Start)], vec!["planner"]);
+    let err = verify_terminal_teams_complete(&config, &[])
+        .expect_err("a terminal RunOnce team that never ran must fail the check");
+    assert_eq!(
+        err,
+        FailureReason::TerminalTeamIncomplete {
+            team: "planner".to_string(),
+            task_ids: vec![],
+        }
+    );
+}
+
+#[test]
+fn verify_terminal_teams_complete_detects_pending_for_tasks() {
+    // Invariant: reconstructs the mechanism behind the original bug —
+    // `worker`'s own completion was recorded under a fresh id ("lost-id")
+    // instead of the declared task id ("t1"), e.g. because a `Split`-origin
+    // replan's child failed to inherit the original task_id. `worker`'s own
+    // `ForTasks` re-evaluation must still find "t1" eligible (it has
+    // `planner`'s row and no "t1" row of `worker`'s own), so the check
+    // reports it as permanently outstanding rather than the run silently
+    // reporting complete.
+    let config = run_config_with_terminal_teams(
+        vec![
+            team("planner", Trigger::Start),
+            team_direct(
+                "worker",
+                Trigger::AfterTeams(vec!["planner".to_string()]),
+                BTreeMap::new(),
+            ),
+        ],
+        vec!["worker"],
+    );
+    let manifest = [
+        record("t1", "obj", "planner"),
+        record("lost-id", "obj", "worker"),
+    ];
+    let err = verify_terminal_teams_complete(&config, &manifest)
+        .expect_err("worker's trigger must still report t1 as outstanding");
+    assert_eq!(
+        err,
+        FailureReason::TerminalTeamIncomplete {
+            team: "worker".to_string(),
+            task_ids: vec!["t1".to_string()],
+        }
+    );
+}
+
+#[test]
+fn verify_terminal_teams_complete_ignores_non_terminal_teams() {
+    // Invariant: a team with outstanding work that ISN'T in
+    // `terminal_teams` must not fail the check — only sinks in the trigger
+    // graph are checked, per `compute_terminal_teams`.
+    let config = run_config_with_terminal_teams(
+        vec![
+            team("planner", Trigger::Start),
+            team_direct(
+                "worker",
+                Trigger::AfterTeams(vec!["planner".to_string()]),
+                BTreeMap::new(),
+            ),
+        ],
+        vec![], // nothing configured as terminal
+    );
+    let manifest = [record("t1", "obj", "planner")];
+    assert_eq!(verify_terminal_teams_complete(&config, &manifest), Ok(()));
+}
+
+#[test]
+fn verify_terminal_teams_complete_excludes_task_with_no_completions_at_all() {
+    // Invariant: a task id that never got any manifest row at all (e.g. its
+    // upstream chain was legitimately cancelled or terminally failed) must
+    // not trip the check — `evaluate_trigger` only ever reports ids that
+    // already have at least one completion row, so an id with zero rows is
+    // indistinguishable from "no task ever existed" and correctly excluded.
+    let config = run_config_with_terminal_teams(
+        vec![
+            team("planner", Trigger::Start),
+            team_direct(
+                "worker",
+                Trigger::AfterTeams(vec!["planner".to_string()]),
+                BTreeMap::new(),
+            ),
+        ],
+        vec!["worker"],
+    );
+    // "t1" completed the whole pipeline. A legitimately-cancelled task
+    // ("t2", say) would simply have no row in the manifest at all — there is
+    // nothing further to add here; the absence itself is the case being
+    // tested, since `evaluate_trigger` has no way to reference an id with
+    // zero completions.
+    let manifest = [
+        record("t1", "obj", "planner"),
+        record("t1", "obj", "worker"),
+    ];
+    assert_eq!(verify_terminal_teams_complete(&config, &manifest), Ok(()));
+}

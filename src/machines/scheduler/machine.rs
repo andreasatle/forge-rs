@@ -381,7 +381,37 @@ impl SchedulerMachine {
                     // does not insert children. A plan-depth violation additionally
                     // marks the original plan Failed as the circuit breaker source.
                     SchedulerEvent::PlanAccepted { plan, .. } => {
-                        let parent_depth = graph.get_node(&node_id).plan_depth;
+                        let parent_node = graph.get_node(&node_id);
+                        let parent_depth = parent_node.plan_depth;
+                        let parent_split_task_id: Option<Option<String>> = match &parent_node.origin
+                        {
+                            NodeOrigin::Split { .. } => Some(parent_node.task_id.clone()),
+                            _ => None,
+                        };
+                        // `NodeOrigin::Split` re-plans the same failed task, so its
+                        // replan must resolve to at most one continuation task —
+                        // fanning out into genuine sub-decomposition would leave no
+                        // single successor to carry the original task id forward.
+                        // Zero is a legitimate outcome (the replan decided no further
+                        // action is needed) and has no successor to stamp a task_id
+                        // onto in the first place, so only reject more than one.
+                        let replan_task_count = plan.children.len() + plan.tasks.len();
+                        if parent_split_task_id.is_some() && replan_task_count > 1 {
+                            let graph = graph.mark_node(&node_id, NodeStatus::Failed);
+                            return recovery::failed_transition(
+                                graph,
+                                FailureReason::SplitReplanFanOut {
+                                    node_id: node_id.0.clone(),
+                                    task_count: replan_task_count,
+                                },
+                            );
+                        }
+                        let mut plan = plan;
+                        if let Some(parent_task_id) = parent_split_task_id.flatten()
+                            && let Some(child) = plan.children.first_mut()
+                        {
+                            child.task_id = Some(parent_task_id);
+                        }
                         match graph.validate_plan_dependencies(&plan.children) {
                             Err(detail) => Transition {
                                 state: SchedulerState::Failed {
@@ -526,10 +556,20 @@ impl SchedulerMachine {
                             &run_config,
                             &manifest_tasks,
                         ) {
-                            Ok(graph) => Transition {
-                                state: SchedulerState::resuming(graph, run_config),
-                                effects: vec![],
-                            },
+                            Ok(graph) => {
+                                if graph.all_complete()
+                                    && let Err(reason) = triggers::verify_terminal_teams_complete(
+                                        &run_config,
+                                        &manifest_tasks,
+                                    )
+                                {
+                                    return recovery::failed_transition(graph, reason);
+                                }
+                                Transition {
+                                    state: SchedulerState::resuming(graph, run_config),
+                                    effects: vec![],
+                                }
+                            }
                             Err(detail) => Transition {
                                 state: SchedulerState::Failed {
                                     graph: completed_graph,
@@ -594,10 +634,20 @@ impl SchedulerMachine {
                             &run_config,
                             &manifest_tasks,
                         ) {
-                            Ok(graph) => Transition {
-                                state: SchedulerState::resuming(graph, run_config),
-                                effects: vec![],
-                            },
+                            Ok(graph) => {
+                                if graph.all_complete()
+                                    && let Err(reason) = triggers::verify_terminal_teams_complete(
+                                        &run_config,
+                                        &manifest_tasks,
+                                    )
+                                {
+                                    return recovery::failed_transition(graph, reason);
+                                }
+                                Transition {
+                                    state: SchedulerState::resuming(graph, run_config),
+                                    effects: vec![],
+                                }
+                            }
                             Err(detail) => Transition {
                                 state: SchedulerState::Failed {
                                     graph: completed_graph,

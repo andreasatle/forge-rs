@@ -1,5 +1,10 @@
 use super::*;
 
+use std::collections::{BTreeMap, HashMap};
+
+use crate::artifacts::TaskRecord;
+use crate::config::{TeamConfig, Trigger};
+
 #[test]
 fn run_request_starts_scheduler_end_to_end() {
     let request = RunRequest {
@@ -565,4 +570,500 @@ fn event_at_terminal_state_returns_protocol_violation() {
         );
         assert!(t.effects.is_empty(), "[{label}]");
     }
+}
+
+// ── Terminal-team completion checking (Bug B), and its Bug A dependency ──
+
+fn simple_team(name: &str, trigger: Trigger, kind: NodeKind) -> TeamConfig {
+    TeamConfig {
+        name: name.to_string(),
+        northstar: String::new(),
+        adapter: String::new(),
+        kind,
+        trigger,
+        language_plugins: BTreeMap::new(),
+        language: String::new(),
+        derives_target: false,
+        worker_role: None,
+        role_validations: BTreeMap::new(),
+    }
+}
+
+fn manifest_record(id: &str, objective: &str, team: &str) -> TaskRecord {
+    TaskRecord {
+        id: id.to_string(),
+        objective: objective.to_string(),
+        commit: String::new(),
+        completed_at: String::new(),
+        team: Some(team.to_string()),
+        task_kv: HashMap::new(),
+        depends_on: vec![],
+    }
+}
+
+fn declared_record(id: &str, objective: &str, team: &str, file_path: &str) -> TaskRecord {
+    let mut r = manifest_record(id, objective, team);
+    r.task_kv
+        .insert("file_path".to_string(), file_path.to_string());
+    r
+}
+
+#[test]
+fn split_replan_task_id_fix_lets_dual_predecessor_terminal_team_spawn() {
+    // Reconstructs the live-run failure from 2026-07-17-21-17-07: planner
+    // declares one task ("t1"); `implement` and `create_test` both race to
+    // complete it; `implement` fails and recovers via `Split` before its
+    // replanned continuation succeeds; `pass_tests` (terminal,
+    // after_teams(implement, create_test)) must spawn once both sides carry
+    // a completion row under the SAME id "t1" — which only happens because
+    // the Split-replan's child inherits "t1" (Bug A's fix). Before that fix,
+    // `implement`'s final completion would land under a fresh node id
+    // instead, and `create_test`'s and `implement`'s rows would never share
+    // an id for `pass_tests` to match on, so `pass_tests` would never spawn.
+    let run_config = RunConfig {
+        has_strong_tier: true,
+        teams: vec![
+            simple_team("planner", Trigger::Start, NodeKind::Plan),
+            simple_team(
+                "implement",
+                Trigger::AfterTeams(vec!["planner".to_string()]),
+                NodeKind::Work,
+            ),
+            simple_team(
+                "create_test",
+                Trigger::AfterTeams(vec!["planner".to_string()]),
+                NodeKind::Work,
+            ),
+            simple_team(
+                "pass_tests",
+                Trigger::AfterTeams(vec!["implement".to_string(), "create_test".to_string()]),
+                NodeKind::Work,
+            ),
+        ],
+        terminal_teams: vec!["pass_tests".to_string()],
+        dispatch_cap: 1,
+    };
+
+    let planner_node = Node {
+        team: "planner".to_string(),
+        status: NodeStatus::Integrating,
+        ..plan_node("planner", "build a fibonacci program", &[])
+    };
+    let graph = RunGraph {
+        nodes: vec![planner_node],
+    };
+
+    // Planner declares the single task "t1".
+    let mut manifest = vec![declared_record(
+        "t1",
+        "build a fibonacci program",
+        "planner",
+        "main.py",
+    )];
+    let t = do_transition(
+        SchedulerState::Waiting {
+            graph,
+            run_config: run_config.clone(),
+        },
+        SchedulerEvent::PlannerTasksIntegrated {
+            node_id: NodeId("planner".to_string()),
+            manifest_tasks: manifest.clone(),
+        },
+    );
+    let SchedulerState::Active { mut graph, .. } = t.state else {
+        panic!(
+            "expected Active after planner's tasks integrate, got {:#?}",
+            t.state
+        );
+    };
+    assert_eq!(
+        graph.nodes.iter().filter(|n| n.team == "implement").count(),
+        1,
+        "implement must have spawned for t1"
+    );
+    assert_eq!(
+        graph
+            .nodes
+            .iter()
+            .filter(|n| n.team == "create_test")
+            .count(),
+        1,
+        "create_test must have spawned for t1"
+    );
+
+    let mut create_test_done = false;
+    let mut implement_done = false;
+    while !(create_test_done && implement_done) {
+        let t = do_transition(
+            SchedulerState::Active {
+                graph,
+                run_config: run_config.clone(),
+            },
+            SchedulerEvent::Start,
+        );
+        let SchedulerState::Waiting { graph: g, .. } = t.state else {
+            panic!("expected Waiting, got {:#?}", t.state);
+        };
+        let running_id = active_node_id(&g).expect("a node should be running");
+        let running_team = g
+            .nodes
+            .iter()
+            .find(|n| n.id == running_id)
+            .unwrap()
+            .team
+            .clone();
+
+        if running_team == "create_test" {
+            let t = do_transition(
+                SchedulerState::Waiting {
+                    graph: g,
+                    run_config: run_config.clone(),
+                },
+                SchedulerEvent::WorkAccepted {
+                    node_id: running_id.clone(),
+                    work: WorkOutput {
+                        summary: "tests written".to_string(),
+                    },
+                },
+            );
+            let SchedulerState::Waiting { graph: g2, .. } = t.state else {
+                panic!("expected Waiting (Integrating) for create_test")
+            };
+            manifest.push(manifest_record("t1", "write tests", "create_test"));
+            let t = do_transition(
+                SchedulerState::Waiting {
+                    graph: g2,
+                    run_config: run_config.clone(),
+                },
+                SchedulerEvent::IntegrationSucceeded {
+                    node_id: running_id,
+                    output: IntegrationOutput {
+                        summary: "tests integrated".to_string(),
+                    },
+                    manifest_tasks: manifest.clone(),
+                },
+            );
+            let SchedulerState::Active { graph: g3, .. } = t.state else {
+                panic!(
+                    "expected Active after create_test integrates, got {:#?}",
+                    t.state
+                );
+            };
+            graph = g3;
+            create_test_done = true;
+        } else if running_team == "implement" {
+            // First attempt fails and recovers via Split.
+            let t = do_transition(
+                SchedulerState::Waiting {
+                    graph: g,
+                    run_config: run_config.clone(),
+                },
+                SchedulerEvent::NodeFailed {
+                    node_id: running_id.clone(),
+                    failure: NodeFailure {
+                        kind: FailureKind::DeliberationFailure,
+                        message: "task too complex".to_string(),
+                        recovery: RecoveryAction::Split {
+                            message: "decompose the work".to_string(),
+                        },
+                    },
+                },
+            );
+            let SchedulerState::Active { graph: g2, .. } = t.state else {
+                panic!("expected Active after Split, got {:#?}", t.state);
+            };
+            let split_plan = g2
+                .nodes
+                .iter()
+                .find(
+                    |n| matches!(&n.origin, NodeOrigin::Split { source } if *source == running_id),
+                )
+                .expect("split Plan node");
+            assert_eq!(
+                split_plan.task_id,
+                Some("t1".to_string()),
+                "Split Plan node must inherit the failed node's task_id"
+            );
+            let split_id = split_plan.id.clone();
+
+            // Dispatch the Split Plan node.
+            let t = do_transition(
+                SchedulerState::Active {
+                    graph: g2,
+                    run_config: run_config.clone(),
+                },
+                SchedulerEvent::Start,
+            );
+            let SchedulerState::Waiting { graph: g3, .. } = t.state else {
+                panic!("expected Waiting after dispatching split Plan node")
+            };
+
+            // Replan emits exactly one continuation Work task.
+            let t = do_transition(
+                SchedulerState::Waiting {
+                    graph: g3,
+                    run_config: run_config.clone(),
+                },
+                SchedulerEvent::PlanAccepted {
+                    node_id: split_id,
+                    plan: PlanOutput {
+                        children: vec![NodeRequest {
+                            id: NodeId("implement-retry".to_string()),
+                            kind: NodeKind::Work,
+                            team: "implement".to_string(),
+                            task_id: None,
+                            adapter: String::new(),
+                            northstar: String::new(),
+                            worker_role: None,
+                            objective: "implement fibonacci, simplified".to_string(),
+                            target_files: vec!["main.py".to_string()],
+                            required_validation_targets: vec![],
+                            dependencies: vec![],
+                            validation_plan: None,
+                        }],
+                        tasks: vec![],
+                    },
+                },
+            );
+            let SchedulerState::Active { graph: g4, .. } = t.state else {
+                panic!("expected Active after replan, got {:#?}", t.state);
+            };
+            let child = g4
+                .nodes
+                .iter()
+                .find(|n| n.objective == "implement fibonacci, simplified")
+                .expect("replanned child");
+            assert_eq!(
+                child.task_id,
+                Some("t1".to_string()),
+                "replanned child must inherit t1, not be dropped to None"
+            );
+            let child_id = child.id.clone();
+
+            // Dispatch and complete the replanned child.
+            let t = do_transition(
+                SchedulerState::Active {
+                    graph: g4,
+                    run_config: run_config.clone(),
+                },
+                SchedulerEvent::Start,
+            );
+            let SchedulerState::Waiting { graph: g5, .. } = t.state else {
+                panic!("expected Waiting after dispatching replanned child")
+            };
+            let t = do_transition(
+                SchedulerState::Waiting {
+                    graph: g5,
+                    run_config: run_config.clone(),
+                },
+                SchedulerEvent::WorkAccepted {
+                    node_id: child_id.clone(),
+                    work: WorkOutput {
+                        summary: "fibonacci implemented".to_string(),
+                    },
+                },
+            );
+            let SchedulerState::Waiting { graph: g6, .. } = t.state else {
+                panic!("expected Waiting (Integrating) for replanned child")
+            };
+            manifest.push(manifest_record("t1", "implement fibonacci", "implement"));
+            let t = do_transition(
+                SchedulerState::Waiting {
+                    graph: g6,
+                    run_config: run_config.clone(),
+                },
+                SchedulerEvent::IntegrationSucceeded {
+                    node_id: child_id,
+                    output: IntegrationOutput {
+                        summary: "implementation integrated".to_string(),
+                    },
+                    manifest_tasks: manifest.clone(),
+                },
+            );
+            let SchedulerState::Active { graph: g7, .. } = t.state else {
+                panic!(
+                    "expected Active after replanned child integrates, got {:#?}",
+                    t.state
+                );
+            };
+            graph = g7;
+            implement_done = true;
+        } else {
+            panic!("unexpected running team: {running_team}");
+        }
+    }
+
+    // pass_tests must now have spawned, exactly because "t1" carries both
+    // an `implement` and a `create_test` completion row under the same id.
+    let pass_tests_node = graph
+        .nodes
+        .iter()
+        .find(|n| n.team == "pass_tests")
+        .expect("pass_tests must have spawned once both predecessors share t1");
+    assert_eq!(pass_tests_node.status, NodeStatus::Pending);
+    assert_eq!(pass_tests_node.task_id, Some("t1".to_string()));
+
+    // Drive pass_tests to completion and confirm the run legitimately
+    // reaches Complete (Bug B's check must not spuriously fire here).
+    let t = do_transition(
+        SchedulerState::Active {
+            graph,
+            run_config: run_config.clone(),
+        },
+        SchedulerEvent::Start,
+    );
+    let SchedulerState::Waiting { graph, .. } = t.state else {
+        panic!("expected Waiting after dispatching pass_tests")
+    };
+    let pass_tests_id = active_node_id(&graph).expect("pass_tests should be running");
+    let t = do_transition(
+        SchedulerState::Waiting {
+            graph,
+            run_config: run_config.clone(),
+        },
+        SchedulerEvent::WorkAccepted {
+            node_id: pass_tests_id.clone(),
+            work: WorkOutput {
+                summary: "tests passed".to_string(),
+            },
+        },
+    );
+    let SchedulerState::Waiting { graph, .. } = t.state else {
+        panic!("expected Waiting (Integrating) for pass_tests")
+    };
+    manifest.push(manifest_record("t1", "run pytest", "pass_tests"));
+    let t = do_transition(
+        SchedulerState::Waiting {
+            graph,
+            run_config: run_config.clone(),
+        },
+        SchedulerEvent::IntegrationSucceeded {
+            node_id: pass_tests_id,
+            output: IntegrationOutput {
+                summary: "pass_tests integrated".to_string(),
+            },
+            manifest_tasks: manifest,
+        },
+    );
+    let SchedulerState::Active { graph, .. } = t.state else {
+        panic!(
+            "expected Active after pass_tests integrates, got {:#?}",
+            t.state
+        );
+    };
+    let t = do_transition(
+        SchedulerState::Active { graph, run_config },
+        SchedulerEvent::Start,
+    );
+    assert!(
+        matches!(t.state, SchedulerState::Complete { .. }),
+        "expected Complete, got {:#?}",
+        t.state
+    );
+}
+
+#[test]
+fn terminal_team_with_lost_task_id_fails_run_with_terminal_team_incomplete() {
+    // Proves the machine.rs wiring end-to-end: if a team's own completion
+    // were ever recorded under the wrong id (simulating the pre-Bug-A-fix
+    // outcome directly, rather than reconstructing the exact Split
+    // mechanism again — see `verify_terminal_teams_complete_detects_pending_for_tasks`
+    // for the equivalent unit-level proof), the run must fail with
+    // `TerminalTeamIncomplete` instead of silently reaching `Complete`.
+    let run_config = RunConfig {
+        has_strong_tier: true,
+        teams: vec![
+            simple_team("planner", Trigger::Start, NodeKind::Plan),
+            simple_team(
+                "worker",
+                Trigger::AfterTeams(vec!["planner".to_string()]),
+                NodeKind::Work,
+            ),
+        ],
+        terminal_teams: vec!["worker".to_string()],
+        dispatch_cap: 1,
+    };
+
+    let planner_node = Node {
+        team: "planner".to_string(),
+        status: NodeStatus::Integrating,
+        ..plan_node("planner", "build something", &[])
+    };
+    let graph = RunGraph {
+        nodes: vec![planner_node],
+    };
+    let manifest = vec![declared_record(
+        "t1",
+        "build something",
+        "planner",
+        "main.py",
+    )];
+    let t = do_transition(
+        SchedulerState::Waiting {
+            graph,
+            run_config: run_config.clone(),
+        },
+        SchedulerEvent::PlannerTasksIntegrated {
+            node_id: NodeId("planner".to_string()),
+            manifest_tasks: manifest.clone(),
+        },
+    );
+    let SchedulerState::Active { graph, .. } = t.state else {
+        panic!(
+            "expected Active after planner's tasks integrate, got {:#?}",
+            t.state
+        );
+    };
+
+    let t = do_transition(
+        SchedulerState::Active {
+            graph,
+            run_config: run_config.clone(),
+        },
+        SchedulerEvent::Start,
+    );
+    let SchedulerState::Waiting { graph, .. } = t.state else {
+        panic!("expected Waiting after dispatching worker")
+    };
+    let worker_id = active_node_id(&graph).expect("worker should be running");
+    let t = do_transition(
+        SchedulerState::Waiting {
+            graph,
+            run_config: run_config.clone(),
+        },
+        SchedulerEvent::WorkAccepted {
+            node_id: worker_id.clone(),
+            work: WorkOutput {
+                summary: "done".to_string(),
+            },
+        },
+    );
+    let SchedulerState::Waiting { graph, .. } = t.state else {
+        panic!("expected Waiting (Integrating) for worker")
+    };
+
+    // Simulate the old bug directly: worker's completion lands under its
+    // own node id instead of the declared task id "t1".
+    let mut manifest = manifest;
+    manifest.push(manifest_record(&worker_id.0, "do the work", "worker"));
+    let t = do_transition(
+        SchedulerState::Waiting { graph, run_config },
+        SchedulerEvent::IntegrationSucceeded {
+            node_id: worker_id,
+            output: IntegrationOutput {
+                summary: "worker integrated".to_string(),
+            },
+            manifest_tasks: manifest,
+        },
+    );
+    let SchedulerState::Failed { reason, .. } = t.state else {
+        panic!("expected Failed, got {:#?}", t.state);
+    };
+    assert_eq!(
+        reason,
+        FailureReason::TerminalTeamIncomplete {
+            team: "worker".to_string(),
+            task_ids: vec!["t1".to_string()],
+        }
+    );
 }

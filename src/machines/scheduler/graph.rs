@@ -184,9 +184,13 @@ pub struct Node {
     pub team: String,
     /// The manifest task id this node was spawned to act on, if any.
     ///
-    /// `Some` only for `AfterTeams`-triggered nodes, carrying the completed
-    /// task id they were spawned for. Used to detect a node already exists
-    /// for a given (team, task) pair without re-reading the manifest.
+    /// `Some` for `AfterTeams`-triggered nodes, carrying the completed task
+    /// id they were spawned for, and used to detect a node already exists
+    /// for a given (team, task) pair without re-reading the manifest. Also
+    /// `Some` on a `Split`-origin `Plan` node's single continuation child
+    /// (see `SchedulerEvent::PlanAccepted` handling), which inherits it from
+    /// the `Split` node's own `task_id` so the replanned task's eventual
+    /// completion still satisfies triggers keyed on the original task id.
     #[serde(default)]
     pub task_id: Option<String>,
     /// Path to the project adapter YAML file this node should run under.

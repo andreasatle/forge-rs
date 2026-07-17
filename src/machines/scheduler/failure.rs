@@ -114,6 +114,30 @@ pub enum FailureReason {
     /// task's name, e.g. the task has no recorded name or no configured
     /// `name_target_rule` matched it.
     TargetDerivationFailed(String),
+    /// A `Split`-origin `Plan` node's replan emitted more than one task.
+    ///
+    /// `NodeOrigin::Split` exists to re-plan the same failed task, not to
+    /// fan out into genuine sub-decomposition — see its doc comment. A
+    /// replan that emits more than one task breaks the assumption that the
+    /// original task's id can be carried forward onto a single successor,
+    /// so this is a replanning contract violation rather than something to
+    /// silently truncate.
+    SplitReplanFanOut {
+        /// The id of the `Split`-origin `Plan` node whose replan fanned out.
+        node_id: String,
+        /// The number of tasks the replan emitted.
+        task_count: usize,
+    },
+    /// A run reached graph completion, but a configured `RunConfig::terminal_teams`
+    /// team's trigger still evaluates as spawnable against the final manifest —
+    /// proof that team never actually ran even though nothing remains in the
+    /// graph that could ever spawn it.
+    TerminalTeamIncomplete {
+        /// The team whose completion requirement was not satisfied.
+        team: String,
+        /// The task ids the team's trigger still considers eligible.
+        task_ids: Vec<String>,
+    },
 }
 
 impl fmt::Display for FailureReason {
@@ -166,6 +190,19 @@ impl fmt::Display for FailureReason {
             }
             Self::RequiredTestTargetsMissing(detail) => write!(f, "{detail}"),
             Self::TargetDerivationFailed(detail) => write!(f, "{detail}"),
+            Self::SplitReplanFanOut {
+                node_id,
+                task_count,
+            } => write!(
+                f,
+                "split-origin plan node {node_id} replanned into {task_count} tasks; \
+                 Split recovery requires exactly one continuation task"
+            ),
+            Self::TerminalTeamIncomplete { team, task_ids } => write!(
+                f,
+                "run reached graph completion but terminal team '{team}' never ran \
+                 for task ids: {task_ids:?}"
+            ),
         }
     }
 }

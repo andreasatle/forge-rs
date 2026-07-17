@@ -13,8 +13,25 @@ use crate::services::team_trigger::{TaskCompletion, TriggerDecision, evaluate_tr
 use crate::validation::ValidationPlan;
 
 use super::config::RunConfig;
+use super::failure::FailureReason;
 use super::graph::{NodeId, NodeOrigin, RunGraph, new_node_id};
 use super::types::NodeRequest;
+
+/// Reduces a manifest snapshot to the (task id, team) completion pairs
+/// trigger evaluation needs. Shared by [`apply_team_triggers`] and
+/// [`verify_terminal_teams_complete`] so both read "the current manifest
+/// completions" the same way.
+fn build_completions(manifest_tasks: &[TaskRecord]) -> Vec<TaskCompletion> {
+    manifest_tasks
+        .iter()
+        .filter_map(|record| {
+            record.team.clone().map(|team| TaskCompletion {
+                task_id: record.id.clone(),
+                team,
+            })
+        })
+        .collect()
+}
 
 /// Evaluates every configured team's trigger against `manifest_tasks` and
 /// inserts a Pending node for each team that should act.
@@ -46,15 +63,7 @@ pub(super) fn apply_team_triggers(
     run_config: &RunConfig,
     manifest_tasks: &[TaskRecord],
 ) -> Result<RunGraph, String> {
-    let completions: Vec<TaskCompletion> = manifest_tasks
-        .iter()
-        .filter_map(|record| {
-            record.team.clone().map(|team| TaskCompletion {
-                task_id: record.id.clone(),
-                team,
-            })
-        })
-        .collect();
+    let completions = build_completions(manifest_tasks);
 
     for team in &run_config.teams {
         graph = match evaluate_trigger(&team.trigger, &team.name, &completions) {
@@ -73,6 +82,55 @@ pub(super) fn apply_team_triggers(
         };
     }
     Ok(graph)
+}
+
+/// Checks whether every `run_config.terminal_teams` team has genuinely
+/// finished, once the graph looks fully drained
+/// (`RunGraph::all_complete()`).
+///
+/// A terminal team is a sink in the trigger graph — no other team's
+/// `AfterTeams` names it — so once nothing remains in the graph that could
+/// ever produce a new node completion, re-evaluating its trigger against
+/// the current manifest completions must report "nothing left to do". The
+/// only transitions that can newly make `RunGraph::all_complete()` true are
+/// `IntegrationSucceeded`/`PlannerTasksIntegrated` (every other node-ending
+/// transition either inserts a fresh Pending node in the same step, per
+/// `PlanAccepted`, or routes straight to `SchedulerState::Failed`, per
+/// `Terminal` recovery), and both already call [`apply_team_triggers`] with
+/// this same `manifest_tasks` snapshot immediately before this check would
+/// run — so if a terminal team's trigger still reports outstanding work
+/// right after that call, no later event will ever change the answer: it is
+/// provably permanent, not "still legitimately waiting".
+///
+/// Call this only when the post-`apply_team_triggers` graph is
+/// `all_complete()`; the caller is responsible for that gate.
+pub(super) fn verify_terminal_teams_complete(
+    run_config: &RunConfig,
+    manifest_tasks: &[TaskRecord],
+) -> Result<(), FailureReason> {
+    let completions = build_completions(manifest_tasks);
+
+    for team_name in &run_config.terminal_teams {
+        let Some(team) = run_config.teams.iter().find(|t| &t.name == team_name) else {
+            continue;
+        };
+        match evaluate_trigger(&team.trigger, &team.name, &completions) {
+            TriggerDecision::RunOnce { should_run: true } => {
+                return Err(FailureReason::TerminalTeamIncomplete {
+                    team: team.name.clone(),
+                    task_ids: vec![],
+                });
+            }
+            TriggerDecision::ForTasks(ids) if !ids.is_empty() => {
+                return Err(FailureReason::TerminalTeamIncomplete {
+                    team: team.name.clone(),
+                    task_ids: ids,
+                });
+            }
+            TriggerDecision::RunOnce { should_run: false } | TriggerDecision::ForTasks(_) => {}
+        }
+    }
+    Ok(())
 }
 
 /// Spawns a team's Start-triggered initial `Plan` node, unless it should not

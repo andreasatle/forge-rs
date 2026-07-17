@@ -507,6 +507,190 @@ fn planner_can_create_two_work_nodes_with_dependency() {
     assert_eq!(completed.len(), 3, "all three nodes must be Completed");
 }
 
+// ── Split-replan task id propagation ─────────────────────────────────────
+
+#[test]
+fn split_replan_single_task_inherits_original_task_id() {
+    // Invariant: a `Split`-origin `Plan` node re-plans the same failed task,
+    // so its single continuation child must inherit the original task's id.
+    // Without this, the eventual completion of the replanned work can never
+    // satisfy a trigger keyed on the original task id, permanently and
+    // silently disabling any downstream team depending on it.
+    let split_plan = Node {
+        task_id: Some("task-1".to_string()),
+        origin: NodeOrigin::Split {
+            source: NodeId("W".to_string()),
+        },
+        ..plan_node("P", "re-plan the failing task", &[])
+    };
+    let graph = RunGraph {
+        nodes: vec![split_plan],
+    };
+    let t = do_transition(
+        SchedulerState::Waiting {
+            graph: running(graph, "P"),
+            run_config: RunConfig::default(),
+        },
+        SchedulerEvent::PlanAccepted {
+            node_id: NodeId("P".to_string()),
+            plan: PlanOutput {
+                children: vec![NodeRequest {
+                    id: NodeId("child-1".to_string()),
+                    kind: NodeKind::Work,
+                    team: String::new(),
+                    task_id: None,
+                    adapter: String::new(),
+                    northstar: String::new(),
+                    worker_role: None,
+                    objective: "retry the work".to_string(),
+                    target_files: vec![],
+                    required_validation_targets: vec![],
+                    dependencies: vec![],
+                    validation_plan: None,
+                }],
+                tasks: vec![],
+            },
+        },
+    );
+
+    let SchedulerState::Active { graph, .. } = t.state else {
+        panic!("expected Active, got {:#?}", t.state);
+    };
+    assert_eq!(graph.nodes.len(), 2, "P + one continuation child");
+    let child = &graph.nodes[1];
+    assert_eq!(child.kind, NodeKind::Work);
+    assert_eq!(
+        child.task_id,
+        Some("task-1".to_string()),
+        "continuation child must inherit the Split parent's task_id"
+    );
+}
+
+#[test]
+fn split_replan_with_two_tasks_fails_loudly() {
+    // Invariant: `NodeOrigin::Split` exists to re-plan the same failed task,
+    // not to fan out into genuine sub-decomposition. A replan that emits
+    // more than one task must fail loudly with a typed reason instead of
+    // silently truncating to the first child (which would arbitrarily
+    // discard the rest) or silently keeping `task_id: None` (which would
+    // reproduce the original bug).
+    let split_plan = Node {
+        task_id: Some("task-1".to_string()),
+        origin: NodeOrigin::Split {
+            source: NodeId("W".to_string()),
+        },
+        ..plan_node("P", "re-plan the failing task", &[])
+    };
+    let graph = RunGraph {
+        nodes: vec![split_plan],
+    };
+    let t = do_transition(
+        SchedulerState::Waiting {
+            graph: running(graph, "P"),
+            run_config: RunConfig::default(),
+        },
+        SchedulerEvent::PlanAccepted {
+            node_id: NodeId("P".to_string()),
+            plan: PlanOutput {
+                children: vec![
+                    NodeRequest {
+                        id: NodeId("child-1".to_string()),
+                        kind: NodeKind::Work,
+                        team: String::new(),
+                        task_id: None,
+                        adapter: String::new(),
+                        northstar: String::new(),
+                        worker_role: None,
+                        objective: "part one".to_string(),
+                        target_files: vec![],
+                        required_validation_targets: vec![],
+                        dependencies: vec![],
+                        validation_plan: None,
+                    },
+                    NodeRequest {
+                        id: NodeId("child-2".to_string()),
+                        kind: NodeKind::Work,
+                        team: String::new(),
+                        task_id: None,
+                        adapter: String::new(),
+                        northstar: String::new(),
+                        worker_role: None,
+                        objective: "part two".to_string(),
+                        target_files: vec![],
+                        required_validation_targets: vec![],
+                        dependencies: vec![],
+                        validation_plan: None,
+                    },
+                ],
+                tasks: vec![],
+            },
+        },
+    );
+
+    let SchedulerState::Failed { graph, reason } = t.state else {
+        panic!("expected Failed, got {:#?}", t.state);
+    };
+    assert_eq!(graph.nodes.len(), 1, "no children should be inserted");
+    assert_eq!(graph.nodes[0].status, NodeStatus::Failed);
+    let FailureReason::SplitReplanFanOut {
+        node_id,
+        task_count,
+    } = reason
+    else {
+        panic!("expected SplitReplanFanOut, got {reason:?}");
+    };
+    assert_eq!(node_id, "P");
+    assert_eq!(task_count, 2);
+}
+
+#[test]
+fn non_split_plan_children_still_default_to_no_task_id() {
+    // Invariant: task_id inheritance is scoped to `Split`-origin parents
+    // only. An ordinary (non-Split) Plan node's children must keep their
+    // existing `task_id: None` behavior, even when the parent itself
+    // happens to carry a task_id.
+    let plan = Node {
+        task_id: Some("task-1".to_string()),
+        ..plan_node("P", "plan something", &[])
+    };
+    let graph = RunGraph { nodes: vec![plan] };
+    let t = do_transition(
+        SchedulerState::Waiting {
+            graph: running(graph, "P"),
+            run_config: RunConfig::default(),
+        },
+        SchedulerEvent::PlanAccepted {
+            node_id: NodeId("P".to_string()),
+            plan: PlanOutput {
+                children: vec![NodeRequest {
+                    id: NodeId("child-1".to_string()),
+                    kind: NodeKind::Work,
+                    team: String::new(),
+                    task_id: None,
+                    adapter: String::new(),
+                    northstar: String::new(),
+                    worker_role: None,
+                    objective: "child work".to_string(),
+                    target_files: vec![],
+                    required_validation_targets: vec![],
+                    dependencies: vec![],
+                    validation_plan: None,
+                }],
+                tasks: vec![],
+            },
+        },
+    );
+
+    let SchedulerState::Active { graph, .. } = t.state else {
+        panic!("expected Active, got {:#?}", t.state);
+    };
+    assert_eq!(graph.nodes.len(), 2);
+    assert_eq!(
+        graph.nodes[1].task_id, None,
+        "non-Split plan expansion must not inherit the parent's task_id"
+    );
+}
+
 #[test]
 fn source_work_dispatch_includes_planned_dependent_test_targets() {
     let graph = RunGraph {
