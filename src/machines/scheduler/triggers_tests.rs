@@ -24,6 +24,7 @@ fn team(name: &str, trigger: Trigger) -> TeamConfig {
         language: String::new(),
         derives_target: false,
         worker_role: None,
+        role_validations: BTreeMap::new(),
     }
 }
 
@@ -131,6 +132,7 @@ fn team_with_adapter(name: &str, trigger: Trigger, adapter: &str, northstar: &st
         language: String::new(),
         derives_target: false,
         worker_role: None,
+        role_validations: BTreeMap::new(),
     }
 }
 
@@ -1041,6 +1043,88 @@ fn for_tasks_spawned_node_carries_its_teams_adapter_declared_worker_role() {
             spawned[0].worker_role,
             Some(expected_role.to_string()),
             "{adapter_file}: spawned node must carry its team's adapter-declared worker role"
+        );
+    }
+}
+
+/// Proves each of the three real adapters' `ForTasks`-spawned node carries
+/// its own worker role's declared validation plan — not `None`, and not
+/// another role's plan — resolved against the real `plugins/python.yaml`
+/// `functions` map each adapter's `key`/`validation` selects from. Before
+/// `spawn_run_once`/`spawn_for_tasks` called `resolve_validation_plan`, every
+/// spawned node here carried `validation_plan: None` regardless of role, so
+/// role-specific validation (e.g. `tester` running only `lint`, not
+/// `implementer`'s `lint`+`typecheck`) never actually ran for a real
+/// multi-team engagement — see [`for_tasks_spawned_node_carries_its_teams_adapter_declared_worker_role`]
+/// for the equivalent proof for `worker_role` itself.
+#[test]
+fn for_tasks_spawned_node_carries_its_teams_adapter_declared_validation_plan() {
+    for (adapter_file, team_name, expected_commands) in [
+        (
+            "create_test.yaml",
+            "create_test",
+            vec![vec!["uv", "run", "ruff", "check"]],
+        ),
+        (
+            "implement.yaml",
+            "implement",
+            vec![
+                vec!["uv", "run", "ruff", "check"],
+                vec!["uv", "run", "pyright"],
+            ],
+        ),
+        (
+            "pass_tests.yaml",
+            "pass_tests",
+            vec![
+                vec!["uv", "run", "ruff", "check"],
+                vec!["uv", "run", "pyright"],
+                vec!["uv", "run", "pytest"],
+            ],
+        ),
+    ] {
+        let adapter = crate::project::load_adapter(&real_adapter_path(adapter_file))
+            .unwrap_or_else(|e| panic!("{adapter_file} must load cleanly: {e}"));
+
+        let graph = RunGraph {
+            nodes: vec![root_node()],
+        };
+        let config = run_config(vec![TeamConfig {
+            worker_role: adapter.primary_role_key(),
+            language_plugins: adapter.language_plugins().clone(),
+            role_validations: crate::node_runner::project_setup::role_validations_from_adapter(
+                &adapter,
+            ),
+            ..team_direct(
+                team_name,
+                Trigger::AfterTeams(vec!["planner".to_string()]),
+                adapter.language_plugins().clone(),
+            )
+        }]);
+        let manifest = [record_with_file_path(
+            "t1",
+            "implement fibonacci(n: int)",
+            "planner",
+            "fibonacci",
+            "main.py",
+        )];
+        let graph = apply_team_triggers(graph, &NodeId("root".to_string()), &config, &manifest)
+            .expect("team triggers must apply cleanly");
+
+        let spawned: Vec<&Node> = graph.nodes.iter().filter(|n| n.team == team_name).collect();
+        assert_eq!(spawned.len(), 1, "{adapter_file}: exactly one node spawned");
+        let plan = spawned[0]
+            .validation_plan
+            .as_ref()
+            .unwrap_or_else(|| panic!("{adapter_file}: spawned node must carry a validation plan"));
+        let commands: Vec<Vec<String>> = plan.steps.iter().map(|s| s.command.clone()).collect();
+        let expected: Vec<Vec<String>> = expected_commands
+            .into_iter()
+            .map(|cmd| cmd.into_iter().map(str::to_string).collect())
+            .collect();
+        assert_eq!(
+            commands, expected,
+            "{adapter_file}: spawned node must carry exactly its own role's validation commands"
         );
     }
 }

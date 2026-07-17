@@ -129,6 +129,17 @@ pub struct TeamConfig {
     /// back-reference to the root config.
     #[serde(default)]
     pub language: String,
+    /// This team's `adapter`'s configured worker roles, keyed by each role's
+    /// own `key`, mapped to its selected validation function names (see
+    /// [`crate::project::WorkerRoleConfig::validation`]) — populated by
+    /// `resolve_team_paths` via
+    /// `crate::node_runner::project_setup::role_validations_from_adapter` so
+    /// the scheduler's node-spawn transition can resolve each spawned `Work`
+    /// node's own validation plan
+    /// (`crate::node_runner::project_setup::resolve_validation_plan`)
+    /// without adapter-YAML I/O from inside the (pure) scheduler transition.
+    #[serde(default)]
+    pub role_validations: BTreeMap<String, Vec<String>>,
 }
 
 /// Parsed form of a `TeamConfig::trigger` expression, consumed by
@@ -665,6 +676,8 @@ fn resolve_team_paths(
         team.worker_role = adapter.primary_role_key();
         team.language_plugins = adapter.language_plugins().clone();
         team.language = language.to_string();
+        team.role_validations =
+            crate::node_runner::project_setup::role_validations_from_adapter(&adapter);
         collect_adapter_task_keys(&adapter, &team.adapter, provides_all, requirements_all);
         std::fs::metadata(&team.northstar).map_err(|e| {
             format!(

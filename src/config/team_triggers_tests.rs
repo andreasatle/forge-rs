@@ -15,6 +15,7 @@ fn team(name: &str, trigger: Trigger) -> TeamConfig {
         language: String::new(),
         derives_target: false,
         worker_role: None,
+        role_validations: std::collections::BTreeMap::new(),
     }
 }
 

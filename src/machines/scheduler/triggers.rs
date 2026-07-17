@@ -8,7 +8,9 @@
 
 use crate::artifacts::TaskRecord;
 use crate::config::TeamConfig;
+use crate::node_runner::project_setup::resolve_validation_plan as resolve_validation_plan_for_role;
 use crate::services::team_trigger::{TaskCompletion, TriggerDecision, evaluate_trigger};
+use crate::validation::ValidationPlan;
 
 use super::config::RunConfig;
 use super::graph::{NodeId, NodeOrigin, RunGraph, new_node_id};
@@ -84,6 +86,8 @@ fn spawn_run_once(
     if !should_run || graph.has_active_team_node(&team.name, None) {
         return graph;
     }
+    let target_files = vec![];
+    let validation_plan = resolve_validation_plan(team, &target_files);
     let request = NodeRequest {
         id: new_node_id(),
         kind: team.kind.clone(),
@@ -93,10 +97,10 @@ fn spawn_run_once(
         northstar: team.northstar.clone(),
         worker_role: team.worker_role.clone(),
         objective: root_objective(&graph),
-        target_files: vec![],
+        target_files,
         required_validation_targets: vec![],
         dependencies: vec![],
-        validation_plan: None,
+        validation_plan,
     };
     graph.insert_children(node_id, vec![request])
 }
@@ -159,6 +163,7 @@ fn spawn_for_tasks(
             );
             let target_files = task_target_files(team, record)?;
             let required_validation_targets = sibling_target_files(team, record);
+            let validation_plan = resolve_validation_plan(team, &target_files);
             Ok(NodeRequest {
                 id: new_node_id(),
                 kind: team.kind.clone(),
@@ -171,7 +176,7 @@ fn spawn_for_tasks(
                 target_files,
                 required_validation_targets,
                 dependencies: vec![],
-                validation_plan: None,
+                validation_plan,
             })
         })
         .collect::<Result<Vec<_>, String>>()?;
@@ -254,6 +259,29 @@ fn derived_target_file(team: &TeamConfig, source: &str) -> Option<String> {
     crate::language::required_validation_targets(&team.language_plugins, &[source.to_string()])
         .into_iter()
         .next()
+}
+
+/// The validation plan a spawned `Work` node carries from the moment it's
+/// inserted into the graph, resolved from `team`'s own adapter-declared
+/// worker role and language plugins against `target_files` — the same rule
+/// [`crate::node_runner::project_setup::resolve_validation_plan`] applies to
+/// a Plan node's own `Work` children, so a team-triggered spawn and a
+/// planner-decomposed one can never disagree about what a role's validation
+/// plan is.
+///
+/// No adapter-level `ValidationConfig` fallback applies here (unlike
+/// `ProjectRuntimeSetup`'s copy of this resolution): that config is a single,
+/// engagement-wide setting with no per-team counterpart, so a team whose
+/// target files match no language plugin gets no validation plan, same as
+/// before this function existed.
+fn resolve_validation_plan(team: &TeamConfig, target_files: &[String]) -> Option<ValidationPlan> {
+    resolve_validation_plan_for_role(
+        &team.language_plugins,
+        &team.role_validations,
+        None,
+        team.worker_role.as_deref(),
+        target_files,
+    )
 }
 
 /// The objective the run was started with, per the graph's `Root` node.

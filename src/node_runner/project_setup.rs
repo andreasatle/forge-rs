@@ -99,6 +99,92 @@ pub(crate) fn validate_worker_roles(
     Ok(())
 }
 
+/// Each of `adapter`'s configured worker roles, keyed by its own `key`, mapped
+/// to its selected validation function names (see
+/// [`crate::project::WorkerRoleConfig::validation`]). A worker role with no
+/// `key` is dropped — it has no name a task's `role` field, or a
+/// [`crate::config::TeamConfig::worker_role`], could ever match.
+///
+/// Shared by [`ProjectRuntimeSetupBuilder::new`] (the run's top-level
+/// adapter) and `resolve_team_paths` (each team's own adapter), so both
+/// derive `resolve_validation_plan`'s `role_validations` input identically.
+pub(crate) fn role_validations_from_adapter(
+    adapter: &YamlProjectAdapter,
+) -> BTreeMap<String, Vec<String>> {
+    adapter
+        .worker_roles()
+        .iter()
+        .filter_map(|w| w.key.clone().map(|name| (name, w.validation.clone())))
+        .collect()
+}
+
+/// Resolves the validation plan for a `Work` node given its assigned worker
+/// `role` and `target_files`, against `plugins` (the owning adapter's
+/// language plugins) and `role_validations` (see
+/// [`role_validations_from_adapter`]).
+///
+/// A role this adapter configures gets a plan built from exactly the named
+/// validation functions it selects, resolved generically against the
+/// selected plugin's `functions` map — an empty selection produces an empty
+/// plan, not a fallback. A role this adapter does not configure at all
+/// (including no role assigned) falls back to the plugin's default
+/// `validation.commands`. When no plugin matches `target_files`, falls back
+/// to `fallback_plan`, when present.
+///
+/// Shared by [`ProjectRuntimeSetupBuilder::validation_plan_for_role_fn`]
+/// (stamped onto a Plan node's own `Work` children) and
+/// `crate::machines::scheduler::triggers` (stamped onto a team-spawned `Work`
+/// node at trigger time), so both derive a node's validation plan through the
+/// same rules rather than two independently maintained mechanisms.
+pub(crate) fn resolve_validation_plan(
+    plugins: &BTreeMap<String, LanguageSpec>,
+    role_validations: &BTreeMap<String, Vec<String>>,
+    fallback_plan: Option<&ValidationPlan>,
+    role: Option<&str>,
+    target_files: &[String],
+) -> Option<ValidationPlan> {
+    let Some(spec) = select_plugin(plugins, target_files) else {
+        return fallback_plan.cloned();
+    };
+    match role.and_then(|name| role_validations.get(name)) {
+        Some(names) => {
+            let commands: Vec<CommandSpec> = names
+                .iter()
+                .map(|name| {
+                    spec.functions.get(name).cloned().unwrap_or_else(|| {
+                        panic!(
+                            "validation function '{name}' missing from plugin's \
+                             functions map; validate_worker_roles must have caught \
+                             this at config-load time"
+                        )
+                    })
+                })
+                .collect();
+            Some(plan_from_commands(&commands))
+        }
+        None => Some(plan_from_commands(&spec.validation.commands)),
+    }
+}
+
+/// Convert a slice of language-spec [`CommandSpec`]s into a [`ValidationPlan`].
+fn plan_from_commands(commands: &[CommandSpec]) -> ValidationPlan {
+    let steps = commands
+        .iter()
+        .cloned()
+        .map(|cmd| ValidationStep {
+            command: std::iter::once(cmd.program).chain(cmd.args).collect(),
+            when_artifacts_present: cmd.when_files_present,
+            scope: cmd.scope,
+            stage: ValidationStage::PreIntegration,
+            must_pass: true,
+        })
+        .collect();
+    ValidationPlan {
+        steps,
+        timeout_seconds: 120,
+    }
+}
+
 struct ProjectRuntimeSetupBuilder<'a> {
     validation: Option<&'a ValidationConfig>,
     language_plugins: BTreeMap<String, LanguageSpec>,
@@ -121,11 +207,7 @@ impl<'a> ProjectRuntimeSetupBuilder<'a> {
         let adapter = load_adapter(adapter)?;
         let language_plugins = adapter.language_plugins().clone();
         validate_worker_roles(&adapter, &language_plugins)?;
-        let role_validations = adapter
-            .worker_roles()
-            .iter()
-            .filter_map(|w| w.key.clone().map(|name| (name, w.validation.clone())))
-            .collect();
+        let role_validations = role_validations_from_adapter(&adapter);
         Ok(Self {
             validation,
             language_plugins,
@@ -180,63 +262,21 @@ impl<'a> ProjectRuntimeSetupBuilder<'a> {
 
     /// Builds the per-role validation plan lookup stamped onto every `Work`
     /// node at plan-expansion time, keyed by the node's target files (to
-    /// select the matching plugin) and its assigned worker role.
-    ///
-    /// A role this adapter configures gets a plan built from exactly the
-    /// named validation functions it selects (see
-    /// [`crate::project::WorkerRoleConfig::validation`]), resolved
-    /// generically against the selected plugin's `functions` map — an empty
-    /// selection produces an empty plan, not a fallback. A role this adapter
-    /// does not configure at all (including no role assigned) falls back to
-    /// the plugin's default `validation.commands`. When no plugin matches the
-    /// node's target files, falls back to the explicit `validation:` config,
-    /// when present.
+    /// select the matching plugin) and its assigned worker role. See
+    /// [`resolve_validation_plan`] for the resolution rules.
     fn validation_plan_for_role_fn(&self) -> Arc<ValidationPlanForRoleFn> {
         let plugins = self.language_plugins.clone();
         let fallback_plan = self.validation_config_plan();
         let role_validations = self.role_validations.clone();
         Arc::new(move |role, target_files| {
-            let Some(spec) = select_plugin(&plugins, target_files) else {
-                return fallback_plan.clone();
-            };
-            match role.and_then(|name| role_validations.get(name)) {
-                Some(names) => {
-                    let commands: Vec<CommandSpec> = names
-                        .iter()
-                        .map(|name| {
-                            spec.functions.get(name).cloned().unwrap_or_else(|| {
-                                panic!(
-                                    "validation function '{name}' missing from plugin's \
-                                     functions map; validate_worker_roles must have caught \
-                                     this at config-load time"
-                                )
-                            })
-                        })
-                        .collect();
-                    Some(Self::plan_from_commands(&commands))
-                }
-                None => Some(Self::plan_from_commands(&spec.validation.commands)),
-            }
+            resolve_validation_plan(
+                &plugins,
+                &role_validations,
+                fallback_plan.as_ref(),
+                role,
+                target_files,
+            )
         })
-    }
-
-    /// Convert a slice of language-spec [`CommandSpec`]s into a [`ValidationPlan`].
-    fn plan_from_commands(commands: &[CommandSpec]) -> ValidationPlan {
-        let steps = commands
-            .iter()
-            .cloned()
-            .map(|cmd| ValidationStep {
-                command: std::iter::once(cmd.program).chain(cmd.args).collect(),
-                when_artifacts_present: cmd.when_files_present,
-                scope: cmd.scope,
-                stage: ValidationStage::PreIntegration,
-                must_pass: true,
-            })
-            .collect();
-        ValidationPlan {
-            steps,
-            timeout_seconds: 120,
-        }
     }
 
     fn validation_config_plan(&self) -> Option<ValidationPlan> {
