@@ -51,7 +51,15 @@ pub fn load_adapter(path: &Path) -> Result<YamlProjectAdapter, Box<dyn Error>> {
         }
     }
 
-    Ok(adapter.with_language_plugins(language_plugins))
+    let adapter = adapter.with_language_plugins(language_plugins);
+    adapter.validate_worker_reviews().map_err(|e| {
+        format!(
+            "adapter at {} declares an invalid worker role: {e}",
+            path.display()
+        )
+    })?;
+
+    Ok(adapter)
 }
 
 fn resolve_relative(path_str: &str, base_dir: Option<&Path>) -> PathBuf {

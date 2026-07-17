@@ -305,6 +305,170 @@ fn generic_planner_guidance_reaches_plan_nodes_but_not_work_nodes() {
     }
 }
 
+// ── worker review scoping ────────────────────────────────────────────────
+//
+// The shared Critic/Referee review contract lives once in the generic
+// layer's `worker_review` block (adapters/generic.yaml) rather than in a
+// standalone fragment file. A worker role opts in via `review: true`
+// (`WorkerRoleConfig::review`); this section protects that opt-in staying
+// scoped to exactly the roles/adapters that declare it, never leaking into
+// Producer prompts, Plan-node prompts, or a worker role that keeps its own
+// inline Critic/Referee.
+
+#[test]
+fn implement_and_create_test_both_opt_into_the_generic_worker_review_content() {
+    // Invariant: implement.yaml and create_test.yaml apply the exact same
+    // Critic/Referee review contract, so both declare `review: true` rather
+    // than duplicating the prompt text inline. If a future edit makes one
+    // adapter opt out (or reintroduces an inline block) without updating the
+    // other, this must fail loudly rather than silently drift apart.
+    let implement = load_adapter(&repo_adapter("implement.yaml")).unwrap();
+    let create_test = load_adapter(&repo_adapter("create_test.yaml")).unwrap();
+
+    assert!(
+        implement.worker_roles()[0].review,
+        "implement.yaml's worker role must declare review: true"
+    );
+    assert!(
+        create_test.worker_roles()[0].review,
+        "create_test.yaml's worker role must declare review: true"
+    );
+
+    let implement_policy = implement.role_policy();
+    let create_test_policy = create_test.role_policy();
+    assert_eq!(
+        implement_policy.worker_critic_system, create_test_policy.worker_critic_system,
+        "implement and create_test critic prompts must resolve to identical rendered content"
+    );
+    assert_eq!(
+        implement_policy.worker_referee_system, create_test_policy.worker_referee_system,
+        "implement and create_test referee prompts must resolve to identical rendered content"
+    );
+}
+
+#[test]
+fn worker_role_with_neither_inline_review_nor_review_flag_fails_loudly() {
+    let adapter_path = unique_path("no_review.yaml");
+    let yaml = CUSTOM_ADAPTER_YAML.replace(
+        "    critic:\n      identity: \"custom worker critic identity\"\n      context: \"custom worker critic context\"\n      instructions: \"custom worker critic instructions\"\n      constraints: \"custom worker critic constraints\"\n    referee:\n      identity: \"custom worker referee identity\"\n      context: \"custom worker referee context\"\n      instructions: \"custom worker referee instructions\"\n      constraints: \"custom worker referee constraints\"\n",
+        "",
+    );
+    fs::write(&adapter_path, yaml).unwrap();
+
+    let err = load_adapter(&adapter_path).unwrap_err();
+    assert!(
+        err.to_string().contains("must declare exactly one of"),
+        "missing both inline critic/referee and review: true must fail loudly; got: {err}"
+    );
+}
+
+#[test]
+fn worker_role_with_both_inline_review_and_review_flag_fails_loudly() {
+    let adapter_path = unique_path("double_review.yaml");
+    let yaml = format!("{CUSTOM_ADAPTER_YAML}    review: true\n");
+    fs::write(&adapter_path, yaml).unwrap();
+
+    let err = load_adapter(&adapter_path).unwrap_err();
+    assert!(
+        err.to_string().contains("must declare exactly one of"),
+        "declaring both inline critic/referee and review: true must fail loudly; got: {err}"
+    );
+}
+
+#[test]
+fn worker_role_review_flag_pulls_in_the_generic_worker_review_content() {
+    let adapter_path = unique_path("opt_in_review.yaml");
+    let yaml = CUSTOM_ADAPTER_YAML.replace(
+        "    critic:\n      identity: \"custom worker critic identity\"\n      context: \"custom worker critic context\"\n      instructions: \"custom worker critic instructions\"\n      constraints: \"custom worker critic constraints\"\n    referee:\n      identity: \"custom worker referee identity\"\n      context: \"custom worker referee context\"\n      instructions: \"custom worker referee instructions\"\n      constraints: \"custom worker referee constraints\"\n",
+        "    review: true\n",
+    );
+    fs::write(&adapter_path, yaml).unwrap();
+
+    let generic = crate::roles::policy::generic_prompt();
+    assert!(
+        !generic.worker_review.critic.identity.is_empty(),
+        "test assumes adapters/generic.yaml defines non-empty worker_review.critic guidance"
+    );
+
+    let policy = load_adapter(&adapter_path).unwrap().role_policy();
+    assert!(
+        policy
+            .worker_critic_system
+            .contains(generic.worker_review.critic.identity.as_str()),
+        "review: true must pull in the generic layer's worker_review.critic content; got:\n{}",
+        policy.worker_critic_system
+    );
+    assert!(
+        policy
+            .worker_referee_system
+            .contains(generic.worker_review.referee.identity.as_str()),
+        "review: true must pull in the generic layer's worker_review.referee content; got:\n{}",
+        policy.worker_referee_system
+    );
+}
+
+#[test]
+fn generic_worker_review_content_reaches_only_opted_in_worker_critic_and_referee_prompts() {
+    // Invariant: the generic layer's `worker_review` content (see
+    // adapters/generic.yaml) must never leak into a Producer prompt, a
+    // Plan-node prompt, or a worker role that declares its own inline
+    // Critic/Referee instead of opting in — exercised through the real
+    // bundled adapters, not synthetic fixtures. `pass_tests.yaml` is a
+    // worker-kind adapter whose Critic/Referee judge against existing tests
+    // rather than the objective, so it must not pick up this content even
+    // though it is worker-kind; `planner.yaml` never renders a worker
+    // Critic/Referee at all.
+    let generic = crate::roles::policy::generic_prompt();
+    let marker = generic.worker_review.critic.identity.as_str();
+    assert!(
+        !marker.is_empty(),
+        "test assumes adapters/generic.yaml defines non-empty worker_review.critic guidance"
+    );
+
+    let implement_policy = load_adapter(&repo_adapter("implement.yaml"))
+        .unwrap()
+        .role_policy();
+    assert!(
+        !implement_policy.worker_producer_system.contains(marker),
+        "implement.yaml's Producer prompt must never carry worker_review content; got:\n{}",
+        implement_policy.worker_producer_system
+    );
+
+    let pass_tests_policy = load_adapter(&repo_adapter("pass_tests.yaml"))
+        .unwrap()
+        .role_policy();
+    for (label, system) in [
+        (
+            "pass_tests producer",
+            &pass_tests_policy.worker_producer_system,
+        ),
+        ("pass_tests critic", &pass_tests_policy.worker_critic_system),
+        (
+            "pass_tests referee",
+            &pass_tests_policy.worker_referee_system,
+        ),
+    ] {
+        assert!(
+            !system.contains(marker),
+            "{label} must not carry the generic worker_review content, since pass_tests.yaml declares its own inline Critic/Referee; got:\n{system}"
+        );
+    }
+
+    let planner_policy = load_adapter(&repo_adapter("planner.yaml"))
+        .unwrap()
+        .role_policy();
+    for (label, system) in [
+        ("planner producer", &planner_policy.planner_producer_base),
+        ("planner critic", &planner_policy.planner_critic_system),
+        ("planner referee", &planner_policy.planner_referee_system),
+    ] {
+        assert!(
+            !system.contains(marker),
+            "{label} must not carry the generic worker_review content; got:\n{system}"
+        );
+    }
+}
+
 #[test]
 fn bundled_adapters_context_file_names_include_readme() {
     let paths = [

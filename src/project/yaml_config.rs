@@ -93,10 +93,27 @@ pub struct WorkerRoleConfig {
     pub description: String,
     /// System instruction for this role's Producer.
     pub producer: RolePromptConfig,
-    /// System instruction for this role's Critic.
-    pub critic: RolePromptConfig,
-    /// System instruction for this role's Referee.
-    pub referee: RolePromptConfig,
+    /// System instruction for this role's Critic, declared inline.
+    ///
+    /// Exactly one of (`critic` and `referee`, both present) or `review:
+    /// true` must hold — enforced by
+    /// [`crate::project::yaml::YamlProjectAdapter::validate_worker_reviews`]
+    /// once parsing has completed, not by parsing itself, since it is a
+    /// cross-field invariant.
+    #[serde(default)]
+    pub critic: Option<RolePromptConfig>,
+    /// System instruction for this role's Referee, declared inline. See
+    /// [`Self::critic`].
+    #[serde(default)]
+    pub referee: Option<RolePromptConfig>,
+    /// Opts this role into the generic prompt layer's shared worker-review
+    /// content (`adapters/generic.yaml`'s `worker_review` section — see
+    /// [`crate::roles::policy::GenericPromptConfig::worker_review`]) for its
+    /// Critic and Referee prompts, in place of declaring `critic`/`referee`
+    /// inline. Mutually exclusive with declaring `critic`/`referee` inline.
+    /// See [`Self::critic`].
+    #[serde(default)]
+    pub review: bool,
 }
 
 /// Full YAML-deserializable configuration for a [`super::YamlProjectAdapter`].
@@ -207,10 +224,12 @@ workers:
         assert_eq!(implementer.producer.context, "build context");
         assert_eq!(implementer.producer.instructions, "build it");
         assert_eq!(implementer.producer.constraints, "build bounds");
-        assert_eq!(implementer.critic.instructions, "review the work");
-        assert_eq!(implementer.critic.constraints, "review work bounds");
-        assert_eq!(implementer.referee.instructions, "decide the work");
-        assert_eq!(implementer.referee.constraints, "decide work bounds");
+        let critic = implementer.critic.as_ref().unwrap();
+        assert_eq!(critic.instructions, "review the work");
+        assert_eq!(critic.constraints, "review work bounds");
+        let referee = implementer.referee.as_ref().unwrap();
+        assert_eq!(referee.instructions, "decide the work");
+        assert_eq!(referee.constraints, "decide work bounds");
     }
 
     #[test]
@@ -277,39 +296,13 @@ workers:
         // Invariant: `planner` and `workers` may each be omitted entirely
         // (see `workers_and_planner_may_both_be_omitted`), but a role prompt
         // that IS present still requires all four of its identity, context,
-        // instructions, and constraints sub-fields, and a worker entry that
-        // IS present still requires its own producer/critic/referee blocks.
-        let missing_worker_referee = r#"
-planner:
-  producer:
-    identity: "plan identity"
-    context: "plan context"
-    instructions: "plan it"
-    constraints: "plan bounds"
-  critic:
-    identity: "plan critic identity"
-    context: "plan critic context"
-    instructions: "review the plan"
-    constraints: "review plan bounds"
-  referee:
-    identity: "plan referee identity"
-    context: "plan referee context"
-    instructions: "decide the plan"
-    constraints: "decide plan bounds"
-workers:
-  - plugin_role: implementer
-    description: "Implements code changes."
-    producer:
-      identity: "build identity"
-      context: "build context"
-      instructions: "build it"
-      constraints: "build bounds"
-    critic:
-      identity: "build critic identity"
-      context: "build critic context"
-      instructions: "review the work"
-      constraints: "review work bounds"
-"#;
+        // instructions, and constraints sub-fields. A worker role's
+        // `critic`/`referee` are optional at this parsing layer — a role may
+        // instead opt into the generic layer's shared content via `review:
+        // true` — so their requiredness (exactly one of inline
+        // critic+referee or `review: true`) is checked by
+        // `YamlProjectAdapter::validate_worker_reviews` instead; see
+        // `crate::project::loader_tests`.
         let missing_constraints_sub_field = r#"
 planner:
   producer:
@@ -366,7 +359,6 @@ workers: []
 "#;
 
         let cases = [
-            (missing_worker_referee, "missing worker referee"),
             (
                 missing_constraints_sub_field,
                 "missing planner.producer.constraints",

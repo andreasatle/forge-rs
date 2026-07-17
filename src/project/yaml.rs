@@ -7,8 +7,8 @@ use super::yaml_config::{ProjectAdapterConfig, RolePromptConfig, WorkerRoleConfi
 use crate::language::LanguageSpec;
 use crate::roles::RolePolicy;
 use crate::roles::policy::{
-    DEFAULT_SYSTEM, PLANNER_PRODUCER_IDENTITY, WORK_PRODUCER_SYSTEM, WORKER_PRODUCER_IDENTITY,
-    WorkerRolePolicy, generic_prompt, render_role_prompt,
+    DEFAULT_SYSTEM, GenericPromptConfig, PLANNER_PRODUCER_IDENTITY, WORK_PRODUCER_SYSTEM,
+    WORKER_PRODUCER_IDENTITY, WorkerRolePolicy, generic_prompt, render_role_prompt,
 };
 
 /// A [`ProjectAdapter`] whose role prompts and context files come from a
@@ -58,6 +58,32 @@ impl YamlProjectAdapter {
     /// This adapter's loaded language plugins, keyed by extension.
     pub fn language_plugins(&self) -> &BTreeMap<String, LanguageSpec> {
         &self.language_plugins
+    }
+
+    /// Validate every worker role declares exactly one of (`critic` and
+    /// `referee`, both inline) or `review: true` — never both, never
+    /// neither. `review: true` opts the role into the generic prompt
+    /// layer's shared `worker_review` content (see
+    /// [`crate::roles::policy::GenericPromptConfig::worker_review`]) instead
+    /// of declaring its own Critic/Referee text.
+    ///
+    /// Called at load time (see [`crate::project::loader::load_adapter`]) so
+    /// a malformed adapter fails immediately instead of silently
+    /// mis-rendering the first time a prompt is built.
+    pub fn validate_worker_reviews(&self) -> Result<(), String> {
+        for worker in &self.config.workers {
+            match (&worker.critic, &worker.referee, worker.review) {
+                (Some(_), Some(_), false) => {}
+                (None, None, true) => {}
+                _ => {
+                    return Err(format!(
+                        "worker role '{}' must declare exactly one of (inline critic and referee) or review: true, not both or neither",
+                        worker.description
+                    ));
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Paths to this adapter's declared language plugin YAML files, as
@@ -150,7 +176,11 @@ impl ProjectAdapter for YamlProjectAdapter {
             ),
             worker_critic_system: format!(
                 "{}\n{DEFAULT_SYSTEM}",
-                render_role_prompt(&shared, &worker.critic, None)
+                render_role_prompt(
+                    &worker_critic_generic(generic, worker),
+                    &resolved_critic(worker),
+                    None
+                )
             ),
             planner_referee_system: format!(
                 "{}\n{DEFAULT_SYSTEM}",
@@ -158,7 +188,11 @@ impl ProjectAdapter for YamlProjectAdapter {
             ),
             worker_referee_system: format!(
                 "{}\n{DEFAULT_SYSTEM}",
-                render_role_prompt(&shared, &worker.referee, None)
+                render_role_prompt(
+                    &worker_referee_generic(generic, worker),
+                    &resolved_referee(worker),
+                    None
+                )
             ),
             planner_producer_base,
             worker_role_descriptions: self
@@ -179,7 +213,7 @@ impl ProjectAdapter for YamlProjectAdapter {
                 .map(|w| {
                     (
                         w.plugin_role.clone().unwrap_or_default(),
-                        worker_role_policy(&shared, w),
+                        worker_role_policy(generic, w),
                     )
                 })
                 .collect(),
@@ -194,10 +228,14 @@ impl ProjectAdapter for YamlProjectAdapter {
 
 /// Build one worker role's Producer/Critic/Referee prompts, composed the
 /// same way as the shared `worker_*_system` fields in [`YamlProjectAdapter::role_policy`].
-fn worker_role_policy(generic: &RolePromptConfig, worker: &WorkerRoleConfig) -> WorkerRolePolicy {
+fn worker_role_policy(
+    generic: &GenericPromptConfig,
+    worker: &WorkerRoleConfig,
+) -> WorkerRolePolicy {
+    let shared = generic.shared();
     let producer_generic = RolePromptConfig {
-        identity: format!("{WORKER_PRODUCER_IDENTITY}\n{}", generic.identity),
-        ..generic.clone()
+        identity: format!("{WORKER_PRODUCER_IDENTITY}\n{}", shared.identity),
+        ..shared.clone()
     };
     WorkerRolePolicy {
         producer_system: format!(
@@ -206,13 +244,67 @@ fn worker_role_policy(generic: &RolePromptConfig, worker: &WorkerRoleConfig) -> 
         ),
         critic_system: format!(
             "{}\n{DEFAULT_SYSTEM}",
-            render_role_prompt(generic, &worker.critic, None)
+            render_role_prompt(
+                &worker_critic_generic(generic, worker),
+                &resolved_critic(worker),
+                None
+            )
         ),
         referee_system: format!(
             "{}\n{DEFAULT_SYSTEM}",
-            render_role_prompt(generic, &worker.referee, None)
+            render_role_prompt(
+                &worker_referee_generic(generic, worker),
+                &resolved_referee(worker),
+                None
+            )
         ),
     }
+}
+
+/// The generic layer for a worker role's Critic prompt: the shared fields
+/// alone for a role that declares its Critic inline, or the shared fields
+/// with the generic layer's `worker_review.critic` addition appended for a
+/// role that opts in via `review: true` (see
+/// [`WorkerRoleConfig::review`]) — never applied to a Producer or a
+/// Plan-node role.
+fn worker_critic_generic(
+    generic: &GenericPromptConfig,
+    worker: &WorkerRoleConfig,
+) -> RolePromptConfig {
+    if worker.review {
+        generic.for_worker_review_critic()
+    } else {
+        generic.shared()
+    }
+}
+
+/// The generic layer for a worker role's Referee prompt. See
+/// [`worker_critic_generic`].
+fn worker_referee_generic(
+    generic: &GenericPromptConfig,
+    worker: &WorkerRoleConfig,
+) -> RolePromptConfig {
+    if worker.review {
+        generic.for_worker_review_referee()
+    } else {
+        generic.shared()
+    }
+}
+
+/// This worker role's Critic prompt, declared inline. Falls back to an
+/// empty prompt when absent — either because the role opts into the
+/// generic layer's shared `worker_review` content instead (see
+/// [`worker_critic_generic`]), or because of the sentinel
+/// `WorkerRoleConfig::default()` used when an adapter configures no workers
+/// at all, which is never rendered into a real Work-node prompt since such
+/// an adapter never drives one.
+fn resolved_critic(worker: &WorkerRoleConfig) -> RolePromptConfig {
+    worker.critic.clone().unwrap_or_default()
+}
+
+/// This worker role's Referee prompt. See [`resolved_critic`].
+fn resolved_referee(worker: &WorkerRoleConfig) -> RolePromptConfig {
+    worker.referee.clone().unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -245,8 +337,9 @@ mod tests {
             requires: vec![],
             description: "Implements code changes.".to_string(),
             producer: prompt("build it", "build bounds"),
-            critic: prompt("review the work", "review work bounds"),
-            referee: prompt("decide the work", "decide work bounds"),
+            critic: Some(prompt("review the work", "review work bounds")),
+            referee: Some(prompt("decide the work", "decide work bounds")),
+            review: false,
         }]
     }
 
@@ -402,8 +495,9 @@ mod tests {
             requires: vec![],
             description: "Writes tests.".to_string(),
             producer: prompt("test it", "test bounds"),
-            critic: prompt("review the tests", "review test bounds"),
-            referee: prompt("decide the tests", "decide test bounds"),
+            critic: Some(prompt("review the tests", "review test bounds")),
+            referee: Some(prompt("decide the tests", "decide test bounds")),
+            review: false,
         });
         let adapter = YamlProjectAdapter::new(ProjectAdapterConfig {
             planner: planner_config(),
@@ -471,8 +565,9 @@ mod tests {
             requires: vec![],
             description: "Writes tests.".to_string(),
             producer: prompt("test it", "test bounds"),
-            critic: prompt("review the tests", "review test bounds"),
-            referee: prompt("decide the tests", "decide test bounds"),
+            critic: Some(prompt("review the tests", "review test bounds")),
+            referee: Some(prompt("decide the tests", "decide test bounds")),
+            review: false,
         });
         let adapter = YamlProjectAdapter::new(ProjectAdapterConfig {
             planner: planner_config(),
@@ -520,8 +615,9 @@ mod tests {
             requires: vec![],
             description: "Writes tests.".to_string(),
             producer: prompt("test it", "test bounds"),
-            critic: prompt("review the tests", "review test bounds"),
-            referee: prompt("decide the tests", "decide test bounds"),
+            critic: Some(prompt("review the tests", "review test bounds")),
+            referee: Some(prompt("decide the tests", "decide test bounds")),
+            review: false,
         });
         let adapter = YamlProjectAdapter::new(ProjectAdapterConfig {
             planner: planner_config(),
