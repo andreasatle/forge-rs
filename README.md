@@ -152,13 +152,19 @@ plugins:
 ```
 
 paths resolved relative to the adapter file's own directory. Each plugin
-declares the file extensions it applies to (`extensions: [py]`); the
-framework picks the plugin matching a node's target files to derive its
-init commands, validation commands, and required test targets. Built-in
-plugins (`python.yaml`, `rust.yaml`) ship in this repo's `plugins/`
-directory. Declaring `plugins:` and an explicit `validation:` block are
-mutually usable together — `validation:` acts as the fallback validator for
-nodes whose target files match no configured plugin.
+declares the file extensions it applies to (`extensions: [py]`) and a named
+`functions` map (e.g. `lint`, `typecheck`, `test`) of runnable commands. A
+worker role in an adapter's `workers:` list selects which of those functions
+run for it via its own `validation: [name, ...]` list — e.g. `implement`'s
+worker runs `[lint, typecheck]`, `pass_tests`'s runs
+`[lint, typecheck, test]`. Every name a role selects must exist in the
+`functions` map of *every* plugin the adapter declares, checked at
+config-load time. `test` is unconditional and workspace-scoped whenever
+selected — it does not gate on `target_files` glob matches. Built-in plugins
+(`python.yaml`, `rust.yaml`) ship in this repo's `plugins/` directory.
+Declaring `plugins:` and an explicit `validation:` block are mutually usable
+together — `validation:` acts as the fallback validator for nodes whose
+target files match no configured plugin.
 
 ### Multi-team configs
 
@@ -489,9 +495,13 @@ collectively exhaustive (the siblings together cover everything the
 decomposed objective asked for, with nothing dropped). This guidance lives
 once, in the generic prompt layer's planner-only block
 (`adapters/generic.yaml`, merged in only for Plan-node Producer/Critic/Referee
-composition via `GenericPromptConfig::for_planner`), so every plan-capable
-adapter inherits both halves without its own copy, and it never reaches a
-Work node's rendered prompt.
+composition via `GenericPromptConfig::for_role(NodeKind::Plan, ...)`), so
+every plan-capable adapter inherits both halves without its own copy, and it
+never reaches a Work node's rendered prompt. The same `for_role` method
+composes the generic layer's shared content with a `KindPromptConfig` (one
+per node kind: planner, worker) and that kind's per-`DeliberationRole`
+override, replacing what used to be four separate hand-written composition
+methods with one parametric one.
 
 ### Role terminology
 
@@ -502,23 +512,27 @@ They compose, but they answer different questions:
   *which stage of the pipeline is running.* Every node, Plan or Work, goes
   through all three. This is a fixed, framework-level enum; it never varies
   by project or adapter.
-- **`plugin_role`** (`WorkerRoleConfig::plugin_role`, e.g. `"tester"`,
-  `"implementer"`) — *which worker specialization a Work node is.* Set on an
-  adapter's `workers:` entries and matched against a language plugin's own
-  `plugin_roles` list (`LanguageRoleConfig::plugin_role`) to pick that role's
-  validation overrides and name-target rules. Optional when the adapter
-  declares no language plugins at all (nothing to match against); required
-  otherwise, enforced at config-load time.
+- **`key`** (`WorkerRoleConfig::key`, e.g. `"tester"`, `"implementer"`) —
+  *which worker specialization a Work node is.* Set on an adapter's
+  `workers:` entries, carried at runtime as `TeamConfig::worker_role`/
+  `NodeRequest::worker_role`, and used to key
+  `RolePolicy::worker_role_policies`/`worker_role_descriptions`. Pure
+  identity, with no plugin-side counterpart to match against — which
+  validation functions a role runs is a separate, explicit
+  `WorkerRoleConfig::validation` list of names resolved against whichever
+  language plugin's `functions` map applies to a node's target files. May be
+  omitted by an adapter with only one worker role, or none at all.
 - **`identity`** (`RolePromptConfig::identity`) — *the persona text inside one
   deliberation role's prompt*, e.g. the Producer's own description of who it
   is. Every deliberation role, and every worker role, has its own `identity`
   string, layered generic → adapter → worker-role at render time.
 
 Concretely: a Work node dispatched under the `create_test` team runs all
-three deliberation roles (Producer, Critic, Referee); its `plugin_role` is
-`"tester"` (matched against `plugins/python.yaml`'s `tester` entry); and each
-of those three deliberation roles' prompts carries its own `identity` text
-describing that role specifically.
+three deliberation roles (Producer, Critic, Referee); its `key` is
+`"tester"`; its `validation` list (`[lint]`) selects which of
+`plugins/python.yaml`'s named `functions` run against it; and each of those
+three deliberation roles' prompts carries its own `identity` text describing
+that role specifically.
 
 ## Artifact data plane
 
