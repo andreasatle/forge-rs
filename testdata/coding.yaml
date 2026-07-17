@@ -55,6 +55,7 @@ planner:
       Do not reject solely for unstated preferences about style, algorithm, architecture, or performance.
 workers:
   - plugin_role: implementer
+    validation: [lint, typecheck]
     description: |-
       Implements code changes, including the tests that verify them.
     producer:
@@ -102,6 +103,20 @@ workers:
         Reject if the artifact contents do not satisfy the objective, even if the producer or critic claims they do.
         Do not reject solely for unstated preferences about style, algorithm, architecture, or performance.
         If you have a style or performance concern outside the contract, mention it in accepted content as advisory only, not as a rejection reason.
+  - plugin_role: tester
+    validation: [lint]
+    description: |-
+      Writes the test files that pin down expected behavior.
+    producer:
+      identity: |-
+        You are a software implementation agent responsible for writing test files.
+      context: |-
+        There is no accepted/rejected status for this role; a valid `summary` means the work is done.
+      instructions: |-
+        Create or update the test files that verify the changed behavior.
+      constraints: |-
+        Do not leave placeholders or stubs — produce concrete, complete artifact changes.
+    review: true
 context_files:
   - README.md
 

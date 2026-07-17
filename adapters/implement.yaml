@@ -1,6 +1,7 @@
 workers:
   - plugin_role: implementer
     requires: [file_path]
+    validation: [lint, typecheck]
     description: |-
       Implements the source changes that satisfy the objective. Tests for this module are authored independently by the tester role; if they already exist, they are authoritative signal, but their absence is not a blocker.
     producer:

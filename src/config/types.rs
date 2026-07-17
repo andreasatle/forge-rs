@@ -411,9 +411,9 @@ impl ForgeConfig {
     /// - `adapter` does not resolve to a loadable adapter YAML file, or any
     ///   plugin it declares fails to load.
     /// - any team's `adapter` is blank, or does not resolve to a loadable
-    ///   adapter YAML file (or plugin it declares fails to load), or declares
-    ///   a worker role that is missing from one of its plugins' `plugin_roles`
-    ///   lists.
+    ///   adapter YAML file (or plugin it declares fails to load), or selects a
+    ///   validation function name that is missing from one of its plugins'
+    ///   `functions` maps.
     /// - any team's `northstar` is blank, or does not resolve to a readable
     ///   file.
     /// - the team-trigger graph formed by `Trigger::AfterTeams` references
@@ -595,9 +595,9 @@ fn resolve_relative(path_str: &str, base: &Path) -> String {
 
 /// Resolves and validates each team's `adapter`/`northstar` in place, the
 /// same way `ForgeConfig::from_file` resolves and validates the top-level
-/// `adapter` field — including the worker-role/plugin check, so a team with
-/// a worker role missing from its plugins' `plugin_roles` lists fails here rather
-/// than at first dispatch.
+/// `adapter` field — including the worker-role/plugin check, so a team that
+/// selects a validation function name missing from one of its plugins'
+/// `functions` maps fails here rather than at first dispatch.
 ///
 /// Each team's adapter's declared `provides`/`requires` are appended to
 /// `provides_all`/`requirements_all` as they're loaded, for

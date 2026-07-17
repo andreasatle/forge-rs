@@ -51,7 +51,7 @@ fn rust_language_plugins() -> BTreeMap<String, LanguageSpec> {
                     target: "{stem}_test.rs".to_string(),
                 }],
             },
-            plugin_roles: vec![],
+            functions: BTreeMap::new(),
             api_summary: None,
         },
     );
@@ -83,7 +83,7 @@ fn python_language_plugins() -> BTreeMap<String, LanguageSpec> {
                     target: "tests/test_{stem}.py".to_string(),
                 }],
             },
-            plugin_roles: vec![],
+            functions: BTreeMap::new(),
             api_summary: None,
         },
     );

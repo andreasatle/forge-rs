@@ -36,30 +36,19 @@ validation:
   validation_targets:
     - pattern: "{stem}.rs"
       target: "{stem}_test.rs"
-plugin_roles:
-  - plugin_role: tester
-    validation:
-      runs_tests: false
-      commands:
-        - program: cargo
-          args: ["fmt", "--check"]
-          scope: workspace
-  - plugin_role: implementer
-    validation:
-      runs_tests: true
-      commands:
-        - program: cargo
-          args: ["fmt", "--check"]
-          scope: workspace
-        - program: cargo
-          args: ["check"]
-          scope: workspace
-        - program: cargo
-          args: ["test"]
-          scope: workspace
-      validation_targets:
-        - pattern: "{stem}.rs"
-          target: "{stem}_test.rs"
+functions:
+  lint:
+    program: cargo
+    args: ["fmt", "--check"]
+    scope: workspace
+  typecheck:
+    program: cargo
+    args: ["check"]
+    scope: workspace
+  test:
+    program: cargo
+    args: ["test"]
+    scope: workspace
 api_summary:
   program: sh
   args:

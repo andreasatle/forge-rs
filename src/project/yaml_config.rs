@@ -44,28 +44,40 @@ pub struct PlannerConfig {
 }
 
 /// A worker role this project adapter defines: its own Producer/Critic/
-/// Referee prompts, plus a human-readable description of what the role is
-/// for.
+/// Referee prompts, a human-readable description of what the role is for,
+/// and which language plugin validation functions it selects (see
+/// [`Self::validation`]).
 ///
 /// The planner assigns `role` to each task explicitly, choosing from the
 /// worker roles described here (see
-/// [`crate::node_runner::planner::PlannerTask::role`]). Which validation
-/// contract a role runs is declared by the language plugin's per-role
-/// validation, not by this struct.
+/// [`crate::node_runner::planner::PlannerTask::role`]).
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkerRoleConfig {
-    /// The worker role name (e.g. `"tester"`, `"implementer"`), matched
-    /// against a language plugin's own `plugin_role` entries.
-    ///
-    /// Required whenever the adapter declares any language plugins — see
-    /// `crate::node_runner::project_setup::validate_worker_roles`, which
-    /// enforces this at config-load time since there is no other way to
-    /// select this role's per-plugin validation override. May be omitted
-    /// entirely when the adapter declares no plugins at all (e.g. a
-    /// document-writing adapter with no language plugin to match against).
+    /// This worker role's own name (e.g. `"tester"`, `"implementer"`),
+    /// assigned to a task's `role` field by the planner and used to key
+    /// [`crate::roles::RolePolicy::worker_role_policies`]/
+    /// `worker_role_descriptions`. Independent of which language plugin
+    /// functions this role runs (see [`Self::validation`]) — this field is
+    /// pure identity, with no plugin-side counterpart to match against. May
+    /// be omitted by an adapter with only one worker role, or none at all.
     #[serde(default)]
     pub plugin_role: Option<String>,
+    /// Names of validation functions this role selects to run, resolved
+    /// generically against the `functions` map of whichever language plugin
+    /// the framework selects for a given node's target files (see
+    /// [`crate::language::LanguageSpec::functions`]). Every name here must
+    /// exist in the `functions` map of *every* plugin this adapter declares
+    /// — checked at config-load time by
+    /// `crate::node_runner::project_setup::validate_worker_roles`, since a
+    /// node's target files may select any of the adapter's declared plugins.
+    ///
+    /// An empty list (the default) produces an empty validation plan for
+    /// this role — not a fallback to the plugin's default `validation`
+    /// commands. A role that never appears as a node's assigned role (or no
+    /// role at all) is what falls back to the plugin's default.
+    #[serde(default)]
+    pub validation: Vec<String>,
     /// Whether this role's target file for a `ForTasks`-spawned node is
     /// derived from the task's source `file_path` via the active language
     /// plugin's validation-target derivation (see

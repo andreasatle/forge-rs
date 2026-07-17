@@ -368,9 +368,20 @@ mod tests {
     }
 
     #[test]
-    fn target_file_guard_skips_pytest_like_step_for_source_only_node() {
-        // Invariant: a source-only node does not run a target-scoped test
-        // command even if that command is present in the validation plan.
+    fn target_file_guard_skips_glob_gated_step_for_non_matching_target() {
+        // Invariant: a target-scoped step declared with `when_artifacts_present`
+        // is skipped when none of the node's target files match the glob.
+        //
+        // This is a generic `ValidationPlan` mechanism test only — it does not
+        // describe how `pass_tests` decides whether to run pytest in
+        // production. `pass_tests` gets its own `plugin_role` in
+        // `plugins/python.yaml` whose pytest step is workspace-scoped and
+        // carries no `when_artifacts_present` gate at all, so its pytest step
+        // always runs regardless of the node's target files. This gate exists
+        // for steps that genuinely should be skipped based on which files a
+        // node targets (e.g. a workspace bootstrap step keyed to a specific
+        // target), not for deciding whether a test suite has already been
+        // written by a sibling team.
         let (path, ws) = temp_workspace();
         let s = ValidationStep {
             command: vec![
@@ -390,6 +401,61 @@ mod tests {
 
         assert!(result.passed, "non-matching source target should skip step");
         assert!(!path.join("pytest-ran").exists());
+        let _ = std::fs::remove_dir_all(&path);
+    }
+
+    #[test]
+    fn pass_tests_shaped_workspace_scoped_step_runs_and_reports_real_failure() {
+        // Invariant / regression: reconstructs the bug where a pass_tests-shaped
+        // node (target_files = ["main.py"], a source file, not a test file)
+        // never actually ran its pytest-like step — the old shared
+        // `implementer` role gated that step on `when_artifacts_present`
+        // matched against `target_files`, which a source-only node's targets
+        // never satisfy, so the step was always skipped and the plan
+        // trivially "passed" no matter what a real test run would have found.
+        //
+        // `pass_tests` now gets its own `plugin_role` (see plugins/python.yaml)
+        // whose pytest step is workspace-scoped with no `when_artifacts_present`
+        // gate at all. This test builds a step of that exact shape and proves
+        // it actually executes — regardless of target_files being source-only,
+        // and regardless of which files exist in the workspace — and that a
+        // real failing exit code is reflected in the returned ValidationResult,
+        // not just that a gate would have allowed it to run.
+        let (path, ws) = temp_workspace();
+        std::fs::create_dir_all(path.join("tests")).unwrap();
+        std::fs::write(
+            path.join("tests").join("test_main.py"),
+            "# a real test file\n",
+        )
+        .unwrap();
+        let s = ValidationStep {
+            command: vec![
+                "sh".to_string(),
+                "-c".to_string(),
+                "touch pytest-ran; exit 1".to_string(),
+                "pytest".to_string(),
+            ],
+            when_artifacts_present: vec![],
+            scope: ValidationScope::Workspace,
+            stage: ValidationStage::PreIntegration,
+            must_pass: true,
+        };
+        let targets = vec!["main.py".to_string()];
+
+        let result = plan(vec![s]).execute_scoped(&ws, &targets, &[]);
+
+        assert!(
+            path.join("pytest-ran").exists(),
+            "pass_tests-shaped step must actually run for a source-only target, not be skipped"
+        );
+        assert!(
+            !result.passed,
+            "a real failing exit code must be reflected in the plan result, not swallowed"
+        );
+        assert!(
+            result.failure.is_some(),
+            "a failing must_pass step must populate ValidationResult::failure"
+        );
         let _ = std::fs::remove_dir_all(&path);
     }
 

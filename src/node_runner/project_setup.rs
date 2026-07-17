@@ -68,17 +68,12 @@ impl ProjectRuntimeSetup {
     }
 }
 
-/// Every worker role the adapter defines must have a matching entry in each
-/// configured plugin's `plugin_roles` list, so a missing per-role validation
-/// override is a hard error at config load time rather than a silent
-/// fallback to that plugin's default validation at run time — regardless of
-/// which plugin ends up selected for a given node.
-///
-/// Also: whenever the adapter declares any plugins at all, every worker
-/// entry must actually name a `plugin_role` — there is no other way to
-/// select that role's per-plugin validation override. An adapter with no
-/// plugins declared has nothing to match against, so its worker entries may
-/// omit `plugin_role` entirely (see [`crate::project::WorkerRoleConfig::plugin_role`]).
+/// Every validation function name a worker role selects (see
+/// [`crate::project::WorkerRoleConfig::validation`]) must exist in the
+/// `functions` map of *every* plugin this adapter declares, so a name that
+/// only some plugins define is a hard error at config load time rather than
+/// a silent panic at run time — regardless of which plugin ends up selected
+/// for a given node's target files.
 ///
 /// Shared by [`ProjectRuntimeSetupBuilder::new`] (the run's top-level
 /// adapter) and `resolve_team_paths` (each team's adapter), so both fail
@@ -88,31 +83,16 @@ pub(crate) fn validate_worker_roles(
     adapter: &YamlProjectAdapter,
     plugins: &BTreeMap<String, LanguageSpec>,
 ) -> Result<(), Box<dyn Error>> {
-    if !plugins.is_empty() {
-        for worker in adapter.worker_roles() {
-            if worker.plugin_role.is_none() {
-                return Err(format!(
-                    "worker role '{}' has no plugin_role, but this adapter declares plugins; plugin_role is required for every worker role",
-                    worker.description
-                )
-                .into());
-            }
-        }
-    }
-
-    let worker_roles = adapter.role_policy().worker_role_descriptions;
-    for (extension, spec) in plugins {
-        let plugin_roles: std::collections::HashSet<&str> = spec
-            .plugin_roles
-            .iter()
-            .map(|role| role.plugin_role.as_str())
-            .collect();
-        for (role, _) in &worker_roles {
-            if !plugin_roles.contains(role.as_str()) {
-                return Err(format!(
-                    "adapter plugin_role '{role}' is not defined in the plugin's plugin_roles for extension '{extension}'"
-                )
-                .into());
+    for worker in adapter.worker_roles() {
+        for name in &worker.validation {
+            for (extension, spec) in plugins {
+                if !spec.functions.contains_key(name) {
+                    return Err(format!(
+                        "worker role '{}' selects validation function '{name}', which is not defined in the plugin's functions for extension '{extension}'",
+                        worker.plugin_role.clone().unwrap_or_default()
+                    )
+                    .into());
+                }
             }
         }
     }
@@ -124,6 +104,12 @@ struct ProjectRuntimeSetupBuilder<'a> {
     language_plugins: BTreeMap<String, LanguageSpec>,
     language: String,
     adapter: Box<dyn ProjectAdapter>,
+    /// Each configured worker role's own name mapped to its selected
+    /// validation function names (see
+    /// [`crate::project::WorkerRoleConfig::validation`]), captured here from
+    /// the concrete adapter before it's boxed into `adapter: Box<dyn
+    /// ProjectAdapter>`, which has no `worker_roles()` accessor.
+    role_validations: BTreeMap<String, Vec<String>>,
 }
 
 impl<'a> ProjectRuntimeSetupBuilder<'a> {
@@ -135,11 +121,21 @@ impl<'a> ProjectRuntimeSetupBuilder<'a> {
         let adapter = load_adapter(adapter)?;
         let language_plugins = adapter.language_plugins().clone();
         validate_worker_roles(&adapter, &language_plugins)?;
+        let role_validations = adapter
+            .worker_roles()
+            .iter()
+            .filter_map(|w| {
+                w.plugin_role
+                    .clone()
+                    .map(|name| (name, w.validation.clone()))
+            })
+            .collect();
         Ok(Self {
             validation,
             language_plugins,
             language: language.to_string(),
             adapter: Box::new(adapter),
+            role_validations,
         })
     }
 
@@ -190,23 +186,41 @@ impl<'a> ProjectRuntimeSetupBuilder<'a> {
     /// node at plan-expansion time, keyed by the node's target files (to
     /// select the matching plugin) and its assigned worker role.
     ///
-    /// A role present in the selected plugin's `plugin_roles` list gets that
-    /// role's own `validation.commands`; every other role (including no role
-    /// at all) falls back to the plugin's default `validation.commands`. When
-    /// no plugin matches the node's target files, falls back to the explicit
-    /// `validation:` config, when present.
+    /// A role this adapter configures gets a plan built from exactly the
+    /// named validation functions it selects (see
+    /// [`crate::project::WorkerRoleConfig::validation`]), resolved
+    /// generically against the selected plugin's `functions` map — an empty
+    /// selection produces an empty plan, not a fallback. A role this adapter
+    /// does not configure at all (including no role assigned) falls back to
+    /// the plugin's default `validation.commands`. When no plugin matches the
+    /// node's target files, falls back to the explicit `validation:` config,
+    /// when present.
     fn validation_plan_for_role_fn(&self) -> Arc<ValidationPlanForRoleFn> {
         let plugins = self.language_plugins.clone();
         let fallback_plan = self.validation_config_plan();
+        let role_validations = self.role_validations.clone();
         Arc::new(move |role, target_files| {
             let Some(spec) = select_plugin(&plugins, target_files) else {
                 return fallback_plan.clone();
             };
-            let commands = role
-                .and_then(|name| spec.plugin_roles.iter().find(|r| r.plugin_role == name))
-                .map(|r| &r.validation.commands)
-                .unwrap_or(&spec.validation.commands);
-            Some(Self::plan_from_commands(commands))
+            match role.and_then(|name| role_validations.get(name)) {
+                Some(names) => {
+                    let commands: Vec<CommandSpec> = names
+                        .iter()
+                        .map(|name| {
+                            spec.functions.get(name).cloned().unwrap_or_else(|| {
+                                panic!(
+                                    "validation function '{name}' missing from plugin's \
+                                     functions map; validate_worker_roles must have caught \
+                                     this at config-load time"
+                                )
+                            })
+                        })
+                        .collect();
+                    Some(Self::plan_from_commands(&commands))
+                }
+                None => Some(Self::plan_from_commands(&spec.validation.commands)),
+            }
         })
     }
 

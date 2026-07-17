@@ -114,8 +114,9 @@ impl YamlProjectAdapter {
     ///
     /// Exposed (rather than only the flattened names in
     /// [`ProjectAdapter::role_policy`]) so
-    /// `crate::node_runner::project_setup::validate_worker_roles` can
-    /// inspect each entry's raw `plugin_role` (`Some`/`None`) directly.
+    /// `crate::node_runner::project_setup::validate_worker_roles` and the
+    /// per-role validation plan builder can inspect each entry's own
+    /// `validation` function-name selection directly.
     pub fn worker_roles(&self) -> &[WorkerRoleConfig] {
         &self.config.workers
     }
@@ -356,6 +357,7 @@ mod tests {
             producer: prompt("build it", "build bounds"),
             critic: Some(prompt("review the work", "review work bounds")),
             referee: Some(prompt("decide the work", "decide work bounds")),
+            validation: vec![],
             review: false,
         }]
     }
@@ -514,6 +516,7 @@ mod tests {
             producer: prompt("test it", "test bounds"),
             critic: Some(prompt("review the tests", "review test bounds")),
             referee: Some(prompt("decide the tests", "decide test bounds")),
+            validation: vec![],
             review: false,
         });
         let adapter = YamlProjectAdapter::new(ProjectAdapterConfig {
@@ -585,6 +588,7 @@ mod tests {
             producer: prompt("test it", "test bounds"),
             critic: Some(prompt("review the tests", "review test bounds")),
             referee: Some(prompt("decide the tests", "decide test bounds")),
+            validation: vec![],
             review: false,
         });
         let adapter = YamlProjectAdapter::new(ProjectAdapterConfig {
@@ -635,6 +639,7 @@ mod tests {
             producer: prompt("test it", "test bounds"),
             critic: Some(prompt("review the tests", "review test bounds")),
             referee: Some(prompt("decide the tests", "decide test bounds")),
+            validation: vec![],
             review: false,
         });
         let adapter = YamlProjectAdapter::new(ProjectAdapterConfig {

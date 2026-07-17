@@ -237,14 +237,7 @@ fn register_fake_language(dir: &Path, label: &str) -> String {
                 commands: vec![],
                 validation_targets: vec![],
             },
-            plugin_roles: vec![crate::language::spec::LanguageRoleConfig {
-                plugin_role: "implementer".to_string(),
-                validation: LanguageValidationSpec {
-                    runs_tests: false,
-                    commands: vec![],
-                    validation_targets: vec![],
-                },
-            }],
+            functions: std::collections::BTreeMap::new(),
             api_summary: None,
         },
     );

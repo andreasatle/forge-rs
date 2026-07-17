@@ -188,12 +188,13 @@ fn unknown_plugin_fails_loudly() {
 }
 
 #[test]
-fn adapter_role_missing_from_plugin_roles_fails_loudly() {
-    // Invariant: every worker role the adapter defines must have a matching
-    // entry in every declared plugin's `plugin_roles` list — a plugin that
-    // only covers some of the adapter's roles is a hard error at config load
-    // time, regardless of which plugin ends up selected for a given node.
-    let dir = test_dir("missing-role");
+fn adapter_validation_function_missing_from_plugin_functions_fails_loudly() {
+    // Invariant: every validation function name a worker role selects (see
+    // `WorkerRoleConfig::validation`) must exist in every declared plugin's
+    // `functions` map — a plugin that doesn't define a selected name is a
+    // hard error at config load time, regardless of which plugin ends up
+    // selected for a given node.
+    let dir = test_dir("missing-function");
     std::fs::write(
         dir.join("plugin.yaml"),
         r#"
@@ -202,73 +203,39 @@ init:
   commands: []
 validation:
   commands: []
-plugin_roles:
-  - plugin_role: implementer
-    validation:
-      commands: []
+functions:
+  lint:
+    program: echo
+    args: []
 "#,
     )
     .unwrap();
-    let adapter = write_custom_adapter(&dir, &["plugin.yaml"]);
-
-    let err = match ProjectRuntimeSetupBuilder::new(&adapter, None, "") {
-        Ok(_) => panic!("adapter role missing from plugin roles must be a hard error"),
-        Err(e) => e.to_string(),
-    };
-    assert_eq!(
-        err,
-        "adapter plugin_role 'tester' is not defined in the plugin's plugin_roles for extension 'zz'"
+    let mut yaml = CUSTOM_ADAPTER_YAML.replace(
+        "  - plugin_role: implementer\n",
+        "  - plugin_role: implementer\n    validation: [typecheck]\n",
     );
-}
-
-#[test]
-fn worker_missing_plugin_role_fails_loudly_when_adapter_declares_plugins() {
-    // Invariant: once an adapter declares any plugins, every worker entry
-    // must name a `plugin_role` — there is no other way to select that
-    // role's per-plugin validation override.
-    let dir = test_dir("missing-plugin-role");
-    std::fs::write(
-        dir.join("plugin.yaml"),
-        r#"
-extensions: [zz]
-init:
-  commands: []
-validation:
-  commands: []
-plugin_roles:
-  - plugin_role: implementer
-    validation:
-      commands: []
-  - plugin_role: tester
-    validation:
-      commands: []
-"#,
-    )
-    .unwrap();
-    let mut yaml = CUSTOM_ADAPTER_YAML.replace("  - plugin_role: implementer\n", "  - \n");
     yaml.push_str("plugins:\n  - plugin.yaml\n");
     let adapter = dir.join("adapter.yaml");
     std::fs::write(&adapter, yaml).unwrap();
 
     let err = match ProjectRuntimeSetupBuilder::new(&adapter, None, "") {
-        Ok(_) => panic!("worker entry missing plugin_role must be a hard error"),
+        Ok(_) => {
+            panic!("adapter validation function missing from plugin functions must be a hard error")
+        }
         Err(e) => e.to_string(),
     };
-    assert!(
-        err.contains("plugin_role"),
-        "error must mention the missing plugin_role; got: {err}"
-    );
-    assert!(
-        err.contains("Implements code."),
-        "error must identify which worker entry is missing plugin_role; got: {err}"
+    assert_eq!(
+        err,
+        "worker role 'implementer' selects validation function 'typecheck', which is not defined in the plugin's functions for extension 'zz'"
     );
 }
 
 #[test]
-fn worker_missing_plugin_role_is_fine_when_adapter_declares_no_plugins() {
-    // Invariant: an adapter with no plugins at all has nothing for
-    // `plugin_role` to match against, so its worker entries may omit it
-    // entirely.
+fn worker_missing_plugin_role_is_fine_regardless_of_declared_plugins() {
+    // Invariant: `plugin_role` is pure worker-role identity now — it has no
+    // plugin-side counterpart to match against (that's `validation`'s job),
+    // so a worker entry may omit it whether or not the adapter declares any
+    // plugins.
     let dir = test_dir("missing-plugin-role-no-plugins");
     let yaml = CUSTOM_ADAPTER_YAML.replace("  - plugin_role: implementer\n", "  - \n");
     let adapter = dir.join("adapter.yaml");
@@ -278,6 +245,31 @@ fn worker_missing_plugin_role_is_fine_when_adapter_declares_no_plugins() {
     assert!(
         result.is_ok(),
         "worker entry missing plugin_role must load fine with no plugins declared"
+    );
+
+    let dir = test_dir("missing-plugin-role-with-plugins");
+    std::fs::write(
+        dir.join("plugin.yaml"),
+        r#"
+extensions: [zz]
+init:
+  commands: []
+validation:
+  commands: []
+functions: {}
+"#,
+    )
+    .unwrap();
+    let mut yaml = CUSTOM_ADAPTER_YAML.replace("  - plugin_role: implementer\n", "  - \n");
+    yaml.push_str("plugins:\n  - plugin.yaml\n");
+    let adapter = dir.join("adapter.yaml");
+    std::fs::write(&adapter, yaml).unwrap();
+
+    let is_ok = ProjectRuntimeSetupBuilder::new(&adapter, None, "").is_ok();
+    assert!(
+        is_ok,
+        "worker entry missing plugin_role must also load fine with plugins declared, since \
+         plugin_role no longer selects anything plugin-side"
     );
 }
 
@@ -408,31 +400,210 @@ fn build_wires_validation_plan_api_summary_and_primary_language_init() {
 }
 
 #[test]
-fn validation_plan_for_role_uses_python_tester_role_override() {
-    // Invariant: a `tester`-role Work node targeting a Python file gets the
-    // python plugin's role-specific validation plan (ruff check only) rather
-    // than the plugin's default plan (ruff + pyright + pytest), so tester
-    // nodes aren't required to pass the full test suite before their own
-    // test files exist.
+fn real_adapters_resolve_to_the_same_validation_plans_as_the_old_plugin_role_bundles() {
+    // Invariant: this pins the exact command/scope/gating shape each real
+    // adapter's role resolved to under the old `plugin_role`-keyed bundle
+    // mechanism, now produced by resolving `validation: [...]` names against
+    // the python plugin's `functions` map instead — a pure mechanism swap,
+    // not a behavior change. See adapters/create_test.yaml, implement.yaml,
+    // pass_tests.yaml and plugins/python.yaml's `functions` map.
+    let targets = vec!["main.py".to_string()];
+
+    let create_test =
+        ProjectRuntimeSetup::build(&adapter_path("create_test.yaml"), None, "py").unwrap();
+    let tester_plan = (create_test.validation_plan_for_role_fn)(Some("tester"), &targets)
+        .expect("create_test's tester role must produce a validation plan");
+    assert_eq!(
+        tester_plan.steps.len(),
+        1,
+        "tester plan must have exactly one step; got: {:?}",
+        tester_plan.steps
+    );
+    assert_eq!(
+        tester_plan.steps[0].command,
+        vec!["uv", "run", "ruff", "check"]
+    );
+    assert_eq!(tester_plan.steps[0].scope, ValidationScope::ChangedFiles);
+    assert!(tester_plan.steps[0].when_artifacts_present.is_empty());
+
+    let implement =
+        ProjectRuntimeSetup::build(&adapter_path("implement.yaml"), None, "py").unwrap();
+    let implementer_plan = (implement.validation_plan_for_role_fn)(Some("implementer"), &targets)
+        .expect("implement's implementer role must produce a validation plan");
+    assert_eq!(
+        implementer_plan
+            .steps
+            .iter()
+            .map(|s| s.command.clone())
+            .collect::<Vec<_>>(),
+        vec![
+            vec!["uv", "run", "ruff", "check"],
+            vec!["uv", "run", "pyright"],
+        ],
+        "implementer plan must be exactly ruff then pyright, no pytest; got: {:?}",
+        implementer_plan.steps
+    );
+    assert_eq!(
+        implementer_plan.steps[0].scope,
+        ValidationScope::ChangedFiles
+    );
+    assert_eq!(implementer_plan.steps[1].scope, ValidationScope::Workspace);
+
+    let pass_tests =
+        ProjectRuntimeSetup::build(&adapter_path("pass_tests.yaml"), None, "py").unwrap();
+    let pass_tests_plan = (pass_tests.validation_plan_for_role_fn)(Some("pass_tests"), &targets)
+        .expect("pass_tests's pass_tests role must produce a validation plan");
+    assert_eq!(
+        pass_tests_plan
+            .steps
+            .iter()
+            .map(|s| s.command.clone())
+            .collect::<Vec<_>>(),
+        vec![
+            vec!["uv", "run", "ruff", "check"],
+            vec!["uv", "run", "pyright"],
+            vec!["uv", "run", "pytest"],
+        ],
+        "pass_tests plan must be exactly ruff, pyright, pytest, in order; got: {:?}",
+        pass_tests_plan.steps
+    );
+    assert_eq!(
+        pass_tests_plan.steps[0].scope,
+        ValidationScope::ChangedFiles
+    );
+    assert_eq!(pass_tests_plan.steps[1].scope, ValidationScope::Workspace);
+    assert_eq!(pass_tests_plan.steps[2].scope, ValidationScope::Workspace);
+    assert!(
+        pass_tests_plan.steps[2].when_artifacts_present.is_empty(),
+        "pass_tests's pytest step must remain ungated (the pytest-gate fix this session preserves)"
+    );
+}
+
+#[test]
+fn validation_plan_for_role_uses_adapters_tester_validation_selection() {
+    // Invariant: a `tester`-role Work node targeting a Python file gets a
+    // validation plan built from exactly the named functions the adapter's
+    // `tester` worker selects (`validation: [lint]`, resolved against the
+    // python plugin's `functions` map) rather than the plugin's default plan
+    // (ruff + pyright + pytest), so tester nodes aren't required to pass the
+    // full test suite before their own test files exist.
     let setup =
         ProjectRuntimeSetup::build(&fixture_adapter_path("coding.yaml"), None, "py").unwrap();
     let plan = (setup.validation_plan_for_role_fn)(Some("tester"), &["main.py".to_string()])
-        .expect("python plugin's tester role override must produce a validation plan");
+        .expect("adapter's tester validation selection must produce a validation plan");
     assert_eq!(
         plan.steps.len(),
         1,
-        "python tester validation plan must contain exactly one step; got: {:?}",
+        "tester validation plan must contain exactly one step; got: {:?}",
         plan.steps
     );
     assert!(
         plan.steps[0].command.contains(&"ruff".to_string()),
-        "python tester validation plan must run ruff; got: {:?}",
+        "tester validation plan must run ruff (the 'lint' function); got: {:?}",
         plan.steps[0].command
     );
     assert!(
         !plan.steps[0].command.contains(&"pytest".to_string()),
-        "python tester validation plan must not run pytest"
+        "tester validation plan must not run pytest"
     );
+}
+
+#[test]
+fn validation_plan_for_role_runs_pytest_unconditionally_for_pass_tests_role() {
+    // Invariant: a `pass_tests`-role Work node targeting a source-only file
+    // (not itself a test file) still gets a pytest step in its validation
+    // plan, with no `when_artifacts_present` gate. `pass_tests` is dispatched
+    // only after both `implement` and `create_test` have already integrated
+    // (`after_teams(implement, create_test)` in forge.yaml), so by the time
+    // this plan runs, the real test file is guaranteed to exist — gating
+    // pytest on the node's own `target_files` (as the shared `implementer`
+    // role used to) meant pytest was skipped for every source-only node,
+    // regardless of whether tests actually existed in the workspace.
+    let setup = ProjectRuntimeSetup::build(&adapter_path("pass_tests.yaml"), None, "py").unwrap();
+    let plan = (setup.validation_plan_for_role_fn)(Some("pass_tests"), &["main.py".to_string()])
+        .expect("python plugin's pass_tests role override must produce a validation plan");
+    let pytest_step = plan
+        .steps
+        .iter()
+        .find(|s| s.command.contains(&"pytest".to_string()))
+        .expect("pass_tests validation plan must include a pytest step");
+    assert!(
+        pytest_step.when_artifacts_present.is_empty(),
+        "pass_tests's pytest step must run unconditionally, not gated on target_files; got: {:?}",
+        pytest_step.when_artifacts_present
+    );
+    assert_eq!(
+        pytest_step.scope,
+        ValidationScope::Workspace,
+        "pass_tests's pytest step must cover the whole workspace, not just the node's own target_files"
+    );
+}
+
+#[test]
+fn validation_plan_for_role_implementer_no_longer_runs_pytest() {
+    // Invariant: verifying that tests pass is `pass_tests`'s job, not
+    // `implement`'s — `implement`'s plan checks its own code (ruff, pyright)
+    // but must not include a pytest step at all.
+    let setup = ProjectRuntimeSetup::build(&adapter_path("implement.yaml"), None, "py").unwrap();
+    let plan = (setup.validation_plan_for_role_fn)(Some("implementer"), &["main.py".to_string()])
+        .expect("python plugin's implementer role override must produce a validation plan");
+    assert!(
+        !plan
+            .steps
+            .iter()
+            .any(|s| s.command.contains(&"pytest".to_string())),
+        "implementer validation plan must not run pytest; got: {:?}",
+        plan.steps
+    );
+}
+
+#[test]
+fn made_up_function_name_resolves_with_zero_rust_changes() {
+    // Invariant / genericity proof: Rust never matches on any specific
+    // validation function name — a plugin exposing a function under an
+    // arbitrary, never-before-seen name, selected by an adapter's worker
+    // role under that same made-up name, resolves correctly with no
+    // additional Rust code beyond what this session already built. If this
+    // test needed a Rust change to pass, the mechanism would not actually be
+    // generic.
+    let dir = test_dir("genericity-proof");
+    std::fs::write(
+        dir.join("plugin.yaml"),
+        r#"
+extensions: [zz]
+init:
+  commands: []
+validation:
+  commands: []
+functions:
+  frobnicate:
+    program: echo
+    args: ["frobnicated"]
+    scope: workspace
+"#,
+    )
+    .unwrap();
+    let mut yaml = CUSTOM_ADAPTER_YAML.replace(
+        "  - plugin_role: implementer\n",
+        "  - plugin_role: implementer\n    validation: [frobnicate]\n",
+    );
+    yaml.push_str("plugins:\n  - plugin.yaml\n");
+    let adapter = dir.join("adapter.yaml");
+    std::fs::write(&adapter, yaml).unwrap();
+
+    let setup = ProjectRuntimeSetupBuilder::new(&adapter, None, "zz")
+        .unwrap()
+        .build();
+    let plan = (setup.validation_plan_for_role_fn)(Some("implementer"), &["main.zz".to_string()])
+        .expect("a made-up function name selected by the adapter must produce a validation plan");
+    assert_eq!(
+        plan.steps.len(),
+        1,
+        "plan must contain exactly the one selected function's step; got: {:?}",
+        plan.steps
+    );
+    assert_eq!(plan.steps[0].command, vec!["echo", "frobnicated"]);
+    assert_eq!(plan.steps[0].scope, ValidationScope::Workspace);
 }
 
 #[test]

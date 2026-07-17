@@ -2,6 +2,7 @@ workers:
   - plugin_role: tester
     derives_target: true
     requires: [file_path]
+    validation: [lint]
     description: |-
       Writes the test files that pin down expected behavior before the implementation exists.
     producer:

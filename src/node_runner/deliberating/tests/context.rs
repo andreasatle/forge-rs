@@ -34,7 +34,7 @@ fn plugin_spec(extension: &str, instructions: &str) -> LanguageSpec {
             commands: vec![],
             validation_targets: vec![],
         },
-        plugin_roles: vec![],
+        functions: BTreeMap::new(),
         api_summary: None,
     }
 }

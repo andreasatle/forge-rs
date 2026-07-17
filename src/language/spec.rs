@@ -1,5 +1,7 @@
 //! Language specification types deserialized from YAML.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 use crate::roles::policy::RolePromptConfig;
@@ -32,15 +34,17 @@ pub struct LanguageSpec {
     /// Commands run once to initialize a new project workspace.
     pub init: LanguageInitSpec,
     /// Commands run to validate a workspace before integration. Used as the
-    /// default for any worker role without an entry in `plugin_roles`.
+    /// default for any worker role whose
+    /// [`crate::project::WorkerRoleConfig::validation`] selection is empty or
+    /// doesn't name this role at all.
     pub validation: LanguageValidationSpec,
-    /// Per-worker-role validation overrides, keyed by role name (e.g.
-    /// `"tester"`, `"implementer"`) to match a
-    /// [`crate::project::WorkerRoleConfig::plugin_role`] defined by the
-    /// project adapter. A role without an entry here falls back to
-    /// `validation`.
+    /// Individually named, invokable validation functions this plugin
+    /// exposes (e.g. `"lint"`, `"typecheck"`, `"test"`). A project adapter's
+    /// worker role selects which of these run in its validation phase via
+    /// [`crate::project::WorkerRoleConfig::validation`] — this map is looked
+    /// up generically by name; no function name is ever hardcoded in Rust.
     #[serde(default)]
-    pub plugin_roles: Vec<LanguageRoleConfig>,
+    pub functions: BTreeMap<String, CommandSpec>,
     /// Command that extracts a readable API summary (signatures, docstrings)
     /// from a single file. Run per file in the artifact workspace with the
     /// file path as the last argument; its stdout is the file's summary.
@@ -68,16 +72,6 @@ impl LanguageSpec {
             constraints: self.constraints.clone(),
         }
     }
-}
-
-/// A worker role's validation override for a language plugin.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct LanguageRoleConfig {
-    /// The worker role name this override applies to (e.g. `"tester"`).
-    pub plugin_role: String,
-    /// Validation spec used for nodes assigned this role, replacing the
-    /// language's default `validation` spec entirely.
-    pub validation: LanguageValidationSpec,
 }
 
 /// Init-phase command list for a language.
@@ -133,7 +127,7 @@ mod tests {
                 commands: vec![],
                 validation_targets: vec![],
             },
-            plugin_roles: vec![],
+            functions: BTreeMap::new(),
             api_summary: None,
         };
         assert!(
@@ -164,7 +158,7 @@ mod tests {
                 }],
                 validation_targets: vec![],
             },
-            plugin_roles: vec![],
+            functions: BTreeMap::new(),
             api_summary: None,
         };
         assert!(
@@ -259,9 +253,10 @@ validation:
     }
 
     #[test]
-    fn roles_defaults_to_empty_when_omitted_from_yaml() {
-        // Invariant: roles is optional — a language spec with no per-role
-        // validation overrides still parses, with roles defaulting to empty.
+    fn functions_defaults_to_empty_when_omitted_from_yaml() {
+        // Invariant: functions is optional — a language spec with no named
+        // validation functions still parses, with functions defaulting to
+        // empty.
         let yaml = r#"
 identity: "guidance"
 init:
@@ -269,15 +264,18 @@ init:
 validation:
   commands: []
 "#;
-        let spec: LanguageSpec = serde_yaml::from_str(yaml).expect("spec without roles must parse");
-        assert!(spec.plugin_roles.is_empty());
+        let spec: LanguageSpec =
+            serde_yaml::from_str(yaml).expect("spec without functions must parse");
+        assert!(spec.functions.is_empty());
     }
 
     #[test]
-    fn roles_parse_their_own_validation_spec() {
-        // Invariant: each entry in roles carries its own role name and a
-        // full LanguageValidationSpec, independent of the default validation
-        // spec.
+    fn functions_parse_as_a_flat_named_map_of_commands() {
+        // Invariant: each entry under `functions` is looked up by its own
+        // name, independent of the default `validation` spec — this is the
+        // mechanism a project adapter's `WorkerRoleConfig::validation`
+        // selects from by name, generically, with no function name ever
+        // hardcoded in Rust.
         let yaml = r#"
 identity: "guidance"
 init:
@@ -287,22 +285,15 @@ validation:
   commands:
     - program: "full"
       args: []
-plugin_roles:
-  - plugin_role: tester
-    validation:
-      runs_tests: false
-      commands:
-        - program: "reduced"
-          args: []
+functions:
+  lint:
+    program: "reduced"
+    args: []
 "#;
-        let spec: LanguageSpec = serde_yaml::from_str(yaml).expect("spec with roles must parse");
-        assert_eq!(spec.plugin_roles.len(), 1);
-        assert_eq!(spec.plugin_roles[0].plugin_role, "tester");
-        assert!(!spec.plugin_roles[0].validation.runs_tests);
-        assert_eq!(
-            spec.plugin_roles[0].validation.commands[0].program,
-            "reduced"
-        );
+        let spec: LanguageSpec =
+            serde_yaml::from_str(yaml).expect("spec with functions must parse");
+        assert_eq!(spec.functions.len(), 1);
+        assert_eq!(spec.functions["lint"].program, "reduced");
         assert!(spec.validation.runs_tests);
         assert_eq!(spec.validation.commands[0].program, "full");
     }

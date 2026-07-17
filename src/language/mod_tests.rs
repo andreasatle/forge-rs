@@ -1,5 +1,4 @@
 use super::*;
-use crate::language::spec::LanguageRoleConfig;
 use crate::validation::ValidationTargetRule;
 
 /// A python-like plugin: sources default to `src/{name}.py` (nested
@@ -24,14 +23,7 @@ fn nested_source_plugin_with_flat_tester() -> LanguageSpec {
                 target: "tests/test_{stem}.py".to_string(),
             }],
         },
-        plugin_roles: vec![LanguageRoleConfig {
-            plugin_role: "tester".to_string(),
-            validation: LanguageValidationSpec {
-                runs_tests: false,
-                commands: vec![],
-                validation_targets: vec![],
-            },
-        }],
+        functions: BTreeMap::new(),
         api_summary: None,
     }
 }

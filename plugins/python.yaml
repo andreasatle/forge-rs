@@ -47,33 +47,19 @@ validation:
   validation_targets:
     - pattern: "{stem}.py"
       target: "tests/test_{stem}.py"
-plugin_roles:
-  - plugin_role: tester
-    validation:
-      runs_tests: false
-      commands:
-        - program: uv
-          args: ["run", "ruff", "check"]
-          scope: changed_files
-  - plugin_role: implementer
-    validation:
-      runs_tests: true
-      commands:
-        - program: uv
-          args: ["run", "ruff", "check"]
-          scope: changed_files
-        - program: uv
-          args: ["run", "pyright"]
-          scope: workspace
-        - program: uv
-          args: ["run", "pytest"]
-          scope: target_files
-          when_files_present:
-            - "test_*.py"
-            - "*_test.py"
-      validation_targets:
-        - pattern: "{stem}.py"
-          target: "tests/test_{stem}.py"
+functions:
+  lint:
+    program: uv
+    args: ["run", "ruff", "check"]
+    scope: changed_files
+  typecheck:
+    program: uv
+    args: ["run", "pyright"]
+    scope: workspace
+  test:
+    program: uv
+    args: ["run", "pytest"]
+    scope: workspace
 api_summary:
   program: uv
   args:
