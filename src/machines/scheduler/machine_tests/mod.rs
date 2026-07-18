@@ -34,6 +34,7 @@ fn work_node(id: &str, objective: &str, deps: &[&str]) -> Node {
         origin: NodeOrigin::Root,
         validation_plan: None,
         retry_feedback: None,
+        prior_attempt_context: None,
     }
 }
 
@@ -58,6 +59,7 @@ fn plan_node(id: &str, objective: &str, deps: &[&str]) -> Node {
         origin: NodeOrigin::Root,
         validation_plan: None,
         retry_feedback: None,
+        prior_attempt_context: None,
     }
 }
 

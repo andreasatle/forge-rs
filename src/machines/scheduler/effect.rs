@@ -52,6 +52,10 @@ pub enum SchedulerEffect {
         /// failure. The dispatch layer appends this to the objective text;
         /// the machine keeps the objective field itself immutable.
         retry_feedback: Option<RetryFeedback>,
+        /// Copied verbatim from `Node::prior_attempt_context`. `Some` only
+        /// when this node was produced by `Split`. Rendered by the prompt
+        /// layer in its own section, kept separate from the objective.
+        prior_attempt_context: Option<String>,
         /// Copied verbatim from `Node::team`. Empty for the single-team
         /// root/plan-expansion path, in which case a `Plan` node's children
         /// inherit no team of their own either.

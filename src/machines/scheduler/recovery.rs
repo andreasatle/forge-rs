@@ -249,6 +249,7 @@ impl RecoveryApplicator {
             plan_depth,
             model_tier,
             validation_plan,
+            prior_attempt_context,
         ) = {
             let n = self.graph.get_node(&self.node_id);
             (
@@ -266,6 +267,7 @@ impl RecoveryApplicator {
                 n.plan_depth,
                 n.model_tier,
                 n.validation_plan.clone(),
+                n.prior_attempt_context.clone(),
             )
         };
         let retry_feedback = self.build_retry_feedback(&kind, retry_message);
@@ -292,6 +294,7 @@ impl RecoveryApplicator {
             },
             validation_plan,
             retry_feedback,
+            prior_attempt_context,
         };
         self.push_replacement(replacement, &replacement_id)
     }
@@ -324,11 +327,15 @@ impl RecoveryApplicator {
             )
         };
         let split_id = new_node_id();
-        // Split creates a new Plan node to re-plan the original objective;
-        // `message` is diagnostic context, not the objective itself. The new
-        // node re-plans the same task, so its objective is preserved and the
-        // diagnostic is appended for the planner's benefit. validation_plan
-        // and retry_feedback belong to Work nodes only.
+        // Split creates a new Plan node to re-plan the original objective.
+        // `objective` is preserved verbatim — it must remain indistinguishable
+        // from the original task requirement for this node's entire lifetime.
+        // `message` is diagnostic context about why the prior attempt failed;
+        // it goes into `prior_attempt_context`, which the prompt layer renders
+        // in its own section, separate from `# Objective`. Only the most
+        // recent attempt's context is kept (not accumulated across repeated
+        // Splits) — see the field doc on `Node::prior_attempt_context`.
+        // validation_plan and retry_feedback belong to Work nodes only.
         let split_node = Node {
             id: split_id.clone(),
             kind: NodeKind::Plan,
@@ -337,9 +344,7 @@ impl RecoveryApplicator {
             adapter,
             northstar,
             worker_role: None,
-            objective: format!(
-                "{objective}\n\nThe previous attempt failed and requires decomposition:\n{message}"
-            ),
+            objective,
             target_files,
             required_validation_targets,
             dependencies: deps,
@@ -353,6 +358,7 @@ impl RecoveryApplicator {
             },
             validation_plan: None,
             retry_feedback: None,
+            prior_attempt_context: Some(message),
         };
         self.push_replacement(split_node, &split_id)
     }
@@ -372,6 +378,7 @@ impl RecoveryApplicator {
             attempt,
             plan_depth,
             validation_plan,
+            prior_attempt_context,
         ) = {
             let n = self.graph.get_node(&self.node_id);
             (
@@ -388,6 +395,7 @@ impl RecoveryApplicator {
                 n.attempt,
                 n.plan_depth,
                 n.validation_plan.clone(),
+                n.prior_attempt_context.clone(),
             )
         };
         let elevated_id = new_node_id();
@@ -413,6 +421,7 @@ impl RecoveryApplicator {
             },
             validation_plan,
             retry_feedback: None,
+            prior_attempt_context,
         };
         self.push_replacement(replacement, &elevated_id)
     }

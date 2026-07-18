@@ -89,6 +89,7 @@ mod tests {
             origin: NodeOrigin::Root,
             validation_plan: None,
             retry_feedback: None,
+            prior_attempt_context: None,
         }
     }
 

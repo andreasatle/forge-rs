@@ -27,6 +27,8 @@ const PRODUCER_CONTENT_PLACEHOLDER: &str = "{PRIOR_PRODUCER_CONTENT: producer su
 const CRITIC_CONTENT_PLACEHOLDER: &str = "{PRIOR_CRITIC_CONTENT: critic review}";
 const REVISION_FEEDBACK_PLACEHOLDER: &str = "{REVISION_FEEDBACK: previous rejection reasons}";
 const TARGET_FILE_PLACEHOLDER: &str = "<target file>";
+const PRIOR_ATTEMPT_CONTEXT_PLACEHOLDER: &str =
+    "{PRIOR_ATTEMPT_CONTEXT: diagnostic reason the previous attempt was split, context only}";
 
 /// Render the exact prompt a real run would send for `role` on a `node_kind`
 /// node (and, for [`NodeKind::Work`], the named `worker_role`), with every
@@ -57,6 +59,7 @@ pub fn render_prompt_preview(
         artifact: None,
         northstar: Some(PROJECT_STATE_PLACEHOLDER.to_string()),
         plugin_prompt: None,
+        prior_attempt_context: Some(PRIOR_ATTEMPT_CONTEXT_PLACEHOLDER.to_string()),
     };
 
     let target_views = if has_tools {

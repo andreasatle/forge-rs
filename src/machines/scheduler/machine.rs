@@ -160,6 +160,7 @@ impl SchedulerMachine {
             origin: NodeOrigin::Root,
             validation_plan: None,
             retry_feedback: None,
+            prior_attempt_context: None,
         };
         SchedulerState::Active {
             graph: RunGraph { nodes: vec![root] },
@@ -287,6 +288,7 @@ impl SchedulerMachine {
                                 model_tier,
                                 attempt,
                                 retry_feedback,
+                                prior_attempt_context,
                                 team,
                                 adapter,
                                 northstar,
@@ -301,6 +303,7 @@ impl SchedulerMachine {
                                     n.model_tier,
                                     n.attempt,
                                     n.retry_feedback.clone(),
+                                    n.prior_attempt_context.clone(),
                                     n.team.clone(),
                                     n.adapter.clone(),
                                     n.northstar.clone(),
@@ -316,6 +319,7 @@ impl SchedulerMachine {
                                 model_tier,
                                 attempt,
                                 retry_feedback,
+                                prior_attempt_context,
                                 team,
                                 adapter,
                                 northstar,

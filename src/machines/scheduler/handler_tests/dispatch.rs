@@ -15,6 +15,7 @@ fn run_node_effect_uses_node_runner() {
         model_tier: ModelTier::Cheap,
         attempt: 0,
         retry_feedback: None,
+        prior_attempt_context: None,
         team: String::new(),
         adapter: String::new(),
         northstar: String::new(),

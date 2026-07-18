@@ -271,6 +271,20 @@ pub struct Node {
     /// `None` for the first attempt and for non-validation retries.
     #[serde(default)]
     pub retry_feedback: Option<RetryFeedback>,
+    /// Diagnostic context describing why the prior attempt at this task
+    /// failed, when this node was produced by `Split`.
+    ///
+    /// This is *not* part of the task requirement: it exists to inform the
+    /// next attempt, not to be mistaken for something the node must satisfy.
+    /// `apply_split` sets this instead of mutating `objective`, so the
+    /// objective a node carries is always the original, stable task
+    /// description for that node's entire lifetime. Rendered by the prompt
+    /// layer in its own clearly-labeled section, separate from `# Objective`.
+    /// Carried forward unchanged by `apply_retry`/`apply_elevate`; overwritten
+    /// (not accumulated) by each successive `Split`, so it always reflects
+    /// only the most recent prior attempt.
+    #[serde(default)]
+    pub prior_attempt_context: Option<String>,
 }
 
 /// The complete set of nodes for one Forge run.
@@ -549,6 +563,7 @@ impl RunGraph {
                 origin: NodeOrigin::PlanExpansion,
                 validation_plan: req.validation_plan,
                 retry_feedback: None,
+                prior_attempt_context: None,
             });
         }
         self

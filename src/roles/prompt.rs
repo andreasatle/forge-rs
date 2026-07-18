@@ -354,6 +354,14 @@ pub(super) fn render_role_prompt_with_test_plan_context(input: RolePromptRender<
         parts.push(format!("# Project State\n{context}"));
     }
     parts.push(format!("# Objective\n{}", input.objective));
+    if let Some(prior_attempt_context) = &input.context.prior_attempt_context {
+        parts.push(format!(
+            "# Previous Attempt (context only, not a new requirement)\n\
+             The previous attempt at this objective failed and was split for \
+             decomposition. This explains why decomposition is needed now; it \
+             does not add to or change the objective above.\n{prior_attempt_context}"
+        ));
+    }
     parts.push(format!("# Role\n{:?}", input.role));
     if !input.target_views.is_empty() {
         parts.push(render_target_state_view(input.target_views));

@@ -137,6 +137,7 @@ fn terminal_failure_produces_failed_scheduler_terminal_output() {
             origin: NodeOrigin::Root,
             validation_plan: None,
             retry_feedback: None,
+            prior_attempt_context: None,
         }],
     };
     let output = run_scheduler(
@@ -172,6 +173,7 @@ fn scheduler_terminal_output_includes_node_failure_reason() {
             origin: NodeOrigin::Root,
             validation_plan: None,
             retry_feedback: None,
+            prior_attempt_context: None,
         }],
     };
 
@@ -496,6 +498,7 @@ fn split_success_reports_recovery() {
                 origin: NodeOrigin::Root,
                 validation_plan: None,
                 retry_feedback: None,
+                prior_attempt_context: None,
             },
             Node {
                 id: split_id,
@@ -517,6 +520,7 @@ fn split_success_reports_recovery() {
                 origin: NodeOrigin::Split { source: source_id },
                 validation_plan: None,
                 retry_feedback: None,
+                prior_attempt_context: None,
             },
         ],
     };

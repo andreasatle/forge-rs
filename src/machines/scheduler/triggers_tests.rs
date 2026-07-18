@@ -206,6 +206,7 @@ fn root_node() -> Node {
         origin: NodeOrigin::Root,
         validation_plan: None,
         retry_feedback: None,
+        prior_attempt_context: None,
     }
 }
 
@@ -708,6 +709,7 @@ fn for_tasks_respawns_after_prior_attempt_failed() {
         origin: NodeOrigin::Root,
         validation_plan: None,
         retry_feedback: None,
+        prior_attempt_context: None,
     });
 
     let config = run_config(vec![team_direct(
@@ -970,6 +972,7 @@ fn for_tasks_spawned_node_required_validation_target_is_enforced_by_the_gate() {
         origin: NodeOrigin::Root,
         validation_plan: None,
         retry_feedback: None,
+        prior_attempt_context: None,
     });
     graph
         .validate_required_tests_completed()

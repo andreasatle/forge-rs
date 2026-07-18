@@ -42,6 +42,12 @@ pub struct NodeRunRequest {
     /// same workspace. Integration is responsible for validating and
     /// publishing it.
     pub work_attempt: Option<WorkAttempt>,
+    /// Copied verbatim from `Node::prior_attempt_context`. `Some` only when
+    /// this node was produced by `Split`; carries diagnostic context about
+    /// the prior attempt's failure, kept structurally separate from
+    /// `objective`. Threaded into `DeliberationContext` and rendered in its
+    /// own prompt section.
+    pub prior_attempt_context: Option<String>,
     /// Copied verbatim from `Node::team`. Empty for the single-team
     /// root/plan-expansion path, in which case the node has no team of its
     /// own to pass on to any children it plans.

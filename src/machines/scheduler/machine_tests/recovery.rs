@@ -422,6 +422,125 @@ fn planner_validation_failure_recovers_via_split_and_is_bounded() {
     ));
 }
 
+#[test]
+fn split_preserves_objective_and_moves_failure_into_prior_attempt_context() {
+    // Invariant: Split must never mutate `objective` — it stays the original,
+    // stable task description for the node's entire lifetime. The reason the
+    // previous attempt failed goes into `prior_attempt_context` instead, so
+    // the prompt layer can render it as diagnostic context rather than
+    // something indistinguishable from the actual requirement.
+    let graph = RunGraph {
+        nodes: vec![plan_node("P", "implement fibonacci", &[])],
+    };
+    let t = do_transition(
+        SchedulerState::Waiting {
+            graph: running(graph, "P"),
+            run_config: RunConfig::default(),
+        },
+        SchedulerEvent::NodeFailed {
+            node_id: NodeId("P".to_string()),
+            failure: NodeFailure {
+                kind: FailureKind::DeliberationFailure,
+                message: "referee rejected: ambiguous interface".to_string(),
+                recovery: RecoveryAction::Split {
+                    message: "Referee rejected: the interface for computing fibonacci numbers \
+                              is ambiguous — unclear whether it should return a single value, \
+                              a sequence, or accept memoization."
+                        .to_string(),
+                },
+            },
+        },
+    );
+
+    let SchedulerState::Active { graph, .. } = t.state else {
+        panic!("expected Active, got {:#?}", t.state);
+    };
+    let replacement = &graph.nodes[1];
+    assert_eq!(
+        replacement.objective, "implement fibonacci",
+        "objective must be byte-for-byte unchanged by Split"
+    );
+    assert_eq!(
+        replacement.prior_attempt_context.as_deref(),
+        Some(
+            "Referee rejected: the interface for computing fibonacci numbers is ambiguous — \
+             unclear whether it should return a single value, a sequence, or accept memoization."
+        )
+    );
+}
+
+#[test]
+fn repeated_splits_keep_only_the_latest_prior_attempt_context() {
+    // Invariant: `prior_attempt_context` must not accumulate across
+    // successive Splits — each Split overwrites it with only the most recent
+    // attempt's failure reason, so the field stays bounded regardless of how
+    // many times a node gets split.
+    let graph = RunGraph {
+        nodes: vec![plan_node("P", "implement fibonacci", &[])],
+    };
+    let first = do_transition(
+        SchedulerState::Waiting {
+            graph: running(graph, "P"),
+            run_config: RunConfig::default(),
+        },
+        SchedulerEvent::NodeFailed {
+            node_id: NodeId("P".to_string()),
+            failure: NodeFailure {
+                kind: FailureKind::DeliberationFailure,
+                message: "first failure".to_string(),
+                recovery: RecoveryAction::Split {
+                    message: "first attempt: ambiguous return type".to_string(),
+                },
+            },
+        },
+    );
+    let SchedulerState::Active { graph, .. } = first.state else {
+        panic!("expected Active after first split, got {:#?}", first.state);
+    };
+    let first_split_id = graph.nodes[1].id.clone();
+
+    let second = do_transition(
+        SchedulerState::Waiting {
+            graph: running(graph, &first_split_id.0),
+            run_config: RunConfig::default(),
+        },
+        SchedulerEvent::NodeFailed {
+            node_id: first_split_id,
+            failure: NodeFailure {
+                kind: FailureKind::DeliberationFailure,
+                message: "second failure".to_string(),
+                recovery: RecoveryAction::Split {
+                    message: "second attempt: still no memoization strategy".to_string(),
+                },
+            },
+        },
+    );
+    let SchedulerState::Active { graph, .. } = second.state else {
+        panic!(
+            "expected Active after second split, got {:#?}",
+            second.state
+        );
+    };
+    let second_replacement = &graph.nodes[2];
+    assert_eq!(
+        second_replacement.objective, "implement fibonacci",
+        "objective must still be unchanged after a second Split"
+    );
+    assert_eq!(
+        second_replacement.prior_attempt_context.as_deref(),
+        Some("second attempt: still no memoization strategy"),
+        "prior_attempt_context must hold only the latest failure, not both concatenated"
+    );
+    let combined = second_replacement
+        .prior_attempt_context
+        .as_deref()
+        .unwrap_or("");
+    assert!(
+        !combined.contains("first attempt"),
+        "must not accumulate across repeated Splits; got: {combined}"
+    );
+}
+
 // ── Plan dependency validation tests ─────────────────────────────────────
 
 #[test]

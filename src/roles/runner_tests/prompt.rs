@@ -117,6 +117,69 @@ fn review_contract_renders_for_reviewers_only() {
 }
 
 #[test]
+fn split_prior_attempt_context_renders_in_its_own_section_not_inside_objective() {
+    // Reconstructs the scenario a Split-recovered Plan node produces: an
+    // ambiguous objective ("implement fibonacci") plus diagnostic context
+    // from a Referee's prior rejection. Before the objective/prior-attempt
+    // split, `apply_split` baked the rejection text directly into the
+    // objective string, so every role — including a Referee reviewing a
+    // Critic-accepted revision in the same round — saw the old rejection
+    // rendered as if it were part of the task requirement itself. This test
+    // proves the rendered prompt no longer conflates the two: the objective
+    // section holds only the original task, and the prior-attempt text
+    // appears solely in its own separately labeled section.
+    const REJECTION_TEXT: &str = "Referee rejected: the interface for computing fibonacci \
+                                   numbers is ambiguous — unclear whether it should return a \
+                                   single value, a sequence, or accept memoization.";
+
+    let mut plan_producer = plan_request("implement fibonacci");
+    plan_producer.context.prior_attempt_context = Some(REJECTION_TEXT.to_string());
+
+    let mut referee = referee_request("implement fibonacci", "draft plan", "revised review");
+    referee.node_kind = NodeKind::Plan;
+    referee.context.prior_attempt_context = Some(REJECTION_TEXT.to_string());
+
+    for (label, request, response) in [
+        ("plan producer", plan_producer, PLAN_RESPONSE),
+        (
+            "plan referee",
+            referee,
+            r#"{"status":"accepted","content":"looks good"}"#,
+        ),
+    ] {
+        let prompt = first_prompt(request, response);
+
+        // The objective section is exactly the original task — nothing else
+        // is appended to it.
+        assert!(
+            prompt.contains("# Objective\nimplement fibonacci\n\n"),
+            "[{label}] objective section must contain only the original task; got:\n{prompt}"
+        );
+
+        // The prior-attempt context appears in its own clearly-labeled
+        // section, separate from "# Objective".
+        assert!(
+            prompt.contains("# Previous Attempt"),
+            "[{label}] must render a distinct Previous Attempt section; got:\n{prompt}"
+        );
+        assert!(
+            prompt.contains(REJECTION_TEXT),
+            "[{label}] Previous Attempt section must carry the diagnostic text; got:\n{prompt}"
+        );
+
+        // The two sections must not be merged into one block.
+        let objective_section = prompt
+            .split("\n\n")
+            .find(|part| part.starts_with("# Objective"))
+            .unwrap_or_else(|| panic!("[{label}] no # Objective section found in:\n{prompt}"));
+        assert!(
+            !objective_section.contains("Referee rejected"),
+            "[{label}] Previous Attempt text must not leak into the Objective section; got:\n{objective_section}"
+        );
+    }
+}
+
+#[test]
 fn missing_required_test_target_is_never_framed_as_grounds_for_rejection() {
     // Invariant: source-producing and test-producing work are authored in
     // parallel by independent teams (e.g. `implement` and `create_test`),

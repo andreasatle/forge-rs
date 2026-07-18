@@ -55,6 +55,12 @@ pub struct DeliberationContext {
     /// declared plugin's extension matches. `None` when no plugin is
     /// configured or no target file's extension matches one.
     pub plugin_prompt: Option<RolePromptConfig>,
+    /// Diagnostic context about why the prior attempt at this task failed,
+    /// carried from `Node::prior_attempt_context`. `Some` only for a node
+    /// produced by `Split`. Rendered in its own clearly-labeled prompt
+    /// section, separate from `# Objective` — this is context to inform the
+    /// next attempt, not a requirement the node must satisfy.
+    pub prior_attempt_context: Option<String>,
 }
 
 /// Read-only artifact context captured before the deliberation run.

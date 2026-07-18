@@ -84,6 +84,7 @@ pub(crate) fn build_deliberation_context(
         }),
         northstar,
         plugin_prompt,
+        prior_attempt_context: request.prior_attempt_context.clone(),
     }
 }
 

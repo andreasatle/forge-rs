@@ -55,6 +55,7 @@ fn scheduler_terminal_output_includes_integration_failure_reason() {
             origin: NodeOrigin::Root,
             validation_plan: None,
             retry_feedback: None,
+            prior_attempt_context: None,
         }],
     };
 
