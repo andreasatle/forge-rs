@@ -170,6 +170,17 @@ pub enum TelemetryEvent {
         /// Full captured stderr for the failed validation command.
         stderr: Option<String>,
     },
+    /// A Critic or Referee rejection was discarded because its reason
+    /// asserted a structural JSON defect (syntax error, malformed/invalid
+    /// JSON, an unclosed field) that is mechanically impossible for content
+    /// that already passed grammar-constrained decoding and structural
+    /// validation. The same role is re-invoked for a fresh decision.
+    HallucinatedRejectionDiscarded {
+        /// The role whose rejection was discarded (`"Critic"` or `"Referee"`).
+        role: String,
+        /// The provably false reason text that was discarded.
+        reason: String,
+    },
     /// A file tool was requested by a role during execution.
     ToolRequested {
         /// The tool name (e.g. `read_file`, `write_file`).
@@ -282,6 +293,9 @@ impl TelemetryEvent {
             TelemetryEvent::WorkAttemptViewConstructionFailed { .. } => {
                 "work-attempt-view-construction-failed"
             }
+            TelemetryEvent::HallucinatedRejectionDiscarded { .. } => {
+                "hallucinated-rejection-discarded"
+            }
             TelemetryEvent::PlannerOutputParsed { .. } => "planner-output-parsed",
             TelemetryEvent::PlannerOutputFallback => "planner-output-fallback",
             TelemetryEvent::PlannerOutputValidationFailed { .. } => {
@@ -383,6 +397,9 @@ impl TelemetryEvent {
             TelemetryEvent::ToolLoopLimitReached => "kind: ToolLoopLimitReached\n".to_string(),
             TelemetryEvent::WorkAttemptViewConstructionFailed { role, reason } => {
                 format!("kind: WorkAttemptViewConstructionFailed\nrole: {role}\nreason: {reason}\n")
+            }
+            TelemetryEvent::HallucinatedRejectionDiscarded { role, reason } => {
+                format!("kind: HallucinatedRejectionDiscarded\nrole: {role}\nreason: {reason}\n")
             }
             TelemetryEvent::PlannerOutputParsed {
                 task_count,

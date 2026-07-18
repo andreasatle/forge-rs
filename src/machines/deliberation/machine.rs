@@ -54,6 +54,12 @@
 //!     → WaitingReferee(producer_content=pc, critic_advisory=AcceptedReview)
 //!     + RunRole(Referee, …)
 //!
+//! WaitingCritic(pc) + CriticRejected { reason } if is_structural_defect_claim(reason)
+//!     → WaitingCritic(pc)  (unchanged)
+//!     + DiscardHallucinatedRejection(Critic, reason, retry=RunRole(Critic, …))
+//!     (reason asserts a syntax/malformed-JSON defect that is impossible for
+//!     already grammar-validated content; discarded, not forwarded to Referee)
+//!
 //! WaitingCritic(pc) + CriticRejected { reason }
 //!     → WaitingReferee(producer_content=pc, critic_advisory=RejectedReason)
 //!     + RunRole(Referee, producer_content=pc, critic_content=reason)
@@ -64,6 +70,11 @@
 //!
 //! WaitingReferee(pc, advisory) + RefereeAccepted
 //!     → Complete { output: pc }   ← output is producer content
+//!
+//! WaitingReferee(pc, advisory) + RefereeRejected { reason } if is_structural_defect_claim(reason)
+//!     → WaitingReferee(pc, advisory)  (unchanged)
+//!     + DiscardHallucinatedRejection(Referee, reason, retry=RunRole(Referee, …))
+//!     (does not consume revision budget)
 //!
 //! WaitingReferee(…) + RefereeRejected { reason }
 //!     feedback.len() < max_revisions:
@@ -83,6 +94,7 @@ use crate::machines::scheduler::FailureKind;
 
 use super::effect::DeliberationEffect;
 use super::event::DeliberationEvent;
+use super::hallucination::is_structural_defect_claim;
 use super::state::DeliberationState;
 use super::types::DeliberationFailureReason;
 use super::types::{
@@ -326,6 +338,43 @@ impl DeliberationMachine {
                 }
             }
 
+            // Critic rejected on a provably false structural-defect claim
+            // (content already passed grammar-constrained decoding and
+            // structural validation) → discard and re-request a fresh Critic
+            // decision. The false claim never reaches the Referee's context.
+            (
+                DeliberationState::WaitingCritic {
+                    request,
+                    producer_content,
+                    feedback,
+                },
+                DeliberationEvent::CriticRejected { reason },
+            ) if is_structural_defect_claim(&reason) => {
+                let retry = DeliberationEffect::RunRole {
+                    role: DeliberationRole::Critic,
+                    objective: request.objective.clone(),
+                    context: Box::new(request.context.clone()),
+                    node_kind: request.node_kind.clone(),
+                    worker_role: request.worker_role.clone(),
+                    test_plan_context: request.test_plan_context.clone(),
+                    producer_content: Some(producer_content.clone()),
+                    critic_content: None,
+                    feedback: feedback.clone(),
+                };
+                Transition {
+                    effects: vec![DeliberationEffect::DiscardHallucinatedRejection {
+                        role: DeliberationRole::Critic,
+                        reason,
+                        retry: Box::new(retry),
+                    }],
+                    state: DeliberationState::WaitingCritic {
+                        request,
+                        producer_content,
+                        feedback,
+                    },
+                }
+            }
+
             // Critic rejected → route to Referee with a typed advisory reason.
             // The Critic is advisory; only the Referee is authoritative.
             (
@@ -416,6 +465,45 @@ impl DeliberationMachine {
                 Transition {
                     effects: vec![],
                     state: DeliberationState::Complete { output },
+                }
+            }
+
+            // Referee rejected on a provably false structural-defect claim
+            // (content already passed grammar-constrained decoding and
+            // structural validation) → discard and re-request a fresh
+            // Referee decision. Does not consume the revision budget.
+            (
+                DeliberationState::WaitingReferee {
+                    request,
+                    producer_content,
+                    critic_advisory,
+                    feedback,
+                },
+                DeliberationEvent::RefereeRejected { reason },
+            ) if is_structural_defect_claim(&reason) => {
+                let retry = DeliberationEffect::RunRole {
+                    role: DeliberationRole::Referee,
+                    objective: request.objective.clone(),
+                    context: Box::new(request.context.clone()),
+                    node_kind: request.node_kind.clone(),
+                    worker_role: request.worker_role.clone(),
+                    test_plan_context: request.test_plan_context.clone(),
+                    producer_content: Some(producer_content.clone()),
+                    critic_content: Some(critic_advisory.as_referee_content().to_string()),
+                    feedback: feedback.clone(),
+                };
+                Transition {
+                    effects: vec![DeliberationEffect::DiscardHallucinatedRejection {
+                        role: DeliberationRole::Referee,
+                        reason,
+                        retry: Box::new(retry),
+                    }],
+                    state: DeliberationState::WaitingReferee {
+                        request,
+                        producer_content,
+                        critic_advisory,
+                        feedback,
+                    },
                 }
             }
 

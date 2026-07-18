@@ -12,6 +12,7 @@ use crate::machines::scheduler::FailureKind;
 
 mod critic;
 mod failure;
+mod hallucination;
 mod producer;
 mod referee;
 mod revision;

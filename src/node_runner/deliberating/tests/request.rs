@@ -86,6 +86,46 @@ fn plan_stamps_work_and_validation_children_with_distinct_plans() {
 }
 
 #[test]
+fn plan_node_revision_budget_survives_more_rejections_than_work_node_allows() {
+    // Invariant: Plan-node Critic/Referee judgment gates every downstream
+    // node, so it gets a larger revision budget than Work nodes (max_revisions
+    // = 3 vs 1). Script exactly 3 Referee rejections followed by acceptance
+    // on the 4th Producer attempt — a Work-node budget of 1 would exhaust
+    // after the 2nd rejection, so completion here proves the Plan-node
+    // budget actually took effect end to end, not just in isolated state.
+    let plan_json = |n: usize| {
+        format!(
+            r#"{{"tasks":[{{"id":"task-{n}","objective":"Modify main.py","operation":"modify","targets":["main.py"],"depends_on":[]}}]}}"#
+        )
+    };
+    let provider = ScriptedProvider::from_strs(&[
+        &plan_json(1),
+        r#"{"status":"accepted","content":"looks fine"}"#,
+        r#"{"status":"rejected","reason":"needs more detail"}"#,
+        &plan_json(2),
+        r#"{"status":"accepted","content":"looks fine"}"#,
+        r#"{"status":"rejected","reason":"still needs more detail"}"#,
+        &plan_json(3),
+        r#"{"status":"accepted","content":"looks fine"}"#,
+        r#"{"status":"rejected","reason":"still not enough detail"}"#,
+        &plan_json(4),
+        r#"{"status":"accepted","content":"looks fine"}"#,
+        r#"{"status":"accepted","content":"approved"}"#,
+    ]);
+    let runner = DeliberatingNodeRunner::new(&provider, &provider);
+
+    let result = runner.run_node(
+        plan_request("Modify main.py after three revisions"),
+        &NoopTelemetry,
+    );
+
+    assert!(
+        matches!(result, NodeRunResult::PlanAccepted(_)),
+        "expected PlanAccepted after 3 revisions within a Plan node's budget"
+    );
+}
+
+#[test]
 fn deliberating_runner_threads_max_tokens_to_provider() {
     let provider = CapturingProvider::from_strs(&[
         r#"{"summary":"task completed"}"#,

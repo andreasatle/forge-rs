@@ -862,3 +862,69 @@ fn pooled_handler_builds_role_request_from_effect_not_construction_state() {
         "second RunRole effect declared Work, same handler instance"
     );
 }
+
+#[test]
+fn discard_hallucinated_rejection_records_telemetry_and_dispatches_retry() {
+    // Invariant: DiscardHallucinatedRejection must (1) record a dedicated,
+    // clearly-labeled telemetry event carrying the discarded role and reason
+    // for observability, and (2) still dispatch the wrapped retry effect
+    // through the same handler, returning the retry's own resulting event —
+    // the discard is transparent to the caller beyond the telemetry record.
+    let runner = ScriptedRoleRunner::with_outputs(vec![accepted_output("fresh review", false)]);
+    let handler = DeliberationHandler {
+        runner,
+        artifact_view: None,
+        work_attempt: None,
+        work_requires_artifact_mutation: false,
+        plan_validation_context: None,
+    };
+
+    let retry = run_role_effect(
+        DeliberationRole::Critic,
+        NodeKind::Work,
+        "write a poem",
+        Some("draft content"),
+        None,
+        vec![],
+    );
+    let effect = DeliberationEffect::DiscardHallucinatedRejection {
+        role: DeliberationRole::Critic,
+        reason: "This is invalid JSON with a syntax error.".to_string(),
+        retry: Box::new(retry),
+    };
+
+    let telemetry = crate::telemetry::VecTelemetry::new();
+    let event = handler.handle_effect_with_telemetry(effect, &telemetry);
+
+    assert!(
+        matches!(
+            event,
+            DeliberationEvent::CriticAccepted { ref content } if content == "fresh review"
+        ),
+        "expected the retry's own event to surface, got {event:?}"
+    );
+    assert_eq!(
+        handler.runner.requests.borrow().len(),
+        1,
+        "the wrapped retry must have actually been dispatched to the role runner"
+    );
+
+    let records = telemetry.records();
+    let discard_record = records
+        .iter()
+        .find(|r| {
+            matches!(
+                r.event,
+                crate::telemetry::TelemetryEvent::HallucinatedRejectionDiscarded { .. }
+            )
+        })
+        .expect("expected a HallucinatedRejectionDiscarded telemetry record");
+    if let crate::telemetry::TelemetryEvent::HallucinatedRejectionDiscarded { role, reason } =
+        &discard_record.event
+    {
+        assert_eq!(role, "Critic");
+        assert!(reason.contains("syntax error"));
+    } else {
+        panic!("expected HallucinatedRejectionDiscarded");
+    }
+}

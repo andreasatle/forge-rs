@@ -257,6 +257,21 @@ impl<R: RoleRunner> DeliberationHandler<R> {
                     Err(retry) => DeliberationEvent::ProducerValidationRejected { content, retry },
                 }
             }
+            DeliberationEffect::DiscardHallucinatedRejection {
+                role,
+                reason,
+                retry,
+            } => {
+                telemetry.record(TelemetryRecord::new_with_subsource(
+                    "DeliberationHandler",
+                    format!("{role:?}"),
+                    TelemetryEvent::HallucinatedRejectionDiscarded {
+                        role: format!("{role:?}"),
+                        reason,
+                    },
+                ));
+                self.handle_effect_with_telemetry(*retry, telemetry)
+            }
         }
     }
 

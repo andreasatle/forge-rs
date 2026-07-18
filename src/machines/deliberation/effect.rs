@@ -49,4 +49,20 @@ pub enum DeliberationEffect {
         /// plan-shaped vs work-shaped semantic validation.
         node_kind: NodeKind,
     },
+    /// A Critic or Referee rejection was discarded because its reason
+    /// asserted a structural JSON defect (syntax error, malformed/invalid
+    /// JSON, an unclosed field) that is mechanically impossible for content
+    /// that already passed grammar-constrained decoding and structural
+    /// validation. The claim is provably false rather than a judgment call,
+    /// so it is not honored as a legitimate rejection and does not consume
+    /// any revision budget. `retry` re-invokes the same role for a fresh
+    /// decision.
+    DiscardHallucinatedRejection {
+        /// The role whose rejection was discarded.
+        role: DeliberationRole,
+        /// The provably false reason text that was discarded.
+        reason: String,
+        /// The `RunRole` effect that re-invokes the same role.
+        retry: Box<DeliberationEffect>,
+    },
 }

@@ -288,6 +288,9 @@ fn revision_then_acceptance_completes_with_revised_producer_content() {
                 DeliberationEffect::ValidateProducer { content, .. } => {
                     DeliberationEvent::ProducerValidationAccepted { content }
                 }
+                DeliberationEffect::DiscardHallucinatedRejection { .. } => {
+                    panic!("unexpected DiscardHallucinatedRejection")
+                }
             }
         }
 

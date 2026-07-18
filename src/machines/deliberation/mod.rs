@@ -35,8 +35,14 @@
 //! - `WaitingProducer + ProducerRejected | ProducerFailed` → `Failed`.
 //! - `WaitingCritic + CriticAccepted` → `WaitingReferee` + `RunRole(Referee)`.
 //! - `WaitingCritic + CriticRejected` → `WaitingReferee` with advisory critic feedback.
+//! - `WaitingCritic + CriticRejected` with a provably false structural-defect
+//!   claim (syntax error/malformed JSON against already grammar-validated
+//!   content) → discarded, `WaitingCritic` re-requests a fresh Critic decision.
 //! - `WaitingCritic + CriticFailed` → `Failed`.
 //! - `WaitingReferee + RefereeAccepted` → `Complete` with producer content.
+//! - `WaitingReferee + RefereeRejected` with a provably false structural-defect
+//!   claim → discarded, `WaitingReferee` re-requests a fresh Referee decision;
+//!   does not consume the revision budget.
 //! - `WaitingReferee + RefereeRejected` and revisions remain
 //!   → `WaitingProducer` with updated `feedback`
 //!   + `RunRole(Producer, feedback)`.
@@ -48,6 +54,7 @@
 mod effect;
 mod event;
 mod feedback;
+mod hallucination;
 mod handler;
 mod machine;
 mod state;

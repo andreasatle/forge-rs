@@ -26,6 +26,13 @@ pub(crate) fn prepare_deliberation<'a, P: ProviderClient>(
 ) -> PreparedDeliberation<'a, P> {
     let plan_validation_context = build_plan_validation_context(request, policy);
     let context = build_deliberation_context(request, context_config);
+    // Plan-node Critic/Referee judgment gates every downstream node, so it
+    // gets a larger revision budget than Work nodes to absorb sampling
+    // variance before the scheduler gives up and re-plans from scratch.
+    let max_revisions = match request.kind {
+        NodeKind::Plan => 3,
+        NodeKind::Work => 1,
+    };
     let initial_state = DeliberationState::Ready {
         request: DeliberationRequest {
             objective: request.objective.clone(),
@@ -33,7 +40,7 @@ pub(crate) fn prepare_deliberation<'a, P: ProviderClient>(
             node_kind: request.kind.clone(),
             worker_role: request.worker_role.clone(),
             test_plan_context: request.test_plan_context.clone(),
-            max_revisions: 1,
+            max_revisions,
         },
     };
     let handler = build_handler(

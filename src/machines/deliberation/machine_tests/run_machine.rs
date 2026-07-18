@@ -46,6 +46,9 @@ fn run_machine_deliberation_smoke_test() {
                 DeliberationEffect::ValidateProducer { content, .. } => {
                     DeliberationEvent::ProducerValidationAccepted { content }
                 }
+                DeliberationEffect::DiscardHallucinatedRejection { .. } => {
+                    panic!("unexpected DiscardHallucinatedRejection")
+                }
             }
         }
 
