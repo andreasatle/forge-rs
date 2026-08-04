@@ -401,28 +401,42 @@ mod tests {
 
     #[test]
     fn accepts_matching_producer_summary_shape() {
-        let grammar = Grammar::parse(crate::roles::policy::PRODUCER_GBNF);
+        let grammar = Grammar::parse(&crate::roles::policy::PRODUCER_GBNF);
         assert!(grammar.accepts(r#"{"summary":"did the thing"}"#));
     }
 
     #[test]
     fn rejects_wrong_field_name() {
-        let grammar = Grammar::parse(crate::roles::policy::PRODUCER_GBNF);
+        let grammar = Grammar::parse(&crate::roles::policy::PRODUCER_GBNF);
         assert!(!grammar.accepts(r#"{"result":"did the thing"}"#));
     }
 
     #[test]
     fn rejects_trailing_garbage() {
-        let grammar = Grammar::parse(crate::roles::policy::PRODUCER_GBNF);
+        let grammar = Grammar::parse(&crate::roles::policy::PRODUCER_GBNF);
         assert!(!grammar.accepts(r#"{"summary":"did the thing"} extra"#));
     }
 
     #[test]
     fn accepts_either_branch_of_a_top_level_alternation() {
-        let grammar = Grammar::parse(crate::roles::policy::ROLE_GBNF);
-        assert!(grammar.accepts(r#"{"status":"accepted","content":"ok"}"#));
-        assert!(grammar.accepts(r#"{"status":"rejected","reason":"no"}"#));
-        assert!(!grammar.accepts(r#"{"status":"maybe","content":"ok"}"#));
+        let grammar = Grammar::parse(&crate::roles::policy::ROLE_GBNF);
+        assert!(grammar.accepts(r#"{"status":"accepted","content":"looks good"}"#));
+        assert!(grammar.accepts(r#"{"status":"rejected","reason":"not done yet"}"#));
+        assert!(!grammar.accepts(r#"{"status":"maybe","content":"looks good"}"#));
+    }
+
+    // Regression test for a degenerate-output bug: nothing constrained the
+    // Critic/Referee `content`/`reason` field's length, so a weak model
+    // could satisfy the grammar with a near-empty echo of the field name
+    // itself (e.g. `"content":"status"`), only caught after generation by
+    // `parser::MIN_CONTENT_LENGTH`. The grammar must now refuse to sample a
+    // `content`/`reason` shorter than that threshold in the first place.
+    #[test]
+    fn rejects_content_shorter_than_min_content_length() {
+        let role = Grammar::parse(&crate::roles::policy::ROLE_GBNF);
+        assert!(!role.accepts(r#"{"status":"accepted","content":"status"}"#));
+        assert!(!role.accepts(r#"{"status":"rejected","reason":"short"}"#));
+        assert!(role.accepts(r#"{"status":"accepted","content":"eightplus"}"#));
     }
 
     // Regression test for a runaway-generation bug: the root rule used to end
@@ -432,16 +446,16 @@ mod tests {
     // the closing brace/bracket so no further tokens are grammar-legal.
     #[test]
     fn rejects_trailing_whitespace_after_closing_brace() {
-        let producer = Grammar::parse(crate::roles::policy::PRODUCER_GBNF);
+        let producer = Grammar::parse(&crate::roles::policy::PRODUCER_GBNF);
         assert!(!producer.accepts("{\"summary\":\"did the thing\"} \n"));
 
-        let role = Grammar::parse(crate::roles::policy::ROLE_GBNF);
-        assert!(!role.accepts("{\"status\":\"accepted\",\"content\":\"ok\"}\n\n"));
+        let role = Grammar::parse(&crate::roles::policy::ROLE_GBNF);
+        assert!(!role.accepts("{\"status\":\"accepted\",\"content\":\"looks good\"}\n\n"));
 
-        let producer_tool = Grammar::parse(crate::roles::policy::PRODUCER_TOOL_GBNF);
+        let producer_tool = Grammar::parse(&crate::roles::policy::PRODUCER_TOOL_GBNF);
         assert!(!producer_tool.accepts("{\"tool\":\"list_files\"} "));
 
-        let reviewer_tool = Grammar::parse(crate::roles::policy::REVIEWER_TOOL_GBNF);
+        let reviewer_tool = Grammar::parse(&crate::roles::policy::REVIEWER_TOOL_GBNF);
         assert!(!reviewer_tool.accepts("{\"tool\":\"list_files\"} "));
 
         let planner_with_roles = Grammar::parse(crate::roles::policy::PLANNER_GBNF_WITH_ROLES);

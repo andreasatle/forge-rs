@@ -198,17 +198,17 @@ fn select_grammar(
     match role {
         DeliberationRole::Critic | DeliberationRole::Referee => {
             if tools_active {
-                REVIEWER_TOOL_GBNF
+                REVIEWER_TOOL_GBNF.as_str()
             } else {
-                ROLE_GBNF
+                ROLE_GBNF.as_str()
             }
         }
         DeliberationRole::Producer => match node_kind {
             NodeKind::Work => {
                 if tools_active {
-                    PRODUCER_TOOL_GBNF
+                    PRODUCER_TOOL_GBNF.as_str()
                 } else {
-                    PRODUCER_GBNF
+                    PRODUCER_GBNF.as_str()
                 }
             }
             NodeKind::Plan => {

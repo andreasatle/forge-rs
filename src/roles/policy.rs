@@ -14,32 +14,73 @@
 use crate::machines::deliberation::DeliberationRole;
 use crate::machines::scheduler::NodeKind;
 
-/// GBNF grammar constraining output to the Work-node Producer's
-/// `{"summary": "..."}` schema.
-pub(crate) const PRODUCER_GBNF: &str = r#"root ::= "{" ws "\"summary\"" ws ":" ws string ws "}"
+/// Shared `ws` rule used by every GBNF grammar constant below.
+const WS_RULE: &str = r#"ws ::= ([ \t\n] ws)?"#;
 
-string ::=
+/// Shared unconstrained-string GBNF rule: any JSON string, no minimum
+/// length. Used for tool-call payload fields (file paths, `replace_text`
+/// old/new, `write_file` content) that have no legitimate minimum length —
+/// unlike the role-decision fields constrained by
+/// [`content_string_rules`].
+const STRING_RULE: &str = r#"string ::=
   "\"" (
     [^\\"\x7F\x00-\x1F] |
     "\\" (["\\/bfnrt] | "u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F])
-  )* "\"" ws
+  )* "\"" ws"#;
 
-ws ::= ([ \t\n] ws)?"#;
+/// GBNF `content-string`/`content-char` rules: like [`STRING_RULE`] but
+/// requires at least [`MIN_CONTENT_LENGTH`](super::parser::MIN_CONTENT_LENGTH)
+/// characters. Used only for role-decision fields (Producer `summary`,
+/// accepted `content`, rejected `reason`) — the same fields
+/// [`super::parser`]'s post-parse `validate_meaningful_field` already
+/// rejects when too short. Enforcing the floor in the grammar too means a
+/// degenerate short value (e.g. a `content` field that just echoes back
+/// the literal text "content") can't be sampled in the first place, rather
+/// than being sampled and then discarded after the fact. Deriving both from
+/// the same constant keeps the two checks from drifting apart.
+fn content_string_rules() -> String {
+    let mut rule = String::from(
+        r#"content-char ::=
+  [^\\"\x7F\x00-\x1F] |
+  "\\" (["\\/bfnrt] | "u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F])
+
+content-string ::= "\"" "#,
+    );
+    rule.push_str(&"content-char ".repeat(super::parser::MIN_CONTENT_LENGTH));
+    rule.push_str(r#"content-char* "\"" ws"#);
+    rule
+}
+
+/// GBNF grammar constraining output to the Work-node Producer's
+/// `{"summary": "..."}` schema.
+pub(crate) static PRODUCER_GBNF: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+    let mut g = String::from(
+        r#"root ::= "{" ws "\"summary\"" ws ":" ws content-string ws "}"
+
+"#,
+    );
+    g.push_str(&content_string_rules());
+    g.push_str("\n\n");
+    g.push_str(WS_RULE);
+    g
+});
 
 /// GBNF grammar constraining output to the Critic/Referee accept-or-reject
 /// schema: `{"status":"accepted","content":"..."}` or
 /// `{"status":"rejected","reason":"..."}`.
-pub(crate) const ROLE_GBNF: &str = r#"root ::= accepted | rejected
-accepted ::= "{" ws "\"status\"" ws ":" ws "\"accepted\"" ws "," ws "\"content\"" ws ":" ws string ws "}"
-rejected ::= "{" ws "\"status\"" ws ":" ws "\"rejected\"" ws "," ws "\"reason\"" ws ":" ws string ws "}"
+pub(crate) static ROLE_GBNF: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+    let mut g = String::from(
+        r#"root ::= accepted | rejected
+accepted ::= "{" ws "\"status\"" ws ":" ws "\"accepted\"" ws "," ws "\"content\"" ws ":" ws content-string ws "}"
+rejected ::= "{" ws "\"status\"" ws ":" ws "\"rejected\"" ws "," ws "\"reason\"" ws ":" ws content-string ws "}"
 
-string ::=
-  "\"" (
-    [^\\"\x7F\x00-\x1F] |
-    "\\" (["\\/bfnrt] | "u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F])
-  )* "\"" ws
-
-ws ::= ([ \t\n] ws)?"#;
+"#,
+    );
+    g.push_str(&content_string_rules());
+    g.push_str("\n\n");
+    g.push_str(WS_RULE);
+    g
+});
 
 /// GBNF grammar constraining the Work-node Producer's inner tool-call loop:
 /// any of the five file tool calls, or the final `{"summary":"..."}`
@@ -49,21 +90,27 @@ ws ::= ([ \t\n] ws)?"#;
 ///
 /// Field order within each tool call matches the schema described to the
 /// model in [`super::prompt::render_tool_section`].
-pub(crate) const PRODUCER_TOOL_GBNF: &str = r#"root ::= write-file | replace-text | read-file | list-files | delete-file | summary
+pub(crate) static PRODUCER_TOOL_GBNF: std::sync::LazyLock<String> = std::sync::LazyLock::new(
+    || {
+        let mut g = String::from(
+            r#"root ::= write-file | replace-text | read-file | list-files | delete-file | summary
 write-file ::= "{" ws "\"tool\"" ws ":" ws "\"write_file\"" ws "," ws "\"path\"" ws ":" ws string ws "," ws "\"content\"" ws ":" ws string ws "}"
 replace-text ::= "{" ws "\"tool\"" ws ":" ws "\"replace_text\"" ws "," ws "\"path\"" ws ":" ws string ws "," ws "\"old\"" ws ":" ws string ws "," ws "\"new\"" ws ":" ws string ws "}"
 read-file ::= "{" ws "\"tool\"" ws ":" ws "\"read_file\"" ws "," ws "\"path\"" ws ":" ws string ws "}"
 list-files ::= "{" ws "\"tool\"" ws ":" ws "\"list_files\"" ws "}"
 delete-file ::= "{" ws "\"tool\"" ws ":" ws "\"delete_file\"" ws "," ws "\"path\"" ws ":" ws string ws "}"
-summary ::= "{" ws "\"summary\"" ws ":" ws string ws "}"
+summary ::= "{" ws "\"summary\"" ws ":" ws content-string ws "}"
 
-string ::=
-  "\"" (
-    [^\\"\x7F\x00-\x1F] |
-    "\\" (["\\/bfnrt] | "u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F])
-  )* "\"" ws
-
-ws ::= ([ \t\n] ws)?"#;
+"#,
+        );
+        g.push_str(STRING_RULE);
+        g.push_str("\n\n");
+        g.push_str(&content_string_rules());
+        g.push_str("\n\n");
+        g.push_str(WS_RULE);
+        g
+    },
+);
 
 /// GBNF grammar constraining the Critic/Referee inner tool-call loop: the two
 /// read-only tool calls (`read_file`, `list_files`), or the final
@@ -73,19 +120,25 @@ ws ::= ([ \t\n] ws)?"#;
 ///
 /// Critic and Referee never receive write tools, so this grammar omits
 /// `write_file`, `replace_text`, and `delete_file` entirely.
-pub(crate) const REVIEWER_TOOL_GBNF: &str = r#"root ::= read-file | list-files | accepted | rejected
+pub(crate) static REVIEWER_TOOL_GBNF: std::sync::LazyLock<String> = std::sync::LazyLock::new(
+    || {
+        let mut g = String::from(
+            r#"root ::= read-file | list-files | accepted | rejected
 read-file ::= "{" ws "\"tool\"" ws ":" ws "\"read_file\"" ws "," ws "\"path\"" ws ":" ws string ws "}"
 list-files ::= "{" ws "\"tool\"" ws ":" ws "\"list_files\"" ws "}"
-accepted ::= "{" ws "\"status\"" ws ":" ws "\"accepted\"" ws "," ws "\"content\"" ws ":" ws string ws "}"
-rejected ::= "{" ws "\"status\"" ws ":" ws "\"rejected\"" ws "," ws "\"reason\"" ws ":" ws string ws "}"
+accepted ::= "{" ws "\"status\"" ws ":" ws "\"accepted\"" ws "," ws "\"content\"" ws ":" ws content-string ws "}"
+rejected ::= "{" ws "\"status\"" ws ":" ws "\"rejected\"" ws "," ws "\"reason\"" ws ":" ws content-string ws "}"
 
-string ::=
-  "\"" (
-    [^\\"\x7F\x00-\x1F] |
-    "\\" (["\\/bfnrt] | "u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F])
-  )* "\"" ws
-
-ws ::= ([ \t\n] ws)?"#;
+"#,
+        );
+        g.push_str(STRING_RULE);
+        g.push_str("\n\n");
+        g.push_str(&content_string_rules());
+        g.push_str("\n\n");
+        g.push_str(WS_RULE);
+        g
+    },
+);
 
 /// GBNF grammar constraining output to the `PlannerOutput` schema used by
 /// adapters that define worker roles: the top-level `kind` field is
