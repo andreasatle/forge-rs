@@ -4,6 +4,7 @@
 //! structured planner rules and artifact-mutation rules; this module owns the
 //! natural-language guidance shown to the model on the resulting retry.
 
+use super::types::REPLACE_TEXT_ESCALATION_GUIDANCE;
 use crate::node_runner::planner::PlannerValidationError;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -90,7 +91,14 @@ pub(super) fn validate_work_output(
 pub(super) fn work_validation_feedback(error: &WorkSemanticValidationError) -> String {
     match error {
         WorkSemanticValidationError::MissingArtifactMutation => {
-            "Accepted Work results must modify the artifact. Use write_file by default when creating a file or replacing most or all of an existing file. Use replace_text only for small, localized edits after reading the file and providing an exact old string that occurs once; whitespace, indentation, or formatting differences will cause replace_text to fail. If a replace_text attempt could not be validated for a whole-file rewrite, switch to write_file instead of retrying another replace_text.".to_string()
+            format!(
+                "Accepted Work results must modify the artifact. Use write_file by default \
+                 when creating a file or replacing most or all of an existing file. Use \
+                 replace_text only for small, localized edits after reading the file and \
+                 providing an exact old string that occurs once; whitespace, indentation, or \
+                 formatting differences will cause replace_text to fail. \
+                 {REPLACE_TEXT_ESCALATION_GUIDANCE}"
+            )
         }
     }
 }

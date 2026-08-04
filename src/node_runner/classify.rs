@@ -1,5 +1,6 @@
 //! Typed failure classification.
 
+use crate::machines::deliberation::REPLACE_TEXT_ESCALATION_GUIDANCE;
 use crate::machines::scheduler::{FailureKind, RecoveryAction};
 
 /// Classify a typed failure kind into the appropriate [`RecoveryAction`].
@@ -20,9 +21,8 @@ pub fn classify_deliberation_failure(kind: FailureKind, message: &str) -> Recove
                  by default when creating a file or replacing most or all of an existing file. \
                  Use replace_text only for small, localized edits after reading the file and \
                  providing an exact old string that occurs once; whitespace, indentation, or \
-                 formatting differences will cause replace_text to fail. If a workspace \
-                 mutation cannot be validated after a failed replace_text, switch to write_file \
-                 for whole-file rewrites instead of retrying another replace_text."
+                 formatting differences will cause replace_text to fail. \
+                 {REPLACE_TEXT_ESCALATION_GUIDANCE}"
             ),
         },
         FailureKind::DeliberationFailure | FailureKind::PlannerValidationFailure => {
@@ -68,6 +68,26 @@ mod tests {
         assert!(
             matches!(recovery, RecoveryAction::Split { .. }),
             "expected Split, got {recovery:?}"
+        );
+    }
+
+    #[test]
+    fn work_semantic_validation_retry_includes_shared_escalation_guidance() {
+        // Invariant: the escalated (scheduler-level) retry message must read
+        // the same replace_text -> write_file escalation rule as the
+        // immediate in-loop retry feedback in
+        // `crate::machines::deliberation::feedback::work_validation_feedback`,
+        // not an independently-worded copy.
+        let recovery = classify_deliberation_failure(
+            FailureKind::WorkSemanticValidationFailure,
+            "accepted work did not mutate the WorkAttempt workspace",
+        );
+        let RecoveryAction::Retry { message } = recovery else {
+            panic!("expected Retry, got {recovery:?}");
+        };
+        assert!(
+            message.contains(REPLACE_TEXT_ESCALATION_GUIDANCE),
+            "escalated retry message must include the shared escalation rule; got: {message}"
         );
     }
 

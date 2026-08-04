@@ -69,5 +69,6 @@ pub use state::DeliberationState;
 pub use types::{
     ArtifactContext, CriticAdvisory, DeliberationContext, DeliberationFailureReason,
     DeliberationOutput, DeliberationRequest, DeliberationRole, DeliberationTerminalOutput,
-    ProducerValidationRetry, RevisionFeedback, SelectedFileContent,
+    ProducerValidationRetry, REPLACE_TEXT_ESCALATION_GUIDANCE, RevisionFeedback,
+    SelectedFileContent,
 };

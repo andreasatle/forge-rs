@@ -1,7 +1,9 @@
 //! Prompt rendering functions for role invocations.
 
 use crate::machines::deliberation::{ArtifactContext, DeliberationContext};
-use crate::machines::deliberation::{DeliberationRole, RevisionFeedback};
+use crate::machines::deliberation::{
+    DeliberationRole, REPLACE_TEXT_ESCALATION_GUIDANCE, RevisionFeedback,
+};
 use crate::machines::scheduler::{NodeKind, TestPlanContext};
 use crate::roles::{TargetView, TargetViewKind};
 use crate::tools::{FileToolPolicy, FileToolResponse};
@@ -95,13 +97,14 @@ pub(super) fn render_tool_section(policy: &FileToolPolicy) -> String {
              - replace_text: `tool` must be \"replace_text\"; `path` must be a target file path string; `old` must be the exact existing text; `new` must be the replacement text.\n\
              - delete_file: `tool` must be \"delete_file\"; `path` must be a target file path string.\n",
         );
-        s.push_str(
+        s.push_str(&format!(
             "Tool selection guidance:\n\
              - Use write_file by default when creating a file or replacing most or all of an existing file.\n\
              - Use replace_text only for small, localized edits after you have read the file and can provide an exact old string that occurs once.\n\
              - replace_text matches bytes exactly; whitespace, indentation, or formatting differences will cause it to fail.\n\
-             - Newlines in write_file content must be real newline characters encoded as \\n in the JSON string, not the literal two-character sequence backslash followed by n. Double-escaping produces a single-line file that fails to parse.\n",
-        );
+             - {REPLACE_TEXT_ESCALATION_GUIDANCE}\n\
+             - Newlines in write_file content must be real newline characters encoded as \\n in the JSON string, not the literal two-character sequence backslash followed by n. Double-escaping produces a single-line file that fails to parse.\n"
+        ));
     }
     s.push_str(
         "You may return either:\n\
@@ -384,12 +387,12 @@ pub(super) fn render_role_prompt_with_test_plan_context(input: RolePromptRender<
         parts.push(format!("# Critic Content\n{cc}"));
     }
     if !input.feedback.is_empty() {
-        let reasons: Vec<String> = input
-            .feedback
-            .iter()
-            .map(|f| format!("- {}", f.reason))
-            .collect();
-        parts.push(format!("# Revision Feedback\n{}", reasons.join("\n")));
+        let reasons = render_revision_feedback(input.feedback);
+        parts.push(format!(
+            "# Revision Feedback\n{reasons}\n\
+             Before repeating a prior reason, re-check the Producer Content above — has \
+             this specific concern already been addressed?"
+        ));
     }
     if !input.worker_role_descriptions.is_empty() {
         parts.push(render_worker_role_descriptions(
@@ -398,6 +401,30 @@ pub(super) fn render_role_prompt_with_test_plan_context(input: RolePromptRender<
     }
     parts.push(input.system.to_string());
     parts.join("\n\n")
+}
+
+/// Collapses consecutive revision-feedback entries with identical reasons so
+/// a stale Referee rejection reason repeated unchanged across rounds is not
+/// restated verbatim on every line.
+fn render_revision_feedback(feedback: &[RevisionFeedback]) -> String {
+    let mut lines = Vec::new();
+    let mut idx = 0;
+    while idx < feedback.len() {
+        let reason = &feedback[idx].reason;
+        let mut run_len = 1;
+        while idx + run_len < feedback.len() && feedback[idx + run_len].reason == *reason {
+            run_len += 1;
+        }
+        if run_len > 1 {
+            lines.push(format!(
+                "- {reason} (repeated unchanged for {run_len} consecutive rounds)"
+            ));
+        } else {
+            lines.push(format!("- {reason}"));
+        }
+        idx += run_len;
+    }
+    lines.join("\n")
 }
 
 /// Renders the "Available worker roles" section shown to the Plan-node
@@ -645,6 +672,104 @@ fn indent_target_state_content(content: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::machines::scheduler::TestPlanContext;
+
+    #[test]
+    fn repeated_identical_revision_feedback_is_not_duplicated_verbatim() {
+        // Invariant: when the Referee rejects with the same reason across
+        // consecutive rounds, the rendered prompt must not restate the full
+        // reason text once per round — repeated verbatim text right before
+        // `# Identity` is a strong copy-shortcut target for a small model.
+        let stale_reason = "the implementation still does not handle the edge case".to_string();
+        let feedback = vec![
+            RevisionFeedback {
+                reason: stale_reason.clone(),
+            },
+            RevisionFeedback {
+                reason: stale_reason.clone(),
+            },
+            RevisionFeedback {
+                reason: stale_reason.clone(),
+            },
+        ];
+        let context = DeliberationContext::default();
+        let test_plan_context = TestPlanContext::default();
+        let prompt = render_role_prompt_with_test_plan_context(RolePromptRender {
+            system: "system prompt",
+            role: &DeliberationRole::Producer,
+            objective: "fix the bug",
+            context: &context,
+            producer_content: None,
+            critic_content: None,
+            feedback: &feedback,
+            target_views: &[],
+            test_plan_context: &test_plan_context,
+            review_contract: None,
+            worker_role_descriptions: &[],
+        });
+
+        let occurrences = prompt.matches(stale_reason.as_str()).count();
+        assert_eq!(
+            occurrences, 1,
+            "identical feedback reason repeated across rounds must appear only once in the \
+             rendered prompt; got {occurrences} occurrences in:\n{prompt}"
+        );
+        assert!(
+            prompt.contains("repeated unchanged for 3 consecutive rounds"),
+            "collapsed entry must note how many consecutive rounds repeated it; got:\n{prompt}"
+        );
+        assert!(
+            prompt.contains("Before repeating a prior reason, re-check the Producer Content"),
+            "prompt must instruct the model to re-check Producer Content before repeating a \
+             prior reason; got:\n{prompt}"
+        );
+    }
+
+    #[test]
+    fn distinct_revision_feedback_entries_are_all_rendered() {
+        // Invariant: dedup only collapses consecutive *identical* entries;
+        // distinct feedback across rounds must still all reach the model.
+        let feedback = vec![
+            RevisionFeedback {
+                reason: "first reason".to_string(),
+            },
+            RevisionFeedback {
+                reason: "second reason".to_string(),
+            },
+        ];
+        let context = DeliberationContext::default();
+        let test_plan_context = TestPlanContext::default();
+        let prompt = render_role_prompt_with_test_plan_context(RolePromptRender {
+            system: "system prompt",
+            role: &DeliberationRole::Producer,
+            objective: "fix the bug",
+            context: &context,
+            producer_content: None,
+            critic_content: None,
+            feedback: &feedback,
+            target_views: &[],
+            test_plan_context: &test_plan_context,
+            review_contract: None,
+            worker_role_descriptions: &[],
+        });
+
+        assert!(prompt.contains("first reason"));
+        assert!(prompt.contains("second reason"));
+        assert!(!prompt.contains("repeated unchanged"));
+    }
+
+    #[test]
+    fn proactive_tool_guidance_includes_replace_text_escalation_rule() {
+        // Invariant: the model must see the replace_text -> write_file
+        // escalation rule before it ever attempts a tool call, not only
+        // after a reactive rejection.
+        let policy = FileToolPolicy::default();
+        let section = render_tool_section(&policy);
+        assert!(
+            section.contains(REPLACE_TEXT_ESCALATION_GUIDANCE),
+            "proactive tool guidance must include the shared escalation rule; got:\n{section}"
+        );
+    }
 
     #[test]
     fn format_tool_observation_is_bounded() {

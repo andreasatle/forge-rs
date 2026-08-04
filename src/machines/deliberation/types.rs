@@ -3,6 +3,13 @@
 use crate::machines::scheduler::{FailureKind, NodeKind, TestPlanContext};
 use crate::roles::policy::RolePromptConfig;
 
+/// Single source of truth for the replace_text -> write_file escalation
+/// rule. Shown proactively in Producer tool guidance and reactively in
+/// work-semantic-validation retry/failure feedback, so the model sees the
+/// same instruction whether it reads it in advance or after a rejection.
+pub const REPLACE_TEXT_ESCALATION_GUIDANCE: &str = "If replace_text does not appear to have taken effect, switch to write_file instead of \
+     retrying another replace_text.";
+
 /// Retry metadata returned when accepted Producer output fails semantic validation.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ProducerValidationRetry {

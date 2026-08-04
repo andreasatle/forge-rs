@@ -684,6 +684,12 @@ fn accepted_work_with_no_artifact_mutation_triggers_revision_feedback() {
         "feedback must explain the semantic invariant; got: {}",
         feedback_reason
     );
+    assert!(
+        feedback_reason.contains(crate::machines::deliberation::REPLACE_TEXT_ESCALATION_GUIDANCE),
+        "immediate retry feedback must include the shared replace_text -> write_file \
+         escalation rule; got: {}",
+        feedback_reason
+    );
     assert_eq!(
         failure_kind,
         FailureKind::WorkSemanticValidationFailure,
