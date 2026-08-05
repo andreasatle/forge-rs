@@ -139,10 +139,7 @@ impl VastClient {
 
     /// Permanently destroy an instance.
     pub fn destroy_instance(&self, instance_id: u64) -> Result<(), VastError> {
-        let request = self.authed(
-            self.agent
-                .delete(&format!("{BASE_URL_V1}/instances/{instance_id}/")),
-        );
+        let request = self.authed(self.agent.delete(&instance_url(instance_id)));
         request.call().map_err(map_ureq_error)?;
         Ok(())
     }
@@ -154,10 +151,7 @@ impl VastClient {
     }
 
     fn get_instance(&self, instance_id: u64) -> Result<VastInstance, VastError> {
-        let request = self.authed(
-            self.agent
-                .get(&format!("{BASE_URL}/instances/{instance_id}/")),
-        );
+        let request = self.authed(self.agent.get(&instance_url(instance_id)));
         let response: ShowInstanceResponse = request
             .call()
             .map_err(map_ureq_error)?
@@ -189,6 +183,14 @@ fn resolve_ssh_url(instance_id: u64, instance: &VastInstance) -> Result<String, 
             instance.status
         ))),
     }
+}
+
+/// Build the URL for the single-instance `api/v0` endpoint (get/destroy).
+///
+/// Not `api/v1`: that version has no route for these operations and
+/// returns a 404 (confirmed against a live instance).
+fn instance_url(instance_id: u64) -> String {
+    format!("{BASE_URL}/instances/{instance_id}/")
 }
 
 fn build_search_request(min_gpu_ram_gb: f64, max_price_per_hour: f64) -> SearchOffersRequest {

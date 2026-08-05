@@ -80,6 +80,18 @@ fn resolve_ssh_url_errors_when_not_ready() {
 }
 
 #[test]
+fn instance_url_uses_v0_not_v1() {
+    // Regression: destroy_instance previously hit BASE_URL_V1, which has no
+    // route for this operation and returned a 404 even for a running
+    // instance. get_instance and destroy_instance must share this builder
+    // so they can't drift apart again.
+    assert_eq!(
+        instance_url(12345),
+        "https://console.vast.ai/api/v0/instances/12345/"
+    );
+}
+
+#[test]
 fn vast_error_display_is_human_readable() {
     let cases = [
         (VastError::ApiKeyMissing, "VAST_API_KEY is not set"),
