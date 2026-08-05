@@ -13,6 +13,19 @@ fn search_request_converts_gb_to_mb_and_pins_query_shape() {
 }
 
 #[test]
+fn create_instance_request_defaults_image_when_none_given() {
+    let request = build_create_instance_request(50.0, None);
+    assert_eq!(request.image, DEFAULT_IMAGE);
+    assert_eq!(request.disk, 50.0);
+}
+
+#[test]
+fn create_instance_request_uses_given_image_over_default() {
+    let request = build_create_instance_request(50.0, Some("andreasatle/forge-vast-llama:latest"));
+    assert_eq!(request.image, "andreasatle/forge-vast-llama:latest");
+}
+
+#[test]
 fn raw_offer_converts_ram_from_mb_to_gb() {
     let raw = RawOffer {
         id: 42,

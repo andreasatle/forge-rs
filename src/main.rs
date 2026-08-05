@@ -14,7 +14,7 @@
 //!   forge trace   <config.yaml> --failures      — print full failure-related events
 //!
 //!   forge vast search --min-ram <gb> --max-price <usd/hr>  — list GPU offers
-//!   forge vast rent <offer_id> [--disk <gb>]                — rent an instance
+//!   forge vast rent <offer_id> [--disk <gb>] [--image <img>] — rent an instance
 //!   forge vast list                                         — list current instances
 //!   forge vast destroy <instance_id>                        — destroy an instance
 //!
@@ -174,6 +174,9 @@ enum VastCommand {
         /// Local disk size in GB.
         #[arg(long, default_value_t = 16.0)]
         disk: f64,
+        /// Docker image to run on the instance (defaults to Vast.ai's CUDA base image).
+        #[arg(long)]
+        image: Option<String>,
     },
     /// List current instances with SSH connection info.
     List,
@@ -293,8 +296,12 @@ fn run_vast_command(action: VastCommand) -> Result<(), Box<dyn std::error::Error
                 );
             }
         }
-        VastCommand::Rent { offer_id, disk } => {
-            let instance = client.create_instance(offer_id, disk)?;
+        VastCommand::Rent {
+            offer_id,
+            disk,
+            image,
+        } => {
+            let instance = client.create_instance(offer_id, disk, image.as_deref())?;
             println!(
                 "Rented instance {} ({}), status: {}",
                 instance.id, instance.gpu_name, instance.status

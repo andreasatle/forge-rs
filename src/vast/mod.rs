@@ -106,11 +106,16 @@ impl VastClient {
     }
 
     /// Rent `offer_id` with `disk_gb` of local disk, returning the created instance.
-    pub fn create_instance(&self, offer_id: u64, disk_gb: f64) -> Result<VastInstance, VastError> {
-        let body = CreateInstanceRequest {
-            image: DEFAULT_IMAGE.to_string(),
-            disk: disk_gb,
-        };
+    ///
+    /// `image` is the Docker image to run on the instance; pass `None` to
+    /// use Vast.ai's default CUDA base image.
+    pub fn create_instance(
+        &self,
+        offer_id: u64,
+        disk_gb: f64,
+        image: Option<&str>,
+    ) -> Result<VastInstance, VastError> {
+        let body = build_create_instance_request(disk_gb, image);
         let request = self.authed(self.agent.put(&format!("{BASE_URL}/asks/{offer_id}/")));
         let response: CreateInstanceResponse = request
             .send_json(&body)
@@ -191,6 +196,13 @@ fn resolve_ssh_url(instance_id: u64, instance: &VastInstance) -> Result<String, 
 /// returns a 404 (confirmed against a live instance).
 fn instance_url(instance_id: u64) -> String {
     format!("{BASE_URL}/instances/{instance_id}/")
+}
+
+fn build_create_instance_request(disk_gb: f64, image: Option<&str>) -> CreateInstanceRequest {
+    CreateInstanceRequest {
+        image: image.unwrap_or(DEFAULT_IMAGE).to_string(),
+        disk: disk_gb,
+    }
 }
 
 fn build_search_request(min_gpu_ram_gb: f64, max_price_per_hour: f64) -> SearchOffersRequest {
