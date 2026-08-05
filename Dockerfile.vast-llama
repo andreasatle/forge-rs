@@ -1,13 +1,17 @@
 # Pre-built llama.cpp (CUDA, multi-architecture) image for vast.ai GPU
 # rentals used by rent-vast.sh.
 #
-# Bakes in fixes confirmed by a manual rent-vast.sh run so they happen once,
-# at build time, instead of on every rental:
-#   - the vast.ai CUDA base image ships the CUDA runtime but not nvcc/the
-#     toolkit -- fixed via the image's own NVIDIA apt repo
-#   - llama.cpp's CUDA build compiles flash-attention kernel templates for
-#     every GPU architecture from scratch -- baked once here instead of on
-#     every rental, since offers deliberately aren't locked to one GPU model
+# Bakes in a fix confirmed by a manual rent-vast.sh run so it happens once,
+# at build time, instead of on every rental: llama.cpp's CUDA build compiles
+# flash-attention kernel templates for every GPU architecture from scratch --
+# baked once here instead of on every rental, since offers deliberately
+# aren't locked to one GPU model.
+#
+# Starts from the "devel" (not "base") CUDA image, which already ships nvcc
+# and the full toolkit -- the vast.ai default base image used by
+# rent-vast.sh's older manual flow lacks nvcc and needed a separate
+# cuda-toolkit-12-1 install; that's not needed, and actively conflicts with
+# this image's pinned CUDA packages, on top of devel.
 #
 # Built for linux/amd64 (vast.ai hosts) by
 # .github/workflows/build-vast-image.yml on a native x86_64 runner.
@@ -18,7 +22,6 @@ ENV PATH=/usr/local/cuda/bin:${PATH}
 
 RUN apt-get update -qq \
     && apt-get install -y -qq git build-essential cmake curl ca-certificates \
-    && apt-get install -y -qq cuda-toolkit-12-1 \
     && rm -rf /var/lib/apt/lists/*
 
 RUN git clone --depth 1 https://github.com/ggml-org/llama.cpp /root/llama.cpp \
